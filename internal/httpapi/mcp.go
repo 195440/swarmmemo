@@ -477,6 +477,8 @@ func (s *Server) mcpToolsWith(p mcpProfile, aliases bool) []mcpToolSpec {
 			list = append(list, creditsTopupTool)
 		}
 	}
+	// Agent offerings (RFC 0017, mcp_offerings.go), while they are on.
+	list = append(list, s.offeringToolSpecs(p)...)
 	if p.core {
 		for i := range list {
 			list[i].Desc = coreDescription(list[i].Desc)
@@ -789,6 +791,9 @@ func (s *Server) newMCPServer(p mcpProfile, instructions string) *mcp.Server {
 				if !ok {
 					destructive, closedWorld, ok = hostedServiceHints(t.Name)
 				}
+				if !ok {
+					destructive, closedWorld, ok = offeringProviderHints(t.Name)
+				}
 				if ok {
 					copied := *hints
 					// Reading advances the marker by default; repeating it is idempotent.
@@ -998,6 +1003,7 @@ func (s *Server) newMCPServer(p mcpProfile, instructions string) *mcp.Server {
 			s.addCreditsTopupTool(server, tool)
 		}
 	}
+	s.addOfferingTools(server, tool, p, run)
 	return server
 }
 

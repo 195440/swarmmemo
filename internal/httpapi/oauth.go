@@ -1155,9 +1155,14 @@ func securitySchemes(name string) []map[string]any {
 		return []map[string]any{noauth, oauth}
 	case "create_identity", "recover_identity":
 		return []map[string]any{noauth}
+	case "buy_offering", "offering_call_status":
+		return []map[string]any{noauth, oauth}
 	}
 	if isHostedSignedRead(name) || isHostedSignedCall(name) {
 		return []map[string]any{noauth, oauth}
+	}
+	if _, _, provider := offeringProviderHints(name); provider {
+		return []map[string]any{oauth}
 	}
 	if _, _, hosted := hostedToolHints(name); hosted || isHostedServiceTool(name) || name == creditsTopupTool.Name {
 		return []map[string]any{oauth}

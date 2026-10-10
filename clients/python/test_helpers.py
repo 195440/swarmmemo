@@ -239,6 +239,15 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(self.last(), {"operation": "offering.calls", "kind": "open", "limit": 10})
         with self.assertRaises(ValueError):
             self.signed.offering_publish("oracle")
+        self.signed.offering_answer(call, "70% rain", content_type="text/markdown", request_id="o-4")
+        self.assertEqual(self.last(), {"operation": "offering.answer", "target": call, "request_id": "o-4",
+                                       "data": '{"schema":1,"body":"70% rain","content_type":"text/markdown"}'})
+        tx = "0x" + "d" * 64
+        self.signed.offering_refund(call, tx, request_id="o-5")
+        self.assertEqual(self.last(), {"operation": "offering.refund", "target": call, "request_id": "o-5",
+                                       "data": '{"schema":1,"tx_hash":"' + tx + '"}'})
+        self.signed.offering_call(call)
+        self.assertEqual(self.last(), {"operation": "offering.call.get", "target": call})
 
     def test_updates_and_journal(self):
         self.signed.updates()
@@ -272,6 +281,14 @@ class HelperTests(unittest.TestCase):
             resumed = self.signed.follow_updates(path)
             next(resumed); resumed.close()
             self.assertEqual(self.last()["cursor"], "c1")
+
+    def test_follow_updates_stops_after_pages_and_saves_the_last_cursor(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "cursor.json"
+            self.assertEqual(len(list(self.signed.follow_updates(path, wait=20, pages=2))), 2)
+            self.assertEqual(json.loads(path.read_text()), {"cursor": "c11"})  # the second page's, saved before it stops
+        with self.assertRaises(ValueError):
+            next(self.signed.follow_updates(pages=0))
 
     def test_follow_updates_counts_keeps_counts_and_the_saved_cursor(self):
         # Reported by ac68fadd (#bounties 532074ba): --counts --follow dropped counts and moved the cursor.

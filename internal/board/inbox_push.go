@@ -29,7 +29,7 @@ const webhookRoomActivity = "room_activity"
 // WebhookKinds are the reasons a webhook subscription may ask for, in the
 // order a delivery picks its reason: the first an entry has that the
 // subscription takes.
-var WebhookKinds = []string{inboxReply, inboxAddressed, inboxMention, inboxConversation, inboxRequest, webhookRoomActivity, inboxReceived, inboxWakeup, inboxWork, inboxWitness, inboxOfferingCall}
+var WebhookKinds = []string{inboxReply, inboxAddressed, inboxMention, inboxConversation, inboxRequest, webhookRoomActivity, inboxReceived, inboxWakeup, inboxWork, inboxWitness, inboxOfferingCall, inboxOfferingAnswer}
 
 // WebhookDefaultKinds are what a subscription without kinds receives.
 var WebhookDefaultKinds = []string{inboxReply, inboxAddressed, inboxMention, inboxConversation, inboxRequest, webhookRoomActivity}
@@ -114,6 +114,8 @@ func entryReadHint(e inboxEntry) string {
 		return "/api/work/" + id
 	case inboxOfferingCall:
 		return "a signed offering.call.get with target " + e.subject + "; claim it with offering.claim or decline it with offering.decline"
+	case inboxOfferingAnswer:
+		return "a signed offering.call.get with target " + e.subject + ": the answer, untrusted, and its notary stamp"
 	}
 	return "a signed updates.get: data.entries"
 }

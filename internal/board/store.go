@@ -262,7 +262,13 @@ CREATE TABLE IF NOT EXISTS leases (
 // 28: offerings, offering_revisions and offering_calls, agents' priced
 // offerings over x402 (offerings.go, RFC 0017, C168). Additive, but a
 // schema-27 binary would neither lapse nor wipe a held authorization.
-const SchemaVersion = 28
+//
+// 29: offering_calls' answer columns (answer_content_type, answer_screen,
+// answer_scores, answer_statement, answer_stamp, answer_late; answer keeps
+// the body) and its indexes: refund_tx UNIQUE, caller, the overdue and the
+// lapsed-closure sweeps (offering_answers.go, C173). A schema-28 answer
+// envelope is split into the columns once.
+const SchemaVersion = 29
 
 // connPragmas are the per-connection PRAGMAs, in modernc.org/sqlite's DSN
 // syntax. journal_mode=WAL is stored in the database file and set at Open.
@@ -387,6 +393,8 @@ func Open(path string, config Config) (*Store, error) {
 	}
 	// Credit top-ups are on exactly when configured with the ledger on.
 	config.Features.Topup = config.Topup != nil && config.Features.Ledger == LedgerOn
+	// Agent offerings are on exactly when configured (RFC 0017).
+	config.Features.Offerings = config.Offerings != nil
 	s := &Store{db: db, config: config, now: time.Now, privateSlots: make(chan struct{}, 2), styleSlots: make(chan struct{}, 2), activityGate: make(chan struct{}, 1), privateRates: map[string]privateReadBucket{}, identityTXT: defaultTXTLookup, identityJitter: mathrand.Float64, identityRates: map[string]privateReadBucket{}, updateWaiters: NewWaitSlots(UpdatesWaitersPerSource, UpdatesWaitersMax), mcpVerifySlots: make(chan struct{}, MCPEventVerifyConcurrency)}
 	if err = db.QueryRow("SELECT value FROM meta WHERE key='generation'").Scan(&s.generation); err != nil {
 		return fail(err)
@@ -745,6 +753,8 @@ func (s *Store) executeCommand(ctx context.Context, cmd Command, source string) 
 	}
 	ctx = s.preflightSettle(ctx, cmd, a)         // RFC 0016: the chain read, no transaction held
 	ctx = s.preflightOfferingScreen(ctx, cmd, a) // RFC 0017: a listing's screen, no transaction held
+	ctx = s.preflightAnswerScreen(ctx, cmd, a)   // RFC 0017: an answer's screen, no transaction held
+	ctx = s.preflightRefund(ctx, cmd, a)         // RFC 0017: a refund's chain read, no transaction held
 	s.preflightScreen(ctx, a, cmd)               // RFC0013 §5.2: a protected reader's catch-up, no transaction held
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1094,6 +1104,10 @@ func (s *Store) execute(ctx context.Context, tx *sql.Tx, c Command, a actor, now
 		return s.offeringDecide(ctx, tx, c, a, now)
 	case "offering.calls", "offering.call.get":
 		return s.readOfferingCalls(ctx, tx, c, a, now)
+	case "offering.answer":
+		return s.offeringAnswer(ctx, tx, c, a, now)
+	case "offering.refund":
+		return s.offeringRefund(ctx, tx, c, a, now)
 	case "trust.get":
 		return s.readTrust(ctx, tx, c, a, now)
 	case "standing.ways":

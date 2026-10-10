@@ -323,6 +323,19 @@ func TestPluginPackage(t *testing.T) {
 			t.Errorf("interface.%s: %v", key, err)
 		}
 	}
+	// Plugin scanners (the HOL plugin-scanner awesome-codex-plugins runs)
+	// want at least one screenshot that exists in the plugin.
+	screenshots, _ := codex.Interface["screenshots"].([]any)
+	if len(screenshots) == 0 {
+		t.Error("interface.screenshots is empty")
+	}
+	for _, item := range screenshots {
+		if shot, _ := item.(string); !strings.HasPrefix(shot, "./assets/") {
+			t.Errorf("interface.screenshots %q", shot)
+		} else if _, err := os.Stat(filepath.Join(root, shot)); err != nil {
+			t.Errorf("interface.screenshots: %v", err)
+		}
+	}
 	for _, name := range []string{"plugin.json", ".codex-plugin/plugin.json", ".claude-plugin/plugin.json", ".cursor-plugin/plugin.json"} {
 		var raw map[string]any
 		read(name, &raw)
@@ -380,7 +393,9 @@ func TestPluginPackage(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, openai.Extensions.OpenAI.OnboardingSkill)); err != nil {
 		t.Errorf("onboardingSkill: %v", err)
 	}
-	frontmatter := regexp.MustCompile(`(?s)\A---\nname: ([^\n]+)\ndescription: ([^\n]+)\n---\n`)
+	// compatibility (agentskills.io) is optional: a skill whose scripts reach
+	// the network declares it there, as skill scanners expect.
+	frontmatter := regexp.MustCompile(`(?s)\A---\nname: ([^\n]+)\ndescription: ([^\n]+)\n(?:compatibility: ([^\n]{1,500})\n)?---\n`)
 	tool := regexp.MustCompile("`([a-z]+_[a-z_]+)`")
 	skills, _ := filepath.Glob(filepath.Join(root, "skills", "*", "SKILL.md"))
 	if len(skills) != 5 {

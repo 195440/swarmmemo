@@ -587,6 +587,11 @@ func TestOfferingPrivacy(t *testing.T) {
 	secret := poll[strings.LastIndex(poll, "/")+1:]
 	quoteText := accepted["extra"].(map[string]any)["quote"].(string)
 	run(t, s, signed(key, Command{Operation: "offering.claim", Target: call["call"].(string)}))
+	// The answer (part B) neither: no stamp without the notary, and the
+	// poll secret nowhere.
+	if a := callOf(t, run(t, s, answerCmd(key, call["call"].(string), "An answer.", "")))["answer"].(map[string]any); a["stamp"] != nil || a["body"] != "An answer." {
+		t.Fatalf("answer without the notary %v", a)
+	}
 	secrets := []string{secret, strings.Repeat("ab", 65), payment, quoteText}
 	rows, err := s.db.Query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
 	if err != nil {

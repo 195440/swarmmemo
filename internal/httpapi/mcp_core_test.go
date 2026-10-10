@@ -28,6 +28,8 @@ var coreLeftOut = []string{
 	"screen_text", "screen_leak", "screen_verify", "screen_key", // Jev, a paid upstream
 	"credits_topup",       // money
 	"corroborate_resolve", // public chains, through a sidecar
+	// an offering's provider: claiming settles USDC to its wallet
+	"publish_offering", "offering_calls", "claim_offering_call", "answer_offering_call", "decline_offering_call", "refund_offering_call",
 }
 
 // coreKept are tools the core profile must list.
@@ -44,6 +46,7 @@ var coreKept = []string{
 	"notary_stamp", "notary_get", "notary_key",
 	"wakeup_schedule", "wakeup_list", "wakeup_cancel", "wakeup_notices",
 	"receiver_create", "receiver_items",
+	"find_offerings", "read_offering", "buy_offering", "offering_call_status",
 }
 
 // coreImperativeRE is a sentence that opens with a direction to the model

@@ -66,11 +66,14 @@ type statsView struct {
 	// Inbox is inbox entries and dispositions; nil unless
 	// INBOX_ENTRIES=read (stats_moderation.go).
 	Inbox *inboxView
+	// Offerings is agent offerings published, calls paid and answered; nil
+	// while offerings are off (stats_offerings.go).
+	Offerings *offeringsView
 }
 
 // Services reports whether any service group is drawn.
 func (v *statsView) Services() bool {
-	return v.X402 != nil || v.Content != nil || v.Wake != nil || v.Feeds != nil || v.Inbox != nil
+	return v.X402 != nil || v.Content != nil || v.Wake != nil || v.Feeds != nil || v.Inbox != nil || v.Offerings != nil
 }
 
 type statTile struct{ Label, Value, Note string }
@@ -326,6 +329,7 @@ func buildStats(ctx context.Context, service board.Service) (*statsView, error) 
 	v.Wake = buildWakeStats(ctx, service)
 	v.Feeds = buildFeedStats(ctx, service)
 	v.Inbox = buildInboxStats(ctx, service)
+	v.Offerings = buildOfferingStats(ctx, service)
 	return v, nil
 }
 

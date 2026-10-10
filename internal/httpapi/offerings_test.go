@@ -162,6 +162,21 @@ func TestOfferingOverHTTP(t *testing.T) {
 	if p := makeRequest(s, "GET", "https://swarmmemo.com"+poll, "", ""); dig(decodeResult(t, p.Body.Bytes()), "data", "call", "state") != "paid" {
 		t.Fatalf("poll after claim %s", p.Body.String())
 	}
+	// The provider answers; the poll carries the answer, untrusted, with its
+	// hash. Nothing logged by route keeps the poll secret.
+	answer, _ := json.Marshal(map[string]any{"schema": 1, "body": "70% rain."})
+	if w := topupRequest(s, signService(key, board.Command{Operation: "offering.answer", Target: id, Data: string(answer)}), ""); w.Code != 200 || dig(decodeResult(t, w.Body.Bytes()), "data", "call", "state") != "answered" {
+		t.Fatalf("answer: %d %s", w.Code, w.Body.String())
+	}
+	p = makeRequest(s, "GET", "https://swarmmemo.com"+poll, "", "")
+	got := decodeResult(t, p.Body.Bytes())
+	if dig(got, "data", "call", "state") != "answered" || dig(got, "data", "call", "answer", "body") != "70% rain." || dig(got, "data", "call", "answer", "text_is_untrusted") != true ||
+		dig(got, "data", "call", "answer", "sha256") != fmt.Sprintf("%x", sha256.Sum256([]byte("70% rain."))) {
+		t.Fatalf("poll after the answer %s", p.Body.String())
+	}
+	if class := routeClass(poll); strings.Contains(class, poll[strings.LastIndex(poll, "/")+1:]) || strings.Contains(class, id) {
+		t.Fatalf("route class %q keeps the poll URL's secret or call", class)
+	}
 	// /capabilities says how.
 	var caps map[string]any
 	_ = json.Unmarshal(makeRequest(s, "GET", "/capabilities", "", "").Body.Bytes(), &caps)
@@ -173,5 +188,61 @@ func TestOfferingOverHTTP(t *testing.T) {
 	w = topupRequest(s, signService(key, board.Command{Operation: "offering.buy", Target: "pythia/oracle", Data: string(in)}), "")
 	if w.Code != 402 || w.Header().Get("PAYMENT-REQUIRED") == "" {
 		t.Fatalf("signed quote: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// Over MCP, keyless: find and read, buy_offering's 402 carries the x402
+// requirement, the paid retry returns the poll URL, and offering_call_status
+// reads it. The assistant profile has find and read only; the core profile
+// the caller's four, never the provider's.
+func TestOfferingsOverMCP(t *testing.T) {
+	s, _, _, _ := offeringServer(t)
+	list := mustTool(t, s, "/mcp", "", "find_offerings", map[string]any{"query": "oracle"})
+	if offerings, _ := dig(list, "data", "offerings").([]any); len(offerings) != 1 {
+		t.Fatalf("find_offerings %v", list)
+	}
+	if got := mustTool(t, s, "/mcp", "", "read_offering", map[string]any{"target": "pythia/oracle"}); dig(got, "data", "offering", "price") != "5" {
+		t.Fatalf("read_offering %v", got)
+	}
+	input := map[string]any{"question": "Rain in Lisbon tomorrow?"}
+	raw, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": "buy_offering", "arguments": map[string]any{"target": "pythia/oracle", "input": input}}})
+	out := mcpRequest(t, s, "/mcp", "", string(raw))
+	accepts, _ := dig(out, "result", "structuredContent", "error", "details", "x402", "accepts").([]any)
+	if dig(out, "result", "structuredContent", "error", "code") != "payment_required" || len(accepts) != 1 {
+		t.Fatalf("buy_offering quote %v", out)
+	}
+	payment := topupPayment(t, accepts[0].(map[string]any), 21)
+	call := mustTool(t, s, "/mcp", "", "buy_offering", map[string]any{"target": "pythia/oracle", "input": input, "payment": payment})
+	poll, _ := dig(call, "data", "call", "poll").(string)
+	if dig(call, "data", "call", "state") != "authorized" || poll == "" {
+		t.Fatalf("buy_offering paid %v", call)
+	}
+	status := mustTool(t, s, "/mcp/core", "", "offering_call_status", map[string]any{"poll": "https://swarmmemo.com" + poll})
+	if dig(status, "data", "call", "state") != "authorized" {
+		t.Fatalf("offering_call_status %v", status)
+	}
+	if _, failure := callTool(t, s, "/mcp", "", "offering_call_status", map[string]any{"poll": poll[:len(poll)-2] + "xx"}); !strings.HasPrefix(failure, "404 offering_call_not_found") {
+		t.Fatalf("a wrong poll secret: %q", failure)
+	}
+	names := func(path string) map[string]bool {
+		out := map[string]bool{}
+		for _, tool := range profileToolList(t, s, path) {
+			out[tool["name"].(string)] = true
+		}
+		return out
+	}
+	assistant, core := names(web.AssistantMCPPath), names("/mcp/core")
+	if !assistant["find_offerings"] || !assistant["read_offering"] || assistant["buy_offering"] || assistant["offering_call_status"] {
+		t.Errorf("assistant profile offering tools: %v", assistant)
+	}
+	for _, name := range []string{"find_offerings", "read_offering", "buy_offering", "offering_call_status"} {
+		if !core[name] {
+			t.Errorf("the core profile does not list %s", name)
+		}
+	}
+	for _, name := range []string{"publish_offering", "claim_offering_call", "answer_offering_call", "refund_offering_call"} {
+		if core[name] {
+			t.Errorf("the core profile lists %s", name)
+		}
 	}
 }

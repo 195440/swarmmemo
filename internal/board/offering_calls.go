@@ -857,18 +857,22 @@ type callRow struct {
 	Seq                                                         int64
 	ID, Account, Name, Caller, Payer, Network, Asset, PayTo     string
 	Input, InputSHA256, InputScreen, InputScores, State, Reason string
-	TxHash, PollHash, AnswerSHA256                              string
+	TxHash, PollHash, AnswerSHA256, Answer, RefundTx            string
+	AnswerContentType, AnswerScreen, AnswerScores               string
+	AnswerStatement, AnswerStamp                                string
+	AnswerLate                                                  bool
 	Rev, Amount, ValidBefore, CreatedAt, ClaimBy, ClaimedAt     int64
 	DueAt, SettledAt, AnsweredAt, ClosedAt                      int64
 	Retryable                                                   bool
 }
 
-const callCols = "seq,id,account,name,rev,caller,payer,amount,network,asset,pay_to,input,input_sha256,input_screen,input_scores,state,reason,retryable,tx_hash,poll_hash,answer_sha256,valid_before,created_at,claim_by,claimed_at,due_at,settled_at,answered_at,closed_at"
+const callCols = "seq,id,account,name,rev,caller,payer,amount,network,asset,pay_to,input,input_sha256,input_screen,input_scores,state,reason,retryable,tx_hash,poll_hash,answer_sha256,answer,refund_tx,valid_before,created_at,claim_by,claimed_at,due_at,settled_at,answered_at,closed_at,answer_content_type,answer_screen,answer_scores,answer_statement,answer_stamp,answer_late"
 
 func scanCall(scan func(...any) error) (callRow, error) {
 	var r callRow
 	err := scan(&r.Seq, &r.ID, &r.Account, &r.Name, &r.Rev, &r.Caller, &r.Payer, &r.Amount, &r.Network, &r.Asset, &r.PayTo, &r.Input, &r.InputSHA256, &r.InputScreen, &r.InputScores,
-		&r.State, &r.Reason, &r.Retryable, &r.TxHash, &r.PollHash, &r.AnswerSHA256, &r.ValidBefore, &r.CreatedAt, &r.ClaimBy, &r.ClaimedAt, &r.DueAt, &r.SettledAt, &r.AnsweredAt, &r.ClosedAt)
+		&r.State, &r.Reason, &r.Retryable, &r.TxHash, &r.PollHash, &r.AnswerSHA256, &r.Answer, &r.RefundTx, &r.ValidBefore, &r.CreatedAt, &r.ClaimBy, &r.ClaimedAt, &r.DueAt, &r.SettledAt, &r.AnsweredAt, &r.ClosedAt,
+		&r.AnswerContentType, &r.AnswerScreen, &r.AnswerScores, &r.AnswerStatement, &r.AnswerStamp, &r.AnswerLate)
 	return r, err
 }
 
@@ -883,15 +887,21 @@ func loadCall(ctx context.Context, q interface {
 }
 
 // effectiveCallState is a call's state now: an authorized call past its
-// claim window has lapsed, whether or not the sweep has marked it yet.
-func effectiveCallState(state string, claimBy, now int64) string {
-	if state == "authorized" && claimBy <= now {
+// claim window has lapsed, and a paid call past its due time unanswered is
+// overdue, whether or not the sweep has marked it yet.
+func effectiveCallState(state string, claimBy, dueAt, now int64) string {
+	switch {
+	case state == "authorized" && claimBy <= now:
 		return "lapsed"
+	case state == "paid" && dueAt > 0 && dueAt <= now:
+		return "overdue"
 	}
 	return state
 }
 
-func (r callRow) effectiveState(now int64) string { return effectiveCallState(r.State, r.ClaimBy, now) }
+func (r callRow) effectiveState(now int64) string {
+	return effectiveCallState(r.State, r.ClaimBy, r.DueAt, now)
+}
 
 // common is what both parties read of a call: never the authorization, its
 // nonce, the quote or the poll secret.
@@ -907,17 +917,27 @@ func (r callRow) common(now int64) map[string]any {
 	if r.TxHash != "" {
 		v["tx_hash"] = r.TxHash
 	}
+	if r.RefundTx != "" {
+		v["refund_tx"] = r.RefundTx
+	}
+	if r.AnswerSHA256 != "" {
+		v["answer_sha256"] = r.AnswerSHA256
+	}
 	if r.Reason != "" && r.State != "declined" {
 		v["reason"] = r.Reason
 	}
 	return v
 }
 
-// callerView is what the caller reads (the 202, the poll page).
+// callerView is what the caller reads (the 202, the poll page): with the
+// answer once there is one.
 func (r callRow) callerView(now int64) map[string]any {
 	v := r.common(now)
 	if r.State == "authorized" || r.State == "verifying" {
 		v["note"] = "Paid only once the provider claims it; if it is declined or not claimed by claim_by, it lapses and nothing is charged."
+	}
+	if a := r.answerView(); a != nil {
+		v["answer"] = a
 	}
 	return v
 }
@@ -938,6 +958,9 @@ func (r callRow) providerView(now int64) map[string]any {
 	}
 	if r.State == "declined" && r.Reason != "" {
 		v["reason"] = r.Reason
+	}
+	if a := r.answerView(); a != nil {
+		v["answer"] = a
 	}
 	return v
 }
@@ -963,11 +986,24 @@ func (s *Store) readOfferingCalls(ctx context.Context, tx *sql.Tx, c Command, a 
 		return Result{}, err
 	}
 	if c.Operation == "offering.call.get" {
-		call, err := s.providerCall(ctx, tx, c.Target, a)
+		if !offeringCallRE.MatchString(c.Target) {
+			return Result{}, problem(400, "invalid_offering_call", "target is the call's id, oc_ and 32 hex digits.")
+		}
+		call, err := loadCall(ctx, tx, c.Target)
 		if err != nil {
 			return Result{}, err
 		}
-		return Result{Data: map[string]any{"call": call.providerView(now)}}, nil
+		if call.Account == a.account {
+			return Result{Data: map[string]any{"call": call.providerView(now)}}, nil
+		}
+		// The signed caller reads its own call: the answer, never the input
+		// screen or the provider's notes.
+		if mine, err := callerIs(ctx, tx, call, a.account); err != nil {
+			return Result{}, err
+		} else if mine {
+			return Result{Data: map[string]any{"call": call.callerView(now)}}, nil
+		}
+		return Result{}, problem(404, "offering_call_not_found", "No such offering call for this agent.")
 	}
 	limit := c.Limit
 	if limit < 0 || limit > OfferingCallsPageMax {
@@ -989,10 +1025,14 @@ func (s *Store) readOfferingCalls(ctx context.Context, tx *sql.Tx, c Command, a 
 		where, args = append(where, "state='authorized' AND claim_by>?"), append(args, now)
 	case "lapsed":
 		where, args = append(where, "(state='lapsed' OR (state='authorized' AND claim_by<=?))"), append(args, now)
-	case "verifying", "settling", "paid", "failed", "unknown", "declined", "answered", "overdue", "refunded":
+	case "paid":
+		where, args = append(where, "state='paid' AND due_at>?"), append(args, now)
+	case "overdue":
+		where, args = append(where, "(state='overdue' OR (state='paid' AND due_at>0 AND due_at<=?))"), append(args, now)
+	case "verifying", "settling", "failed", "unknown", "declined", "answered", "refunded":
 		where, args = append(where, "state=?"), append(args, c.Kind)
 	default:
-		return Result{}, problem(400, "invalid_kind", "kind is a call state (open, settling, paid, failed, unknown, declined, lapsed), or omitted for every call.")
+		return Result{}, problem(400, "invalid_kind", "kind is a call state (open, settling, paid, overdue, answered, refunded, failed, unknown, declined, lapsed), or omitted for every call.")
 	}
 	if c.Cursor != "" {
 		n, err := strconv.ParseInt(c.Cursor, 10, 64)
@@ -1018,7 +1058,13 @@ func (s *Store) readOfferingCalls(ctx context.Context, tx *sql.Tx, c Command, a 
 			data["next_cursor"] = strconv.FormatInt(last, 10)
 			break
 		}
-		out, last = append(out, call.providerView(now)), call.Seq
+		// A page leaves each answer's body out (up to 32 KiB each):
+		// offering.call.get reads it.
+		v := call.providerView(now)
+		if a, ok := v["answer"].(map[string]any); ok {
+			delete(a, "body")
+		}
+		out, last = append(out, v), call.Seq
 	}
 	if err = closeRows(rows); err != nil {
 		return Result{}, err
@@ -1079,21 +1125,37 @@ func (s *Store) OfferingPoll(ctx context.Context, alias, name, id, secret string
 	if err != nil || account != call.Account {
 		return nil, notFound
 	}
-	return call.callerView(s.now().Unix()), nil
+	now := s.now().Unix()
+	if last := max(call.CreatedAt, call.SettledAt, call.AnsweredAt, call.ClosedAt); now-last > OfferingPollDays*86400 {
+		return nil, problem(404, "offering_call_not_found", fmt.Sprintf("This poll URL answered for %d days after the call's last change and has expired; a signed caller still reads its call with offering.call.get.", OfferingPollDays))
+	}
+	return call.callerView(now), nil
 }
 
 // ---- the sweep and the operator -------------------------------------------
+
+// openCallsTerm repeats offering_calls_open's WHERE word for word: SQLite
+// uses a partial index only for a query whose WHERE contains its terms, and
+// state='authorized' alone does not imply the IN list.
+const openCallsTerm = "state IN ('verifying','authorized','settling')"
 
 // sweepOfferingCalls lapses authorized calls past their claim window and
 // fails calls stuck verifying, wiping their authorizations, at most limit
 // of each.
 func sweepOfferingCalls(ctx context.Context, tx *sql.Tx, now int64, limit int) (int, error) {
-	res, err := tx.ExecContext(ctx, "UPDATE offering_calls SET state='lapsed',auth='',closed_at=claim_by WHERE id IN (SELECT id FROM offering_calls WHERE state='authorized' AND claim_by<=? ORDER BY claim_by LIMIT ?)", now, limit)
+	res, err := tx.ExecContext(ctx, "UPDATE offering_calls SET state='lapsed',auth='',closed_at=claim_by WHERE id IN (SELECT id FROM offering_calls WHERE "+openCallsTerm+" AND state='authorized' AND claim_by<=? ORDER BY claim_by LIMIT ?)", now, limit)
 	if err != nil {
 		return 0, err
 	}
 	n := rowsChanged(res)
-	res, err = tx.ExecContext(ctx, "UPDATE offering_calls SET state='failed',reason='interrupted',retryable=1,auth='',closed_at=? WHERE id IN (SELECT id FROM offering_calls WHERE state='verifying' AND created_at<=? ORDER BY created_at LIMIT ?)", now, now-offeringVerifyStale, limit)
+	res, err = tx.ExecContext(ctx, "UPDATE offering_calls SET state='failed',reason='interrupted',retryable=1,auth='',closed_at=? WHERE id IN (SELECT id FROM offering_calls WHERE "+openCallsTerm+" AND state='verifying' AND created_at<=? ORDER BY created_at LIMIT ?)", now, now-offeringVerifyStale, limit)
+	if err != nil {
+		return 0, err
+	}
+	n += rowsChanged(res)
+	// A paid call unanswered by its due time is overdue (the record counts
+	// it); the provider may still answer, or refund it.
+	res, err = tx.ExecContext(ctx, "UPDATE offering_calls SET state='overdue' WHERE id IN (SELECT id FROM offering_calls WHERE state='paid' AND due_at>0 AND due_at<=? ORDER BY due_at LIMIT ?)", now, limit)
 	if err != nil {
 		return 0, err
 	}

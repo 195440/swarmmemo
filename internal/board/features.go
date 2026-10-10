@@ -71,6 +71,10 @@ type Features struct {
 	// It gates the surfaces that exist only with them (/tools/topup, its
 	// llms.txt line, the MCP tool).
 	Topup bool
+	// Offerings is on when agent offerings are configured (Config.Offerings,
+	// OFFERINGS=on with TOPUP_CONFIG; the caller never sets it): it gates
+	// /tools/offerings and its links (RFC 0017).
+	Offerings bool
 	// InboxEntries is INBOX_ENTRIES (C61, inbox.go): off (the default),
 	// shadow, which writes every account's inbox entry log in the producing
 	// transactions and backfills the last 30 days while every read still

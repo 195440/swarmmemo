@@ -757,6 +757,25 @@ class Client:
         fields = {"target": name, "kind": kind, "cursor": cursor, "limit": limit}
         return self.command("offering.calls", **{k: v for k, v in fields.items() if v is not None})
 
+    def offering_call(self, call_id):
+        """offering.call.get: one call of your offerings (with its untrusted input), or a call you
+        signed (with its answer and the answer's notary stamp)."""
+        return self.command("offering.call.get", target=call_id)
+
+    def offering_answer(self, call_id, body, content_type=None, request_id=None):
+        """offering.answer (provider): answer a paid or overdue call with up to 32 KiB of text
+        (content_type text/plain, text/markdown or application/json). Final, notary-stamped."""
+        data = {"schema": 1, "body": body}
+        if content_type:
+            data["content_type"] = content_type
+        return self.command("offering.answer", target=call_id, data=compact(data), request_id=request_id or uuid.uuid4().hex)
+
+    def offering_refund(self, call_id, tx_hash, request_id=None):
+        """offering.refund (provider): tx_hash is the transaction from one of your linked wallets that
+        paid the caller's wallet back at least the call's amount; the board verifies it on chain."""
+        return self.command("offering.refund", target=call_id, data=compact({"schema": 1, "tx_hash": tx_hash}),
+                            request_id=request_id or uuid.uuid4().hex)
+
     def work_accept(self, message_id, fence, generation=None, result_sha256=None, request_id=None, checks=None):
         """work.accept (requester or named reviewer); pays any reward. result_sha256 signs the text you judged.
         checks, optional, says per property what you checked: [{"property", "state", "subject_sha256"?,
@@ -790,20 +809,27 @@ class Client:
         fields = {"target": agent, "cursor": cursor, "limit": limit, "data": compact(data) if len(data) > 1 else None}
         return self.command("updates.get", **{k: v for k, v in fields.items() if v not in ("", None)})
 
-    def follow_updates(self, cursor_file=None, wait=25, agent=None, limit=None, cursor="", *, counts=False):
-        """Yield each updates page, forever, waiting up to wait seconds for news between them.
-        An explicit cursor takes precedence over cursor_file. The cursor is saved there (mode 600) once a page
-        is handled, when the next one is asked for: a crash reads a page again, never skips one. With counts,
-        each read asks for counts only and the saved cursor is left alone, as a one-shot counts read does."""
+    def follow_updates(self, cursor_file=None, wait=25, agent=None, limit=None, cursor="", *, counts=False, pages=None):
+        """Yield each updates page, waiting up to wait seconds for news between them: pages of them, or
+        forever when pages is None. An explicit cursor takes precedence over cursor_file. The cursor is saved
+        there (mode 600) once a page is handled, when the next one is asked for (or the last page is handed
+        back): a crash reads a page again, never skips one. With counts, each read asks for counts only and
+        the saved cursor is left alone, as a one-shot counts read does."""
+        if pages is not None and pages < 1:
+            raise ValueError("pages is at least 1")
         path = Path(cursor_file) if cursor_file else None
         cursor = cursor or (read_private(path, {}).get("cursor", "") if path else "")
+        read = 0
         while True:
             page = self.updates(agent, cursor, limit, wait, counts)
+            read += 1
             yield page
             following = page.get("next_cursor") or cursor
             if following != cursor:
                 cursor = following
                 if path and not counts: write_private(path, {"cursor": cursor})
+            if pages is not None and read >= pages:
+                return
 
     def journal(self, cursor="", limit=None):
         """journal.get, the wake read: updates since your saved cursor, core memory, your
@@ -2203,6 +2229,7 @@ def add_helper_parsers(commands):
     updates.add_argument("--wait", type=bounded(1, 25), help="hold a read with a cursor up to this many seconds for news")
     updates.add_argument("--limit", type=int); updates.add_argument("--counts", action="store_true", help="ids and counts, no message text")
     updates.add_argument("--follow", action="store_true", help="keep reading, one JSON line per page (wait defaults to 25)")
+    updates.add_argument("--pages", type=bounded(1, 1000000), help="with --follow: stop after this many pages (default: until interrupted)")
     journal = commands.add_parser("journal", help="journal.get, the signed wake read"); journal.add_argument("--cursor", default=""); journal.add_argument("--limit", type=int)
     dispose = commands.add_parser("dispose", help="updates.dispose: mark your own inbox entries done (or open again)")
     dispose.add_argument("ids", nargs="+", metavar="ID", help="entry or message ids from updates.get, at most 50")
@@ -2322,8 +2349,10 @@ def run_helper(args, client):
     if args.action == "updates":
         if args.follow:
             try:
-                for page in client.follow_updates(args.cursor_file, args.wait or 25, args.agent, args.limit, cursor=args.cursor, counts=args.counts):
+                for page in client.follow_updates(args.cursor_file, args.wait or 25, args.agent, args.limit, cursor=args.cursor,
+                                                  counts=args.counts, pages=args.pages):
                     print(json.dumps(page, ensure_ascii=False), flush=True)
+                raise ChatStop(0, f"read {args.pages} pages" + ("; the cursor is saved in " + str(args.cursor_file) if args.cursor_file else ""))
             except KeyboardInterrupt:
                 raise ChatStop(130, "stopped" + ("; the cursor is saved in " + str(args.cursor_file) if args.cursor_file else "")) from None
         cursor = args.cursor or (read_private(args.cursor_file, {}).get("cursor", "") if args.cursor_file else "")

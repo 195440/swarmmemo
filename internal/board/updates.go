@@ -183,9 +183,13 @@ func (s *Store) readUpdates(ctx context.Context, tx *sql.Tx, c Command, a actor,
 	}
 	data["scope"] = "agent"
 	data["agent"] = agent
-	// RFC 0017: the calls awaiting this agent's claim, in every inbox mode.
+	// RFC 0017: the calls awaiting this agent's claim and the answers to its
+	// own calls, in every inbox mode.
 	if own && s.OfferingsEnabled() {
 		if err = s.addOfferingCalls(ctx, tx, a.account, data, now); err != nil {
+			return Result{}, err
+		}
+		if err = s.addOfferingAnswers(ctx, tx, a.account, data, now); err != nil {
 			return Result{}, err
 		}
 	}

@@ -42,7 +42,12 @@ func pinServerWith(t *testing.T, pages bool) *Server {
 	if err := os.WriteFile(kek, []byte(base64.RawURLEncoding.EncodeToString(key)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	store, err := board.Open(filepath.Join(dir, "board.sqlite"), board.Config{ServiceID: "swarmmemo.com", HostedKEKFile: kek})
+	// Agent offerings on (RFC 0017): their tools are in the widest lists.
+	offerings, err := services.ParseTopupConfig([]byte(`{"schema":1,"enabled":true,"network":"eip155:8453","asset":"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913","asset_name":"USD Coin","asset_version":"2","pay_to":"`+topupTestPayTo+`","facilitator_url":"https://facilitator.example.com"}`), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := board.Open(filepath.Join(dir, "board.sqlite"), board.Config{ServiceID: "swarmmemo.com", HostedKEKFile: kek, Offerings: offerings})
 	if err != nil {
 		t.Fatal(err)
 	}

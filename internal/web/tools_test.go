@@ -24,8 +24,9 @@ func (s *featuredService) Features() board.Features { return s.features }
 func toolPage(t *testing.T, services []string, path string) (int, string) {
 	t.Helper()
 	w := httptest.NewRecorder()
-	// "topup" stands for the top-up flag (board.Features.Topup), not a service.
-	Handler(&featuredService{features: board.Features{Services: services, Topup: slices.Contains(services, "topup")}}).ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+	// "topup" and "offerings" stand for the top-up and offerings flags
+	// (board.Features.Topup, .Offerings), not services.
+	Handler(&featuredService{features: board.Features{Services: services, Topup: slices.Contains(services, "topup"), Offerings: slices.Contains(services, "offerings")}}).ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 	return w.Code, w.Body.String()
 }
 
@@ -34,8 +35,8 @@ func toolPage(t *testing.T, services []string, path string) (int, string) {
 // title and description for the searches that find it, and keeps write and
 // receive URLs inside code blocks, never as links.
 func TestToolPages(t *testing.T) {
-	all := []string{"fetch", "receiver", "paste", "docs", "memory", "wakeup", "x402", "notary", "corroborate", "topup"}
-	for _, path := range []string{"/tools", "/tools/all", "/tools/topup", "/tools/fetch", "/tools/receive", "/tools/paste", "/tools/docs", "/tools/memory", "/tools/wakeup", "/tools/journal", "/tools/paid-apis", "/tools/notary", "/tools/corroborate"} {
+	all := []string{"fetch", "receiver", "paste", "docs", "memory", "wakeup", "x402", "notary", "corroborate", "topup", "offerings"}
+	for _, path := range []string{"/tools", "/tools/all", "/tools/topup", "/tools/offerings", "/tools/fetch", "/tools/receive", "/tools/paste", "/tools/docs", "/tools/memory", "/tools/wakeup", "/tools/journal", "/tools/paid-apis", "/tools/notary", "/tools/corroborate"} {
 		if code, _ := toolPage(t, nil, path); code != 404 {
 			t.Errorf("%s while its service is off: %d", path, code)
 		}
@@ -62,6 +63,7 @@ func TestToolPages(t *testing.T) {
 		"/tools/notary":      {"timestamp notary", "curl -s https://swarmmemo.com/call/notary/stamp --data-urlencode", ""},
 		"/tools/corroborate": {"cost to fake this identity", "curl -s &#39;https://swarmmemo.com/call/corroborate/resolve?addresses=0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045&#39;", ""},
 		"/tools/topup":       {"Top up AI agent credit", "{&#34;operation&#34;:&#34;credits.topup&#34;", ""},
+		"/tools/offerings":   {"Sell an AI agent", "curl -i -X POST https://swarmmemo.com/@pythia/oracle", ""},
 		"/tools/verify":      {"transparency log", "curl -s &#39;https://swarmmemo.com/api/log/proof?message=MESSAGE_ID&#39;", ""},
 		"/tools/identity":    {"Agent identity across boards", "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey", ""},
 		"/tools/work":        {"Pay another AI agent for a task", "python3 swarmmemo.py --key agent.json command &#39;{&#34;operation&#34;:&#34;work.create&#34;", ""},
@@ -130,7 +132,7 @@ func TestToolPages(t *testing.T) {
 	if paths := ToolPaths(board.Features{}); strings.Join(paths, " ") != "/tools/board /tools/updates /tools/feed /tools/verify /tools/identity /tools/work" {
 		t.Errorf("tool paths without services: %v", paths)
 	}
-	if paths := ToolPaths(board.Features{Services: all, Topup: true}); len(paths) != len(publicdocs.ToolPaths()) || len(paths) != len(want) {
+	if paths := ToolPaths(board.Features{Services: all, Topup: true, Offerings: true}); len(paths) != len(publicdocs.ToolPaths()) || len(paths) != len(want) {
 		t.Errorf("tool paths with every service: %v; the test checks %d pages", paths, len(want))
 	}
 }

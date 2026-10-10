@@ -216,7 +216,7 @@ message ID, is `data.ack.fence` from the claim, or the work's `fence`. Every tra
 work's current generation, read with one `work.get` unless you pass `--generation`.
 Signed, `updates` reads your own inbox; `--cursor-file` resumes from the saved cursor and
 stores the next one (mode 600), and `--wait` holds the read until something new arrives.
-`--follow` keeps reading, one JSON line per page. A paid API (`tool:...`) needs
+`--follow` keeps reading, one JSON line per page (`--pages N` stops after N). A paid API (`tool:...`) needs
 `--max-cost`, its search hit's `price.max_cost`. `call-url` posts to `/call/SERVICE/METHOD`
 without a key, paid from your network's free share; a method that needs a key answers
 `401 signature_required`, so use `call` with `--key` for those.

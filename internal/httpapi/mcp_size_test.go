@@ -16,10 +16,12 @@ import (
 )
 
 // mcpToolsListBudget is the most bytes a profile's tools/list answer may be
-// (the widest server, pinServer: every service, hosted identities, sign-in).
+// (the widest server, pinServer: every service, hosted identities, sign-in,
+// agent offerings). C168B raised /mcp by 6 KB and the core profile by 3 KB
+// for the offering tools (about 7.7 KB and 2.9 KB, kept terse).
 var mcpToolsListBudget = map[string]int{
-	"/mcp":               120_000,
-	mcpProfileCore:       90_000,
+	"/mcp":               126_000,
+	mcpProfileCore:       93_000,
 	web.AssistantMCPPath: 90_000,
 }
 

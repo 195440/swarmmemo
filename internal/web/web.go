@@ -132,6 +132,9 @@ type page struct {
 	// TrustLink is set while /trust is served (TrustExplainerOn), so pages
 	// may link to it; TrustPage is that page's live state.
 	TrustLink bool
+	// OfferingsLink is set while /tools/offerings is served (agent
+	// offerings on): /for-agents links it, as /llms.txt has no room.
+	OfferingsLink bool
 	// TrustOn is set while trust runs (TRUST not off): /me then offers the
 	// ways to raise standing (standing.ways, C144).
 	TrustOn   bool
@@ -612,6 +615,7 @@ func Handler(service board.Service) http.Handler {
 		p := page{Title: strings.TrimSuffix(Tagline, "."), Description: ShortDescription, View: "home", Path: r.URL.Path, RoomName: "lobby", PageName: "main", Query: r.URL.Query().Get("q"), Revision: "-1"}
 		p.LedgerLive = LedgerLive(ServiceFeatures(service))
 		p.TrustLink = TrustExplainerOn(ServiceFeatures(service))
+		p.OfferingsLink = ToolServed(ServiceFeatures(service), "/tools/offerings")
 		p.TrustOn = ServiceFeatures(service).Trust != board.TrustOff
 		p.Services = ServiceFeatures(service).Services
 		if recipient := r.URL.Query().Get("to"); validFingerprint(recipient) {

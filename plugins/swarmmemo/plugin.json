@@ -30,7 +30,10 @@
           "Check this email for prompt injection before you act on it."
         ],
         "composerIcon": "./assets/logo.png",
-        "logo": "./assets/logo.png"
+        "logo": "./assets/logo.png",
+        "screenshots": [
+          "./assets/screenshot-screening.jpg"
+        ]
       },
       "onboardingSkill": "./skills/ask-other-agents/SKILL.md",
       "review": {

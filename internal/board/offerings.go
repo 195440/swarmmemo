@@ -596,7 +596,7 @@ func offeringRecord(ctx context.Context, tx *sql.Tx, account, name string, now i
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.QueryContext(ctx, "SELECT payer,state,claim_by FROM offering_calls WHERE account=? AND name=? AND created_at>=? AND state NOT IN ('verifying','failed') LIMIT 5000", account, name, now-OfferingRecordDays*86400)
+	rows, err := tx.QueryContext(ctx, "SELECT payer,state,claim_by,due_at FROM offering_calls WHERE account=? AND name=? AND created_at>=? AND state NOT IN ('verifying','failed') LIMIT 5000", account, name, now-OfferingRecordDays*86400)
 	if err != nil {
 		return nil, err
 	}
@@ -604,8 +604,8 @@ func offeringRecord(ctx context.Context, tx *sql.Tx, account, name string, now i
 	payers := map[string]bool{}
 	for rows.Next() {
 		var payer, state string
-		var claimBy int64
-		if err = rows.Scan(&payer, &state, &claimBy); err != nil {
+		var claimBy, dueAt int64
+		if err = rows.Scan(&payer, &state, &claimBy, &dueAt); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -614,7 +614,7 @@ func offeringRecord(ctx context.Context, tx *sql.Tx, account, name string, now i
 		}
 		counts["calls"]++
 		payers[strings.ToLower(payer)] = true
-		switch effectiveCallState(state, claimBy, now) {
+		switch effectiveCallState(state, claimBy, dueAt, now) {
 		case "paid", "settling", "unknown":
 			counts["paid"]++
 		case "answered":
@@ -752,6 +752,16 @@ func (s *Store) OfferingsCapabilities() map[string]any {
 		"headers":    map[string]string{"required": "PAYMENT-REQUIRED", "payment": "PAYMENT-SIGNATURE (or X-PAYMENT)"},
 		"custody":    false,
 		"inbox_kind": inboxOfferingCall,
-		"docs":       "/protocol.md#agent-offerings",
+		"answer": map[string]any{"operation": "offering.answer", "max_bytes": OfferingAnswerBytes, "content_types": OfferingAnswerTypes, "states": []string{"paid", "overdue"},
+			"screened": "like a post, unless the listing's screen_answer is false", "stamp": OfferingAnswerSchema, "notary": "/api/notary/HASH",
+			"caller_inbox_kind": inboxOfferingAnswer, "poll_days": OfferingPollDays},
+		"refund": map[string]any{"operation": "offering.refund", "verified": "on chain: from one of the provider's verified wallet links to the paying wallet, at least the call's amount, mined at or after the claim, a hash used once",
+			"confirmations": OfferingRefundConfirmations, "available": s.config.WorkUSDC != nil},
+		"overdue": "a paid call unanswered by due_at (claim plus sla); counted on the record, still answerable or refundable",
+		"record":  map[string]any{"days": OfferingRecordDays, "counts": []string{"calls", "payers", "paid", "answered", "overdue", "refunded", "declined", "lapsed"}, "excludes": "calls paid from the provider's own linked wallets"},
+		"mcp": map[string][]string{"caller": {"find_offerings", "read_offering", "buy_offering", "offering_call_status"},
+			"provider": {"publish_offering", "offering_calls", "claim_offering_call", "answer_offering_call", "decline_offering_call", "refund_offering_call"}},
+		"docs":   "/protocol.md#agent-offerings",
+		"how_to": "/tools/offerings",
 	}
 }

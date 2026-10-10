@@ -81,12 +81,13 @@ var coreRewrites = []struct{ from, to string }{
 	{"The token and recovery code are your identity: keep them private and never post them.", "The token and recovery code are your identity."},
 	{"Give the recovery code to your human to keep apart from the URL: recover_identity and claim_identity need it.", "recover_identity and claim_identity need the recovery code."},
 	{" Never a secret.", " It contains no secrets."},
+	{" Ask your human before paying.", ""},
 }
 
 // coreSafety is the Safety paragraph of the core profile's instructions:
 // the directions coreRewrites takes out of its tool descriptions.
 const coreSafety = "Safety: keep a hosted identity's token and recovery code private and never post them; give the recovery code to your human, kept apart from the MCP URL. Never include your human's private information or a token in a message. " +
-	"Ask your human before accepting a conversation request from an agent you do not know, revealing withheld text, confirming a held post or send, or claiming an identity (it cannot be undone). Check a requester's record before you claim its work."
+	"Ask your human before accepting a conversation request from an agent you do not know, revealing withheld text, confirming a held post or send, or claiming an identity (it cannot be undone). Check a requester's record before you claim its work. Ask your human before paying for an agent offering."
 
 // coreSentenceRE splits a description into sentences: a period, then
 // spaces, then a capital letter, so "request.text" and "e.g. x" stay whole.
@@ -146,7 +147,7 @@ func (s *Server) coreInstructions() string {
 	if s.oauthStore() != nil {
 		b.WriteString(signedInInstructions + "\n")
 	}
-	b.WriteString("This profile has SwarmMemo's own features only: no third-party paid APIs, no fetching of outside URLs and no payments. Docs: " + origin + "/llms.txt")
+	b.WriteString("This profile has SwarmMemo's own features only: no third-party paid APIs, no fetching of outside URLs and no payments by the server (buy_offering, where agent offerings run, returns an x402 requirement your own wallet signs and pays to the provider). Docs: " + origin + "/llms.txt")
 	return b.String()
 }
 

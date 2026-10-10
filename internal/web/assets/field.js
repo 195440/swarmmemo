@@ -20,38 +20,26 @@
   };
   const smooth = (a, b, x) => {const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t);};
   const cell = 7;
-  // Interaction. The pointer warms the field the longer it rests (a quick
-  // sweep barely registers), pushes the dots outward like a lens, and drags
-  // the drifting pattern along with its motion. A click or tap sends a slow
-  // wave that displaces the pattern as it travels, then fades. The field runs
-  // at 10 fps at rest and 30 while someone is interacting, then settles back.
-  let px = -1e4, py = -1e4, lastInput = -1e9, lastMove = 0, heat = 0, speed = 0;
-  let dragX = 0, dragY = 0, velX = 0, velY = 0, warming = false;
+  // Interaction: a click or tap on the page's empty background drops a
+  // stone in the water (below). Nothing follows the pointer, and clicks on
+  // links, buttons and fields leave the field alone, so text stays readable.
+  // The field runs at 10 fps at rest and 30 while a wave is moving.
+  let lastInput = -1e9;
   const ripples = [];
-  addEventListener('pointermove', e => {
-    if (still) return;
-    const now = performance.now(), dt = Math.max(8, now - lastMove);
-    if (px > -1e3) {
-      const mx = e.clientX - px, my = e.clientY - py;
-      speed = Math.min(4, Math.hypot(mx, my) / dt);
-      velX += mx * 0.0009; velY += my * 0.0009;
-    }
-    px = e.clientX; py = e.clientY; lastMove = lastInput = now; wake();
-  }, {passive: true});
+  const interactive = 'a,button,input,textarea,select,label,summary,[role=button],[contenteditable],[tabindex]';
   addEventListener('pointerdown', e => {
-    if (still) return;
+    if (still || e.target?.closest?.(interactive)) return;
     ripples.push({x: e.clientX, y: e.clientY, at: performance.now()});
     if (ripples.length > 8) ripples.shift();
     lastInput = performance.now(); wake();
   }, {passive: true});
-  document.documentElement.addEventListener('pointerleave', () => {px = py = -1e4; heat = 0;});
   // Wall-clock time, so the pattern continues from page to page instead of restarting.
   const clock = () => (Date.now() / 1000) % 86400;
   // The click wave is a stone dropped in water: the surface first dips under
   // the pointer, then rings of crest and trough spread out, slowing and
   // fading. A crest brightens and pushes the dots outward, a trough darkens
   // and draws them in, so the pattern itself moves, not just a ring on top.
-  const waveSpeed = 150, waveLife = 4, waveLength = 72, waveDecay = 1.4, waveTrail = 130, waveFront = 34, glowR = 190, glowS = 70;
+  const waveSpeed = 150, waveLife = 4, waveLength = 72, waveDecay = 1.4, waveTrail = 130, waveFront = 34;
   const waveK = 2 * Math.PI / waveLength;
   let prev = performance.now();
   function draw(t) {
@@ -61,30 +49,16 @@
     const style = getComputedStyle(box);
     ctx.fillStyle = style.color;
     const base = parseFloat(style.getPropertyValue('--field-alpha')) || 0.07;
+    // How strongly the pointer and waves lift the dots: lower on dark pages,
+    // where light dots on a dark ground read brighter.
+    const glow = parseFloat(style.getPropertyValue('--field-glow')) || 1;
     const now = performance.now(), dt = Math.min(0.2, (now - prev) / 1000); prev = now;
     for (let i = ripples.length - 1; i >= 0; i--) if (now - ripples[i].at > waveLife * 1000) ripples.splice(i, 1);
-    // Heat rises over about two seconds while the pointer rests or drifts
-    // slowly, and drains quickly while it moves fast or after it leaves.
-    if (now - lastMove > 120) speed *= Math.pow(0.02, dt);
-    const target = px < -1e3 ? 0 : Math.max(0, 1 - speed * 0.9);
-    heat += (target - heat) * (1 - Math.pow(target > heat ? 0.55 : 0.02, dt));
-    warming = Math.abs(target - heat) > 0.01;
-    // The drag decays, so the pattern eases back to its own drift.
-    velX *= Math.pow(0.25, dt); velY *= Math.pow(0.25, dt);
-    dragX += velX * dt * 30; dragY += velY * dt * 30;
     const asp = w / h, waves = ripples.map(r => ({x: r.x, y: r.y, age: (now - r.at) / 1000}));
     for (let gy = cell / 2; gy < h; gy += cell) {
       for (let gx = cell / 2; gx < w; gx += cell) {
-        // Displacement of the sample point: a lens around the pointer and a
-        // radial push riding each wave front.
+        // Displacement of the sample point: a radial push riding each wave front.
         let sx = gx, sy = gy, e = 0;
-        const dx = gx - px, dy = gy - py;
-        if (dx > -glowR && dx < glowR && dy > -glowR && dy < glowR) {
-          const g = Math.exp(-(dx * dx + dy * dy) / (2 * glowS * glowS));
-          const push = 26 * (0.3 + heat) * g;
-          sx -= dx * push / glowS; sy -= dy * push / glowS;
-          e = (0.04 + 0.56 * heat) * g;
-        }
         let hgt = 0, px2 = 0, py2 = 0;
         for (const r of waves) {
           const rx = gx - r.x, ry = gy - r.y, dist = Math.hypot(rx, ry) || 1, front = r.age * waveSpeed, d = dist - front;
@@ -105,11 +79,11 @@
         const pm = Math.hypot(px2, py2);
         if (pm > 30) { px2 *= 30 / pm; py2 *= 30 / pm; }
         sx -= px2; sy -= py2;
-        const cx = ((sx - dragX) / w - 0.5) * asp + 0.5, cy = (sy - dragY) / h;
+        const cx = (sx / w - 0.5) * asp + 0.5, cy = sy / h;
         const c = smooth(0.5, 0.95, noise(cx * 3.2 + t * 0.06, cy * 3.2 - t * 0.045)) * 0.7;
         // A crest lifts dots (brighter, larger), a trough presses them down.
-        const v = Math.max(0, Math.max(c, e * 0.9) * (1 + 0.9 * hgt) + Math.max(0, hgt) * 0.45);
-        e = Math.max(e, Math.max(0, hgt) * 0.35);
+        const v = Math.max(0, Math.max(c, e * 0.9 * glow) * (1 + 0.9 * hgt * glow) + Math.max(0, hgt) * 0.45 * glow);
+        e = Math.max(e, Math.max(0, hgt) * 0.35) * glow;
         if (v <= 0.04) continue;
         const j = (hash(gx, gy) - 0.5) * cell * 0.35;
         ctx.globalAlpha = Math.min(1, (0.35 + v) * (base + e * 0.4));
@@ -124,7 +98,7 @@
   addEventListener('resize', () => draw(clock()), {passive: true});
   let raf = 0, last = 0;
   const loop = now => {
-    const active = now - lastInput < 2500 || ripples.length > 0 || warming || Math.abs(velX) + Math.abs(velY) > 0.002;
+    const active = now - lastInput < 2500 || ripples.length > 0;
     if (still && !active) {raf = 0; draw(clock()); return;}
     if (now - last > 1000 / (active ? 30 : 10)) {last = now; draw(still ? 2 : clock());}
     raf = document.hidden ? 0 : requestAnimationFrame(loop);

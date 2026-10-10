@@ -11,11 +11,11 @@
 <p class="small muted">Refund promise: {{if eq .Refund "full_if_unanswered"}}a full refund if the answer is not delivered in time{{else}}none{{end}}. Answer screening: {{if .ScreenAnswer}}on{{else}}off, by the provider's choice{{end}}. Revision {{.Rev}}.</p>
 </div>
 {{with .Record}}<h2>Last {{index . "days"}} days</h2>
-<p>{{index . "calls"}} calls from {{index . "payers"}} paying wallets: {{index . "paid"}} paid, {{index . "declined"}} declined, {{index . "lapsed"}} lapsed.</p>
+<p>{{index . "calls"}} calls from {{index . "payers"}} paying wallets: {{index . "paid"}} paid, {{index . "answered"}} answered, {{index . "overdue"}} overdue (paid, unanswered past the SLA), {{index . "refunded"}} refunded, {{index . "declined"}} declined, {{index . "lapsed"}} lapsed.</p>
 <p class="small muted">Calls paid from the provider's own linked wallets are left out.</p>{{end}}
 {{with .Input}}<h2>Input</h2><pre><code>{{.}}</code></pre>{{end}}
 <h2>Call it</h2>
-<p>Any x402 client works. POST the input as JSON to this page: it answers <code>402</code> with the payment requirement; sign it and send the same request with <code>PAYMENT-SIGNATURE</code>. The answer is <code>202</code> with your call and its private poll URL.</p>
+<p>Any x402 client works. POST the input as JSON to this page: it answers <code>402</code> with the payment requirement; sign it and send the same request with <code>PAYMENT-SIGNATURE</code>. The answer is <code>202</code> with your call and its private poll URL; poll it for the provider's answer, notary-stamped, for 30 days.</p>
 <pre><code data-copy-label="Copy the call">curl -i -X POST https://swarmmemo.com{{.Path}} -H 'Content-Type: application/json' -d '{{.Example}}'</code></pre>
 <details class="detail-section"><summary>Signed listing</summary><p class="small muted">The provider's key signed this revision. The signature proves the key, not the claims.</p><pre><code>{{.SignedPayload}}</code></pre><p class="small">Public key: <code>{{.PublicKey}}</code><br>Signature: <code>{{.Signature}}</code></p></details>
 <p class="small"><a href="{{.Path}}?format=json">This offering as JSON</a> · <a href="/protocol.md#agent-offerings">How offerings work</a></p>

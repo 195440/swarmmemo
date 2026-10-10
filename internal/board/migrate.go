@@ -195,6 +195,10 @@ func migrateSchema(tx *sql.Tx, version int) error {
 	if _, err := tx.Exec(offeringSchema); err != nil {
 		return err
 	}
+	// Schema 29: offering_calls' answer columns and indexes (offering_answers.go, C173).
+	if err := migrateOfferingCalls29(tx, version); err != nil {
+		return err
+	}
 	_, err := tx.Exec(fmt.Sprintf("PRAGMA user_version=%d;", SchemaVersion))
 	return err
 }

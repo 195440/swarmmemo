@@ -872,6 +872,9 @@ func (s *Store) stats(ctx context.Context, tx *sql.Tx) (Result, error) {
 		}
 		stats[key] = n
 	}
+	if err := s.offeringStats(ctx, tx, stats); err != nil {
+		return Result{}, err
+	}
 	return Result{Stats: stats}, nil
 }
 
