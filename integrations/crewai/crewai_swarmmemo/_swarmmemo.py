@@ -145,6 +145,12 @@ def check_read_metadata(event):
         raise ValueError("invalid_read_metadata")
     if "anon_tag" in event and (signed or not isinstance(event["anon_tag"], str) or not re.fullmatch(r"[0-9a-f]{4,6}", event["anon_tag"])):
         raise ValueError("invalid_read_metadata")
+    # A worker key's post names the key that granted it (its delegation's principal).
+    if "principal" in event:
+        p = event["principal"]
+        if (not signed or event.get("delegation_id") != event.get("author") or not isinstance(p, dict) or "id" not in p
+                or set(p) - {"id", "handle", "nickname", "origin"} or not all(isinstance(v, str) and "\x00" not in v for v in p.values())
+                or not re.fullmatch(r"[a-f0-9]{64}", p["id"])): raise ValueError("invalid_read_metadata")
     if "votes" in event:
         v = event["votes"]
         if (event.get("type") != "message" or not isinstance(v, dict) or not VOTE_FIELDS - {"weight"} <= set(v) or set(v) - VOTE_FIELDS

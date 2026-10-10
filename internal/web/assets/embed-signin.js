@@ -21,6 +21,8 @@ const style = `
 .me .panel p{margin:0 8px 4px;color:var(--m)}.me .panel a{color:inherit;padding:4px 8px;border-radius:6px;text-decoration:none}.me .panel a:hover{background:var(--t)}
 .me .panel button{justify-content:flex-start}
 .mod{color:var(--m)}
+.removed-list{margin-top:16px;color:var(--m);font-size:.875em}.removed-list summary{cursor:pointer;padding:4px 0}
+.removed-list .gone{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:4px 0 0 16px}
 `;
 
 function readAll() {
@@ -69,28 +71,45 @@ export default async function signin(ctx) {
       Object.assign(payload, {public_key: record.public_key, timestamp: Math.floor(Date.now() / 1000), nonce: uuid(), delegation: {schema: 1, grant_id: record.grant_id, generation: record.generation}});
       payload.signature = await signWith(record, canonical2(payload));
     },
-    // Hide or Restore for the room's owner and moderators (room.hide /
-    // room.restore, on the room's public log at /modlog/ROOM).
+    // Hide on a comment for the room's owner and moderators (room.hide, on the
+    // room's public log at /modlog/ROOM); Restore is in the removed list.
     decorate(actions, message) {
-      if (!session.mod) return;
-      const hide = !message.hidden, b = button(hide ? 'Hide' : 'Restore', 'mod');
-      b.title = hide ? 'Hide this comment (logged publicly)' : 'Restore this comment (logged publicly)';
-      b.onclick = async () => {
-        const reason = prompt(hide ? 'Public reason for hiding this comment:' : 'Public reason for restoring this comment:', hide ? 'Spam' : 'Restored');
-        if (!reason || !reason.trim()) return;
-        b.disabled = true;
-        try {
-          await request({operation: hide ? 'room.hide' : 'room.restore', message_id: message.latest, reason: reason.trim()});
-          const response = await fetch(origin + '/e/' + message.latest, {headers: {Accept: 'application/json'}, credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store'});
-          const fresh = (await response.json()).messages?.[0];
-          const current = messages.get(message.latest);
-          if (fresh?.id === message.latest) messages.set(fresh.id, fresh); else if (current) current.hidden = hide;
-          render(); status.textContent = hide ? 'Hidden; logged publicly.' : 'Restored; logged publicly.';
-        } catch (error) { status.textContent = error.message; b.disabled = false; }
-      };
-      actions.append(b);
+      if (session.mod && !message.hidden) actions.append(modButton(message));
+    },
+    // Removed comments stay out of the thread (embed-v1.js render). The room's
+    // owner and moderators get one closed line at the bottom, "N removed
+    // comments", that opens to each with Restore (room.restore).
+    removed(list, hidden, shown) {
+      if (!session.mod || !hidden.length) return;
+      const box = el('details', undefined, 'removed-list'), summary = el('summary', hidden.length + (hidden.length === 1 ? ' removed comment' : ' removed comments'));
+      box.open = session.removedOpen; box.ontoggle = () => { session.removedOpen = box.open; };
+      box.append(summary);
+      for (const message of hidden) {
+        const row = el('p', undefined, 'gone'); row.dataset.id = message.id;
+        row.append(el('span', shown(message).name), ' · ', el('time', core.ageLabel(message.created_at)), ' · ', el('span', 'removed', 'removed'), modButton(message));
+        box.append(row);
+      }
+      list.append(box);
     },
   };
+  function modButton(message) {
+    const hide = !message.hidden, b = button(hide ? 'Hide' : 'Restore', 'mod');
+    b.title = hide ? 'Hide this comment (logged publicly)' : 'Restore this comment (logged publicly)';
+    b.onclick = async () => {
+      const reason = prompt(hide ? 'Public reason for hiding this comment:' : 'Public reason for restoring this comment:', hide ? 'Spam' : 'Restored');
+      if (!reason || !reason.trim()) return;
+      b.disabled = true;
+      try {
+        await request({operation: hide ? 'room.hide' : 'room.restore', message_id: message.latest, reason: reason.trim()});
+        const response = await fetch(origin + '/e/' + message.latest, {headers: {Accept: 'application/json'}, credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-store'});
+        const fresh = (await response.json()).messages?.[0];
+        const current = messages.get(message.latest);
+        if (fresh?.id === message.latest) messages.set(fresh.id, fresh); else if (current) current.hidden = hide;
+        render(); status.textContent = hide ? 'Hidden; logged publicly.' : 'Restored; logged publicly.';
+      } catch (error) { status.textContent = error.message; b.disabled = false; }
+    };
+    return b;
+  }
 
   function signedOutView() {
     record = null; session.ops = []; session.mod = false; panel = null;

@@ -36,8 +36,8 @@ function mount(messages) {
     CSS: {supports: () => true},
     localStorage: {getItem: () => null, setItem() {}},
     fetch: async () => { requests++; return {ok: true, status: 200, headers: {get: () => null}, json: async () => ({ok: true, messages, data: {has_more: false}})}; },
-    crypto: globalThis.crypto, TextEncoder, btoa, atob, URL, URLSearchParams, setTimeout, Date, Math, Error, Map, Set, JSON, Promise, Array, Object, String, Uint8Array,
-    navigator: {},
+    crypto: globalThis.crypto, AbortSignal, TextEncoder, btoa, atob, URL, URLSearchParams, setTimeout, Date, Math, Error, Map, Set, JSON, Promise, Array, Object, String, Uint8Array,
+    navigator: {}, location: {origin: 'https://blog.test', href: 'https://blog.test/post', hash: ''},
   };
   sandbox.globalThis = sandbox;
   // The same bundle embed.go serves: memo-core.js and embed-v1.js in one closure.
@@ -119,5 +119,37 @@ function depthOf(node) { let max = 0; for (const c of node.children) max = Math.
   assert.match(generated.children[0].title, /^Name generated from this key; no handle claimed\./);
   assert.equal(byline('n').textContent, 'Anonymous · net d092');
   assert.match(byline('n').children.find(c => c.className === 'name-tag').title, /resets daily/);
-  console.log('PASS: ' + n + '-reply chain rendered in ' + elapsed + 'ms at DOM depth ' + depthOf(root) + '; count, heart state, sort, work lines and bylines.');
+  // A worker key's post (Sign in with SwarmMemo, C157) shows the account that
+  // granted it (message.principal), never the worker key's generated name (C171);
+  // "via SITE" only when another site's sign-in signed it.
+  const worker = 'e'.repeat(64), boss = 'c'.repeat(64);
+  const delegated = mount([
+    {id: 'w1', sequence: 1, created_at: 1e9, text: 'mine', author: worker, delegation_id: worker, public_key: 'wk', nickname: 'frost-bridge', display_name_source: 'generated', principal: {id: boss, handle: 'hugo', origin: 'https://blog.test'}},
+    {id: 'w2', sequence: 2, created_at: 1e9 + 1, text: 'elsewhere', author: worker, delegation_id: worker, public_key: 'wk', nickname: 'frost-bridge', display_name_source: 'generated', principal: {id: boss, handle: 'hugo', origin: 'https://other.test'}},
+    {id: 'w3', sequence: 3, created_at: 1e9 + 2, text: 'unnamed', author: worker, delegation_id: worker, public_key: 'wk', nickname: 'frost-bridge', display_name_source: 'generated', principal: {id: boss, nickname: 'amber-acorn'}},
+  ]);
+  await delegated.done();
+  const dArticle = id => delegated.body.children[1].shadowRoot.querySelectorAll('article').find(a => a.dataset.id === id);
+  assert.equal(dArticle('w1').querySelectorAll('strong')[0].textContent, 'hugo', 'a delegated post names its principal');
+  assert.deepEqual(dArticle('w1').querySelectorAll('span').filter(s => s.className === 'tag').map(s => s.textContent), [], 'no via tag on the granting site itself');
+  assert.deepEqual(dArticle('w2').querySelectorAll('span').filter(s => s.className === 'tag').map(s => s.textContent), ['via other.test']);
+  assert.equal(dArticle('w3').querySelectorAll('strong')[0].textContent, 'amber-acorn key cccccccc (generated name; no handle claimed)');
+  assert.ok(!delegated.body.children[1].shadowRoot.textContent.includes('frost-bridge'), 'the worker key\'s own name never shows');
+  // Removed comments (C171): left out, or one line where visible replies hang
+  // under them; never counted; readers get no removed list.
+  const removed = mount([
+    {id: 'p', sequence: 1, created_at: 1e9, text: '', hidden: true},
+    {id: 'q', sequence: 2, created_at: 1e9 + 1, text: 'still here', handle: 'hq', reply_to: 'p'},
+    {id: 'z', sequence: 3, created_at: 1e9 + 2, text: '', hidden: true},
+    {id: 'y', sequence: 4, created_at: 1e9 + 3, text: '', hidden: true, reply_to: 'q'},
+  ]);
+  await removed.done();
+  const rroot = removed.body.children[1].shadowRoot, rArticles = rroot.querySelectorAll('article');
+  assert.deepEqual(rArticles.map(a => a.dataset.id), ['p', 'q'], 'a removed comment without visible replies is left out');
+  const tomb = rArticles[0];
+  assert.deepEqual(tomb.children.filter(c => c.className === 'meta'), [], 'the kept tombstone is one line, no byline');
+  assert.equal(tomb.children.find(c => c.className === 'body removed').textContent, 'This comment was removed.');
+  assert.equal(rroot.querySelectorAll('h2')[0].textContent, '1 comment', 'removed comments are not counted');
+  assert.equal(rroot.querySelectorAll('details').length, 0, 'readers get no removed list');
+  console.log('PASS: ' + n + '-reply chain rendered in ' + elapsed + 'ms at DOM depth ' + depthOf(root) + '; count, heart state, sort, work lines, bylines, delegated principals and removed comments.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

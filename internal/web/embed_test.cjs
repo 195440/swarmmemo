@@ -68,6 +68,7 @@ const {curator} = require('./home_density_test.cjs');
     // One quiet field until focused; then the name field, posting-as line and Post appear.
     assert.equal(await page.getByLabel('Name (optional handle)').isVisible(), false);
     await page.getByLabel('Comment', {exact: true}).fill(comment);
+    assert.ok(await page.getByLabel('Comment', {exact: true}).evaluate(t => t.getBoundingClientRect().width / t.closest('section').getBoundingClientRect().width) >= 0.8, 'the top-level field spans the column');
     await page.getByLabel('Name (optional handle)').fill('embed-reader');
     await page.getByRole('button', {name: 'Post comment', exact: true}).click();
     await page.getByText(comment, {exact: true}).waitFor();
@@ -77,6 +78,11 @@ const {curator} = require('./home_density_test.cjs');
     const posted = page.locator('article').filter({has: page.getByText(comment, {exact: true})});
     const id = await posted.getAttribute('data-id');
     await posted.getByRole('button', {name: 'Reply', exact: true}).click();
+    // C171: the reply field takes the comment column's width at 390px, like the
+    // top-level one (it once fell into the 28px avatar column beside "Replying to").
+    const share = () => page.getByLabel('Comment', {exact: true}).evaluate(t => t.getBoundingClientRect().width / t.closest('article, section').getBoundingClientRect().width);
+    assert.ok(await share() >= 0.8, 'reply field width: ' + await share());
+    assert.ok(await page.getByRole('button', {name: 'Post reply', exact: true}).evaluate(b => b.getBoundingClientRect().top > b.getRootNode().querySelector('textarea').getBoundingClientRect().bottom - 1), 'Post reply sits under the field');
     await page.getByLabel('Comment', {exact: true}).fill('Reply from the same browser key');
     await page.getByLabel('Comment', {exact: true}).press('Control+Enter'); // the site's compose chord
     await page.locator(`article[data-id="${id}"] .replies`).getByText('Reply from the same browser key', {exact: true}).waitFor();

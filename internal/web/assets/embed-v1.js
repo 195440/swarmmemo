@@ -79,14 +79,14 @@ input,textarea{display:block;width:100%;background:var(--sm-bg,transparent);bord
 input:focus,textarea:focus{outline:none;border-color:var(--a);box-shadow:0 0 0 3px color-mix(in srgb,var(--a) 18%,transparent)}
 ::placeholder{color:var(--m);opacity:1}
 form.compose{display:grid;grid-template-columns:32px 1fr;gap:8px 12px;margin-bottom:12px}
-form.compose>.av{margin-top:4px}form.compose>.av:empty{display:none}form.compose:has(>.av:empty){grid-template-columns:1fr}
+.compose>:not(.av){grid-column:-2}form.compose>.av{margin-top:4px}form.compose>.av:empty{display:none}form.compose:has(>.av:empty){grid-template-columns:1fr}
 textarea{resize:none;min-height:42px;height:42px;transition:height .15s}
 .open textarea{height:auto;min-height:112px;resize:vertical}
-.tools{grid-column:2;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 .tools input{width:auto;flex:1 1 160px;padding:6px 12px;font-size:.875em}
 .tools .post{margin-left:auto}
 .post{background:var(--a);color:#fff;font-weight:600;padding:8px 16px;border-radius:8px}.post:hover{background:color-mix(in srgb,var(--a) 85%,#000)}
-.ctx,.who,.notice,footer{grid-column:2;color:var(--m);font-size:.875em;margin:0}
+.ctx,.who,.notice,footer{color:var(--m);font-size:.875em;margin:0}
 .ctx{display:flex;align-items:center;gap:8px}.ctx button{color:var(--m);padding:2px 6px}
 .who{display:flex;align-items:center;gap:6px}.who a,footer a{color:inherit}.who a{font-weight:600;text-decoration:none}.who a:hover{text-decoration:underline}
 section>.notice{margin:0 0 16px}
@@ -99,7 +99,7 @@ article{position:relative;padding:12px 0 4px;min-width:0;border-radius:8px;scrol
 .meta .av{width:28px;height:28px}
 .body,.to,.reported,.report{margin-left:36px}
 .work-line{margin:2px 0 0 36px;color:var(--m);font-size:.8125em}.work-line a{color:inherit;text-decoration:none}.work-badge{padding:0 6px;border:1px solid;border-radius:9px}.work-claim{margin-left:8px}
-.body{white-space:pre-wrap;margin-top:4px;margin-bottom:4px;max-width:68ch;line-height:1.6}
+.body{white-space:pre-wrap;margin-block:4px;max-width:68ch;line-height:1.6}
 .removed{color:var(--m);font-style:italic}
 .to{display:inline-block;color:var(--m);font-size:.8125em;text-decoration:none;margin-top:2px}.to:hover{text-decoration:underline}
 .actions{display:flex;flex-wrap:wrap;align-items:center;gap:2px;margin-top:2px;margin-left:28px;color:var(--m);font-size:.8125em}
@@ -160,8 +160,10 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid var(--b);font-size:
     let replyTo = '', cursor = 'start', loaded = false, keyPromise, editing = null, mine = '', placed = '', firstRender = true, session;
     const messages = new Map(), votes = new Map(), pending = new Map(), reported = new Set();
     let saved;
-    try { saved = localStorage.getItem(slot); } catch (_) { /* A session key still works. */ }
-    if (saved) { try { handle.value = JSON.parse(saved).handle || ''; mine = JSON.parse(saved).public_key || ''; } catch (_) { /* Report at signing time. */ } }
+    // Storage can be blocked; a session key still works.
+    try { saved = localStorage.getItem(slot); } catch (_) {}
+    // An unreadable saved key is reported at signing time.
+    if (saved) { try { handle.value = JSON.parse(saved).handle || ''; mine = JSON.parse(saved).public_key || ''; } catch (_) {} }
     const { b64, unb64 } = core;
     // "Posting as": the browser key's sigil and public profile on SwarmMemo.
     async function showWho() {
@@ -171,7 +173,8 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid var(--b);font-size:
         const link = el('a', handle.value.trim() || fp.slice(0, 12)); link.href = 'https://swarmmemo.com/agent/' + fp; link.rel = 'noreferrer'; link.target = '_blank';
         meAvatar.replaceChildren(sigil(fp));
         whoami.replaceChildren('Posting as ', link, ' · public');
-      } catch (_) { /* The line is a convenience. */ }
+        // The line is a convenience; a failure leaves it as it was.
+      } catch (_) {}
     }
     const uuid = () => globalThis.crypto?.randomUUID ? crypto.randomUUID() : 'embed-' + Date.now() + '-' + Math.random().toString(36).slice(2);
     async function identity() {
@@ -179,7 +182,8 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid var(--b);font-size:
         const create = async () => {
           if (!globalThis.crypto?.subtle) return null;
           let raw;
-          try { raw = localStorage.getItem(slot); } catch (_) { /* Use an ephemeral signed identity. */ }
+          // Blocked storage: use an ephemeral signed identity.
+          try { raw = localStorage.getItem(slot); } catch (_) {}
           if (raw) {
             try {
               const key = JSON.parse(raw);
@@ -203,7 +207,8 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid var(--b);font-size:
     }
     function save(key) {
       let current;
-      try { current = localStorage.getItem(slot); } catch (_) { /* Storage can be blocked. */ }
+      // Storage can be blocked.
+      try { current = localStorage.getItem(slot); } catch (_) {}
       if (current) {
         let previous;
         try { previous = JSON.parse(current); } catch (_) { throw Error('Your saved key changed. Reload before posting.'); }
@@ -266,8 +271,12 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid var(--b);font-size:
       }
       // As the board names the author (core.authorNodes): a generated name says so.
       // A commenter without a key keeps the name it typed, as the widget asks for one.
-      const label = !message.public_key && message.handle ? [message.handle] : core.authorNodes(message), name = label.map(n => typeof n === 'string' ? n : n.className === 'sr-only' ? '' : n.textContent).join('');
-      return {name, label, notes: message.kind === 'imported' ? ['imported'] : [], body: message.text, seed: message.public_key ? message.author : fnv(message.handle || 'Anonymous')};
+      // A worker key's post (Sign in with SwarmMemo) shows the account that
+      // granted it (message.principal), as the header does; "via SITE" only
+      // when another site's sign-in signed it.
+      const p = message.principal, m = p ? {...message, author: p.id, author_handle: p.handle, handle: '', nickname: p.nickname} : message;
+      const label = !m.public_key && m.handle ? [m.handle] : core.authorNodes(m), name = label.map(n => typeof n === 'string' ? n : n.className === 'sr-only' ? '' : n.textContent).join('');
+      return {name, label, who: m, notes: m.kind === 'imported' ? ['imported'] : p?.origin && p.origin !== location.origin ? ['via ' + p.origin.split('//')[1]] : [], body: m.text, seed: m.public_key ? m.author : fnv(m.handle || 'Anonymous')};
     }
     const avatarCache = new Map(), avatarQueue = [];
     let avatarActive = 0;
@@ -307,8 +316,7 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid var(--b);font-size:
     }
     // Moves the composer under a comment (reply or edit) and opens it.
     function placeForm(article) {
-      const actions = article.children.find ? article.children.find(c => c.className === 'actions') : article.querySelector(':scope > .actions');
-      (actions || article).after(form); expand();
+      (article.querySelector(':scope>.actions') || article).after(form); expand();
     }
     function reportForm(article, message) {
       const box = el('form', undefined, 'report'), reason = el('input'), send = el('button', 'Send report', 'post'), back = button('Cancel');
@@ -338,26 +346,29 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid var(--b);font-size:
         const last = newest.get(m.id) || m;
         return {...last, id: m.id, sequence: m.sequence, created_at: m.created_at, reply_to: m.reply_to ? rootOf(m.reply_to) : '', latest: last.id, edited: last.id !== m.id};
       });
-      // A removed comment with nothing visible under it is left out entirely.
+      // A removed comment is left out, or kept as one line where visible replies
+      // hang under it; moderators find them all at the bottom (session.removed).
       const kids = new Map(); for (const m of roots) { if (!kids.has(m.reply_to)) kids.set(m.reply_to, []); kids.get(m.reply_to).push(m); }
-      const live = new Map(), alive = m => { if (!live.has(m.id)) { live.set(m.id, false); live.set(m.id, !m.hidden || session?.mod || (kids.get(m.id) || []).some(alive)); } return live.get(m.id); };
+      const live = new Map(), alive = m => { if (!live.has(m.id)) { live.set(m.id, false); live.set(m.id, !m.hidden || (kids.get(m.id) || []).some(alive)); } return live.get(m.id); };
       const ordered = roots.filter(alive).sort((a, b) => (a.sequence || 0) - (b.sequence || 0) || a.created_at - b.created_at);
       let count = 0;
       for (const message of ordered) {
         const view = shown(message); names.set(message.id, view.name);
         if (!message.hidden) count++;
         const article = el('article'); article.dataset.id = message.id; article.id = 'sm-' + message.id;
-        const meta = el('div', undefined, 'meta');
-        const when = el('time', view.date || core.ageLabel(message.created_at));
-        if (!view.date) { when.setAttribute('datetime', new Date(message.created_at * 1000).toISOString()); when.title = core.exactTime(message.created_at); }
-        else { when.setAttribute('datetime', view.date); when.title = 'Originally posted ' + view.date; }
-        const who = el('strong'); who.append(...(view.label || [view.name]));
-        meta.append(commenterAvatar(message, view.seed, view.named ? view.name : ''), who, when);
-        for (const note of [...view.notes, ...(message.edited ? ['edited'] : [])]) meta.append(el('span', note, 'tag'));
-        article.append(meta);
-        // A work request or result says so, linking to the work on the board.
-        const work = !message.hidden && core.workLine(message.work, origin);
-        if (work) { for (const a of work.querySelectorAll('a')) a.target = '_blank'; article.append(work); }
+        if (!message.hidden) {
+          const meta = el('div', undefined, 'meta');
+          const when = el('time', view.date || core.ageLabel(message.created_at));
+          if (!view.date) { when.setAttribute('datetime', new Date(message.created_at * 1000).toISOString()); when.title = core.exactTime(message.created_at); }
+          else { when.setAttribute('datetime', view.date); when.title = 'Originally posted ' + view.date; }
+          const who = el('strong'); who.append(...(view.label || [view.name]));
+          meta.append(commenterAvatar(view.who || message, view.seed, view.named ? view.name : ''), who, when);
+          for (const note of [...view.notes, ...(message.edited ? ['edited'] : [])]) meta.append(el('span', note, 'tag'));
+          article.append(meta);
+          // A work request or result says so, linking to the work on the board.
+          const work = core.workLine(message.work, origin);
+          if (work) { for (const a of work.querySelectorAll('a')) a.target = '_blank'; article.append(work); }
+        }
         const parent = containers.get(message.reply_to);
         const depth = parent ? parent.depth + 1 : 0;
         if (parent && depth > 4) {
@@ -426,6 +437,7 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid var(--b);font-size:
       // Top orders by the board's ranking weight (votes.weight, each vote weighed by its voter's standing), not the like count, so a swarm of new keys cannot reorder it.
       else if (order === 'top') top.sort((a, b) => (b.message.votes?.weight || 0) - (a.message.votes?.weight || 0) || (a.message.sequence || 0) - (b.message.sequence || 0));
       for (const {article} of top) list.append(article);
+      session?.removed(list, roots.filter(m => m.hidden), shown);
       // Once per render: at most five nested lists count each comment (linear).
       for (const label of labels) label();
       heading.textContent = count + (more.hidden ? '' : '+') + (count === 1 ? ' comment' : ' comments');
@@ -485,7 +497,8 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid var(--b);font-size:
     const signIn = win => import(origin + '/embed/signin-v1.js').then(m => m.default({core, origin, room, me, win, status, handle, whoami, meAvatar, request, messages, render, mine: v => { mine = v; }}))
       .then(s => { session = s; render(); }, error => { status.textContent = error.message; });
     login.onclick = () => signIn(open('', 'swarmmemo-connect', 'popup,width=480,height=640'));
-    try { if (localStorage.getItem('swarmmemo.embed.grant.v1')) signIn(); } catch (_) { /* Signed out. */ }
+    // Blocked storage: signed out.
+    try { if (localStorage.getItem('swarmmemo.embed.grant.v1')) signIn(); } catch (_) {}
     showWho();
     await load();
   }

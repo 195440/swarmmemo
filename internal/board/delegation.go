@@ -630,3 +630,32 @@ func (s *Store) readDelegation(ctx context.Context, tx *sql.Tx, c Command, a act
 	}
 	return result, nil
 }
+
+// Principal is the account behind a worker key's post: the granting key's
+// fingerprint, its handle now (or, without one, the board's generated
+// nickname, as on a message) and the site origin a site sign-in grant named.
+type Principal struct {
+	ID       string `json:"id"`
+	Handle   string `json:"handle,omitempty"`
+	Nickname string `json:"nickname,omitempty"`
+	Origin   string `json:"origin,omitempty"`
+}
+
+// principalColumn reads a delegated event's grant as "ISSUER HANDLE PAYLOAD"
+// (a handle has no spaces; the payload is the rest), or "" for any other event.
+const principalColumn = `coalesce((SELECT d.issuer_id||' '||coalesce((SELECT pi.handle FROM identities pi WHERE pi.id=d.issuer_id),'')||' '||d.payload FROM event_delegations pd JOIN delegations d ON d.child_id=pd.grant_id WHERE pd.event_id=e.id),'')`
+
+// parsePrincipal reads principalColumn for a worker key's own post (its
+// author is the grant delegation_id names), or nil.
+func parsePrincipal(e Message, column string) *Principal {
+	id, rest, _ := strings.Cut(column, " ")
+	handle, payload, _ := strings.Cut(rest, " ")
+	if e.PublicKey == "" || e.DelegationID == "" || e.Author != e.DelegationID || !fingerprintRE.MatchString(id) {
+		return nil
+	}
+	p := &Principal{ID: id, Handle: handle, Origin: grantOrigin(payload)}
+	if handle == "" {
+		p.Nickname = Nickname(id)
+	}
+	return p
+}

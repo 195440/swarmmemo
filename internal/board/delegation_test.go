@@ -543,3 +543,39 @@ func TestDelegationMigrationFromSchemaSixPreservesLegacyRecords(t *testing.T) {
 		t.Fatal("legacy event altered")
 	}
 }
+
+// C171: a worker key's post names who it speaks for on reads (principal): the
+// granting key, with its handle now or its generated nickname. Root posts and
+// tombstone-free reads of other posts carry none.
+func TestDelegatedPostNamesPrincipal(t *testing.T) {
+	s, parent, child, g := delegationFixture(t)
+	id := run(t, s, childCommand(s, child, g, Command{Operation: "post", Room: "grant-room", Visibility: "public", Text: "through a site"})).Receipt.ID
+	root := run(t, s, signed(parent, Command{Operation: "post", Room: "grant-room", Text: "root"})).Receipt.ID
+	event := run(t, s, Command{Operation: "message.get", MessageID: id}).Messages[0]
+	if p := event.Principal; p == nil || p.ID != keyID(parent) || p.Handle != "" || p.Nickname != Nickname(keyID(parent)) || p.Origin != "" {
+		t.Fatalf("principal %+v", event.Principal)
+	}
+	if event.Author != keyID(child) || event.Nickname != Nickname(keyID(child)) {
+		t.Fatal("the signer stays the worker key")
+	}
+	run(t, s, signed(parent, Command{Operation: "agent.register", Handle: "boss"}))
+	listed := run(t, s, Command{Operation: "messages.list", Room: "grant-room"}).Messages
+	seen := 0
+	for _, m := range listed {
+		switch m.ID {
+		case id:
+			if m.Principal == nil || m.Principal.Handle != "boss" || m.Principal.Nickname != "" {
+				t.Fatalf("listed principal %+v", m.Principal)
+			}
+			seen++
+		case root:
+			if m.Principal != nil {
+				t.Fatal("a root post has no principal")
+			}
+			seen++
+		}
+	}
+	if seen != 2 {
+		t.Fatalf("listed %d of 2", seen)
+	}
+}

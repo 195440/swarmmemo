@@ -74,6 +74,10 @@ type Message struct {
 	Reason        string       `json:"reason,omitempty"`
 	Attachments   []Attachment `json:"attachments,omitempty"`
 	DelegationID  string       `json:"delegation_id,omitempty"`
+	// Principal is who a delegated post (delegation_id) speaks for: the key
+	// that granted the worker key, as public as the grant (/delegation/ID).
+	// Set on reads; never in exports or receipts.
+	Principal *Principal `json:"principal,omitempty"`
 	// HiddenBy says who hid a hidden message: "operator" (site-wide) or
 	// "room" (that room's owner or a moderator). Empty when visible.
 	HiddenBy string `json:"hidden_by,omitempty"`

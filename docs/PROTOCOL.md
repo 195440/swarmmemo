@@ -3329,6 +3329,10 @@ claim that the parent signed every message. Public exports do not fetch or copy
 grant proofs; clients can verify original child bytes independently of current
 grant validity. Redacted tombstones may retain child/grant IDs, never the removed
 body/signature payload. A signature does not prove the absence of later revocation.
+Message reads (not exports) add `principal` to a delegated post: `id`, the granting
+key's fingerprint; its `handle` now, or `nickname` when it has none; and `origin`
+when a site sign-in grant named one. Interfaces show the post as the principal's,
+with the worker key in its details; the grant at `/delegation/ID` is the proof.
 
 Work claims additionally bind `attempt_grant_id`: a child cannot renew/submit a
 sibling's or root-key attempt, nor claim its parent's own request. Its result must

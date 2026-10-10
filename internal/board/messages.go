@@ -352,7 +352,7 @@ func (s *Store) claimOnPost(ctx context.Context, tx *sql.Tx, c Command, a actor,
 	return want, nil, nil
 }
 
-const eventColumns = `e.id,e.seq,e.display_seq,e.room,e.page,e.text,e.kind,e.author,e.handle,e.public_key,e.signature,e.payload,e.created_at,e.hash,e.reply_to,e.recipient,e.hidden,e.reason,r.visibility,coalesce((SELECT grant_id FROM event_delegations ed WHERE ed.event_id=e.id),''),e.format,e.supersedes,e.origin,coalesce((SELECT s.id FROM events s WHERE s.supersedes=e.id AND s.supersedes<>''),''),e.hidden_by,e.via,` + forwardColumn + `,` + custodyColumn + `,coalesce((SELECT i.handle FROM identities i WHERE i.id=e.author),''),e.account`
+const eventColumns = `e.id,e.seq,e.display_seq,e.room,e.page,e.text,e.kind,e.author,e.handle,e.public_key,e.signature,e.payload,e.created_at,e.hash,e.reply_to,e.recipient,e.hidden,e.reason,r.visibility,coalesce((SELECT grant_id FROM event_delegations ed WHERE ed.event_id=e.id),''),e.format,e.supersedes,e.origin,coalesce((SELECT s.id FROM events s WHERE s.supersedes=e.id AND s.supersedes<>''),''),e.hidden_by,e.via,` + forwardColumn + `,` + custodyColumn + `,coalesce((SELECT i.handle FROM identities i WHERE i.id=e.author),''),e.account,` + principalColumn
 
 type scanner interface{ Scan(...any) error }
 
@@ -372,10 +372,11 @@ func curatorPost(kind, handle, publicKey string) bool {
 
 func scanEvent(row scanner) (Message, error) {
 	var e Message
-	var forward, account string
-	err := row.Scan(&e.ID, &e.internalSequence, &e.Sequence, &e.Room, &e.Page, &e.Text, &e.Kind, &e.Author, &e.Handle, &e.PublicKey, &e.Signature, &e.SignedPayload, &e.CreatedAt, &e.Hash, &e.ReplyTo, &e.To, &e.Hidden, &e.Reason, &e.Visibility, &e.DelegationID, &e.Format, &e.Supersedes, &e.origin, &e.SupersededBy, &e.HiddenBy, &e.Via, &forward, &e.Custody, &e.AuthorHandle, &account)
+	var forward, account, principal string
+	err := row.Scan(&e.ID, &e.internalSequence, &e.Sequence, &e.Room, &e.Page, &e.Text, &e.Kind, &e.Author, &e.Handle, &e.PublicKey, &e.Signature, &e.SignedPayload, &e.CreatedAt, &e.Hash, &e.ReplyTo, &e.To, &e.Hidden, &e.Reason, &e.Visibility, &e.DelegationID, &e.Format, &e.Supersedes, &e.origin, &e.SupersededBy, &e.HiddenBy, &e.Via, &forward, &e.Custody, &e.AuthorHandle, &account, &principal)
 	e.Forwarded = parseForwarded(forward)
 	e.name(account)
+	e.Principal = parsePrincipal(e, principal)
 	e.Via = messageVia(e.Via, e.Forwarded)
 	e.Type = "message"
 	e.ArchiveEligible = e.Visibility == "public"
@@ -707,10 +708,10 @@ func (s *Store) export(ctx context.Context, tx *sql.Tx, c Command, now int64) (R
 	for rows.Next() {
 		var e Message
 		var change int64
-		var forward, account string
-		// The export leaves out the account and the names read from it: an
-		// archive row records what was signed (nickname.go).
-		if err = rows.Scan(&e.ID, &e.internalSequence, &e.Sequence, &e.Room, &e.Page, &e.Text, &e.Kind, &e.Author, &e.Handle, &e.PublicKey, &e.Signature, &e.SignedPayload, &e.CreatedAt, &e.Hash, &e.ReplyTo, &e.To, &e.Hidden, &e.Reason, &e.Visibility, &e.DelegationID, &e.Format, &e.Supersedes, &e.origin, &e.SupersededBy, &e.HiddenBy, &e.Via, &forward, &e.Custody, &e.AuthorHandle, &account, &change); err != nil {
+		var forward, account, principal string
+		// The export leaves out the account and the names read from it (and the
+		// grant's principal, a live read): an archive row records what was signed (nickname.go).
+		if err = rows.Scan(&e.ID, &e.internalSequence, &e.Sequence, &e.Room, &e.Page, &e.Text, &e.Kind, &e.Author, &e.Handle, &e.PublicKey, &e.Signature, &e.SignedPayload, &e.CreatedAt, &e.Hash, &e.ReplyTo, &e.To, &e.Hidden, &e.Reason, &e.Visibility, &e.DelegationID, &e.Format, &e.Supersedes, &e.origin, &e.SupersededBy, &e.HiddenBy, &e.Via, &forward, &e.Custody, &e.AuthorHandle, &account, &principal, &change); err != nil {
 			rows.Close()
 			return Result{}, err
 		}

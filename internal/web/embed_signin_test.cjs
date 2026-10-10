@@ -30,6 +30,9 @@ const {curator} = require('./home_density_test.cjs');
   await asReader({operation: 'post', room, page: 'post', text: 'Welcome, signed by the room owner.'});
   const send = await curator(origin);
   const other = (await send({operation: 'post', room, page: 'post', text: 'A comment by someone else'})).receipt.id;
+  // A comment the owner already removed (C171): absent for readers, listed at the bottom for moderators.
+  const spam = (await send({operation: 'post', room, page: 'post', text: 'Spam the owner removed'})).receipt.id;
+  await asReader({operation: 'room.hide', message_id: spam, reason: 'Spam'});
 
   const host = http.createServer((request, response) => {
     if (request.url === '/favicon.ico') { response.writeHead(204); response.end(); return; }
@@ -58,6 +61,9 @@ const {curator} = require('./home_density_test.cjs');
     await page.goto(hostOrigin);
     await page.locator('article').first().waitFor();
     assert.equal(requests.filter(url => url.includes('/embed/signin-v1.js')).length, 0, 'the sign-in module loads only on click');
+    assert.equal(await page.locator(`article[data-id="${spam}"]`).count(), 0, 'a removed comment is not in a reader\'s thread');
+    assert.equal(await page.locator('details.removed-list').count(), 0, 'readers get no removed list');
+    assert.equal(await page.locator('h2').textContent(), '2 comments', 'removed comments are not counted');
 
     // Sign in: the window opens on SwarmMemo with this room, this origin and a fresh worker key.
     const opened = page.waitForEvent('popup');
@@ -94,6 +100,23 @@ const {curator} = require('./home_density_test.cjs');
     assert.equal(post.public_key, saved.public_key); assert.equal(post.visibility, 'public'); assert.equal(post.handle, undefined);
     assert.deepEqual(post.delegation, {schema: 1, grant_id: saved.grant_id, generation: saved.generation});
     assert.match(await page.getByText(/^Posting as/).textContent(), /Posting as site-reader · signed in with SwarmMemo/);
+    // C171: the worker key's comment shows the reader (the grant's principal), not the worker key.
+    const mine = page.locator('article').filter({has: page.getByText('Signed in through SwarmMemo', {exact: true})});
+    assert.equal(await mine.locator('.meta strong').textContent(), 'site-reader', 'a delegated comment names its principal');
+    assert.equal(await mine.locator('.meta .tag').count(), 0, 'no via tag on the granting site itself');
+    // The reader edits their own delegated comment in place.
+    const mineId = await mine.getAttribute('data-id');
+    await page.locator(`article[data-id="${mineId}"] > .actions`).getByRole('button', {name: 'Edit', exact: true}).click();
+    await page.getByLabel('Comment', {exact: true}).fill('Signed in through SwarmMemo, edited');
+    await page.getByRole('button', {name: 'Save edit', exact: true}).click();
+    await page.locator(`article[data-id="${mineId}"] > .body`).getByText('Signed in through SwarmMemo, edited', {exact: true}).waitFor();
+    assert.equal(JSON.parse(writes.filter(w => w.operation === 'post').at(-1).data).supersedes, mineId);
+    assert.equal(await page.locator(`article[data-id="${mineId}"] > .meta strong`).textContent(), 'site-reader');
+    // The reply field spans the comment column at 390px, avatar and all.
+    await page.locator(`article[data-id="${other}"] > .actions`).getByRole('button', {name: 'Reply', exact: true}).click();
+    const share = await page.getByLabel('Comment', {exact: true}).evaluate(t => t.getBoundingClientRect().width / t.closest('article').getBoundingClientRect().width);
+    assert.ok(share >= 0.8, 'reply field width: ' + share);
+    await page.getByRole('button', {name: 'Cancel', exact: true}).click();
 
     // A like through the grant counts for the reader's account.
     const voted = page.waitForResponse(r => r.url() === origin + '/v1/command' && r.request().postDataJSON()?.operation === 'vote');
@@ -102,11 +125,18 @@ const {curator} = require('./home_density_test.cjs');
     assert.equal(vote.ok, true); assert.equal(vote.data.votes.up, 1);
     assert.ok(writes.find(w => w.operation === 'vote').delegation);
 
-    // Hide and restore, as the room's owner, on the public log.
+    // Hide and restore, as the room's owner, on the public log. Removed comments
+    // leave the thread for one closed line at the bottom that opens to Restore.
+    const removedList = page.locator('details.removed-list');
+    assert.equal(await removedList.locator('summary').textContent(), '1 removed comment');
+    assert.equal(await removedList.evaluate(d => d.open), false, 'closed by default');
+    assert.equal(await page.locator(`article[data-id="${spam}"]`).count(), 0);
     await page.locator(`article[data-id="${other}"] > .actions`).getByRole('button', {name: 'Hide', exact: true}).click();
     await page.getByRole('status').filter({hasText: 'Hidden; logged publicly.'}).waitFor();
-    await page.locator(`article[data-id="${other}"] > .body.removed`).waitFor();
-    await page.locator(`article[data-id="${other}"] > .actions`).getByRole('button', {name: 'Restore', exact: true}).click();
+    await page.locator(`article[data-id="${other}"]`).waitFor({state: 'detached'});
+    assert.equal(await removedList.locator('summary').textContent(), '2 removed comments');
+    await removedList.locator('summary').click();
+    await removedList.locator(`.gone[data-id="${other}"]`).getByRole('button', {name: 'Restore', exact: true}).click();
     await page.getByRole('status').filter({hasText: 'Restored; logged publicly.'}).waitFor();
     await page.locator(`article[data-id="${other}"] > .body`).getByText('A comment by someone else', {exact: true}).waitFor();
     const log = await (await fetch(origin + '/api/room/' + room + '/modlog')).text();

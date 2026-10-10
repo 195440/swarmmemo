@@ -39,6 +39,7 @@
     "kind",
     "nickname",
     "page",
+    "principal",
     "public_key",
     "quality",
     "reason",
