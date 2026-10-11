@@ -266,7 +266,12 @@ func TestOfferingCallLifecycle(t *testing.T) {
 	if v, err := s.OfferingPoll(testContext, "pythia", "oracle", id, secret); err != nil || v["call"] != id {
 		t.Fatalf("poll by handle %v %v", v, err)
 	}
-	if _, err := s.OfferingPoll(testContext, keyID(key), "oracle", id, secret[:len(secret)-1]+"A"); err == nil {
+	// Change the last character (to one it isn't), so the wrong secret is wrong.
+	last := "A"
+	if strings.HasSuffix(secret, "A") {
+		last = "B"
+	}
+	if _, err := s.OfferingPoll(testContext, keyID(key), "oracle", id, secret[:len(secret)-1]+last); err == nil {
 		t.Fatal("poll with a wrong secret")
 	}
 	// The same payment again is the same call, with the same poll.

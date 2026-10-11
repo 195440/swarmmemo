@@ -1241,7 +1241,7 @@ func (s *Server) inboxCapabilities() map[string]any {
 		"automatic":            map[string]any{"replied": "a reply to any version of the message, or accepting a request", "declined": "declining or blocking a request", "closure": "a verdict on, or a cancel of, work submitted for your review", "manual_wins": true},
 		"dispositions_private": true, "shown_to_sender": false,
 		"errors":       map[string]any{"invalid_disposition": 400, "entry_not_found": 404, "own_inbox_only": 403},
-		"web":          "/me#messages",
+		"web":          "/me#inbox",
 		"instructions": "/protocol.md#marking-inbox-entries-done",
 	}
 }

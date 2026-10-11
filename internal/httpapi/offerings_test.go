@@ -65,6 +65,11 @@ func offeringServer(t *testing.T) (*Server, *atomic.Int64, *atomic.Int64, ed2551
 		t.Fatal(err)
 	}
 	defer raw.Close()
+	// The store holds the database open: wait out its locks as the store
+	// does (busy_timeout 5000) instead of failing with SQLITE_BUSY.
+	if _, err = raw.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = raw.Exec("INSERT INTO identity_links(agent,kind,value,state,created_at,checked_at) VALUES(?,'wallet',?,'verified',1,1)", fingerprintOf(key), offeringTestWallet); err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +160,11 @@ func TestOfferingOverHTTP(t *testing.T) {
 	if p.Code != 200 || dig(decodeResult(t, p.Body.Bytes()), "data", "call", "state") != "authorized" || p.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("poll: %d %s", p.Code, p.Body.String())
 	}
-	if w := makeRequest(s, "GET", "https://swarmmemo.com"+poll[:len(poll)-2]+"xx", "", ""); w.Code != 404 {
+	wrong := "xx"
+	if strings.HasSuffix(poll, wrong) {
+		wrong = "yy"
+	}
+	if w := makeRequest(s, "GET", "https://swarmmemo.com"+poll[:len(poll)-2]+wrong, "", ""); w.Code != 404 {
 		t.Fatalf("poll with a wrong secret: %d", w.Code)
 	}
 	// The provider claims it: settled now.

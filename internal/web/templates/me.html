@@ -1,8 +1,8 @@
 {{/* /me: this browser's key and everything that belongs to it. One header
 (the key, and where it leads), then five tabs. Without JavaScript the tab bar
 is a list of jump links and the five sections stack; app.js turns it into
-real tabs whose URL hash (#messages, #profile, #your-room, #key, #more for
-Settings) is
+real tabs whose URL hash (#inbox, #profile, #your-room, #key, #more for
+Settings; #messages opens the Inbox at its conversations) is
 linkable. Every signing control sits inside the disabled fieldset until
 app.js has checked WebCrypto (enableWorkspace). */}}
 {{define "me"}}<div class="me" id="me">
@@ -31,16 +31,25 @@ app.js has checked WebCrypto (enableWorkspace). */}}
 </div>
 </header>
 <nav class="me-tabs" id="me-tabs" aria-label="Sections of Me">
-<a href="#messages">{{template "icon" "message"}}<span>Messages</span><span class="count-badge" id="me-messages-count" hidden></span></a>
+<a href="#inbox">{{template "icon" "inbox"}}<span>Inbox</span><span class="count-badge" id="me-messages-count" hidden></span></a>
 <a href="#profile">{{template "icon" "person"}}<span>Profile</span></a>
 <a href="#your-room">{{template "icon" "room"}}<span>Your room</span></a>
 <a href="#key">{{template "icon" "key"}}<span>Key &amp; backup</span></a>
 <a href="#more">{{template "icon" "sliders"}}<span>Settings</span></a>
 </nav>
 
-<section class="me-panel" id="messages">
-<h2 class="me-panel-title">{{template "icon" "message"}}Messages</h2>
+<section class="me-panel" id="inbox">
+<h2 class="me-panel-title">{{template "icon" "inbox"}}Inbox</h2>
+<section class="inbox-new" id="inbox-new" aria-labelledby="inbox-new-title">
 <div class="section-head">
+<h3 class="section-title" id="inbox-new-title">Replies, public DMs and mentions</h3>
+<div class="section-actions"><button class="quiet-button" type="button" id="inbox-mark-read" hidden>Mark all read</button></div>
+</div>
+<ul id="inbox-list" class="inbox-list" aria-label="Replies, public DMs and mentions" hidden></ul>
+<p id="inbox-list-status" class="small muted empty-note" data-needs-key hidden>Replies to your posts, public DMs and mentions of you show here.</p>
+<p class="section-foot"><a class="quiet-link" id="nav-inbox" href="/me" hidden title="{{tip "public-inbox"}}">Your public inbox page</a></p>
+</section>
+<div class="section-head" id="messages">
 <h3 class="section-title">Conversations</h3>
 <a class="pill-link term plain" href="/me/messages?tab=requests" title="{{tip "request"}}">Requests<span class="count-badge" id="me-requests-count" hidden></span></a>
 <div class="section-actions">
@@ -114,7 +123,6 @@ app.js has checked WebCrypto (enableWorkspace). */}}
 <ul id="messaging-blocks" class="identity-links"></ul>
 </div>
 </details>
-<a class="settings-row settings-link" id="nav-inbox" href="/me" hidden>{{template "icon" "at"}}<span>Public inbox</span><span class="summary-note">Posts addressed to you in public; anyone can read them</span></a>
 <p id="messaging-status" class="form-status" role="status"></p>
 </div>
 </section>

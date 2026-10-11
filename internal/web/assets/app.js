@@ -2365,10 +2365,10 @@
     return draw;
   })();
 
-  // ---- notifications: tab title, favicon, the Me dot -------------------------------
+  // ---- notifications: tab title, favicon, the Me dot and badge ---------------------
   // For a browser with a key, on every page: unread conversations and waiting
-  // requests (the Messages count), plus new replies to its posts and public
-  // messages addressed to it, as one number. One signed updates.get (counts
+  // requests, plus new replies to its posts, public DMs to it and mentions of
+  // it, as one number on Me. One signed updates.get (counts
   // only: no message text) at most every 60 s across all open tabs, hidden ones
   // included: a background tab is where the badge matters. Its cursor
   // and what is still unseen live in localStorage, so every tab shows the same
@@ -2386,7 +2386,7 @@
     const slot = notifySlot + ':' + fp;
     const load = () => { try { const saved = JSON.parse(localStorage.getItem(slot) || localStorage.getItem(notifySlot) || 'null'); return saved?.fp === fp ? saved : null; } catch (_) { return null; } };
     const save = state => { try { localStorage.setItem(slot, JSON.stringify(state)); } catch (_) { /* A convenience: without storage each tab counts alone. */ } };
-    const blank = () => ({fp, cursor: '', polled_at: 0, rooms: 0, requests: 0, replies: [], addressed: []});
+    const blank = () => ({fp, cursor: '', polled_at: 0, rooms: 0, requests: 0, replies: [], addressed: [], mentions: []});
     const cap = list => list.slice(-99);
     function drawIcon() {
       if (!icon || badgedIcon) return;
@@ -2401,76 +2401,27 @@
       };
       img.src = plainIcon;
     }
+    // What is new for this key that is not a conversation: replies, public DMs
+    // and mentions, each listed once (a reply that is also a mention is a reply).
+    const personal = ['replies', 'addressed', 'mentions'];
+    const newIds = state => [...new Set(personal.flatMap(key => state[key] || []))];
     function render(state) {
       state ||= blank();
-      const dm = state.rooms + state.requests, total = dm + state.replies.length + state.addressed.length;
+      const dm = state.rooms + state.requests, mine = newIds(state).length, total = dm + mine;
       shown = total;
       const label = total > 99 ? '99+' : String(total);
       document.title = total ? '(' + label + ') ' + plainTitle : plainTitle;
       if (icon) { if (!total) setIcon(plainIcon, plainType); else if (badgedIcon) setIcon(badgedIcon, 'image/png'); else drawIcon(); }
-      // Your messages are yours: the Me dot turns red; the inbox beside it counts.
+      // One header control: Me, with a red dot and a count badge when something is new.
       document.querySelector('.workspace-link .identity-dot')?.classList.toggle('alert', total > 0);
-      for (const [id, n, what] of [['me-messages-count', dm, 'unread or waiting'], ['me-requests-count', state.requests, 'waiting'], ['me-waiting-count', state.waiting || 0, 'waiting for your answer']]) {
+      for (const [id, n, what] of [['me-count', total, 'new in your inbox'], ['me-messages-count', total, 'new'], ['me-requests-count', state.requests, 'waiting'], ['me-waiting-count', state.waiting || 0, 'waiting for your answer']]) {
         const el = $(id); if (!el) continue;
         el.hidden = !n; el.textContent = n > 99 ? '99+' : String(n); el.setAttribute('aria-label', n + ' ' + what);
       }
-      // Me always leads to Me (and its Settings). The news is its own control
-      // beside it, the inbox: it says what is new ("1 reply") and opens a list
-      // of each thing, and each item opens that thing: a reply opens on the
-      // reply itself.
-      const menu = $('inbox-menu'), news = $('me-count');
-      if (menu && news) {
-        const replies = state.replies.length, addressed = state.addressed.length;
-        const count = (n, one, many) => (n > 99 ? '99+' : String(n)) + ' ' + (n === 1 ? one : many);
-        const only = [dm, replies, addressed].filter(Boolean).length === 1;
-        menu.hidden = !total; if (!total) openInbox(false);
-        news.textContent = !only ? count(total, 'new', 'new') : dm ? count(dm, 'message', 'messages') : replies ? count(replies, 'reply', 'replies') : count(addressed, 'public DM', 'public DMs');
-        const items = [];
-        if (dm) items.push({label: count(dm, 'unread or waiting message', 'unread or waiting messages'), href: '/me#messages'});
-        // Oldest first, as they arrived; each is a public post, so its permalink.
-        for (const [key, word] of [['replies', 'Reply to you'], ['addressed', 'Public DM to you']]) for (const id of state[key].slice(0, 20)) items.push({label: word, href: '/e/' + path(id), id});
-        const list = $('inbox-items');
-        list.replaceChildren(...items.map(item => {
-          const row = node('li', 'inbox-item'), a = link('inbox-item-link', undefined, item.href);
-          a.append(node('span', 'inbox-item-kind', item.label));
-          if (item.id) { a.dataset.id = item.id; const known = previews.get(item.id); if (known) a.append(node('span', 'inbox-item-preview', known)); }
-          row.append(a); return row;
-        }));
-        if (!$('inbox-panel').hidden) preview();
-      }
-    }
-    function openInbox(open) {
-      const panel = $('inbox-panel'), button = $('me-count-button'); if (!panel || !button) return;
-      panel.hidden = !open; button.setAttribute('aria-expanded', String(open));
-      if (open) preview();
-    }
-    // What an item says, read when the inbox opens: each is a public post, read
-    // by its public JSON (no key, no cookie), shown as text and cut short.
-    const previews = new Map();
-    function preview() {
-      for (const a of document.querySelectorAll('#inbox-items a[data-id]')) {
-        const id = a.dataset.id; if (previews.has(id)) continue;
-        previews.set(id, '');
-        fetch('/e/' + path(id) + '?format=json', {headers: {Accept: 'application/json'}, credentials: 'omit'}).then(r => r.ok ? r.json() : null).then(result => {
-          const m = result?.messages?.find(x => x.id === id);
-          if (!m || m.visibility !== 'public') return;
-          // The byline as the page draws it (handle or generated name), as text.
-          const who = node('span'); who.append(...(m.public_key ? core.authorNodes(core.principalOf(m)?.who || m, true) : core.authorNodes(m)));
-          who.querySelectorAll('.sr-only').forEach(n => n.remove());
-          const text = (who.textContent.trim() || 'Anonymous') + ': ' + (m.hidden ? 'This message has been removed.' : quoteText(String(m.text || '')));
-          previews.set(id, text);
-          for (const el of document.querySelectorAll('#inbox-items a[data-id="' + CSS.escape(id) + '"]')) if (!el.querySelector('.inbox-item-preview')) el.append(node('span', 'inbox-item-preview', text));
-        }).catch(() => {});
-      }
-    }
-    {
-      const menu = $('inbox-menu'), button = $('me-count-button'), panel = $('inbox-panel');
-      if (menu && button && panel) {
-        button.addEventListener('click', () => openInbox(panel.hidden));
-        // Closes like a menu: a tap elsewhere or Escape.
-        document.addEventListener('click', event => { if (!panel.hidden && !menu.contains(event.target)) openInbox(false); });
-        document.addEventListener('keydown', event => { if (event.key === 'Escape' && !panel.hidden) { openInbox(false); button.focus(); } });
-      }
+      // Me always opens Me; with news it opens Me at the Inbox, the new items first.
+      const me = document.querySelector('.workspace-link');
+      if (me && fp) me.setAttribute('href', mine ? '/me#inbox-new' : dm ? '/me#messages' : '/me');
+      document.dispatchEvent(new CustomEvent('swarmmemo:notify'));
     }
     // A reply or public DM this page shows that was still new is marked New, so
     // it can be found in a long thread; opening the page by itself (not at a
@@ -2479,7 +2430,7 @@
       const view = document.body.dataset.view;
       if (!state || (view !== 'event' && view !== 'inbox')) return;
       let first = null;
-      for (const [key, word] of [['replies', 'New reply'], ['addressed', 'New public DM']]) for (const id of state[key]) {
+      for (const [key, word] of [['replies', 'New reply'], ['addressed', 'New public DM'], ['mentions', 'New mention']]) for (const id of state[key] || []) {
         const el = document.getElementById('e-' + id);
         if (!el || el.classList.contains('memo-new')) continue;
         el.classList.add('memo-new');
@@ -2496,7 +2447,7 @@
       let changed = false;
       if (view === 'inbox' && document.body.dataset.inbox === fp && state.addressed.length) { state.addressed = []; changed = true; }
       if (view === 'inbox' || view === 'event') {
-        for (const key of ['replies', 'addressed']) { const left = state[key].filter(id => !document.getElementById('e-' + id)); if (left.length !== state[key].length) { state[key] = left; changed = true; } }
+        for (const key of personal) { const list = state[key] || [], left = list.filter(id => !document.getElementById('e-' + id)); if (left.length !== list.length) { state[key] = left; changed = true; } }
       }
       return changed;
     }
@@ -2515,7 +2466,7 @@
         const result = await request({operation: 'updates.get', target: fp, data: JSON.stringify({schema: 1, counts: true}), ...(baseline ? {limit: 1} : {cursor: state.cursor, limit: 50})}, true);
         const data = result.data || {}, conversation = new Set(data.conversations || []);
         state = load() || state;
-        if (!baseline) for (const key of ['replies', 'addressed']) state[key] = cap([...new Set([...state[key], ...(data[key] || []).filter(id => !conversation.has(id))])]);
+        if (!baseline) for (const key of personal) state[key] = cap([...new Set([...(state[key] || []), ...(data[key] || []).filter(id => !conversation.has(id))])]);
         state.cursor = result.next_cursor || state.cursor;
         state.rooms = Array.isArray(data.unread?.rooms) ? data.unread.rooms.length : 0;
         state.requests = Array.isArray(data.requests) ? data.requests.length : 0;
@@ -2545,7 +2496,72 @@
       },
       // Something was just read (a conversation opened): count again now.
       refresh() { return poll(true); },
+      // What is still new, by id and reason, for the Inbox on Me.
+      unread() { const state = load() || blank(); return {ids: new Set(newIds(state)), state}; },
+      // Mark all read: the Inbox's button. Conversations keep their own unread counts.
+      markAllRead() { const state = load() || blank(); for (const key of personal) state[key] = []; save(state); render(state); },
     };
+  })();
+
+  // ---- Inbox on Me: replies, public DMs and mentions --------------------------
+  // The place the badge on Me leads to. One signed updates.get of this key's
+  // own inbox, newest first (with message text: you opened your inbox), keeps
+  // the replies, public DMs and mentions, not conversations or room activity.
+  // What the notifier still holds as new is marked Unread and listed first;
+  // the rest stay listed, marked Read. Each item opens its permalink, where the
+  // reply is loaded, centred and marked.
+  (function inboxList() {
+    const list = $('inbox-list'); if (!list) return;
+    const say = text => { const el = $('inbox-list-status'); if (el) { el.textContent = text; el.hidden = !text; } };
+    const markAll = $('inbox-mark-read');
+    const kinds = {replies: 'Reply to you', addressed: 'Public DM to you', mentions: 'Mentions you'};
+    let items = [], loaded = false;
+    const byline = m => { const who = node('span', 'inbox-row-who'); who.append(...(m.public_key ? core.authorNodes(core.principalOf(m)?.who || m, true) : core.authorNodes(m))); who.querySelectorAll('.sr-only').forEach(n => n.remove()); return who; };
+    const kindOf = (state, id) => (state.replies || []).includes(id) ? 'replies' : (state.addressed || []).includes(id) ? 'addressed' : 'mentions';
+    const bodyText = m => { const text = String(m.text || ''); return text.startsWith(curatorDisclosure) ? text.slice(curatorDisclosure.length) : text; };
+    function draw() {
+      if (!loaded) return;
+      const {ids, state} = notify.unread();
+      // Something still new but older than the page read is read by its public JSON.
+      for (const id of ids) if (!items.some(it => it.id === id)) items.push({id, kind: kindOf(state, id), message: null});
+      const ordered = [...items].sort((x, y) => (ids.has(y.id) - ids.has(x.id)) || ((y.message?.sequence || 0) - (x.message?.sequence || 0)));
+      list.replaceChildren(...ordered.slice(0, 15).map(item => {
+        const fresh = ids.has(item.id), m = item.message;
+        const row = node('li', 'inbox-row' + (fresh ? ' inbox-unread' : ''));
+        const a = link('inbox-row-link', undefined, '/e/' + path(item.id)); a.dataset.id = item.id;
+        const head = node('span', 'inbox-row-head');
+        head.append(node('span', 'inbox-row-state', fresh ? 'Unread' : 'Read'), node('span', 'inbox-row-kind', kinds[item.kind] || kinds.replies));
+        if (m) { head.append(byline(m)); if (m.created_at) head.append(timeElement(m.created_at, 'inbox-row-time')); }
+        a.append(head, node('span', 'inbox-row-preview', !m ? 'Loading…' : m.hidden ? 'This message has been removed.' : quoteText(bodyText(m))));
+        row.append(a); return row;
+      }));
+      list.hidden = !items.length;
+      say(items.length ? '' : 'Nothing yet. Replies to your posts, public DMs and mentions of you show here.');
+      if (markAll) markAll.hidden = !ids.size;
+      for (const item of items) if (!item.message && !item.fetching) fetchOne(item);
+    }
+    function fetchOne(item) {
+      item.fetching = true;
+      fetch('/e/' + path(item.id) + '?format=json', {headers: {Accept: 'application/json'}, credentials: 'omit'}).then(r => r.ok ? r.json() : null).then(result => {
+        const m = result?.messages?.find(x => x.id === item.id);
+        if (m && m.visibility === 'public') { item.message = m; draw(); }
+      }).catch(() => {});
+    }
+    async function load() {
+      if (!identity) return;
+      say('Loading your inbox…');
+      try {
+        const result = await request({operation: 'updates.get', target: identity.fingerprint, limit: 200}, true);
+        const data = result.data || {}, conversation = new Set(data.conversations || []);
+        const reason = {};
+        for (const key of ['mentions', 'addressed', 'replies']) for (const id of data[key] || []) if (!conversation.has(id)) reason[id] = key;
+        items = (result.messages || []).filter(m => reason[m.id] && m.visibility === 'public').map(m => ({id: m.id, kind: reason[m.id], message: m}));
+      } catch (error) { items = []; }
+      loaded = true; draw();
+    }
+    markAll?.addEventListener('click', () => notify.markAllRead());
+    document.addEventListener('swarmmemo:notify', draw);
+    capabilitiesReady.then(load).catch(error => say(error.message));
   })();
 
   // ---- waiting for your answer (C71) ---------------------------------------

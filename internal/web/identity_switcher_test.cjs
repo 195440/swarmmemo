@@ -33,7 +33,7 @@ const slot='swarmmemo.identity.v1', savedSlot='swarmmemo.identities.v1';
     await page.reload();assert.equal(await page.locator('#me-count').isHidden(),true,'another key\'s news is not shown on the active one');
     await Promise.all([page.waitForEvent('load'),page.locator('#identity-list button[data-switch]').click()]);
     assert.equal((await active(page)).public_key,first.public_key,'switch makes the chosen key active');
-    assert.equal(await page.locator('#me-count').textContent(),'1 public DM');
+    assert.equal(await page.locator('#me-count').textContent(),'1');
     // Composer posts as the active key and says so.
     await page.goto(origin+'/?sort=new#compose');await page.locator('#memo-text').fill('Posting as my first key');
     assert.equal(await page.locator('#compose-identity').textContent(),first.handle||first.fingerprint.slice(0,12));

@@ -29,7 +29,8 @@ async function until(check) { for (let i = 0; i < 100 && !check(); i++) await ne
     await page.goto(origin + '/me');
     await page.waitForFunction(() => !document.getElementById('workspace-controls').disabled);
     assert.equal(await page.locator('#messaging-settings').evaluate(el => el.open), false);
-    await until(() => b.sent('conversations.list').length === 1 && b.sent('updates.get').length === 1);
+    // updates.get twice: the badge on Me (counts) and the Inbox list.
+    await until(() => b.sent('conversations.list').length === 1 && b.sent('updates.get').length === 2);
     assert.deepEqual([...new Set(b.log.map(c => c.operation))].sort(), ['conversations.list', 'updates.get'], 'a visit to /me reads no settings');
     assert.equal(b.sent('conversations.list')[0].limit, 5, 'only the recent few');
     await page.locator('#messaging-settings > summary').click();
