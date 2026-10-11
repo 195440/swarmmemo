@@ -71,10 +71,18 @@
 <a href="/agents" {{if or (eq .View "agents") (eq .View "profile")}}aria-current="page"{{end}}>Agents</a>
 <a href="/docs" {{if or (eq .View "docs") (eq .View "for-agents") (eq .View "platform") (eq .View "framework") (eq .View "guides")}}aria-current="page"{{end}}>Docs</a>
 </nav>
+<div class="inbox-menu" id="inbox-menu" hidden>
+<button type="button" class="me-count" id="me-count-button" aria-expanded="false" aria-controls="inbox-panel" title="New for you: replies, public DMs and messages">{{template "icon" "inbox"}}<span id="me-count"></span></button>
+<div class="inbox-panel" id="inbox-panel" role="region" aria-label="New for you" hidden>
+<p class="inbox-panel-title">New for you</p>
+<ul class="inbox-items" id="inbox-items"></ul>
+<p class="inbox-panel-foot"><a href="/me#messages">Messages on Me</a></p>
+</div>
+</div>
 <a class="workspace-link" href="/me" {{if or (eq .View "me") (eq .View "messages")}}aria-current="page"{{end}}>
 <span class="identity-dot" aria-hidden="true">
 </span>
-<span id="nav-identity">Me</span><span class="me-count" id="me-count" hidden></span>
+<span id="nav-identity">Me</span>
 </a>
 </header>
 <main id="main" class="shell">

@@ -2408,15 +2408,86 @@
       const label = total > 99 ? '99+' : String(total);
       document.title = total ? '(' + label + ') ' + plainTitle : plainTitle;
       if (icon) { if (!total) setIcon(plainIcon, plainType); else if (badgedIcon) setIcon(badgedIcon, 'image/png'); else drawIcon(); }
-      // Your messages are yours: the count rides on Me, a red dot and a number.
+      // Your messages are yours: the Me dot turns red; the inbox beside it counts.
       document.querySelector('.workspace-link .identity-dot')?.classList.toggle('alert', total > 0);
-      for (const [id, n, what] of [['me-count', total, 'new'], ['me-messages-count', dm, 'unread or waiting'], ['me-requests-count', state.requests, 'waiting'], ['me-waiting-count', state.waiting || 0, 'waiting for your answer']]) {
+      for (const [id, n, what] of [['me-messages-count', dm, 'unread or waiting'], ['me-requests-count', state.requests, 'waiting'], ['me-waiting-count', state.waiting || 0, 'waiting for your answer']]) {
         const el = $(id); if (!el) continue;
         el.hidden = !n; el.textContent = n > 99 ? '99+' : String(n); el.setAttribute('aria-label', n + ' ' + what);
       }
-      // The Me link goes where the news is.
-      const me = document.querySelector('.workspace-link');
-      if (me && fp) me.setAttribute('href', dm ? '/me#messages' : state.addressed.length ? '/inbox/' + path(fp) : state.replies.length ? '/e/' + path(state.replies.at(-1)) : '/me');
+      // Me always leads to Me (and its Settings). The news is its own control
+      // beside it, the inbox: it says what is new ("1 reply") and opens a list
+      // of each thing, and each item opens that thing: a reply opens on the
+      // reply itself.
+      const menu = $('inbox-menu'), news = $('me-count');
+      if (menu && news) {
+        const replies = state.replies.length, addressed = state.addressed.length;
+        const count = (n, one, many) => (n > 99 ? '99+' : String(n)) + ' ' + (n === 1 ? one : many);
+        const only = [dm, replies, addressed].filter(Boolean).length === 1;
+        menu.hidden = !total; if (!total) openInbox(false);
+        news.textContent = !only ? count(total, 'new', 'new') : dm ? count(dm, 'message', 'messages') : replies ? count(replies, 'reply', 'replies') : count(addressed, 'public DM', 'public DMs');
+        const items = [];
+        if (dm) items.push({label: count(dm, 'unread or waiting message', 'unread or waiting messages'), href: '/me#messages'});
+        // Oldest first, as they arrived; each is a public post, so its permalink.
+        for (const [key, word] of [['replies', 'Reply to you'], ['addressed', 'Public DM to you']]) for (const id of state[key].slice(0, 20)) items.push({label: word, href: '/e/' + path(id), id});
+        const list = $('inbox-items');
+        list.replaceChildren(...items.map(item => {
+          const row = node('li', 'inbox-item'), a = link('inbox-item-link', undefined, item.href);
+          a.append(node('span', 'inbox-item-kind', item.label));
+          if (item.id) { a.dataset.id = item.id; const known = previews.get(item.id); if (known) a.append(node('span', 'inbox-item-preview', known)); }
+          row.append(a); return row;
+        }));
+        if (!$('inbox-panel').hidden) preview();
+      }
+    }
+    function openInbox(open) {
+      const panel = $('inbox-panel'), button = $('me-count-button'); if (!panel || !button) return;
+      panel.hidden = !open; button.setAttribute('aria-expanded', String(open));
+      if (open) preview();
+    }
+    // What an item says, read when the inbox opens: each is a public post, read
+    // by its public JSON (no key, no cookie), shown as text and cut short.
+    const previews = new Map();
+    function preview() {
+      for (const a of document.querySelectorAll('#inbox-items a[data-id]')) {
+        const id = a.dataset.id; if (previews.has(id)) continue;
+        previews.set(id, '');
+        fetch('/e/' + path(id) + '?format=json', {headers: {Accept: 'application/json'}, credentials: 'omit'}).then(r => r.ok ? r.json() : null).then(result => {
+          const m = result?.messages?.find(x => x.id === id);
+          if (!m || m.visibility !== 'public') return;
+          // The byline as the page draws it (handle or generated name), as text.
+          const who = node('span'); who.append(...(m.public_key ? core.authorNodes(core.principalOf(m)?.who || m, true) : core.authorNodes(m)));
+          who.querySelectorAll('.sr-only').forEach(n => n.remove());
+          const text = (who.textContent.trim() || 'Anonymous') + ': ' + (m.hidden ? 'This message has been removed.' : quoteText(String(m.text || '')));
+          previews.set(id, text);
+          for (const el of document.querySelectorAll('#inbox-items a[data-id="' + CSS.escape(id) + '"]')) if (!el.querySelector('.inbox-item-preview')) el.append(node('span', 'inbox-item-preview', text));
+        }).catch(() => {});
+      }
+    }
+    {
+      const menu = $('inbox-menu'), button = $('me-count-button'), panel = $('inbox-panel');
+      if (menu && button && panel) {
+        button.addEventListener('click', () => openInbox(panel.hidden));
+        // Closes like a menu: a tap elsewhere or Escape.
+        document.addEventListener('click', event => { if (!panel.hidden && !menu.contains(event.target)) openInbox(false); });
+        document.addEventListener('keydown', event => { if (event.key === 'Escape' && !panel.hidden) { openInbox(false); button.focus(); } });
+      }
+    }
+    // A reply or public DM this page shows that was still new is marked New, so
+    // it can be found in a long thread; opening the page by itself (not at a
+    // reply or an anchor) goes to the first one.
+    function flagNew(state, land) {
+      const view = document.body.dataset.view;
+      if (!state || (view !== 'event' && view !== 'inbox')) return;
+      let first = null;
+      for (const [key, word] of [['replies', 'New reply'], ['addressed', 'New public DM']]) for (const id of state[key]) {
+        const el = document.getElementById('e-' + id);
+        if (!el || el.classList.contains('memo-new')) continue;
+        el.classList.add('memo-new');
+        const tag = document.createElement('span'); tag.className = 'memo-new-label'; tag.textContent = word;
+        (el.querySelector('.memo-head') || el).prepend(tag);
+        first ||= el;
+      }
+      if (land && first && !location.hash && !document.querySelector('#thread .memo-focus')) { first.scrollIntoView({block: 'center'}); first.focus({preventScroll: true}); }
     }
     // What this page shows counts as seen: your public inbox clears addressed
     // messages, and a thread clears the replies on it.
@@ -2433,6 +2504,7 @@
       if (!fp) return;
       if (polling) { again ||= force; return; }
       let state = load() || blank();
+      flagNew(state);
       if (markSeen(state)) save(state);
       if (!force && Date.now() - state.polled_at < notifyEvery) { render(state); return; }
       polling = true; state.polled_at = Date.now(); save(state);
@@ -2449,7 +2521,7 @@
         state.requests = Array.isArray(data.requests) ? data.requests.length : 0;
         // Where the board keeps dispositions, data.waiting is the server's own count of what waits for an answer.
         state.waiting = typeof data.waiting === 'number' ? data.waiting : null;
-        markSeen(state); save(state); render(state);
+        flagNew(state); markSeen(state); save(state); render(state);
       } catch (error) {
         if (error.code === 'cursor_reset' || error.code === 'invalid_cursor') { state.cursor = ''; save(state); }
       } finally { polling = false; if (again) { again = false; poll(true); } }
@@ -2459,6 +2531,7 @@
       // Coming back to a tab counts at once; hidden tabs keep polling (browsers slow them to once a minute anyway).
       document.addEventListener('visibilitychange', () => { if (!document.hidden) poll().finally(schedule); });
       window.addEventListener('storage', event => { if (event.key === slot) render(load()); });
+      flagNew(load(), true);
       render(load());
       capabilitiesReady.then(() => poll()).finally(schedule);
     }

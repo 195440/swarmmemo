@@ -235,6 +235,19 @@ func loadEventPage(w http.ResponseWriter, r *http.Request, p *page, service boar
 		return 404, true
 	}
 	p.ThreadRoot, _ = res.Data["root_id"].(string)
+	// A conversation opened at a reply beyond its first page (a notification's
+	// "1 reply" on a long thread) reads on until that reply is on the page, a
+	// bounded number of pages, so it can be shown, scrolled to and marked.
+	if r.URL.Query().Get("cursor") == "" {
+		for extra := 0; extra < focusPagesMax && hasMore(res) && !holds(res.Messages, id); extra++ {
+			next, err := execute(board.Command{Operation: "thread.get", MessageID: id, Cursor: res.NextCursor, Limit: 40})
+			if err != nil || len(next.Messages) == 0 {
+				break
+			}
+			next.Messages = append(res.Messages, next.Messages...)
+			res = next
+		}
+	}
 	requested := id
 	for _, m := range res.Messages {
 		if m.ID == id {
@@ -362,4 +375,17 @@ func loadHistory(r *http.Request, p *page, service board.Service, id string) int
 	p.Description = "Every signed version of this post, newest first. Earlier versions stay in the public log unchanged."
 	p.History = &historyView{Title: title, PostPath: postPath, Versions: newest}
 	return 200
+}
+
+// focusPagesMax bounds how many more conversation pages are read to reach the
+// reply a permalink names: 40 a page, so a reply up to 400 posts in is shown.
+const focusPagesMax = 9
+
+func holds(messages []board.Message, id string) bool {
+	for _, m := range messages {
+		if m.ID == id {
+			return true
+		}
+	}
+	return false
 }

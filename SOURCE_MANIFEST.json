@@ -1,5 +1,5 @@
 {
-  "allowlist_sha256": "4d6232d43423a7fdbf96bb5d0029e801c128619d278f12fcaf697d7d1c42f566",
+  "allowlist_sha256": "93ece75fdb15821ffb446259d6890d6fc046dbd95b1848271d9f6e4e4ef4a6c7",
   "files": [
     {
       "mode": "0644",
@@ -5776,8 +5776,8 @@
     {
       "mode": "0644",
       "path": "internal/web/articles.go",
-      "sha256": "82ea762f5120a5e1a003617ac7f5c179c3fba1d105a4bb281cb217a3569426e2",
-      "size": 12288
+      "sha256": "03dd15a24de474f55187ccce9e4ec6e3dd635a9c0179303541dbc82cad786118",
+      "size": 13228
     },
     {
       "mode": "0644",
@@ -5788,8 +5788,8 @@
     {
       "mode": "0644",
       "path": "internal/web/assets/app.js",
-      "sha256": "dc01156eb7007789dcb7c79a34a0417a907618589c181bac05c7529ca78f5540",
-      "size": 201679
+      "sha256": "17092f0a55c624b096c34497057d482e0c733f37578ee4c166e8ad0f75dea806",
+      "size": 206477
     },
     {
       "mode": "0644",
@@ -5986,8 +5986,8 @@
     {
       "mode": "0644",
       "path": "internal/web/assets/style.css",
-      "sha256": "c1f0db23f5a54d5652322c0c22a64e5e87084349df4c5b64d2d04084fd09f461",
-      "size": 135341
+      "sha256": "c09fb09c9afad0c210cf3fd52967dcae424b2391b8e2c29dda45a44be9f9fd4f",
+      "size": 137688
     },
     {
       "mode": "0644",
@@ -6358,8 +6358,8 @@
     {
       "mode": "0644",
       "path": "internal/web/identity_switcher_test.cjs",
-      "sha256": "61decb2ad8894d45bfc3b2563ad7a3b2be1fb8d180960b5c5787ecca2455ab3e",
-      "size": 6393
+      "sha256": "11a324354ca4f3fe08d8c7905670a28a456e8e29064a627639226d03863f4e49",
+      "size": 6403
     },
     {
       "mode": "0644",
@@ -6442,8 +6442,8 @@
     {
       "mode": "0644",
       "path": "internal/web/me_safety_test.go",
-      "sha256": "86d1074ee40840a02daf5c647bdf63113ccdf18a57021d38043a52e596387b93",
-      "size": 3286
+      "sha256": "2e7c3bde3a8ea1a871fdb1b945ef81566ddf52762d434776a07ce4d83691338d",
+      "size": 3384
     },
     {
       "mode": "0644",
@@ -6519,9 +6519,15 @@
     },
     {
       "mode": "0644",
+      "path": "internal/web/notifier_mobile_test.cjs",
+      "sha256": "e2913556db3bacffa8f955ab536c9e30e40890100e764e7dc7b4df103f066bbb",
+      "size": 9136
+    },
+    {
+      "mode": "0644",
       "path": "internal/web/notifier_test.cjs",
-      "sha256": "6c7aadf4263295cab2652f60a947b941b8a7fe804d6cba9849d5d88b69e41af3",
-      "size": 8538
+      "sha256": "67f99fb3495b36d7200bc226a6ed8f24aa57b26a3852bcc9567e12bac84cbfde",
+      "size": 8855
     },
     {
       "mode": "0644",
@@ -6874,8 +6880,8 @@
     {
       "mode": "0644",
       "path": "internal/web/templates/page.html",
-      "sha256": "3fdb6f66d79f2cb21523de02c97487f0e8ca69d701c51b0731d8ea52bfd14388",
-      "size": 59501
+      "sha256": "9ef8aca19109d191aa3d27a6c511b28e9b110e19a307312b68d70505cc5eb9e2",
+      "size": 59995
     },
     {
       "mode": "0644",

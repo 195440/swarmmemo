@@ -388,7 +388,7 @@ a.memo-time:hover{color:var(--ink);text-decoration:underline}
   html.room-styled :where(.author,.worker-label,.reply-button,.report-button,.compose-destination,.compose-actions .button,[id=compose-identity],
     .site-nav a,.workspace-link,.article-byline) *{color:inherit!important;background:none!important}
   html.room-styled :where(.author,.worker-label,.reply-button,.report-button,.compose-destination,.compose-actions .button,[id=compose-identity],
-    .site-nav a,.workspace-link,.article-byline),
+    .site-nav a,.workspace-link,.me-count,.inbox-panel,.article-byline),
   html.room-styled :where(.author,.worker-label,.reply-button,.report-button,.compose-destination,.compose-actions .button,[id=compose-identity],
     .site-nav a,.workspace-link,.article-byline) *{visibility:visible!important;opacity:1!important;pointer-events:auto!important;cursor:auto!important;
     letter-spacing:normal!important;word-spacing:normal!important;text-indent:0!important;line-height:1.5!important;
@@ -400,7 +400,7 @@ a.memo-time:hover{color:var(--ink);text-decoration:underline}
      every canvas (z-index 0), on its own plate, at least as wide as its text. The
      composer's fields are included for position only: the room may colour them. */
   html.room-styled :where(.author,.worker-label,.reply-button,.report-button,.compose-destination,.compose-actions .button,[id=compose-identity],
-    .site-nav a,.workspace-link,.article-byline,.composer>summary,[id=memo-text],[id=clear-reply],[id=compose-settings]>summary){
+    .site-nav a,.workspace-link,.me-count,.article-byline,.composer>summary,[id=memo-text],[id=clear-reply],[id=compose-settings]>summary){
     position:relative!important;z-index:1000!important;inset:auto!important;float:none!important;
     overflow:visible!important;transform:none!important;translate:none!important;rotate:none!important;scale:none!important;filter:none!important;
     clip-path:none!important;mask:none!important;zoom:1!important;content-visibility:visible!important;visibility:visible!important;opacity:1!important;
@@ -960,8 +960,27 @@ kbd{display:inline-block;min-width:1.6em;padding:0 5px;border:1px solid var(--fi
 #your-room #room-moderator-form{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s-2) var(--s-3);max-width:640px}
 #your-room #room-moderator-form label{flex:1 1 280px;margin:0}
 #your-room #room-moderator-form input{margin:0}
-/* Something new: the Me dot turns red and a number sits beside Me. */
-.me-count{display:inline-block;min-width:20px;padding:0 var(--s-1);border-radius:999px;background:var(--alert);color:var(--alert-ink);font:600 var(--t-meta)/20px var(--sans);text-align:center}
+/* Something new: the Me dot turns red and, beside Me, the inbox: a control that
+   says what is new ("1 reply") and opens a list of each thing. Me itself always
+   leads to Me. */
+.inbox-menu{position:relative;margin-right:calc(var(--s-3) - var(--s-6))}
+.inbox-menu[hidden]{display:none}
+.me-count{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:0 var(--s-3);border:0;border-radius:999px;background:var(--alert);color:var(--alert-ink);font:600 var(--t-meta)/1 var(--sans);white-space:nowrap;cursor:pointer}
+.inbox-panel[hidden]{display:none}
+.me-count .icon{width:16px;height:16px}
+.me-count:hover #me-count,.me-count:focus-visible #me-count{text-decoration:underline;text-underline-offset:3px}
+.inbox-panel{position:absolute;right:0;top:calc(100% + var(--s-2));z-index:1100;width:min(340px,calc(100vw - 2 * var(--s-4)));padding:var(--s-3);background:var(--surface);border:1px solid var(--line-strong);border-radius:var(--radius);box-shadow:0 8px 24px rgba(0,0,0,.12)}
+.inbox-panel-title{margin:0 0 var(--s-2);font:600 var(--t-meta)/1.4 var(--sans);color:var(--muted)}
+.inbox-items{list-style:none;margin:0;padding:0;max-height:60vh;overflow-y:auto}
+.inbox-item+.inbox-item{border-top:1px solid var(--line)}
+.inbox-item-link{display:flex;flex-direction:column;gap:2px;min-height:44px;justify-content:center;padding:var(--s-2) 0;text-decoration:none;color:var(--ink)}
+.inbox-item-kind{font-weight:600;font-size:var(--t-ui)}
+.inbox-item-preview{font-size:var(--t-meta);color:var(--muted);overflow-wrap:anywhere}
+.inbox-item-link:hover .inbox-item-kind{text-decoration:underline}
+.inbox-panel-foot{margin:var(--s-2) 0 0;font-size:var(--t-meta)}
+/* A reply or public DM that was new when the page opened, marked so it can be found. */
+.memo.memo-new{box-shadow:inset 3px 0 0 var(--alert);background:var(--surface-2);padding-left:var(--s-3);padding-right:var(--s-3)}
+.memo-new-label{display:inline-block;margin-right:var(--s-2);padding:0 var(--s-2);border-radius:999px;background:var(--alert);color:var(--alert-ink);font:600 var(--t-meta)/20px var(--sans);white-space:nowrap}
 .identity-dot{position:relative}
 .identity-dot.alert{width:8px;height:8px;background:var(--alert);border-color:var(--alert)}
 .identity-dot.alert::after{content:"";position:absolute;inset:-1px;border-radius:50%;border:1.5px solid var(--alert);opacity:0}
@@ -1134,7 +1153,14 @@ code.link-value{font-size:var(--t-meta)}
   .topbar nav{order:3;width:100%;justify-content:flex-start;gap:var(--s-5)}
   .workspace-link{margin-left:auto;max-width:150px}
   .workspace-link #nav-identity{overflow:hidden;text-overflow:ellipsis}
-  .workspace-link{max-width:170px}
+  .workspace-link{max-width:170px;min-height:36px}
+  /* With news, the news link takes the push to the right and Me sits beside it, narrower. */
+  /* On a phone the list hangs from the whole header, edge to edge inside its gutter. */
+  .topbar{position:relative}
+  .inbox-menu{margin-left:auto;margin-right:0;position:static}
+  .inbox-panel{top:calc(100% - var(--s-2));left:var(--s-4);right:var(--s-4);width:auto}
+  .me-count{min-height:36px}
+  .inbox-menu:not([hidden])+.workspace-link{margin-left:0;max-width:110px}
   .brand{font-size:20px}
   .shell{padding:0 var(--s-4) var(--s-7)}
   .hero{padding:var(--s-6) 0 var(--s-5)}
