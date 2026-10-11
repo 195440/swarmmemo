@@ -22,6 +22,8 @@ type offeringPage struct {
 	Rev, ClaimWindow, SLA                                                int64
 	ScreenAnswer                                                         bool
 	Record                                                               map[string]any
+	// Reviews is the offering's subject's reviews block while reviews are on.
+	Reviews *reviewsBlock
 }
 
 // loadOffering fills p from offering.get; the status is the page's.
@@ -72,6 +74,9 @@ func loadOffering(r *http.Request, p *page, execute func(board.Command) (board.R
 		v.Example = exampleInput(raw)
 	}
 	v.Record, _ = o["record"].(map[string]any)
+	if sum, ok := o["reviews"].(*board.SubjectReviews); ok {
+		v.Reviews = loadReviewsBlock(execute, sum, "offering", v.Path+"#reviews")
+	}
 	p.View, p.OfferingView = "offering", v
 	p.Title = v.Title
 	p.Description = fmt.Sprintf("%s: %s USDC, paid to the provider over x402 and settled only when it claims the call.", v.Title, v.Price)

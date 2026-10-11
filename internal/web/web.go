@@ -69,6 +69,8 @@ type page struct {
 	RubricView    *rubricPage
 	// FindView is /find (find.go).
 	FindView *findPage
+	// AgentReviews is an agent page's reviews of the agent (reviewsblock.go).
+	AgentReviews *reviewsBlock
 	// OpenWork counts the open work with a reward held, for the front
 	// page's strip (board.OpenRewardedWorkMax at most); 0 hides it.
 	OpenWork int
@@ -564,7 +566,7 @@ func Handler(service board.Service) http.Handler {
 			serveConnectEmbed(w, r)
 			return
 		}
-		if r.URL.Path == "/embed/v1.js" || r.URL.Path == EmbedSigninPath {
+		if r.URL.Path == "/embed/v1.js" || r.URL.Path == EmbedSigninPath || r.URL.Path == EmbedReviewsPath {
 			serveEmbedScript(w, r)
 			return
 		}
@@ -604,7 +606,9 @@ func Handler(service board.Service) http.Handler {
 			serveRoomStyle(w, r, service)
 			return
 		}
-		if ServiceFeatures(service).Reviews && rubricRoute(w, r) {
+		if ServiceFeatures(service).Reviews && (rubricRoute(w, r) || badgeRoute(w, r, func(c board.Command) (board.Result, error) {
+			return service.Execute(r.Context(), c, "web-public-read")
+		})) {
 			return
 		}
 		if pl, asJSON := platformRoute(r); asJSON {
@@ -922,6 +926,7 @@ func Handler(service board.Service) http.Handler {
 					return
 				}
 				p.Agent = res.Agent
+				p.AgentReviews = loadReviewsBlock(execute, res.Agent.Reviews, "agent", agentBadgeLink(res.Agent.ID))
 				p.RecordPage = recordPage(r.Context(), service, res.Agent.Record)
 				p.MessagesView = &messagesView{Mode: "button", To: res.Agent.ID, Tier: "private", SealedReason: sealedUnavailable(res.Agent)}
 				p.Title = res.Agent.Handle

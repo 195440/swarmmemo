@@ -377,6 +377,7 @@ test('work, updates, journal, docs, tools and /call helpers send the documented 
       const reply = parsed.operation === 'work.get' ? {ok: true, data: {work: {service_generation: generation, fence: 3}}}
         : parsed.operation === 'agent.get' ? {ok: true, agent: {id: agent}}
         : parsed.operation === 'updates.get' ? {ok: true, messages: [], next_cursor: parsed.cursor ? parsed.cursor + '+' : 'c1', data: {}}
+        : parsed.operation === 'subject.resolve' ? {ok: true, data: {subject: {id: 's'.repeat(26), uri: 'site:https://example.org/', exists: false}}}
         : {ok: true};
       res.writeHead(200, {'Content-Type': 'application/json'}); res.end(JSON.stringify(reply));
     });
@@ -419,6 +420,10 @@ test('work, updates, journal, docs, tools and /call helpers send the documented 
     [() => anonymous.toolsSearch('weather forecast', {kind: 'catalogue'}), {operation: 'service.read', target: 'tools', data: '{"schema":1,"method":"search","args":{"query":"weather forecast","kind":"catalogue"}}'}],
     [() => signed.toolsCall('tool:wx', {city: 'Lisbon'}, {maxCost: 30, requestId: 't-1'}), {operation: 'service.call', target: 'tools', request_id: 't-1', data: '{"schema":1,"method":"call","args":{"id":"tool:wx","args":{"city":"Lisbon"}},"max_cost":30}'}],
     [() => signed.serviceCall('wakeup', 'schedule', {key: 'replies', on: 'reply'}, {maxCost: 1, requestId: 'w-1'}), {operation: 'service.call', target: 'wakeup', request_id: 'w-1', data: '{"schema":1,"method":"schedule","args":{"key":"replies","on":"reply"},"max_cost":1}'}],
+    [() => anonymous.subjectResolve('example.org'), {operation: 'subject.resolve', target: 'example.org'}],
+    [() => anonymous.subject('site:https://example.org/', {limit: 5}), {operation: 'subject.get', target: 'site:https://example.org/', limit: 5}],
+    [() => anonymous.find('weather', {types: ['agent', 'mcp'], maxPrice: 0.01, limit: 5}), {operation: 'find', query: 'weather', limit: 5, data: '{"schema":1,"max_price":"0.01","type":["agent","mcp"]}'}],
+    [() => anonymous.find(), {operation: 'find'}],
   ];
   for (const [call, expected] of cases) {
     await call();
@@ -428,6 +433,16 @@ test('work, updates, journal, docs, tools and /call helpers send the documented 
     assert.equal(!!body.signature, call.toString().startsWith('() => signed.'));
     if (body.signature) verifySigned(body); else assert.equal(body.public_key, undefined);
   }
+  // A review resolves its subject, then signs the post the board expects; unsigned, it is refused.
+  await signed.review('https://Example.org/page', 'good', 'Answered fast.', {dimensions: {works: 90}, evidence: ['call:' + 'b'.repeat(32)], relationship: 'customer', requestId: 'r-1'});
+  assert.deepEqual(requests.map(r => r.body.operation), ['subject.resolve', 'post']);
+  assert.deepEqual(shown(requests[1].body), {operation: 'post', room: 'reviews', page: 's'.repeat(26), kind: 'review', text: 'Answered fast.', request_id: 'r-1',
+    data: `{"schema":1,"review":{"subject":"site:https://example.org/","verdict":"good","dimensions":{"works":90},"relationship":"customer","evidence":["call:${'b'.repeat(32)}"]}}`});
+  verifySigned(requests[1].body); requests.length = 0;
+  await signed.review('site:https://example.org/', 'bad', 'Worse now.', {supersedes: 'e'.repeat(32), requestId: 'r-2'});
+  assert.equal(JSON.parse(requests[1].body.data).supersedes, 'e'.repeat(32)); requests.length = 0;
+  await assert.rejects(anonymous.review('example.org', 'good', 'Unsigned.'), /signed/);
+  assert.equal(requests.length, 0);
   // work.reviewer.set signs the reviewer's fingerprint; a handle is read once with agent.get.
   await signed.setWorkReviewer(id, agent, {generation, requestId: 'v-1'});
   assert.deepEqual(requests.map(r => shown(r.body)), [{operation: 'work.reviewer.set', message_id: id, request_id: 'v-1', data: `{"schema":1,"generation":"${generation}","reviewer":"${agent}"}`}]);

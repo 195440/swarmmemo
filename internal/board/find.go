@@ -370,11 +370,14 @@ func (s *Store) findDocs(ctx context.Context) ([]find.Doc, error) {
 	// Reviewed x402 APIs outside the catalogue are found too, not callable.
 	for id, q := range quality {
 		if q.sub.Type == reviews.TypeX402 && q.listed && !seen[id] {
+			if _, _, offering := reviews.OfferingPath(q.sub, s.subjectOptions()); offering {
+				continue // an agent offering is found as itself (findOfferings)
+			}
 			docs = append(docs, find.Doc{Type: find.TypeService, Kind: find.KindX402, ID: q.sub.URI(), Name: q.sub.Key, Category: subjectCategory(v, q.sub.Key),
-				URL: "/s/" + id, Terms: services.URLWords(q.sub.Key), Price: find.Unpriced, SubjectID: id, Quality: q.withNote("not in SwarmMemo's catalogue")})
+				URL: "/s/" + id, Terms: services.URLWords(q.sub.Key), Price: find.Unpriced, SubjectID: id, Review: "/s/" + id, Quality: q.withNote("not in SwarmMemo's catalogue")})
 		}
 	}
-	offerings, err := s.findOfferings(ctx, v, standing)
+	offerings, err := s.findOfferings(ctx, v, standing, quality)
 	if err != nil {
 		return nil, err
 	}
@@ -406,7 +409,7 @@ func (s *Store) findDocs(ctx context.Context) ([]find.Doc, error) {
 			name = q.sub.URI()
 		}
 		docs = append(docs, find.Doc{Type: typ, ID: q.sub.URI(), Name: name, Category: subjectCategory(v, q.sub.Key), URL: "/s/" + id,
-			Terms: services.URLWords(q.sub.Key), Price: find.Unpriced, SubjectID: id, Quality: q.Quality})
+			Terms: services.URLWords(q.sub.Key), Price: find.Unpriced, SubjectID: id, Review: "/s/" + id, Quality: q.Quality})
 	}
 	return docs, nil
 }
@@ -426,8 +429,11 @@ func findX402Doc(l services.X402Listing, q subjectQuality) find.Doc {
 	d := find.Doc{Type: find.TypeService, Kind: find.KindX402, ID: l.ID, Name: x402Name(l.ID), Description: l.Summary, Category: l.Category,
 		URL: "/tools/paid-apis", Terms: services.URLWords(l.URL), Price: usdMicro(l.MaxPrice, l.Decimals), Network: find.NetworkName(l.Network), Output: "json",
 		SubjectID: l.Subject, Untrusted: !l.Pinned, Quality: find.Quality{LabLower: -1}}
+	if l.Subject != "" {
+		d.Review = "/s?q=" + url.QueryEscape(l.Method+" "+l.URL)
+	}
 	if q.exists {
-		d.URL, d.Quality = "/s/"+l.Subject, q.Quality
+		d.URL, d.Quality, d.Review = "/s/"+l.Subject, q.Quality, "/s/"+l.Subject
 	}
 	if l.Category == "media" {
 		d.Output = ""
@@ -466,8 +472,9 @@ func usdMicro(amount int64, decimals int) int64 {
 	return amount
 }
 
-// findOfferings are the active offerings.
-func (s *Store) findOfferings(ctx context.Context, v find.Vocab, standing map[string]string) ([]find.Doc, error) {
+// findOfferings are the active offerings, each with its subject's reviews
+// (an offering is reviewed at its page's address, C200).
+func (s *Store) findOfferings(ctx context.Context, v find.Vocab, standing map[string]string, quality map[string]subjectQuality) ([]find.Doc, error) {
 	if !s.OfferingsEnabled() {
 		return nil, nil
 	}
@@ -494,9 +501,19 @@ func (s *Store) findOfferings(ctx context.Context, v find.Vocab, standing map[st
 			continue
 		}
 		path := offeringPath(account, handle, name)
-		docs = append(docs, find.Doc{Type: find.TypeOffering, ID: strings.TrimPrefix(path, "/@"), Name: l.Title, Description: l.Description,
+		d := find.Doc{Type: find.TypeOffering, ID: strings.TrimPrefix(path, "/@"), Name: l.Title, Description: l.Description,
 			Category: v.Categorize(l.Title + " " + l.Description), URL: path, Terms: name + " " + handle, Price: price, Network: network, Output: "text",
-			Untrusted: true, Quality: find.Quality{Standing: standing[account], LabLower: -1}})
+			Untrusted: true, Quality: find.Quality{LabLower: -1}}
+		if s.ReviewsEnabled() {
+			if sub, err := s.offeringSubject(account, handle, name); err == nil {
+				d.SubjectID, d.Review = sub.ID, SubjectReviewURL(sub, false)
+				if q, ok := quality[sub.ID]; ok {
+					d.Quality, d.Review = q.Quality, SubjectReviewURL(sub, true)
+				}
+			}
+		}
+		d.Quality.Standing = standing[account]
+		docs = append(docs, d)
 	}
 	return docs, rows.Err()
 }
@@ -535,9 +552,11 @@ func (s *Store) findAgents(ctx context.Context, v find.Vocab, now int64, standin
 		if c := v.Categorize(description + " " + strings.Join(capabilities, " ")); description != "" && c != "data" {
 			d.Category = c
 		}
-		if sub, err := reviews.Canonical(reviews.TypeAgent, account, reviews.Options{}); err == nil {
+		if sub, err := reviews.Canonical(reviews.TypeAgent, account, reviews.Options{}); err == nil && s.ReviewsEnabled() {
+			// Every agent is a subject: its hit says where to review it.
+			d.SubjectID, d.Review = sub.ID, SubjectReviewURL(sub, false)
 			if q, ok := quality[sub.ID]; ok {
-				d.Quality, d.SubjectID = q.Quality, sub.ID
+				d.Quality, d.Review = q.Quality, SubjectReviewURL(sub, true)
 			}
 		}
 		d.Quality.Standing = standing[account]

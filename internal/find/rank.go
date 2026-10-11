@@ -155,7 +155,7 @@ func matchedWords(d *Doc, words []string, v Vocab) ([]string, []string) {
 func (s scored) hit(explain bool) Hit {
 	d := s.doc
 	h := Hit{Type: d.Type, Kind: d.Kind, ID: d.ID, Name: d.Name, Description: d.Description, Category: d.Category, URL: d.URL,
-		PriceText: d.PriceText, Network: d.Network, Output: d.Output, SubjectID: d.SubjectID, State: d.Quality.State,
+		PriceText: d.PriceText, Network: d.Network, Output: d.Output, SubjectID: d.SubjectID, ReviewURL: d.Review, State: d.Quality.State,
 		Standing: d.Quality.Standing, Untrusted: d.Untrusted, Score: round4(s.score)}
 	if h.Category == "other" {
 		h.Category = ""
@@ -259,4 +259,11 @@ func (s scored) why() string {
 		parts = append(parts, "ranked lower")
 	}
 	return strings.Join(parts, " · ")
+}
+
+// ReviewWord is the word for a community aggregate, given its verdict mean
+// and the weight behind it: what a result's why says, and what a "Rated on
+// SwarmMemo" badge shows.
+func ReviewWord(mean, weight float64) string {
+	return reviewWord(Quality{ReviewMean: mean, ReviewWeight: weight})
 }

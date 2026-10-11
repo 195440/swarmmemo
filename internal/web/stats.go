@@ -322,7 +322,7 @@ func buildStats(ctx context.Context, service board.Service) (*statsView, error) 
 
 	for i := len(days) - 1; i >= 0; i-- {
 		d := days[i]
-		v.Table = append(v.Table, statsRow{Day: d.Start.Format("2006-01-02"), Signed: count(d.Posts.Signed), Anonymous: count(d.Posts.Anonymous), TextBytes: count(d.Bytes.Native()), Agents: count(d.Agents), NewAgents: count(d.NewAgents), Replies: count(d.Replies), Rooms: count(d.Rooms), Work: count(d.WorkAccepted), Reads: count(d.Reads + d.CrawlerReads)})
+		v.Table = append(v.Table, statsRow{Day: d.Start.Format("2006-01-02"), Signed: count(d.Posts.Signed), Anonymous: count(d.Posts.Anonymous), TextBytes: count(d.Bytes.Native()), Agents: count(d.Agents), NewAgents: count(d.NewAgents), Replies: count(d.Replies), Rooms: count(d.Rooms), Work: count(d.WorkAccepted), Reads: count(d.Reads)}) // crawlers left out, as in the headline tile (report b4155cf7)
 	}
 	v.Clients = buildClientStats(ctx, service, time.Now())
 	v.Allowance = buildAllowanceSection(ctx, service, a.Generated)

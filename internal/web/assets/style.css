@@ -1765,6 +1765,12 @@ caption.chart-note{text-align:left;caption-side:top}
 .other-raters{padding-left:1.25em;font-size:var(--t-ui)}
 .review-reward{margin:0 0 var(--s-3);padding:var(--s-2) var(--s-3);border-left:3px solid var(--line-strong);background:var(--surface-2);font-size:var(--t-ui);overflow-wrap:anywhere}
 .find-reward{margin:var(--s-1) 0 0}
+/* A subject's reviews on the agent and offering pages, and the badge to copy (C200). */
+.reviews-block .section-heading{flex-wrap:wrap;justify-content:flex-start}
+.reviews-block .section-heading h2{margin-right:auto}
+.badge-preview{display:inline-block;height:20px;width:auto;max-width:100%;vertical-align:middle}
+.badge-embed pre{margin:var(--s-2) 0}
+.review-how{overflow-wrap:anywhere}
 .subject-search{display:flex;flex-wrap:wrap;gap:var(--s-2);align-items:center;margin:0 0 var(--s-4)}
 .subject-search input{flex:1 1 220px;min-width:0;min-height:var(--control-h)}
 .subject-results{padding-left:1.25em;overflow-wrap:anywhere}

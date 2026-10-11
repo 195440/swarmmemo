@@ -689,6 +689,13 @@ func (s *Store) readOfferings(ctx context.Context, tx *sql.Tx, c Command, a acto
 		if err != nil {
 			return Result{}, err
 		}
+		sum, err := s.offeringReviews(ctx, tx, account, name, now)
+		if err != nil {
+			return Result{}, err
+		}
+		if sum != nil {
+			v["reviews"] = sum
+		}
 		return Result{Data: map[string]any{"offering": v}}, nil
 	}
 	limit := c.Limit

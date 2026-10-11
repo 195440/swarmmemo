@@ -33,6 +33,12 @@ const offeringTestWallet = "0x3333333333333333333333333333333333333333"
 
 func offeringServer(t *testing.T) (*Server, *atomic.Int64, *atomic.Int64, ed25519.PrivateKey) {
 	t.Helper()
+	return offeringServerWith(t, board.Features{})
+}
+
+// offeringServerWith is offeringServer with features on (reviews, C200).
+func offeringServerWith(t *testing.T, features board.Features) (*Server, *atomic.Int64, *atomic.Int64, ed25519.PrivateKey) {
+	t.Helper()
 	verified, settled := &atomic.Int64{}, &atomic.Int64{}
 	cfg, err := services.ParseTopupConfig([]byte(`{"schema":1,"enabled":true,"network":"eip155:8453","asset":"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913","asset_name":"USD Coin","asset_version":"2","pay_to":"`+topupTestPayTo+`","facilitator_url":"https://facilitator.example.com","offerings":{"max_timeout_seconds":600}}`), nil)
 	if err != nil {
@@ -50,12 +56,12 @@ func offeringServer(t *testing.T) (*Server, *atomic.Int64, *atomic.Int64, ed2551
 	t.Cleanup(facilitator.Close)
 	cfg.UseTestFacilitator(facilitator.Client(), facilitator.URL)
 	dbPath := filepath.Join(t.TempDir(), "board.sqlite")
-	store, err := board.Open(dbPath, board.Config{ServiceID: "swarmmemo.com", Offerings: cfg})
+	store, err := board.Open(dbPath, board.Config{ServiceID: "swarmmemo.com", Offerings: cfg, Features: features})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { store.Close() })
-	s := New(store, web.Handler(store), Config{PublicURL: "https://swarmmemo.com", ServiceID: "swarmmemo.com"})
+	s := New(store, web.Handler(store), Config{PublicURL: "https://swarmmemo.com", ServiceID: "swarmmemo.com", Features: features})
 	key := ed25519.NewKeyFromSeed(append(make([]byte, 31), 168))
 	if w := topupRequest(s, signService(key, board.Command{Operation: "agent.register", Handle: "pythia"}), ""); w.Code != 200 {
 		t.Fatalf("register: %d %s", w.Code, w.Body.String())

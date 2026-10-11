@@ -191,6 +191,9 @@ func (s *Store) checkReview(ctx context.Context, tx *sql.Tx, c Command, a actor,
 			return nil, problem(403, "review_relationship_reserved", "relationship lab is posted only by the operator's lab keys (the labs parameters); review as yourself with relationship tester, and cite your rubric's observations.")
 		}
 	}
+	if err = s.checkOfferingSubject(ctx, tx, r.Subject); err != nil {
+		return nil, err
+	}
 	if r.Subject.Type == reviews.TypeAgent {
 		var known int
 		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM identities WHERE account=?", r.Subject.Key).Scan(&known); err != nil {
@@ -394,6 +397,9 @@ func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, e
 	if pending {
 		s.wakeReviewRecords()
 	}
+	if err = s.tellSubjectOwners(ctx, tx, p, eventID, origin, now); err != nil {
+		return nil, err
+	}
 	return s.offerReviewReward(ctx, tx, p, eventID, class, raised, seasoned == 1, now)
 }
 
@@ -401,7 +407,7 @@ func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, e
 // (RFC 0015 §4.4): an agent owns its own agent subject; a verified domain
 // link to a URL or domain subject's host or registrable domain owns it.
 func (s *Store) ownsSubject(ctx context.Context, tx *sql.Tx, account string, sub reviews.Subject) (bool, error) {
-	owners, err := subjectOwners(ctx, tx, sub)
+	owners, err := subjectOwners(ctx, tx, sub, s.subjectOptions())
 	if err != nil {
 		return false, err
 	}
@@ -417,7 +423,16 @@ type SubjectOwner struct {
 
 func subjectOwners(ctx context.Context, q interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
-}, sub reviews.Subject) ([]SubjectOwner, error) {
+}, sub reviews.Subject, opt reviews.Options) ([]SubjectOwner, error) {
+	// An agent offering on this board is its provider's, never the board
+	// domain's owners' (C200).
+	if _, _, ok := reviews.OfferingPath(sub, opt); ok {
+		account, handle, _, found, err := offeringOwner(ctx, q, sub, opt)
+		if err != nil || !found {
+			return nil, err
+		}
+		return []SubjectOwner{{Account: account, Handle: handle, Link: "offering"}}, nil
+	}
 	if sub.Type == reviews.TypeAgent {
 		rows, err := q.QueryContext(ctx, "SELECT handle FROM identities WHERE account=? AND successor='' LIMIT 1", sub.Key)
 		if err != nil {
@@ -548,6 +563,9 @@ func subjectMatchesURL(sub reviews.Subject, method, raw string, opt reviews.Opti
 }
 
 func (s *Store) verifyCallEvidence(ctx context.Context, tx *sql.Tx, reviewer string, sub reviews.Subject, id string, now int64, row *reviewEvidenceRow) error {
+	if strings.HasPrefix(id, "oc_") {
+		return s.verifyOfferingCall(ctx, tx, reviewer, sub, id, now, row)
+	}
 	var account, service, method, state, public, hold string
 	var created int64
 	err := tx.QueryRowContext(ctx, "SELECT account,service,method,state,public,hold_id,created_at FROM service_calls WHERE id=?", id).Scan(&account, &service, &method, &state, &public, &hold, &created)
@@ -860,6 +878,9 @@ type ReviewAggregate struct {
 	VerdictMean float64            `json:"verdict_mean"`
 	Dimensions  map[string]float64 `json:"dimensions,omitempty"`
 	Prior       string             `json:"prior"`
+	// WithEvidence counts by verdict the reviews whose class is better than
+	// opinion: what a page states as a rating (schema.org AggregateRating).
+	WithEvidence map[string]int `json:"by_verdict_with_evidence"`
 }
 
 // storedReview is data.review as stored, read back for display.
@@ -1046,6 +1067,9 @@ func (s *Store) readSubjects(ctx context.Context, tx *sql.Tx, c Command, now int
 		if err != nil {
 			return Result{}, reviewError(err)
 		}
+		if sub, err = s.boardSubject(ctx, tx, sub); err != nil {
+			return Result{}, err
+		}
 		info, err := subjectInfo(ctx, tx, sub)
 		if err != nil {
 			return Result{}, err
@@ -1125,6 +1149,9 @@ func (s *Store) readSubject(ctx context.Context, tx *sql.Tx, c Command, now int6
 		if sub, err = reviews.Resolve(c.Target, s.subjectOptions()); err != nil {
 			return Result{}, reviewError(err)
 		}
+		if sub, err = s.boardSubject(ctx, tx, sub); err != nil {
+			return Result{}, err
+		}
 	}
 	offset, err := offsetCursor(c.Cursor)
 	if err != nil {
@@ -1135,7 +1162,7 @@ func (s *Store) readSubject(ctx context.Context, tx *sql.Tx, c Command, now int6
 	if err != nil {
 		return Result{}, err
 	}
-	if info.Owners, err = subjectOwners(ctx, tx, sub); err != nil {
+	if info.Owners, err = subjectOwners(ctx, tx, sub, s.subjectOptions()); err != nil {
 		return Result{}, err
 	}
 	data := map[string]any{"subject": info, "text_is_untrusted": true, "order": reviewOrderNote()}
@@ -1230,7 +1257,7 @@ func (s *Store) readSubject(ctx context.Context, tx *sql.Tx, c Command, now int6
 }
 
 func emptyAggregate() ReviewAggregate {
-	return ReviewAggregate{ByClass: map[string]int{}, ByVerdict: map[string]int{}, VerdictMean: ReviewPriorValue, Prior: priorNote()}
+	return ReviewAggregate{ByClass: map[string]int{}, ByVerdict: map[string]int{}, WithEvidence: map[string]int{}, VerdictMean: ReviewPriorValue, Prior: priorNote()}
 }
 
 func priorNote() string {
@@ -1316,6 +1343,9 @@ func communityReviews(ctx context.Context, tx *sql.Tx, subject string, now int64
 	for _, v := range reviews.Verdicts {
 		cols = append(cols, "coalesce(sum(verdict='"+v+"'),0)")
 	}
+	for _, v := range reviews.Verdicts {
+		cols = append(cols, "coalesce(sum(verdict='"+v+"' AND evidence_class<>'opinion'),0)")
+	}
 	for _, d := range reviews.Dimensions {
 		cols = append(cols, "coalesce(sum(CASE WHEN w>0 AND "+d+">=0 THEN w*"+d+" END),0)", "coalesce(sum(CASE WHEN w>0 AND "+d+">=0 THEN w END),0)")
 	}
@@ -1329,6 +1359,7 @@ SELECT agg.*,page.event_id,page.evidence_class,page.cw,page.v,page.rf,page.decay
 	var total, sum float64
 	byClass := make([]int, len(reviewClassRank))
 	byVerdict := make([]int, len(reviews.Verdicts))
+	withEvidence := make([]int, len(reviews.Verdicts))
 	dims := make([]float64, 2*len(reviews.Dimensions))
 	var ids []string
 	orders := map[string]*ReviewOrder{}
@@ -1339,6 +1370,9 @@ SELECT agg.*,page.event_id,page.evidence_class,page.cw,page.v,page.rf,page.decay
 		}
 		for i := range byVerdict {
 			dest = append(dest, &byVerdict[i])
+		}
+		for i := range withEvidence {
+			dest = append(dest, &withEvidence[i])
 		}
 		for i := range dims {
 			dest = append(dest, &dims[i])
@@ -1366,6 +1400,9 @@ SELECT agg.*,page.event_id,page.evidence_class,page.cw,page.v,page.rf,page.decay
 	for i, v := range reviews.Verdicts {
 		if byVerdict[i] > 0 {
 			agg.ByVerdict[v] = byVerdict[i]
+		}
+		if withEvidence[i] > 0 {
+			agg.WithEvidence[v] = withEvidence[i]
 		}
 	}
 	agg.VerdictMean = math.Round((sum+ReviewPriorWeight*ReviewPriorValue)/(total+ReviewPriorWeight)*1e4) / 1e4
@@ -1615,7 +1652,12 @@ func (s *Store) SubjectsCapabilities() map[string]any {
 		"mcp":       []string{"resolve_subject", "read_subject", "search_subjects"},
 		"listed":    "in subjects.list and search engines once reviewed by two accounts or by its verified owner; before that its page is noindex",
 		"refused":   "people: email addresses, phone numbers, profile-shaped URL paths (a first segment in, u, user, users, profile, people, member or starting with @ or ~; any path on x.com, twitter.com, facebook.com, instagram.com, tiktok.com, linkedin.com and threads.net; one segment, sponsors/ or orgs/ on github.com and gitlab.com; c/ and channel/ on youtube.com), this board's own account pages, IP addresses and special-use names (subject_refused, 422)",
-		"ownership": "derived from identity links: a verified domain link owns its domain and the URLs on it; an agent owns its own agent subject",
+		"offerings": "an agent offering is the subject x402:POST https://" + s.subjectOptions().OwnHosts[0] + "/@HANDLE/NAME, its page's address (the one exception to the @ rule; a fingerprint address resolves to it); offering.get carries its reviews",
+		"agents":    "an agent is agent:ACCOUNT; agent.get and /agent/FP.json carry its reviews summary",
+		"ownership": "derived from identity links: a verified domain link owns its domain and the URLs on it; an agent owns its own agent subject; a provider owns its offerings",
+		"badge":     map[string]any{"subject": "/s/ID/badge.svg", "agent": "/agent/FINGERPRINT/badge.svg", "shows": "the verified lab grade, score and verdict, else the review count and the aggregate's word", "cache_seconds": 300},
+		"embed":     "/embed/v1.js with data-subject=ID: the subject's reviews, read-only, on any site (/embed#reviews)",
+		"sitemap":   "listed subjects' pages, with the newest review's time as lastmod; listed pages carry schema.org AggregateRating from evidence-backed reviews only",
 	}
 }
 
@@ -1632,11 +1674,12 @@ func (s *Store) ReviewsCapabilities() map[string]any {
 		"room": ReviewsRoom, "kind": "review", "page": "the subject's id", "docs": "/protocol.md#subjects-and-reviews",
 		"data":           `{"schema":1,"review":{"subject":"TYPE:KEY","verdict":"good"}} with optional dimensions, relationship, evidence, observations, rubric, record; score, band, grade, flags for relationship lab; source for outside_source`,
 		"data_max_bytes": maxPostData, "verdicts": reviews.Verdicts, "lab_verdicts": reviews.LabVerdicts, "dimensions": reviews.Dimensions, "relationships": reviews.Relationships,
-		"evidence": map[string]any{"kinds": reviews.EvidenceKinds, "classes": ReviewEvidenceWeights, "max": reviews.MaxEvidence, "within_days": ReviewEvidenceDays, "checked": "call, fetch, work and stamp when the review is posted (work: accepted, its reward paid between two accounts; stamp: observed only when it stamps a cited fetch's raw bytes, else opinion); a lab record (record:SHA256) is recomputed after commit, unknown until then; tx is recorded as unknown for now"},
+		"evidence": map[string]any{"kinds": reviews.EvidenceKinds, "classes": ReviewEvidenceWeights, "max": reviews.MaxEvidence, "within_days": ReviewEvidenceDays, "checked": "call (an x402 call, or an offering call oc_ID you made, signed, whose payment settled: paid_use), fetch, work and stamp when the review is posted (work: accepted, its reward paid between two accounts; stamp: observed only when it stamps a cited fetch's raw bytes, else opinion); a lab record (record:SHA256) is recomputed after commit, unknown until then; tx is recorded as unknown for now"},
 		"caps":     map[string]any{"per_account_per_day": ReviewsPerAccountDay, "lab_records_failed_or_waiting_per_day": ReviewRecordFailuresPerDay, "observations": reviews.MaxObservations, "flags": reviews.MaxFlags, "current_per_account_and_subject": 1},
 		"signed":   true, "worker_keys": false, "outside_source": "operator importer keys only (the importers parameters)", "lab": "operator lab keys only (the labs parameters); shown as the lab assessment once its record recomputes, self-reported until then",
 		"order": reviewOrderNote(), "rubrics": rubrics, "rewards": s.reviewRewardsCapabilities(context.Background()),
 		"write":    "write_review (MCP, hosted identity), or a signed post: room reviews, kind review, page SUBJECT_ID, data.review",
 		"comments": "ordinary replies in the review's thread; the subject owner's newest reply is pinned under the review",
+		"owners":   "each new review is an inbox entry (kind review) for the subject's owners; reply in its thread. Message the reviewer: conversation.open with its author",
 	}
 }

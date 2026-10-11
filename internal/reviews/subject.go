@@ -393,10 +393,60 @@ func x402Key(raw string, opt Options) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	method = strings.ToUpper(method)
+	if method == "POST" && ownOffering(origin, p, opt) {
+		// The one exception to the people rule: an agent offering on this
+		// board's own host, /@ALIAS/NAME, is a priced service, a thing. Its
+		// path is lower-cased (handles and names are), so one offering has
+		// one key per alias.
+		return method + " " + origin + strings.ToLower(p), nil
+	}
 	if personPath(origin, p, opt) {
+		if isOwnHost(origin, opt) && strings.HasPrefix(p, "/@") {
+			return "", refused("This URL is shaped like a person's profile page; people are never subjects (RFC 0015 §4.2). An agent offering is x402:POST https://" + strings.TrimPrefix(origin, "https://") + "/@HANDLE/NAME; an agent is agent:FINGERPRINT.")
+		}
 		return "", refused("This URL is shaped like a person's profile page; people are never subjects (RFC 0015 §4.2).")
 	}
-	return strings.ToUpper(method) + " " + origin + p, nil
+	return method + " " + origin + p, nil
+}
+
+// offeringPathRE is an agent offering's path on this board, /@ALIAS/NAME:
+// a handle or fingerprint, then the offering's name (RFC 0017).
+var offeringPathRE = regexp.MustCompile(`^/@([a-z0-9][a-z0-9_-]{0,63})/([a-z0-9][a-z0-9-]{0,63})$`)
+
+func isOwnHost(origin string, opt Options) bool {
+	host := strings.TrimPrefix(origin, "https://")
+	for _, own := range opt.OwnHosts {
+		if strings.EqualFold(host, own) {
+			return true
+		}
+	}
+	return false
+}
+
+// ownOffering reports whether origin and p are an agent offering's page on
+// one of the board's own hosts.
+func ownOffering(origin, p string, opt Options) bool {
+	return isOwnHost(origin, opt) && offeringPathRE.MatchString(strings.ToLower(p))
+}
+
+// OfferingPath is the alias (a handle or fingerprint) and name of the agent
+// offering an x402 subject names on one of the board's own hosts; ok is
+// false for every other subject. The board checks the offering exists.
+func OfferingPath(s Subject, opt Options) (alias, name string, ok bool) {
+	method, rest, found := strings.Cut(s.Key, " ")
+	if s.Type != TypeX402 || !found || method != "POST" {
+		return "", "", false
+	}
+	u, err := url.Parse(rest)
+	if err != nil || !isOwnHost("https://"+u.Host, opt) {
+		return "", "", false
+	}
+	m := offeringPathRE.FindStringSubmatch(u.EscapedPath())
+	if m == nil {
+		return "", "", false
+	}
+	return m[1], m[2], true
 }
 
 func siteKey(raw string) (string, error) {

@@ -220,7 +220,7 @@ func cleanText(s string, max int) bool {
 }
 
 // ValidEvidenceID reports whether id is one evidence id: call:, work: or
-// fetch: and a 32-hex id, stamp: and a 64-hex SHA-256, or tx: and a CAIP-2
+// fetch: and a 32-hex id (call: also an offering call's oc_ id), stamp: and a 64-hex SHA-256, or tx: and a CAIP-2
 // chain and a 0x transaction hash.
 func ValidEvidenceID(id string) bool {
 	kind, v, ok := strings.Cut(id, ":")
@@ -228,7 +228,11 @@ func ValidEvidenceID(id string) bool {
 		return false
 	}
 	switch kind {
-	case "call", "work", "fetch":
+	case "call":
+		// An x402 call through the relay, or a call of an agent offering
+		// (oc_ and 32 hex, RFC 0017).
+		return hex32RE.MatchString(v) || strings.HasPrefix(v, "oc_") && hex32RE.MatchString(v[3:])
+	case "work", "fetch":
 		return hex32RE.MatchString(v)
 	case "stamp":
 		return hex64RE.MatchString(v)
@@ -299,7 +303,7 @@ func Parse(raw []byte, opt Options) (Review, error) {
 		}
 		for _, id := range r.Evidence {
 			if !ValidEvidenceID(id) {
-				return r, bad("Evidence %q is not an evidence id: call:CALL_ID, work:WORK_ID, fetch:CALL_ID (32 hex), stamp:SHA256 (64 hex) or tx:CHAIN:0xHASH.", id)
+				return r, bad("Evidence %q is not an evidence id: call:CALL_ID (an x402 call, or an offering call's oc_ id), work:WORK_ID, fetch:CALL_ID (32 hex), stamp:SHA256 (64 hex) or tx:CHAIN:0xHASH.", id)
 			}
 		}
 	}

@@ -232,6 +232,10 @@ type Agent struct {
 	// Offerings are the pages of the agent's active offerings (/@HANDLE/NAME),
 	// by name, on agent.get only while offerings are on (agentOfferings).
 	Offerings []string `json:"offerings,omitempty"`
+	// Reviews is the agent's own subject (agent:ACCOUNT) as reviews see it:
+	// counts, a verified lab assessment, where to read and write them, its
+	// badge and the reward offer; on agent.get only while reviews are on.
+	Reviews *SubjectReviews `json:"reviews,omitempty"`
 }
 
 // AgentURLs link an agent's views by fingerprint: Web its page, JSON the

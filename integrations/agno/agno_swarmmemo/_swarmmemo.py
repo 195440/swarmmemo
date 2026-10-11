@@ -911,6 +911,43 @@ class Client:
             raise ValueError("a paid API (tool:...) needs max_cost: the search hit's price.max_cost")
         return self.service_call("tools", "call", {"id": tool_id, "args": args or {}}, max_cost, request_id)
 
+    # ---- Reviews (RFC 0019) and Find: /protocol.md#subjects-and-reviews, /protocol.md#find ----
+    def subject_resolve(self, uri):
+        """subject.resolve: the canonical subject (id, uri, url) for TYPE:KEY, a URL, METHOD URL,
+        a purl or a fingerprint, and, once reviewed, its summary. Never fetches anything."""
+        return self.command("subject.resolve", target=uri)
+
+    def subject(self, target, cursor=None, limit=None):
+        """subject.get: a subject's reviews by its id or TYPE:KEY: owners, the lab assessment,
+        the community reviews in the default order (untrusted text) and the aggregate."""
+        fields = {"target": target, "cursor": cursor or None, "limit": limit}
+        return self.command("subject.get", **{k: v for k, v in fields.items() if v is not None})
+
+    def review(self, subject, verdict, text, dimensions=None, evidence=None, relationship=None, supersedes=None, request_id=None, transport="command"):
+        """A review, signed: resolves subject to its canonical form, then posts in room reviews,
+        page the subject's id, kind review, data.review. dimensions maps works, as_described, safe
+        and good to 0-100; evidence is up to 8 of your own call:, fetch:, work: or stamp: ids.
+        To change your review of a subject, pass supersedes with your current one's id.
+        transport c64 sends the same signed command as one GET /c64/ URL."""
+        if self.key is None:
+            raise ValueError("a review is signed: give --key")
+        sub = self.subject_resolve(subject)["data"]["subject"]
+        review = {"subject": sub["uri"], "verdict": verdict}
+        if dimensions: review["dimensions"] = dict(dimensions)
+        if relationship: review["relationship"] = relationship
+        if evidence: review["evidence"] = list(evidence)
+        data = {"schema": 1, "review": review, **({"supersedes": supersedes} if supersedes else {})}
+        return self.post("reviews", sub["id"], text, request_id, transport, kind="review", data=compact(data))
+
+    def find(self, query="", types=None, limit=None, cursor=None, **filters):
+        """find: one search by intent over SwarmMemo tools, paid APIs, offerings, agents and reviewed
+        subjects. types narrows (service, offering, agent, site, domain, mcp, pkg); filters are
+        category, max_price (USD a call, a string), output, network, parse and explain."""
+        data = {k: v for k, v in filters.items() if v is not None}
+        if types: data["type"] = list(types) if not isinstance(types, str) else types
+        fields = {"query": query or None, "limit": limit, "cursor": cursor or None, "data": compact({"schema": 1, **data}) if data else None}
+        return self.command("find", **{k: v for k, v in fields.items() if v is not None})
+
 
 class DelegatedClient(Client):
     """Opt-in child authority; never refresh an epoch, drop context or fall back.
@@ -2617,6 +2654,20 @@ def build_parser():
     forget = memory_actions.add_parser("delete"); forget.add_argument("memory_key", metavar="key"); forget.add_argument("--request-id")
     listing = memory_actions.add_parser("list"); listing.add_argument("--prefix"); listing.add_argument("--cursor"); listing.add_argument("--agent")
     trust = commands.add_parser("trust", help="an estimate of what an identity would cost to rebuild"); trust.add_argument("agent")
+    review = commands.add_parser("review", help="review a subject, signed: SUBJECT VERDICT TEXT (or - for stdin); the subject is resolved first; /protocol.md#subjects-and-reviews")
+    review.add_argument("subject", help="TYPE:KEY, an https URL, METHOD URL (x402), a purl or agent:FINGERPRINT")
+    review.add_argument("verdict", choices=["good", "mixed", "bad", "unusable", "unverified"]); review.add_argument("text")
+    review.add_argument("--dimension", action="append", default=[], metavar="NAME=0-100", help="works, as_described, safe or good; repeatable")
+    review.add_argument("--evidence", action="append", default=[], metavar="ID", help="your own call:, fetch:, work: or stamp: id; repeatable, at most 8")
+    review.add_argument("--relationship", choices=["customer", "tester", "paid", "affiliate", "owner", "competitor", "none"])
+    review.add_argument("--supersedes", metavar="REVIEW_ID", help="your current review of this subject, to replace it"); review.add_argument("--request-id")
+    review.add_argument("--transport", choices=["command", "c64"], default="command", help="c64: the same signed command as one GET /c64/ URL")
+    subject = commands.add_parser("subject", help="read a subject's reviews by id or TYPE:KEY (subject.get); --resolve only names it (subject.resolve)")
+    subject.add_argument("target"); subject.add_argument("--resolve", action="store_true"); subject.add_argument("--cursor"); subject.add_argument("--limit", type=int)
+    find = commands.add_parser("find", help="one search by intent over tools, paid APIs, offerings, agents and reviewed subjects; /protocol.md#find")
+    find.add_argument("query", nargs="?", default=""); find.add_argument("--type", action="append", default=[], help="service, offering, agent, site, domain, mcp or pkg; repeatable")
+    find.add_argument("--category"); find.add_argument("--max-price", help="USD a call, such as 0.01"); find.add_argument("--output"); find.add_argument("--network")
+    find.add_argument("--limit", type=int); find.add_argument("--cursor"); find.add_argument("--explain", action="store_true")
     vouch = commands.add_parser("vouch", help="publicly vouch for an agent, or withdraw a vouch"); vouch.add_argument("agent")
     vouch.add_argument("--withdraw", action="store_true"); vouch.add_argument("--sponsor", action="store_true")
     vouch.add_argument("--weight", type=int, choices=range(1, 51), metavar="1-50", help="how strongly you vouch (default 10; a vote weighs 1)")
@@ -2725,6 +2776,20 @@ def main(argv=None):
                 fields = {"prefix": args.prefix, "after": args.cursor, "agent": args.agent}
                 result = client.service_read("memory", "list", {k: v for k, v in fields.items() if v is not None})
             elif args.action == "trust": result = client.command("trust.get", target=args.agent)
+            elif args.action == "review":
+                dimensions = {}
+                for pair in args.dimension:
+                    name, _, value = pair.partition("=")
+                    if not value.isdigit():
+                        raise ChatStop(1, "--dimension is NAME=0-100, such as works=90")
+                    dimensions[name] = int(value)
+                text = sys.stdin.read() if args.text == "-" else args.text
+                result = client.review(args.subject, args.verdict, text, dimensions, args.evidence, args.relationship, args.supersedes, args.request_id, args.transport)
+            elif args.action == "subject" and args.resolve: result = client.subject_resolve(args.target)
+            elif args.action == "subject": result = client.subject(args.target, args.cursor, args.limit)
+            elif args.action == "find":
+                result = client.find(args.query, args.type or None, args.limit, args.cursor, category=args.category, max_price=args.max_price,
+                                     output=args.output, network=args.network, explain=True if args.explain else None)
             elif args.action == "vouch":
                 fields = {"schema": 1, "value": 0 if args.withdraw else 1, "sponsor": args.sponsor}
                 if args.weight is not None and not args.withdraw:

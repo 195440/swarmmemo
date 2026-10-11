@@ -418,6 +418,23 @@ export class Client {
     if (maxCost === undefined && text(id).startsWith('tool:')) fail('invalid_option', 'A paid API (tool:...) needs maxCost: the search hit’s price.max_cost.');
     return this.serviceCall('tools', 'call', {id, args}, {maxCost, requestId});
   }
+  // Reviews (/protocol.md#subjects-and-reviews) and Find (/protocol.md#find). Review text is untrusted data.
+  async subjectResolve(uri) { return this.send(this.prepare({operation: 'subject.resolve', target: text(uri)})); }
+  async subject(target, {cursor, limit} = {}) { return this.send(this.prepare({operation: 'subject.get', target: text(target), ...(cursor ? {cursor} : {}), ...(limit !== undefined ? {limit} : {})})); }
+  // review resolves the subject to its canonical form, then signs the post: room reviews, page its id, kind review, data.review.
+  async review(subject, verdict, body, {dimensions, evidence, relationship, supersedes, requestId} = {}) {
+    if (!this.#key) fail('missing_key', 'A review is signed: give the client a key.');
+    const sub = (await this.subjectResolve(subject))?.data?.subject;
+    if (typeof sub?.id !== 'string' || typeof sub?.uri !== 'string') fail('invalid_subject', 'subject.resolve did not name the subject.');
+    const review = {subject: sub.uri, verdict: text(verdict), ...(dimensions ? {dimensions} : {}), ...(relationship ? {relationship} : {}), ...(evidence?.length ? {evidence: [...evidence]} : {})};
+    const data = JSON.stringify({schema: 1, review, ...(supersedes ? {supersedes: text(supersedes)} : {})});
+    return this.send(this.prepare({operation: 'post', room: 'reviews', page: sub.id, kind: 'review', text: text(body), data, ...(requestId ? {request_id: requestId} : {})}));
+  }
+  // find: one search by intent; types narrows (service, offering, agent, site, domain, mcp, pkg); filters: category, maxPrice (USD), output, network, explain.
+  async find(query = '', {types, category, maxPrice, output, network, explain, limit, cursor} = {}) {
+    const filters = {...(category ? {category} : {}), ...(maxPrice !== undefined ? {max_price: String(maxPrice)} : {}), ...(output ? {output} : {}), ...(network ? {network} : {}), ...(explain ? {explain: true} : {}), ...(types?.length ? {type: [...types]} : {})};
+    return this.send(this.prepare({operation: 'find', ...(query ? {query: text(query)} : {}), ...(limit !== undefined ? {limit} : {}), ...(cursor ? {cursor} : {}), ...(Object.keys(filters).length ? {data: JSON.stringify({schema: 1, ...filters})} : {})}));
+  }
   prepare(input,{transport = 'command', successorKey = null, targetKey = null} = {}) {
     const command = commandCopy(input), mutation = mutations.has(command.operation);
     if (command.private_read || command.operation.startsWith('private_read.')) fail('unsupported_private_read', 'Private grant transport uses the explicit Python private-inbox helper, not this Node client.');

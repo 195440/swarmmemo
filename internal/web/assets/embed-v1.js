@@ -36,16 +36,38 @@
     script.after(el('p', 'SwarmMemo: ' + error.message));
   }
 
+  // Theme values shared by both modes: checked before any is set.
+  function applyTheme(attr) {
+    for (const [name, variable, property] of [['themeHeadingFont', '--sm-heading-font', 'font-family'], ['themeInk', '--sm-ink', 'color'], ['themeAccent', '--sm-accent', 'color']]) {
+      const value = attr[name];
+      if (value === undefined) continue;
+      if (value.length > 200 || /[;{}\\\x00-\x1f]|url\s*\(|var\s*\(/i.test(value) || !CSS.supports(property, value)) throw Error('Invalid theme value: ' + name);
+      host.style.setProperty(variable, value);
+    }
+  }
+  // The official endpoint, plus loopback previews used by the browser suite.
+  function officialOrigin() {
+    const origin = new URL(script.src).origin;
+    if (origin !== 'https://swarmmemo.com' && !/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(origin)) throw Error('Load the official SwarmMemo embed script.');
+    return origin;
+  }
+  // Reviews of a subject (data-subject): embed-reviews.js, an ES module
+  // imported only in that mode, so the comment widget's budget carries none of it.
+  function startReviews(root, attr) {
+    const origin = officialOrigin();
+    applyTheme(attr);
+    return import(origin + '/embed/reviews-v1.js').then(m => m.default({core, el, root, attr, origin}));
+  }
+
   async function start(root) {
     const attr = script.dataset;
+    if (attr.subject !== undefined) return startReviews(root, attr);
     const room = attr.room || '';
     if (!/^(?:[a-z0-9][a-z0-9_-]{0,63}|@[a-f0-9]{64})$/.test(room)) throw Error('Set data-room to a valid SwarmMemo room name.');
     // Match board.slug: underscore is allowed; the first character must be alphanumeric.
     const page = (attr.page || '').toLowerCase().replace(/[^a-z0-9_-]/g, '-').slice(0, 64);
     if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(page)) throw Error('data-page must start with a letter or number after normalization.');
-    const origin = new URL(script.src).origin;
-    // The official endpoint, plus loopback previews used by the browser suite.
-    if (origin !== 'https://swarmmemo.com' && !/^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(origin)) throw Error('Load the official SwarmMemo embed script.');
+    const origin = officialOrigin();
     const title = attr.title || '';
     if (title.length > 500 || /[\x00-\x1f\x7f]/.test(title)) throw Error('data-title must be a short, plain title.');
     let url = '';
@@ -55,12 +77,7 @@
       if (!['https:', 'http:'].includes(parsed.protocol) || parsed.username || parsed.password) throw Error('data-url must be a public HTTP or HTTPS URL.');
       parsed.hash = ''; url = parsed.href;
     }
-    for (const [name, variable, property] of [['themeHeadingFont', '--sm-heading-font', 'font-family'], ['themeInk', '--sm-ink', 'color'], ['themeAccent', '--sm-accent', 'color']]) {
-      const value = attr[name];
-      if (value === undefined) continue;
-      if (value.length > 200 || /[;{}\\\x00-\x1f]|url\s*\(|var\s*\(/i.test(value) || !CSS.supports(property, value)) throw Error('Invalid theme value: ' + name);
-      host.style.setProperty(variable, value);
-    }
+    applyTheme(attr);
     // Colours derive from the ink (the host's text colour unless set), so a dark
     // host gets light text with matching muted text, hairlines and hover tints.
     const style = el('style');

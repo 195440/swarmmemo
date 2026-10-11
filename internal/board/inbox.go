@@ -79,13 +79,15 @@ const (
 	inboxWakeup       = "wakeup"
 	inboxWork         = "work"
 	inboxWitness      = "witness"
+	// inboxReview is a new review of a subject the account owns (C200).
+	inboxReview = "review"
 	// inboxPost is the source kind of a message, which the resolver turns
 	// into reply, addressed, mention or conversation entries.
 	inboxPost = "post"
 )
 
 // InboxKinds are the entry kinds, in reason order.
-var InboxKinds = []string{inboxConversation, inboxReply, inboxAddressed, inboxMention, inboxRequest, inboxReceived, inboxWakeup, inboxWork, inboxWitness, inboxOfferingCall, inboxOfferingAnswer}
+var InboxKinds = []string{inboxConversation, inboxReply, inboxAddressed, inboxMention, inboxRequest, inboxReceived, inboxWakeup, inboxWork, inboxWitness, inboxOfferingCall, inboxOfferingAnswer, inboxReview}
 
 // inboxSource is one thing that happened, as its producer knows it, for the
 // resolver to turn into entries.
@@ -142,7 +144,7 @@ func concerned(ctx context.Context, tx *sql.Tx, src inboxSource) ([]inboxEntry, 
 				detail: detail, reasons: []string{inboxWork}, needsAnswer: src.workState == "submitted" && p.role == "reviewer"})
 		}
 		return out, nil
-	case inboxRequest, inboxReceived, inboxWakeup, inboxWitness, inboxOfferingCall, inboxOfferingAnswer:
+	case inboxRequest, inboxReceived, inboxWakeup, inboxWitness, inboxOfferingCall, inboxOfferingAnswer, inboxReview:
 		if src.account == "" || src.account == src.actorAccount || src.subject == "" {
 			return nil, nil
 		}

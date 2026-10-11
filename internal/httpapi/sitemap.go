@@ -16,8 +16,9 @@ import (
 	"swarmmemo/internal/web"
 )
 
-// The sitemap offers every indexable page: the fixed pages, every listed room
-// and every listed thread root (board/sitemap.go says which). It used to list
+// The sitemap offers every indexable page: the fixed pages, every listed room,
+// every listed subject's /s/ID page while reviews are on, and every listed
+// thread root (board/sitemap.go says which). It used to list
 // only whichever of the newest 100 messages were visible roots, an arbitrary
 // window from the first implementation, so most of the board was never offered.
 //
@@ -41,6 +42,13 @@ type sitemapStore interface {
 	PublicSitemapCounts(context.Context) (int, int, error)
 	PublicSitemapRooms(context.Context, int, int) ([]board.SitemapRoom, error)
 	PublicSitemapPosts(context.Context, int, int, func(board.Message)) error
+}
+
+// sitemapSubjectStore lists the listed subjects (/s/ID), in the order they
+// were listed, each with its newest review's time.
+type sitemapSubjectStore interface {
+	PublicSitemapSubjectCount(context.Context) (int, error)
+	PublicSitemapSubjects(context.Context, int, int) ([]board.SitemapRoom, error)
 }
 
 func sitemapPath(p string) bool { return p == "/sitemap.xml" || sitemapFile.MatchString(p) }
@@ -142,7 +150,7 @@ func (s *Server) buildSitemap(w http.ResponseWriter, r *http.Request) {
 	}
 	fixed := s.sitemapFixedPaths(r.Context())
 	store, ok := s.service.(sitemapStore)
-	rooms, posts := 0, 0
+	rooms, subjects, posts := 0, 0, 0
 	if ok {
 		var err error
 		if rooms, posts, err = store.PublicSitemapCounts(r.Context()); err != nil {
@@ -150,7 +158,15 @@ func (s *Server) buildSitemap(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	total := len(fixed) + rooms + posts
+	subjectStore, _ := s.service.(sitemapSubjectStore)
+	if subjectStore != nil {
+		var err error
+		if subjects, err = subjectStore.PublicSitemapSubjectCount(r.Context()); err != nil {
+			sitemapUnavailable(w)
+			return
+		}
+	}
+	total := len(fixed) + rooms + subjects + posts
 	files := min((total+sitemapURLsPerFile-1)/sitemapURLsPerFile, sitemapMaxFiles)
 	var out bytes.Buffer
 	out.WriteString(xml.Header)
@@ -169,7 +185,7 @@ func (s *Server) buildSitemap(w http.ResponseWriter, r *http.Request) {
 			start, end = (file-1)*sitemapURLsPerFile, min(file*sitemapURLsPerFile, total)
 		}
 		out.WriteString(`<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">`)
-		if err := s.sitemapURLs(r.Context(), &out, store, fixed, rooms, start, end); err != nil {
+		if err := s.sitemapURLs(r.Context(), &out, store, subjectStore, fixed, rooms, subjects, start, end); err != nil {
 			sitemapUnavailable(w)
 			return
 		}
@@ -183,8 +199,9 @@ func (s *Server) buildSitemap(w http.ResponseWriter, r *http.Request) {
 }
 
 // sitemapURLs writes addresses [start,end) of the one ordered list: fixed
-// pages, then rooms by name, then thread roots in posting order.
-func (s *Server) sitemapURLs(ctx context.Context, out *bytes.Buffer, store sitemapStore, fixed []string, rooms, start, end int) error {
+// pages, then rooms by name, then listed subjects in the order they were
+// listed, then thread roots in posting order.
+func (s *Server) sitemapURLs(ctx context.Context, out *bytes.Buffer, store sitemapStore, subjectStore sitemapSubjectStore, fixed []string, rooms, subjects, start, end int) error {
 	entry := func(path string, modified int64) {
 		out.WriteString("<url><loc>")
 		_ = xml.EscapeText(out, []byte(s.cfg.PublicURL+path))
@@ -210,6 +227,16 @@ func (s *Server) sitemapURLs(ctx context.Context, out *bytes.Buffer, store sitem
 		}
 	}
 	head := len(fixed) + rooms
+	if from, to := max(start-head, 0), min(end-head, subjects); subjectStore != nil && from < to {
+		list, err := subjectStore.PublicSitemapSubjects(ctx, from, to-from)
+		if err != nil {
+			return err
+		}
+		for _, sub := range list {
+			entry("/s/"+url.PathEscape(sub.Name), sub.Modified)
+		}
+	}
+	head += subjects
 	if from, to := max(start-head, 0), end-head; from < to {
 		return store.PublicSitemapPosts(ctx, from, to-from, func(m board.Message) {
 			path := "/e/" + url.PathEscape(m.ID)

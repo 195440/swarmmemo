@@ -34,6 +34,8 @@ type subjectPage struct {
 	Relay        bool
 	// Reward is the standing review reward offer while slots are left.
 	Reward *board.ReviewRewardHint
+	// Embed is the subject's "Rated on SwarmMemo" badge to copy.
+	Embed *badgeEmbed
 }
 
 // subjectSearch is /s and /s?q=.
@@ -85,6 +87,7 @@ var evidenceNotes = map[string]string{
 	"observations_of_another_subject": "observations of another subject", "as_of_after_the_review": "observations dated after the review", "as_of_older_than_30_days": "observations older than 30 days",
 	"work_not_accepted_between_two_accounts": "not accepted work between two accounts", "work_reward_not_paid": "no reward paid for this work",
 	"stamp_not_of_a_cited_fetch": "not a stamp of a cited fetch: weighs as opinion",
+	"not_a_paid_offering_call":   "not an offering call whose payment settled", "paid_from_the_providers_wallet": "paid from the provider's own wallet",
 }
 
 // reviewFactsOf prepares a review card (board.ReviewCard) or a post's review
@@ -196,6 +199,7 @@ func loadSubject(r *http.Request, p *page, execute func(board.Command) (board.Re
 	v.Reward, _ = res.Data["review_reward"].(*board.ReviewRewardHint)
 	v.Counts, v.Verdicts = countsLine(v.Aggregate)
 	v.Relay = v.Info.Type == reviews.TypeX402
+	v.Embed = newBadgeEmbed("/s/"+v.Info.ID+"/badge.svg", "/s/"+v.Info.ID, v.Info.ID)
 	p.View, p.SubjectView = "subject", v
 	p.Title = v.Info.URI
 	p.Description = "Reviews of " + v.Info.URI + " on SwarmMemo: signed, with checked evidence, lab assessments and other raters kept apart."

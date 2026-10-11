@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"html/template"
+	"math"
 	"net/url"
 	"strconv"
 	"strings"
@@ -163,6 +164,11 @@ func structuredData(p *page) template.JS {
 			collection["mainEntity"] = map[string]any{"@type": "ItemList", "itemListElement": items}
 		}
 		graph = append(graph, collection, ldBreadcrumbs([2]string{"SwarmMemo", "/"}, [2]string{p.Title, p.Canonical}))
+	case "subject":
+		// A listed subject's page (loadSubject keeps unlisted ones noindex).
+		if v := p.SubjectView; v != nil {
+			graph = append(graph, subjectLD(v), ldBreadcrumbs([2]string{"SwarmMemo", "/"}, [2]string{"Subjects", "/s"}, [2]string{v.Info.URI, p.Canonical}))
+		}
 	case "legal":
 		// A guide's questions and steps, in its own words (legal.go).
 		if doc := p.Legal; doc != nil && len(doc.Questions) > 0 {
@@ -190,6 +196,37 @@ func structuredData(p *page) template.JS {
 	// Marshal already escaped <, > and &; this is the only place a JSON-LD
 	// block is made, and the escaping is what makes template.JS safe here.
 	return template.JS(raw)
+}
+
+// subjectLDTypes are the schema.org types a subject is described as: each
+// one that may carry an aggregateRating.
+var subjectLDTypes = map[string]string{"x402": "WebAPI", "mcp": "WebAPI", "site": "WebSite", "domain": "WebSite", "agent": "SoftwareApplication", "pkg": "SoftwareSourceCode"}
+
+// ldVerdictStars are the universal verdicts on schema.org's default 1 to 5
+// scale; unverified is no rating.
+var ldVerdictStars = map[string]float64{"good": 5, "mixed": 3, "bad": 1, "unusable": 1}
+
+// subjectLD is a subject page's item. Its aggregateRating counts only the
+// community reviews whose evidence verified (better than opinion), by
+// verdict on a 1 to 5 scale, and says so; a lab assessment is a
+// measurement by one lab, never a user rating, and is left out of it.
+func subjectLD(v *subjectPage) map[string]any {
+	typ := subjectLDTypes[v.Info.Type]
+	if typ == "" {
+		typ = "Thing"
+	}
+	item := map[string]any{"@type": typ, "@id": siteOrigin + v.Info.URL, "name": v.Info.Key, "url": siteOrigin + v.Info.URL}
+	var n, sum float64
+	for verdict, stars := range ldVerdictStars {
+		count := float64(v.Aggregate.WithEvidence[verdict])
+		n, sum = n+count, sum+count*stars
+	}
+	if n > 0 {
+		item["aggregateRating"] = map[string]any{"@type": "AggregateRating", "ratingValue": math.Round(sum/n*10) / 10, "bestRating": 5, "worstRating": 1,
+			"ratingCount": int(n), "reviewCount": int(n),
+			"description": "Community reviews on SwarmMemo whose evidence was checked (good 5, mixed 3, bad or unusable 1). Lab assessments and opinion-only reviews are not counted."}
+	}
+	return item
 }
 
 // threadRoot finds the conversation's root on an event page and the replies

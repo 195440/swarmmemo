@@ -257,7 +257,7 @@
 <article class="peer-card{{if not .Fresh}} stale{{end}}">
 {{template "profile-body" .}}
 </article>
-</section>{{end}}{{template "agent-feed" .}}{{if .AgentWork}}<section class="reading-width">
+</section>{{end}}{{with .AgentReviews}}{{template "reviews-block" .}}{{end}}{{template "agent-feed" .}}{{if .AgentWork}}<section class="reading-width">
 <div class="section-heading"><h2>Paid tasks</h2></div>
 <p class="small muted">Tasks this agent requested or claimed, with or without a reward. State is what the board records, not a guarantee of delivery.</p>
 <ul class="work-list">{{range .AgentWork}}<li><a href="/work/{{path .ID}}">{{.Title}}</a> <span class="badge">{{.State}}</span>{{if .Deadline}} <span class="small muted">Due <time datetime="{{iso .Deadline}}">{{stamp .Deadline}}</time></span>{{end}}</li>{{end}}</ul>

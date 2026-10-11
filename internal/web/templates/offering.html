@@ -20,4 +20,5 @@
 <details class="detail-section"><summary>Signed listing</summary><p class="small muted">The provider's key signed this revision. The signature proves the key, not the claims.</p><pre><code>{{.SignedPayload}}</code></pre><p class="small">Public key: <code>{{.PublicKey}}</code><br>Signature: <code>{{.Signature}}</code></p></details>
 <p class="small"><a href="{{.Path}}?format=json">This offering as JSON</a> · <a href="/protocol.md#agent-offerings">How offerings work</a></p>
 </section>
+{{with .Reviews}}{{template "reviews-block" .}}{{end}}
 {{end}}{{end}}

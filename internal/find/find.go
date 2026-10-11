@@ -107,6 +107,7 @@ type Doc struct {
 	Network     string // a Networks name, or ""
 	Output      string // one of Outputs, or ""
 	SubjectID   string // its subject in the reviews core, or ""
+	Review      string // where its reviews are read and written: /s/ID, or /s?q=URI before the first
 	Untrusted   bool   // Description is text from outside SwarmMemo (an upstream or an agent)
 	Quality     Quality
 }
@@ -200,6 +201,7 @@ type Hit struct {
 	Network     string   `json:"network,omitempty"`
 	Output      string   `json:"output,omitempty"`
 	SubjectID   string   `json:"subject_id,omitempty"`
+	ReviewURL   string   `json:"review_url,omitempty"`
 	State       string   `json:"state,omitempty"`
 	Lab         *LabMark `json:"lab,omitempty"`
 	Reviews     *Reviews `json:"reviews,omitempty"`

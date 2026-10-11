@@ -297,3 +297,47 @@ func TestReviewByteSizeExample(t *testing.T) {
 	}
 	t.Logf("lab example: %d bytes", len(data))
 }
+
+// An agent offering on the board's own host (RFC 0017) is the one narrow
+// exception to the people rule (C200): POST /@ALIAS/NAME, lower-cased.
+// Every other own-host @ path, another method, another host or a deeper
+// path stays refused.
+func TestOfferingSubjects(t *testing.T) {
+	s, err := Resolve("POST https://SwarmMemo.com/@Weaver/Echo-1", opt)
+	if err != nil || s.URI() != "x402:POST https://swarmmemo.com/@weaver/echo-1" {
+		t.Fatalf("offering: %v %v", s, err)
+	}
+	if again, err := Resolve(s.URI(), opt); err != nil || again != s {
+		t.Fatalf("not idempotent: %v %v", again, err)
+	}
+	alias, name, ok := OfferingPath(s, opt)
+	if !ok || alias != "weaver" || name != "echo-1" {
+		t.Fatalf("OfferingPath: %q %q %v", alias, name, ok)
+	}
+	fp := strings.Repeat("ab", 32)
+	if s, err := Resolve("x402:POST https://swarmmemo.com/@"+fp+"/echo", opt); err != nil {
+		t.Fatalf("fingerprint alias: %v", err)
+	} else if a, _, ok := OfferingPath(s, opt); !ok || a != fp {
+		t.Fatalf("fingerprint alias path: %q %v", a, ok)
+	}
+	for _, in := range []string{
+		"x402:GET https://swarmmemo.com/@weaver/echo", "x402:POST https://swarmmemo.com/@weaver", "x402:POST https://swarmmemo.com/@weaver/echo/calls",
+		"x402:POST https://swarmmemo.com/%40weaver/echo", "x402:POST https://other.example.com/@weaver/echo", "mcp:https://swarmmemo.com/@weaver/echo",
+		"x402:POST https://swarmmemo.com/@we.aver/echo", "x402:POST https://swarmmemo.com/@weaver/echo_x", "x402:POST https://swarmmemo.com/agent/" + fp,
+	} {
+		var e *Error
+		if _, err := Resolve(in, opt); !errors.As(err, &e) || e.Code != "subject_refused" {
+			t.Errorf("%q: got %v, want subject_refused", in, err)
+		}
+	}
+	for _, sub := range []Subject{{Type: TypeX402, Key: "POST https://other.example.com/@weaver/echo"}, {Type: TypeX402, Key: "GET https://swarmmemo.com/@weaver/echo"}, {Type: TypeSite, Key: "https://swarmmemo.com/"}} {
+		if _, _, ok := OfferingPath(sub, opt); ok {
+			t.Errorf("OfferingPath(%v) = ok", sub)
+		}
+	}
+	for id, want := range map[string]bool{"call:oc_" + strings.Repeat("a", 32): true, "call:oc_" + strings.Repeat("a", 31): false, "work:oc_" + strings.Repeat("a", 32): false, "call:" + strings.Repeat("a", 32): true} {
+		if ValidEvidenceID(id) != want {
+			t.Errorf("ValidEvidenceID(%q) != %v", id, want)
+		}
+	}
+}

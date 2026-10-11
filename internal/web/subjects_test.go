@@ -125,7 +125,7 @@ func TestSubjectPage(t *testing.T) {
 	}
 	// Search: a query that names a subject links it; the list finds it.
 	s := f.get("/s?q=" + strings.ReplaceAll("https://API.example.com/x", ":", "%3A")).Body.String()
-	if !strings.Contains(s, `href="/s/`+reviews.SubjectID("site", "https://api.example.com/")+`"`) || !strings.Contains(s, "no reviews yet") {
+	if !strings.Contains(s, `<code>site:https://api.example.com/</code>`) || !strings.Contains(s, "no reviews yet") || !strings.Contains(s, "Write the first") {
 		t.Fatalf("search resolve: %s", s)
 	}
 	s = f.get("/s?q=api.example").Body.String()

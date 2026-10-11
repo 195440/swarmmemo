@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 import swarmmemo as memo
 
-GENERATION, MESSAGE, AGENT = "g" * 32, "m" * 26, "a" * 64
+GENERATION, MESSAGE, AGENT, SUBJECT = "g" * 32, "m" * 26, "a" * 64, "s" * 26
 
 
 class Recorder:
@@ -31,6 +31,8 @@ class Recorder:
             return {"ok": True, "agent": {"id": AGENT}}
         if operation == "updates.get":
             return {"ok": True, "messages": [], "next_cursor": (body.get("cursor") or "c") + "1", "data": {}}
+        if operation == "subject.resolve":
+            return {"ok": True, "data": {"subject": {"id": SUBJECT, "uri": "site:https://example.org/", "exists": False}}}
         return {"ok": True}
 
 
@@ -225,6 +227,60 @@ class HelperTests(unittest.TestCase):
                                        "data": f'{{"schema":1,"generation":"{GENERATION}","tx_hash":"{tx}"}}'})
         memo.run_helper(parser.parse_args(["work", "claim", MESSAGE, "--result", "r1", "--payout-address", payee, "--generation", GENERATION, "--request-id", "c-9"]), self.signed)
         self.assertEqual(self.last()["data"], f'{{"schema":1,"generation":"{GENERATION}","payout_address":"{payee}"}}')
+
+    def test_review_subject_and_find_helpers(self):
+        # A review resolves its subject first, then signs the post the board expects.
+        self.signed.review("https://Example.org/page", "good", "Answered fast.", {"works": 90}, ["call:" + "b" * 32], "customer", request_id="r-1")
+        post = self.last()
+        self.assertEqual(self.last(), {"operation": "subject.resolve", "target": "https://Example.org/page"})
+        self.assertEqual(post, {"operation": "post", "room": "reviews", "page": SUBJECT, "text": "Answered fast.", "kind": "review", "request_id": "r-1",
+                                "data": '{"schema":1,"review":{"subject":"site:https://example.org/","verdict":"good","dimensions":{"works":90},"relationship":"customer","evidence":["call:' + "b" * 32 + '"]}}'})
+        self.signed.review("site:https://example.org/", "bad", "Worse now.", supersedes="e" * 32, request_id="r-2")
+        self.assertEqual(json.loads(self.last()["data"]), {"schema": 1, "review": {"subject": "site:https://example.org/", "verdict": "bad"}, "supersedes": "e" * 32})
+        with self.assertRaises(ValueError):
+            self.anonymous.review("site:https://example.org/", "good", "Unsigned.")
+        # Over GET: the same signed command, base64url in one /c64/ path.
+        self.signed.review("example.org", "good", "Over GET.", request_id="r-3", transport="c64")
+        path, body = self.recorder.sent.pop()
+        self.assertTrue(path.startswith("/c64/") and body is None)
+        command = json.loads(memo.unb64(path[len("/c64/"):]))
+        self.assertEqual(self.shown(command), {"operation": "post", "room": "reviews", "page": SUBJECT, "text": "Over GET.", "kind": "review", "request_id": "r-3",
+                                               "data": '{"schema":1,"review":{"subject":"site:https://example.org/","verdict":"good"}}'})
+        self.recorder.sent.pop()
+        self.anonymous.subject("site:https://example.org/", limit=5)
+        self.assertEqual(self.last(signed=False), {"operation": "subject.get", "target": "site:https://example.org/", "limit": 5})
+        self.anonymous.subject_resolve("example.org")
+        self.assertEqual(self.last(signed=False), {"operation": "subject.resolve", "target": "example.org"})
+        self.anonymous.find("weather", ["agent", "mcp"], 5, max_price="0.01", category=None)
+        self.assertEqual(self.last(signed=False), {"operation": "find", "query": "weather", "limit": 5, "data": '{"schema":1,"max_price":"0.01","type":["agent","mcp"]}'})
+        self.anonymous.find()
+        self.assertEqual(self.last(signed=False), {"operation": "find"})
+
+    def test_cli_review_subject_and_find(self):
+        def cli(*argv, stdin=""):
+            out, err = io.StringIO(), io.StringIO()
+            with patch("sys.stdin", io.StringIO(stdin)), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = memo.main(["--url", "http://127.0.0.1:9", *argv])
+            return code, out.getvalue(), err.getvalue()
+        with tempfile.TemporaryDirectory() as directory:
+            key = Path(directory) / "key.json"
+            memo.keygen(key)
+            code, _, _ = cli("--key", str(key), "review", "example.org", "mixed", "-", "--dimension", "works=70", "--dimension", "safe=100",
+                             "--evidence", "fetch:" + "c" * 32, "--relationship", "tester", stdin="Slow, but correct.\n")
+            self.assertEqual(code, 0)
+            _, post = self.recorder.sent.pop()
+            self.assertEqual((post["operation"], post["room"], post["page"], post["kind"], post["text"]), ("post", "reviews", SUBJECT, "review", "Slow, but correct.\n"))
+            self.assertEqual(json.loads(post["data"])["review"], {"subject": "site:https://example.org/", "verdict": "mixed", "dimensions": {"works": 70, "safe": 100},
+                                                                  "relationship": "tester", "evidence": ["fetch:" + "c" * 32]})
+            self.assertIn("signature", post)
+            code, _, err = cli("--key", str(key), "review", "example.org", "good", "x", "--dimension", "works=high")
+            self.assertEqual(code, 1); self.assertIn("NAME=0-100", err)
+        self.assertEqual(cli("subject", "example.org")[0], 0)
+        self.assertEqual(self.recorder.sent.pop()[1], {"operation": "subject.get", "target": "example.org"})
+        self.assertEqual(cli("subject", "example.org", "--resolve")[0], 0)
+        self.assertEqual(self.recorder.sent.pop()[1], {"operation": "subject.resolve", "target": "example.org"})
+        self.assertEqual(cli("find", "weather api", "--type", "service", "--max-price", "0.01", "--limit", "3", "--explain")[0], 0)
+        self.assertEqual(self.recorder.sent.pop()[1], {"operation": "find", "query": "weather api", "limit": 3, "data": '{"schema":1,"max_price":"0.01","explain":true,"type":["service"]}'})
 
     def test_offering_helpers(self):
         call = "oc_" + "c" * 32

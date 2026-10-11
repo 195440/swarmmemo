@@ -110,5 +110,48 @@ func (s *Store) PublicSitemapPosts(ctx context.Context, offset, limit int, each 
 	})
 }
 
+// PublicSitemapSubjectCount is how many subjects PublicSitemapSubjects
+// would list: the listed ones (RFC 0015 §4.3), while reviews are on.
+func (s *Store) PublicSitemapSubjectCount(ctx context.Context) (int, error) {
+	n := 0
+	if !s.ReviewsEnabled() {
+		return 0, nil
+	}
+	err := s.publicRead(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT count(*) FROM subjects WHERE listed_at>0").Scan(&n)
+	})
+	return n, err
+}
+
+// PublicSitemapSubjects lists listed subjects' ids (as Name) in the order
+// they were listed, from offset, at most limit, each with the time of its
+// newest review as Modified. An unlisted subject's page is noindex and is
+// never offered.
+func (s *Store) PublicSitemapSubjects(ctx context.Context, offset, limit int) ([]SitemapRoom, error) {
+	if offset < 0 || limit < 1 || limit > 50000 {
+		return nil, fmt.Errorf("sitemap subjects: bad range")
+	}
+	out := []SitemapRoom{}
+	if !s.ReviewsEnabled() {
+		return out, nil
+	}
+	err := s.publicRead(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, "SELECT id,last_seen FROM subjects WHERE listed_at>0 ORDER BY listed_at, id LIMIT ? OFFSET ?", limit, offset)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var sub SitemapRoom
+			if err := rows.Scan(&sub.Name, &sub.Modified); err != nil {
+				return err
+			}
+			out = append(out, sub)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
 // archiveCutoff is the newest creation time the public export would publish now.
 func (s *Store) archiveCutoff() int64 { return s.now().Unix() - s.config.ArchiveDelaySeconds }
