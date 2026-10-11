@@ -105,8 +105,14 @@ func (s *Store) openLedger() error {
 		// Additional accounts allowed to publish imported public posts.
 		ImportersParamsNamespace: {
 			Version:  0,
-			Body:     defaultImporterParams,
-			Validate: func(b []byte) error { _, err := parseImporterParams(b); return err },
+			Body:     defaultAccountList,
+			Validate: func(b []byte) error { _, err := parseAccountList(ImportersParamsNamespace, b); return err },
+		},
+		// The accounts allowed to post lab assessments (reviews.go, RFC 0019).
+		LabsParamsNamespace: {
+			Version:  0,
+			Body:     defaultAccountList,
+			Validate: func(b []byte) error { _, err := parseAccountList(LabsParamsNamespace, b); return err },
 		},
 		// Hosted identity issuance caps (RFC0013 §2.2, hosted.go).
 		HostedParamsNamespace: {

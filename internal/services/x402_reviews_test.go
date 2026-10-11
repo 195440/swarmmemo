@@ -14,7 +14,10 @@ import (
 type fakeReviews struct {
 	asked []string
 	id    string
+	opt   reviews.Options
 }
+
+func (f *fakeReviews) SubjectOptions() reviews.Options { return f.opt }
 
 func (f *fakeReviews) ReviewSummaries(_ context.Context, _ allowance.Querier, subjects []string) (map[string]any, error) {
 	f.asked = subjects
@@ -48,5 +51,20 @@ func TestX402ResourcesNameSubjects(t *testing.T) {
 	}
 	if raw, _ = json.Marshal(got); strings.Contains(string(raw), "subject_id") {
 		t.Fatal("subject_id while REVIEWS is off")
+	}
+}
+
+// A resource names its subject with the board's own subject options, as a
+// review of it would (security review C186 L4): an account page on the
+// board's own host is never a subject.
+func TestX402ResourceSubjectsUseBoardOptions(t *testing.T) {
+	x := &x402{reviews: &fakeReviews{opt: reviews.Options{OwnHosts: []string{"example.com"}}}}
+	ids, _, err := x.resourceSubjects(context.Background(), nil, []*X402Resource{
+		{ID: "own", Method: "GET", URL: "https://example.com/agent/abc"},
+		{ID: "api", Method: "GET", URL: "https://example.com/paid"},
+	})
+	want, _ := reviews.Canonical(reviews.TypeX402, "GET https://example.com/paid", reviews.Options{})
+	if err != nil || ids["own"] != "" || ids["api"] != want.ID {
+		t.Fatalf("subjects %v (%v)", ids, err)
 	}
 }

@@ -141,6 +141,30 @@ func TestSubjectPage(t *testing.T) {
 	}
 }
 
+// A lab review whose record has not recomputed is a self-reported run, never
+// the subject's lab assessment (security review C186 H1).
+func TestSubjectPageSelfReportedLab(t *testing.T) {
+	f := newReviewFixture(t, true)
+	lab := reviewKey(4)
+	f.exec(lab, board.Command{Operation: "agent.register"})
+	account := sha256.Sum256(lab.Public().(ed25519.PublicKey))
+	body, _ := json.Marshal(map[string]any{"schema": 1, "accounts": []string{hex.EncodeToString(account[:])}})
+	if _, err := f.store.SetAllowanceParams(context.Background(), board.LabsParamsNamespace, body, "test lab", 0); err != nil {
+		t.Fatal(err)
+	}
+	rb := reviews.LookupRubric("x402-endpoint", "")
+	uri := "x402:GET https://api.example.com/v1/search"
+	id := f.review(lab, uri, "Lab run.", map[string]any{"verdict": "good", "relationship": "lab", "rubric": map[string]any{"id": rb.ID, "version": rb.Version, "sha256": rb.SHA256}, "score": 84, "band": []int{78, 89}, "grade": "B"})
+	sub, _ := reviews.Resolve(uri, reviews.Options{})
+	page := f.get("/s/" + sub.ID).Body.String()
+	if strings.Contains(page, "<h2>Lab assessment</h2>") || !strings.Contains(page, "Lab run, self-reported") || !strings.Contains(page, ">self-reported</span>") {
+		t.Fatalf("self-reported lab run: %s", page)
+	}
+	if e := f.get("/e/" + id).Body.String(); !strings.Contains(e, ">self-reported</span>") {
+		t.Fatalf("/e/ID lab card without self-reported: %s", e)
+	}
+}
+
 func TestRubricPages(t *testing.T) {
 	f := newReviewFixture(t, true)
 	rb := reviews.LookupRubric("x402-endpoint", "")

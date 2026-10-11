@@ -19,16 +19,19 @@ import (
 
 // subjectPage is /s/ID as the template shows it.
 type subjectPage struct {
-	Info       board.SubjectInfo
-	Lab        *board.ReviewCard
-	LabRuns    int
-	Others     []board.ReviewCard
-	Reviews    []board.ReviewCard
-	Aggregate  board.ReviewAggregate
-	Counts     string
-	Verdicts   string
-	NextCursor string
-	Relay      bool
+	Info board.SubjectInfo
+	// Lab is the newest lab assessment whose record recomputed; without
+	// one, SelfReported is the newest lab run, shown as its lab's claim.
+	Lab          *board.ReviewCard
+	SelfReported *board.ReviewCard
+	LabRuns      int
+	Others       []board.ReviewCard
+	Reviews      []board.ReviewCard
+	Aggregate    board.ReviewAggregate
+	Counts       string
+	Verdicts     string
+	NextCursor   string
+	Relay        bool
 }
 
 // subjectSearch is /s and /s?q=.
@@ -42,17 +45,19 @@ type subjectSearch struct {
 // reviewFacts is a review's structured part, ready for the page.
 type reviewFacts struct {
 	Verdict, LabVerdict, Relationship, Raised string
-	Lab                                       bool
-	Score                                     *int
-	Band                                      []int
-	Grade                                     string
-	Flags                                     []string
-	Dims                                      []dimFact
-	Evidence                                  []evidenceFact
-	Rubric                                    *board.ReviewRubric
-	Record                                    *evidenceFact
-	Source                                    *reviews.Source
-	Observations                              int
+	// Lab is a lab assessment; Recomputed, that its record recomputed to
+	// what it claims. A lab without it is self-reported.
+	Lab, Recomputed bool
+	Score           *int
+	Band            []int
+	Grade           string
+	Flags           []string
+	Dims            []dimFact
+	Evidence        []evidenceFact
+	Rubric          *board.ReviewRubric
+	Record          *evidenceFact
+	Source          *reviews.Source
+	Observations    int
 }
 
 type dimFact struct {
@@ -73,7 +78,11 @@ var evidenceNotes = map[string]string{
 	"fetch_of_another_site": "a fetch of another site", "not_your_public_work": "not public work of this reviewer's", "request_does_not_name_the_subject": "the request does not name this subject",
 	"not_your_stamp": "not a stamp of this reviewer's", "on-chain payments are not checked yet": "on-chain payments are not checked yet",
 	"not_your_doc_version": "no such doc version of this reviewer's", "record_unreadable": "the record could not be read", "not_observations_of_this_rubric": "not observations for this rubric",
-	"recomputed_result_differs": "recomputed with the rubric, the result differs",
+	"recomputed_result_differs":       "recomputed with the rubric, the result differs",
+	board.RecordPending:               "waiting to be recomputed",
+	"observations_of_another_subject": "observations of another subject", "as_of_after_the_review": "observations dated after the review", "as_of_older_than_30_days": "observations older than 30 days",
+	"work_not_accepted_between_two_accounts": "not accepted work between two accounts", "work_reward_not_paid": "no reward paid for this work",
+	"stamp_not_of_a_cited_fetch": "not a stamp of a cited fetch: weighs as opinion",
 }
 
 // reviewFactsOf prepares a review card (board.ReviewCard) or a post's review
@@ -100,10 +109,17 @@ func reviewFactsOf(v any) *reviewFacts {
 	}
 	for _, e := range m.Evidence {
 		reason, _ := e.Detail["reason"].(string)
+		if note, ok := e.Detail["note"].(string); ok {
+			reason = note
+		}
 		fact := evidenceFact{ID: e.ID, Class: strings.ReplaceAll(e.Class, "_", " "), State: e.State, Note: evidenceNotes[reason]}
+		if e.Detail["counted_for"] != nil {
+			fact.Note = "already counted for another review"
+		}
 		if strings.HasPrefix(e.ID, board.RecordEvidencePrefix) {
 			if e.State == "verified" {
-				fact.Note = "recomputed with the rubric: score, band, grade, verdict and flags match"
+				f.Recomputed = true
+				fact.Note = "the score, band, grade, verdict and flags recompute from the lab's published observations with the rubric; that checks the arithmetic, not the observations"
 			}
 			f.Record = &fact
 			continue
@@ -168,6 +184,9 @@ func loadSubject(r *http.Request, p *page, execute func(board.Command) (board.Re
 	}
 	runs, _ := res.Data["lab_runs"].([]board.ReviewCard)
 	v.LabRuns = len(runs)
+	if v.Lab == nil && len(runs) > 0 {
+		v.SelfReported = &runs[0]
+	}
 	v.Others, _ = res.Data["other_raters"].([]board.ReviewCard)
 	v.Reviews, _ = res.Data["reviews"].([]board.ReviewCard)
 	v.Aggregate, _ = res.Data["aggregate"].(board.ReviewAggregate)

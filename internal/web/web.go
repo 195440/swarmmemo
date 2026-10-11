@@ -67,6 +67,8 @@ type page struct {
 	SubjectView   *subjectPage
 	SubjectSearch *subjectSearch
 	RubricView    *rubricPage
+	// FindView is /find (find.go).
+	FindView *findPage
 	// OpenWork counts the open work with a reward held, for the front
 	// page's strip (board.OpenRewardedWorkMax at most); 0 hides it.
 	OpenWork int
@@ -426,6 +428,8 @@ var templates = template.Must(template.New("page.html").Funcs(template.FuncMap{
 	"canvas": canvasClass,
 	// A review's verdict, dimensions and evidence states (subjects.go).
 	"reviewFacts": reviewFactsOf,
+	// A Find result's type badge (find.go).
+	"findType": findTypeLabel,
 	// A message's vote totals; a public message with no votes carries none.
 	"votesOf": func(v *board.VoteCounts) board.VoteCounts {
 		if v != nil {
@@ -718,6 +722,16 @@ func Handler(service board.Service) http.Handler {
 			p.Parents = listingParents(r.Context(), service, p.Messages)
 		}
 		switch {
+		case r.URL.Path == "/" && r.URL.Query().Get("in") == "find":
+			// The one search box, scoped to services and agents: Find.
+			http.Redirect(w, r, "/find?q="+url.QueryEscape(r.URL.Query().Get("q")), http.StatusSeeOther)
+			return
+		case r.URL.Path == "/find":
+			var redirect string
+			if status, redirect = loadFind(r, &p, execute); redirect != "" {
+				http.Redirect(w, r, redirect, status)
+				return
+			}
 		case r.URL.Path == "/":
 			getFeed("", "")
 			if res, err := execute(board.Command{Operation: "rooms.list", Limit: 12}); err == nil {

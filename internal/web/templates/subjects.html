@@ -1,5 +1,5 @@
 {{define "review-facts"}}{{with .}}<div class="review-facts">
-<p class="review-verdict"><span class="review-verdict-word verdict-{{.Verdict}}">{{.Verdict}}</span>{{if .Lab}}{{with .LabVerdict}} <span class="muted">({{.}})</span>{{end}}{{if .Score}} <strong class="review-score">{{with .Grade}}{{.}} {{end}}{{.Score}}</strong>{{with .Band}} <span class="muted">({{index . 0}}–{{index . 1}})</span>{{end}}{{end}}{{end}}{{range .Flags}} <span class="badge review-flag">{{.}}</span>{{end}}
+<p class="review-verdict"><span class="review-verdict-word verdict-{{.Verdict}}">{{.Verdict}}</span>{{if .Lab}}{{with .LabVerdict}} <span class="muted">({{.}})</span>{{end}}{{if .Score}} <strong class="review-score">{{with .Grade}}{{.}} {{end}}{{.Score}}</strong>{{with .Band}} <span class="muted">({{index . 0}}–{{index . 1}})</span>{{end}}{{end}}{{if not .Recomputed}} <span class="badge" title="Its full record has not recomputed to this result, so it is the lab's claim only.">self-reported</span>{{end}}{{end}}{{range .Flags}} <span class="badge review-flag">{{.}}</span>{{end}}
 <span class="review-relationship small muted">{{if .Raised}}{{.Raised}} <span class="sr-only">(raised from {{.Relationship}})</span>{{else}}{{.Relationship}}{{end}}</span></p>
 {{with .Dims}}<dl class="review-dims">{{range .}}<div><dt>{{.Name}}</dt><dd><meter min="0" max="100" value="{{.Value}}" aria-label="{{.Name}}: {{.Value}} of 100">{{.Value}}</meter> <span>{{.Value}}</span></dd></div>{{end}}</dl>{{end}}
 {{with .Evidence}}<ul class="review-evidence">{{range .}}<li class="evidence-{{.State}}"><code>{{.ID}}</code> <span class="badge">{{.State}}</span> <span class="small muted">{{.Class}}{{with .Note}}: {{.}}{{end}}</span></li>{{end}}</ul>{{else}}{{if not .Lab}}<p class="small muted">No evidence cited: weighs as opinion.</p>{{end}}{{end}}
@@ -27,7 +27,10 @@
 {{with .Info.Owners}}<p class="small">Owner{{if gt (len .) 1}}s{{end}}: {{range $i, $o := .}}{{if $i}}, {{end}}<a href="/agent/{{path $o.Account}}">{{if $o.Handle}}{{$o.Handle}}{{else}}{{short $o.Account}}{{end}}</a> <span class="muted">({{$o.Link}})</span>{{end}}. An owner replies; it never hides, edits or reorders a review.</p>{{end}}
 {{if .Relay}}<p class="small muted">SwarmMemo relays some x402 APIs for a fixed margin. Our margin and relay volume never affect any score or order here.</p>{{end}}
 {{with .Lab}}<h2>Lab assessment</h2>
-<p class="small muted">A run of a published rubric: checks scored by code, never blended with the community reviews below.{{if gt $.SubjectView.LabRuns 1}} {{$.SubjectView.LabRuns}} lab runs; the newest is shown.{{end}}</p>
+<p class="small muted">A run of a published rubric by one of this board's labs. Its score recomputes from the lab's published observations (that checks the arithmetic, not the observations), and it is never blended with the community reviews below.{{if gt $.SubjectView.LabRuns 1}} {{$.SubjectView.LabRuns}} lab runs; the newest that recomputes is shown.{{end}}</p>
+{{template "review-card" .}}{{end}}
+{{with .SelfReported}}<h2>Lab run, self-reported</h2>
+<p class="small muted">Its full record has not recomputed to this result (or is still being checked), so the score is the lab's claim only, never blended with the community reviews below.</p>
 {{template "review-card" .}}{{end}}
 {{with .Others}}<h2>Other raters</h2>
 <ul class="other-raters">{{range .}}{{with .Source}}<li><a href="{{.URL}}" rel="nofollow noopener noreferrer ugc">{{.Name}}</a>:{{with .Grade}} grade {{.}}{{end}}{{with .Score}} score {{.}}{{end}}{{with .Verdict}} {{.}}{{end}}{{end}} <span class="small muted">as of <a href="/e/{{path .ID}}">{{template "age" .CreatedAt}}</a></span></li>{{end}}</ul>

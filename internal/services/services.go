@@ -37,6 +37,7 @@ import (
 
 	"swarmmemo/internal/allowance"
 	"swarmmemo/internal/corroborate"
+	"swarmmemo/internal/reviews"
 )
 
 // Schema is migration fragment C (RFC0012 §7), applied after ledger.Schema:
@@ -332,7 +333,10 @@ type Deps struct {
 
 // ReviewSummarizer is the board's reviews index, read on the read's own
 // querier: each subject id that has reviews maps to its compact summary.
+// SubjectOptions are the board's own, so a resource names the subject a
+// review of it would (its own hosts' account pages are never subjects).
 type ReviewSummarizer interface {
+	SubjectOptions() reviews.Options
 	ReviewSummaries(ctx context.Context, q allowance.Querier, subjects []string) (map[string]any, error)
 }
 

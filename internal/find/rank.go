@@ -1,0 +1,262 @@
+package find
+
+// Ranking. Relevance is BM25 over the best candidate's, so the best match
+// is 1. Quality q, from -1 to 1, adds q × QualityShift: it can only
+// reorder results within 2 × QualityShift of each other. Down (our calls
+// fail, or the lab says down) and the lab's avoid set q to -1: they sink
+// within their band, and are never hidden.
+
+import (
+	"fmt"
+	"math"
+	"slices"
+	"sort"
+	"strings"
+)
+
+// standingValue is an agent's tier, as quality.
+var standingValue = map[string]float64{"trusted": 1, "proven": 0.6, "signed": 0.2}
+
+// quality is d's q with its parts.
+func quality(d *Doc) (float64, map[string]any) {
+	qd := d.Quality
+	parts := map[string]any{}
+	var sum float64
+	var n int
+	add := func(name string, v float64) {
+		v = math.Max(-1, math.Min(1, v))
+		parts[name] = round4(v)
+		sum += v
+		n++
+	}
+	sink := ""
+	if qd.HasLab() {
+		parts["lab_verdict"] = qd.LabVerdict
+		switch qd.LabVerdict {
+		case "avoid", "down":
+			sink = "lab " + qd.LabVerdict
+		}
+		if qd.LabLower >= 0 {
+			parts["lab_band_lower"] = qd.LabLower
+			add("lab", float64(qd.LabLower-50)/50)
+		}
+	}
+	if qd.Reviews > 0 {
+		parts["reviews"] = qd.Reviews
+		parts["reviews_verdict_mean"] = round4(qd.ReviewMean)
+		parts["reviews_weight"] = round4(qd.ReviewWeight)
+		if qd.ReviewWeight > 0 {
+			add("community", (qd.ReviewMean-0.5)*2)
+		}
+	}
+	if v, ok := standingValue[qd.Standing]; ok {
+		parts["standing_tier"] = qd.Standing
+		add("standing", v)
+	}
+	switch qd.State {
+	case "up":
+		parts["state"] = "up"
+		add("up", 0.3)
+	case "down":
+		parts["state"] = "down"
+		sink = "down"
+	}
+	if sink != "" {
+		parts["sinks"] = sink
+		return -1, parts
+	}
+	if n == 0 {
+		return 0, parts
+	}
+	return sum / float64(n), parts
+}
+
+// scored is one ranked candidate.
+type scored struct {
+	doc     *Doc
+	bm25    float64
+	rel     float64
+	q       float64
+	score   float64
+	parts   map[string]any
+	matched []string
+	fields  []string
+}
+
+// rank orders the candidates. words are the query's words (for the why and
+// the explain); with none, relevance is 1 for every candidate.
+func (ix *Index) rank(cands []match, words []string) []scored {
+	best := 0.0
+	for _, m := range cands {
+		best = math.Max(best, -m.bm25)
+	}
+	out := make([]scored, 0, len(cands))
+	for _, m := range cands {
+		d := &ix.docs[m.doc]
+		s := scored{doc: d, bm25: m.bm25, rel: 1}
+		if best > 0 {
+			s.rel = -m.bm25 / best
+		}
+		s.q, s.parts = quality(d)
+		s.score = s.rel + QualityShift*s.q
+		s.matched, s.fields = matchedWords(d, words, ix.vocab)
+		out = append(out, s)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.score != b.score {
+			return a.score > b.score
+		}
+		if a.rel != b.rel {
+			return a.rel > b.rel
+		}
+		if a.doc.Name != b.doc.Name {
+			return a.doc.Name < b.doc.Name
+		}
+		return a.doc.ID < b.doc.ID
+	})
+	return out
+}
+
+// matchedWords are the words d matches (a word, its stem-like prefix or a
+// category it stands for) and the fields they are in.
+func matchedWords(d *Doc, words []string, v Vocab) ([]string, []string) {
+	fields := []struct{ name, text string }{{"name", d.Name}, {"category", d.Category}, {"description", d.Description}, {"url", d.Terms}}
+	var matched, in []string
+	for _, w := range words {
+		probe := w
+		if r := []rune(w); len(r) > 5 {
+			probe = string(r[:5]) // a crude stem: "forecasts" finds "forecast"
+		}
+		hit := false
+		for _, f := range fields {
+			t := strings.ToLower(f.text)
+			ok := strings.Contains(t, probe)
+			if !ok && f.name == "category" {
+				ok = slices.Contains(v.synonyms(w), d.Category)
+			}
+			if ok {
+				hit = true
+				if !slices.Contains(in, f.name) {
+					in = append(in, f.name)
+				}
+			}
+		}
+		if hit {
+			matched = append(matched, w)
+		}
+	}
+	order := []string{"name", "category", "description", "url"}
+	slices.SortFunc(in, func(a, b string) int { return slices.Index(order, a) - slices.Index(order, b) })
+	return matched, in
+}
+
+// hit is s as the wire shows it.
+func (s scored) hit(explain bool) Hit {
+	d := s.doc
+	h := Hit{Type: d.Type, Kind: d.Kind, ID: d.ID, Name: d.Name, Description: d.Description, Category: d.Category, URL: d.URL,
+		PriceText: d.PriceText, Network: d.Network, Output: d.Output, SubjectID: d.SubjectID, State: d.Quality.State,
+		Standing: d.Quality.Standing, Untrusted: d.Untrusted, Score: round4(s.score)}
+	if h.Category == "other" {
+		h.Category = ""
+	}
+	if d.Price >= 0 {
+		h.Price = FormatUSD(d.Price)
+		if h.PriceText == "" {
+			h.PriceText = usdText(d.Price) + " a call"
+			if d.Price == 0 {
+				h.PriceText = "free"
+			}
+		}
+	}
+	if q := d.Quality; q.HasLab() {
+		h.Lab = &LabMark{Verdict: q.LabVerdict, Grade: q.LabGrade}
+		if q.LabLower >= 0 {
+			lower := q.LabLower
+			h.Lab.Lower = &lower
+		}
+	}
+	if q := d.Quality; q.Reviews > 0 {
+		h.Reviews = &Reviews{Count: q.Reviews, Mean: round4(q.ReviewMean), Word: reviewWord(q)}
+	}
+	h.Why = s.why()
+	if explain {
+		h.Explain = &Explain{BM25: s.bm25, Relevance: round4(s.rel), Matched: s.matched, Fields: s.fields, Quality: s.parts,
+			Q: round4(s.q), Shift: round4(QualityShift * s.q), Score: round4(s.score), Rule: "score = relevance + 0.1 × q"}
+	}
+	return h
+}
+
+// usdText is a price as people read it: at least cents ("$0.50", "$0.002").
+func usdText(micro int64) string {
+	s := FormatUSD(micro)
+	whole, frac, _ := strings.Cut(s, ".")
+	for len(frac) < 2 {
+		frac += "0"
+	}
+	return "$" + whole + "." + frac
+}
+
+// reviewWord sums the community's verdict mean in a word.
+func reviewWord(q Quality) string {
+	switch mean := q.ReviewMean; {
+	case q.ReviewWeight <= 0:
+		return "not weighed yet"
+	case mean >= 0.65:
+		return "mostly good"
+	case mean <= 0.35:
+		return "mostly bad"
+	}
+	return "mixed"
+}
+
+// why is the one line that says why s is here and where it stands.
+func (s scored) why() string {
+	d := s.doc
+	var parts []string
+	switch {
+	case len(s.matched) > 0:
+		quoted := make([]string, len(s.matched))
+		for i, w := range s.matched {
+			quoted[i] = "“" + w + "”"
+		}
+		where := ""
+		if len(s.fields) > 0 {
+			where = " in its " + strings.Join(s.fields, ", ")
+		}
+		parts = append(parts, "Matches "+strings.Join(quoted, ", ")+where)
+	case s.bm25 != 0:
+		parts = append(parts, "Matches your words")
+	default:
+		parts = append(parts, "Fits your filters")
+	}
+	q := d.Quality
+	switch {
+	case q.HasLab() && q.LabGrade != "":
+		parts = append(parts, fmt.Sprintf("lab grade %s (%s)", q.LabGrade, q.LabVerdict))
+	case q.HasLab():
+		parts = append(parts, "lab: "+q.LabVerdict)
+	}
+	if q.Reviews > 0 {
+		noun := "reviews"
+		if q.Reviews == 1 {
+			noun = "review"
+		}
+		parts = append(parts, fmt.Sprintf("%d %s, %s", q.Reviews, noun, reviewWord(q)))
+	}
+	if q.Standing != "" {
+		parts = append(parts, q.Standing+" standing")
+	}
+	switch {
+	case q.State == "down" && q.StateNote != "":
+		parts = append(parts, "down: "+q.StateNote)
+	case q.State == "down":
+		parts = append(parts, "down")
+	case q.StateNote != "":
+		parts = append(parts, q.StateNote)
+	}
+	if s.q < 0 && q.State != "down" && q.HasLab() && (q.LabVerdict == "avoid" || q.LabVerdict == "down") {
+		parts = append(parts, "ranked lower")
+	}
+	return strings.Join(parts, " · ")
+}

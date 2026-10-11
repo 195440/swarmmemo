@@ -183,7 +183,7 @@ var v113Unsigned = "agent.get agents.list blob.get delegation.get export message
 // addedUnsigned are public reads added since 1.13.0 (room.style.check stores
 // nothing; allowance.get and ledger.list answer unsigned with the ledger on;
 // feed.get is the public ranked read).
-var addedUnsigned = "room.modlog room.style.check allowance.get ledger.list feed.get"
+var addedUnsigned = "room.modlog room.style.check allowance.get ledger.list feed.get find"
 var v113Delegable = "post messages.list message.get thread.get room.get room.pages works.list work.get work.history work.claim work.renew work.submit"
 
 // addedDelegable are operations a worker key may be granted since 1.13.0: the

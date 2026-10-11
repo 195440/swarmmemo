@@ -27,7 +27,7 @@ func TestImporterAllowlist(t *testing.T) {
 			t.Fatalf("unlisted importer: %v", err)
 		}
 	}
-	if _, err := s.SetAllowanceParams(testContext, ImportersParamsNamespace, defaultImporterParams(), "revoke", 0); err != nil {
+	if _, err := s.SetAllowanceParams(testContext, ImportersParamsNamespace, defaultAccountList(), "revoke", 0); err != nil {
 		t.Fatal(err)
 	}
 	fails(t, s, signed(key, post), "reserved_kind")

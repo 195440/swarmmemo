@@ -482,6 +482,8 @@ func (s *Server) mcpToolsWith(p mcpProfile, aliases bool) []mcpToolSpec {
 	list = append(list, s.offeringToolSpecs(p)...)
 	// Subjects and reviews (RFC 0019, mcp_reviews.go), while they are on.
 	list = append(list, s.reviewToolSpecs(p)...)
+	// Find (find.go): one search over everything above and the catalogue.
+	list = append(list, s.findToolSpecs()...)
 	if p.core {
 		for i := range list {
 			list[i].Desc = coreDescription(list[i].Desc)
@@ -1025,6 +1027,7 @@ func (s *Server) newMCPServer(p mcpProfile, instructions string) *mcp.Server {
 	}
 	s.addOfferingTools(server, tool, p, run)
 	s.addReviewTools(server, tool, p, run)
+	s.addFindTool(server, tool, run)
 	return server
 }
 

@@ -1,0 +1,320 @@
+// Package find is Find: one intent search over everything SwarmMemo can
+// rate or call (its own tools, the paid x402 APIs it relays, agent
+// offerings, agents, and the reviewed sites, domains, MCP servers and
+// packages of the reviews core).
+//
+// A query goes through three steps, each its own part of this package:
+//
+//  1. Intent (intent.go, parse.go): the query becomes applied filters (type,
+//     category, max price, output, network) and a clean text query. A small
+//     model does it when one is configured, with a strict JSON answer, a hard
+//     timeout, a cache and a budget; the deterministic parser does it
+//     otherwise, so search never depends on the model. The filters are
+//     always returned, and every one can be set or cleared by the caller.
+//  2. Matching (index.go): SQLite FTS5 with BM25 over an index built from
+//     the sources (Source), never a second copy of the truth: it is rebuilt
+//     from them every few minutes. Query words are expanded with the
+//     category word lists (synonyms), the one source of categories.
+//  3. Ranking (rank.go): relevance first. Quality (the lab grade's lower
+//     edge, the community review aggregate, standing for agents, and up or
+//     down) moves a result by at most QualityShift, so it only reorders close
+//     matches; down or avoid sinks, never hides. SwarmMemo's margin and relay
+//     volume are never inputs. Every result says why in one line.
+//
+// Embeddings are a hook (Embedder), not shipped: see the Embedder comment.
+package find
+
+import (
+	"context"
+	"encoding/json"
+	"math"
+	"strconv"
+	"strings"
+)
+
+// Types of result, as the wire names them. TypeService is a SwarmMemo
+// tool or a paid x402 API (both called with service.call), told apart by
+// Kind.
+const (
+	TypeService  = "service"
+	TypeOffering = "offering"
+	TypeAgent    = "agent"
+	TypeSite     = "site"
+	TypeDomain   = "domain"
+	TypeMCP      = "mcp"
+	TypePkg      = "pkg"
+)
+
+// Types are every result type, in display order.
+var Types = []string{TypeService, TypeOffering, TypeAgent, TypeSite, TypeDomain, TypeMCP, TypePkg}
+
+// Service kinds.
+const (
+	KindTool = "tool" // a SwarmMemo tool, swarmmemo:SERVICE.METHOD
+	KindX402 = "x402" // a paid API the x402 relay calls
+)
+
+// Outputs a filter may ask for.
+var Outputs = []string{"json", "text", "html", "image", "audio", "video"}
+
+// Networks a filter may name, and the CAIP-2 ids they stand for.
+var Networks = map[string]string{
+	"eip155:8453": "base", "eip155:84532": "base-sepolia", "eip155:137": "polygon", "eip155:80002": "polygon-amoy",
+	"eip155:1": "ethereum", "eip155:10": "optimism", "eip155:42161": "arbitrum",
+	"solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp": "solana",
+}
+
+// NetworkName is the short name of a CAIP-2 network id or a short name;
+// "" for anything else.
+func NetworkName(id string) string {
+	if n, ok := Networks[id]; ok {
+		return n
+	}
+	for _, n := range Networks {
+		if n == strings.ToLower(id) {
+			return n
+		}
+	}
+	return ""
+}
+
+// Bounds.
+const (
+	QueryMaxBytes = 200 // a query, as every other search box
+	PageDefault   = 20
+	PageMax       = 50
+	OffsetMax     = 200 // results past it are never ranked
+	// Unpriced is Doc.Price for an entry without a USD price per call.
+	Unpriced = -1
+	// QualityShift is the most quality moves a result, in relevance units
+	// (the best match is 1): two results whose relevance differs by more
+	// than 2×QualityShift never swap.
+	QualityShift = 0.1
+)
+
+// Doc is one entry of the index, as a source gives it.
+type Doc struct {
+	Type        string // one of Types
+	Kind        string // a service's kind: KindTool or KindX402
+	ID          string // unique within Type
+	Name        string
+	Description string
+	Category    string // a category name, or ""
+	URL         string // its page: a path on this board, or the subject's page
+	Terms       string // more words to match: a URL's host and path, keywords, capabilities
+	Price       int64  // micro-USD per call; Unpriced when unknown or not sold per call
+	PriceText   string // the price as shown, when it is not in USD ("5 credits")
+	Network     string // a Networks name, or ""
+	Output      string // one of Outputs, or ""
+	SubjectID   string // its subject in the reviews core, or ""
+	Untrusted   bool   // Description is text from outside SwarmMemo (an upstream or an agent)
+	Quality     Quality
+}
+
+// Quality is what the ranking may weigh, all of it public.
+type Quality struct {
+	// State is up, down or unknown: our own calls (x402), availability.
+	State     string
+	StateNote string
+	// The newest lab assessment: its verdict word (proceed, caution, avoid,
+	// down, unverified), grade and band's lower edge (-1: none).
+	LabVerdict string
+	LabGrade   string
+	LabLower   int
+	// The community reviews: their count, the core's aggregate verdict mean
+	// (Bayesian, 0 to 1) and the weight behind it; Reviews 0 means none, and
+	// a zero weight (no reviewer's review counts yet) leaves the mean the
+	// prior, which says nothing.
+	Reviews      int
+	ReviewMean   float64
+	ReviewWeight float64
+	// Standing is an agent's tier name (trusted, proven, signed), or "".
+	Standing string
+}
+
+// HasLab reports whether a lab assessment is known.
+func (q Quality) HasLab() bool { return q.LabVerdict != "" }
+
+// Filters are the applied filters. Every field is always on the wire, empty
+// when it does not apply.
+type Filters struct {
+	Types    []string `json:"type"`
+	Category string   `json:"category"`
+	MaxPrice string   `json:"max_price"` // USD, a decimal string; "" none
+	Output   string   `json:"output"`
+	Network  string   `json:"network"`
+}
+
+// maxMicro is MaxPrice in micro-USD; -1 when none.
+func (f Filters) maxMicro() int64 {
+	if f.MaxPrice == "" {
+		return -1
+	}
+	n, ok := ParseUSD(f.MaxPrice)
+	if !ok {
+		return -1
+	}
+	return n
+}
+
+// Empty reports whether no filter applies.
+func (f Filters) Empty() bool {
+	return len(f.Types) == 0 && f.Category == "" && f.MaxPrice == "" && f.Output == "" && f.Network == ""
+}
+
+// Request is one search.
+type Request struct {
+	Query string
+	// Set are the filters the caller set explicitly, by wire name; they
+	// override what the parser finds. A set field with an empty value clears
+	// that filter ("any" on the wire).
+	Set     Filters
+	SetKeys map[string]bool
+	// Parse is auto (the default: the model when it is available and the
+	// query reads as a sentence, else the rules), rules, or off (the query is
+	// the text, as given).
+	Parse   string
+	Explain bool
+	Limit   int
+	Offset  int
+}
+
+// Parse modes.
+const (
+	ModeAuto  = "auto"
+	ModeRules = "rules"
+	ModeOff   = "off"
+)
+
+// Hit is one result.
+type Hit struct {
+	Type        string   `json:"type"`
+	Kind        string   `json:"kind,omitempty"`
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Category    string   `json:"category,omitempty"`
+	URL         string   `json:"url"`
+	Price       string   `json:"price,omitempty"` // USD per call, a decimal string
+	PriceText   string   `json:"price_text,omitempty"`
+	Network     string   `json:"network,omitempty"`
+	Output      string   `json:"output,omitempty"`
+	SubjectID   string   `json:"subject_id,omitempty"`
+	State       string   `json:"state,omitempty"`
+	Lab         *LabMark `json:"lab,omitempty"`
+	Reviews     *Reviews `json:"reviews,omitempty"`
+	Standing    string   `json:"standing,omitempty"`
+	Why         string   `json:"why"`
+	Score       float64  `json:"score"`
+	Untrusted   bool     `json:"description_is_untrusted,omitempty"`
+	Explain     *Explain `json:"explain,omitempty"`
+}
+
+// LabMark is the newest lab assessment, as a result shows it.
+type LabMark struct {
+	Verdict string `json:"verdict"`
+	Grade   string `json:"grade,omitempty"`
+	Lower   *int   `json:"band_lower,omitempty"`
+}
+
+// Reviews is the community reviews' summary, as a result shows it.
+type Reviews struct {
+	Count int     `json:"count"`
+	Mean  float64 `json:"verdict_mean"`
+	Word  string  `json:"word"` // mostly good, mixed, mostly bad, or not weighed yet
+}
+
+// Explain is a result's score with its parts (explain=true).
+type Explain struct {
+	BM25      float64        `json:"bm25"`
+	Relevance float64        `json:"relevance"` // BM25 over the best match's, 0 to 1
+	Matched   []string       `json:"matched,omitempty"`
+	Fields    []string       `json:"fields,omitempty"`
+	Quality   map[string]any `json:"quality"`
+	Q         float64        `json:"q"`     // -1 to 1
+	Shift     float64        `json:"shift"` // Q × QualityShift
+	Score     float64        `json:"score"` // relevance + shift
+	Rule      string         `json:"rule"`
+}
+
+// Answer is a search's answer.
+type Answer struct {
+	Query      string         `json:"query"`
+	Text       string         `json:"text"`
+	Filters    Filters        `json:"filters"`
+	ParsedBy   string         `json:"parsed_by"` // model, rules or off
+	Cached     bool           `json:"parse_cached,omitempty"`
+	ParseNote  string         `json:"parse_note,omitempty"`
+	Results    []Hit          `json:"results"`
+	Matched    int            `json:"matched"`
+	NextCursor string         `json:"next_cursor,omitempty"`
+	Index      IndexInfo      `json:"index"`
+	Order      string         `json:"order"`
+	Untrusted  bool           `json:"text_is_untrusted"`
+	Expanded   map[string]any `json:"expanded,omitempty"`
+}
+
+// IndexInfo says what was searched.
+type IndexInfo struct {
+	BuiltAt int64          `json:"built_at"`
+	Docs    map[string]int `json:"docs"`
+	Match   string         `json:"match"`
+}
+
+// OrderNote is the ranking rule in one sentence, on every answer.
+const OrderNote = "relevance first (BM25 over names, categories, descriptions and URLs); quality (lab band's lower edge, the community reviews' verdict mean, an agent's standing, up or down) moves a result by at most 0.1 of the best match's relevance, so it reorders only close matches; down or avoid sinks, never hides; SwarmMemo's margin and relay volume are never inputs"
+
+// Embedder is the hook for semantic matching: a vector per text, cached by
+// the caller. None ships: a local model needs cgo or a runtime the static,
+// CGO-free ARM build does not carry, and the inference upstreams serve chat
+// completions only, so BM25 with category synonyms is the engine today.
+type Embedder interface {
+	Embed(ctx context.Context, texts []string) ([][]float32, error)
+}
+
+// ParseUSD reads a USD amount ("0.01", "$0.5", "1") as micro-USD; at most
+// 6 decimals and 1,000,000 USD.
+func ParseUSD(s string) (int64, bool) {
+	s = strings.TrimPrefix(strings.TrimSpace(s), "$")
+	if s == "" || len(s) > 16 {
+		return 0, false
+	}
+	whole, frac, _ := strings.Cut(s, ".")
+	if whole == "" {
+		whole = "0"
+	}
+	if len(frac) > 6 || strings.ContainsAny(whole+frac, "+-eE") {
+		return 0, false
+	}
+	w, err := strconv.ParseInt(whole, 10, 64)
+	if err != nil || w > 1_000_000 {
+		return 0, false
+	}
+	f := int64(0)
+	if frac != "" {
+		v, err := strconv.ParseInt(frac+strings.Repeat("0", 6-len(frac)), 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		f = v
+	}
+	return w*1_000_000 + f, true
+}
+
+// FormatUSD writes micro-USD as a decimal string without trailing zeros.
+func FormatUSD(micro int64) string {
+	s := strconv.FormatInt(micro/1_000_000, 10)
+	if frac := micro % 1_000_000; frac != 0 {
+		s += "." + strings.TrimRight(strconv.FormatInt(1_000_000+frac, 10)[1:], "0")
+	}
+	return s
+}
+
+// round4 rounds for the wire.
+func round4(f float64) float64 { return math.Round(f*1e4) / 1e4 }
+
+// marshalCompact is JSON without HTML escaping, for prompts.
+func marshalCompact(v any) string {
+	b, _ := json.Marshal(v)
+	return string(b)
+}

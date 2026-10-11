@@ -1,0 +1,277 @@
+package find
+
+// The deterministic intent parser: price, type, output and network words
+// become filters, and what is left, less filler words, is the text. It
+// sets no category: a topic word stays in the text, where BM25 and the
+// category synonyms rank that category's entries first without dropping
+// the entries no category names (a site, an MCP server). It is the fallback whenever the model is off, slow, over its
+// budget or answers something that does not validate, so it never fails.
+
+import (
+	"regexp"
+	"slices"
+	"strings"
+	"unicode"
+)
+
+// Category is one category and the words that name it (services'
+// x402Categories, the one list).
+type Category struct {
+	Name  string
+	Words []string
+}
+
+// Vocab is what parsing and matching know about categories.
+type Vocab struct {
+	Categories []Category
+}
+
+func (v Vocab) has(name string) bool {
+	return slices.ContainsFunc(v.Categories, func(c Category) bool { return c.Name == name })
+}
+
+// Categorize is the first category one of whose words text contains, as
+// the catalogue categorizes; "other" when none does.
+func (v Vocab) Categorize(text string) string {
+	t := strings.ToLower(text)
+	for _, c := range v.Categories {
+		for _, w := range c.Words {
+			if strings.Contains(t, w) {
+				return c.Name
+			}
+		}
+	}
+	return "other"
+}
+
+// synonyms are the category names a query word stands for: the word is
+// one of the category's words (or its name).
+func (v Vocab) synonyms(word string) []string {
+	var out []string
+	for _, c := range v.Categories {
+		if c.Name == word || c.Name == "data" || c.Name == "other" {
+			continue
+		}
+		for _, w := range c.Words {
+			if strings.TrimSpace(w) == word {
+				out = append(out, c.Name)
+				break
+			}
+		}
+	}
+	return out
+}
+
+var (
+	// "under a cent", "less than one penny", "below a dollar"
+	pricePhraseRE = regexp.MustCompile(`\b(?:under|below|less than|at most|up to|max(?:imum)?|cheaper than|no more than|within)\s+(?:a|one)\s+(cent|penny|dollar|buck)\b`)
+	// "under $0.05", "under 5 cents", "max 0.01 usd", "<= $1"
+	priceAmountRE = regexp.MustCompile(`(?:\b(?:under|below|less than|at most|up to|max(?:imum)?|cheaper than|no more than|within)\s*|<=?\s*)\$?\s*(\d{1,7}(?:\.\d{1,6})?)\s*(cents?|¢|c\b|usd\b|usdc\b|dollars?\b|\$)?`)
+	// "$0.01 or less", "0.01 usd max"
+	priceTrailRE = regexp.MustCompile(`\$\s*(\d{1,7}(?:\.\d{1,6})?)\s*(?:or less|max(?:imum)?|tops)?`)
+	freeRE       = regexp.MustCompile(`\b(?:free|no cost|costs nothing)\b`)
+	outputRE     = regexp.MustCompile(`\b(?:that\s+)?(?:returns?|returning|outputs?|gives?(?:\s+(?:me|back))?|responds? (?:with|in)|answers? (?:with|in)|in|as)\s+(?:a\s+|an\s+)?(json|text|plain text|markdown|csv|html|images?|png|jpe?g|audio|mp3|wav|video|mp4)\b`)
+	outputBareRE = regexp.MustCompile(`\b(json|html|csv)\b`)
+	networkRE    = regexp.MustCompile(`\b(?:on|via|over|paid on|pay on|settled on|using)\s+(base|polygon|solana|ethereum|arbitrum|optimism)\b`)
+)
+
+var outputWords = map[string]string{
+	"json": "json", "text": "text", "plain text": "text", "markdown": "text", "csv": "text", "html": "html",
+	"image": "image", "images": "image", "png": "image", "jpg": "image", "jpeg": "image",
+	"audio": "audio", "mp3": "audio", "wav": "audio", "video": "video", "mp4": "video",
+}
+
+// typeWords are words that name a result type; keep says the word stays
+// in the text too (it is also how such entries are named).
+var typeWords = map[string]struct {
+	types []string
+	keep  bool
+}{
+	"api": {[]string{TypeService}, false}, "apis": {[]string{TypeService}, false}, "endpoint": {[]string{TypeService}, false}, "endpoints": {[]string{TypeService}, false},
+	"x402": {[]string{TypeService}, false}, "tool": {[]string{TypeService}, false}, "tools": {[]string{TypeService}, false},
+	"service": {[]string{TypeService}, false}, "services": {[]string{TypeService}, false},
+	"offering": {[]string{TypeOffering}, false}, "offerings": {[]string{TypeOffering}, false}, "gig": {[]string{TypeOffering}, false},
+	"agent": {[]string{TypeAgent}, false}, "agents": {[]string{TypeAgent}, false}, "bot": {[]string{TypeAgent}, false}, "bots": {[]string{TypeAgent}, false},
+	"site": {[]string{TypeSite, TypeDomain}, false}, "sites": {[]string{TypeSite, TypeDomain}, false},
+	"website": {[]string{TypeSite, TypeDomain}, false}, "websites": {[]string{TypeSite, TypeDomain}, false},
+	"domain": {[]string{TypeDomain}, false}, "domains": {[]string{TypeDomain}, false},
+	"mcp":     {[]string{TypeMCP}, false},
+	"package": {[]string{TypePkg}, false}, "packages": {[]string{TypePkg}, false}, "library": {[]string{TypePkg}, false}, "libraries": {[]string{TypePkg}, false},
+	"npm": {[]string{TypePkg}, true}, "pypi": {[]string{TypePkg}, true}, "crate": {[]string{TypePkg}, true},
+}
+
+// stopWords say nothing about what is wanted.
+var stopWords = map[string]bool{
+	"a": true, "an": true, "the": true, "i": true, "me": true, "my": true, "we": true, "us": true, "need": true, "needs": true, "want": true, "wants": true,
+	"find": true, "looking": true, "look": true, "for": true, "to": true, "of": true, "with": true, "that": true, "which": true,
+	"who": true, "can": true, "could": true, "please": true, "some": true, "any": true, "something": true, "someone": true, "anything": true,
+	"get": true, "gets": true, "give": true, "show": true, "is": true, "are": true, "be": true, "it": true, "its": true, "and": true, "or": true,
+	"on": true, "in": true, "at": true, "by": true, "from": true, "per": true, "call": true, "calls": true, "request": true, "server": true, "servers": true,
+	"cheap": true, "cheapest": true, "inexpensive": true, "affordable": true, "good": true, "best": true, "reliable": true, "fast": true,
+	"under": true, "below": true, "less": true, "than": true, "max": true, "usd": true, "dollar": true, "dollars": true, "cent": true, "cents": true,
+	"returns": true, "return": true, "returning": true, "does": true, "do": true, "will": true, "should": true, "how": true, "what": true, "where": true,
+	"this": true, "these": true, "there": true, "your": true, "you": true, "one": true, "about": true, "like": true, "into": true,
+}
+
+// ParseRules is the deterministic parser: the filters q names and the text
+// left. It never fails; an unreadable price is left in the text.
+func ParseRules(q string, v Vocab) (Filters, string) {
+	var f Filters
+	s := " " + strings.ToLower(normalizeSpace(q)) + " "
+	cut := func(re *regexp.Regexp, fn func(m []string) bool) {
+		s = re.ReplaceAllStringFunc(s, func(match string) string {
+			if fn(re.FindStringSubmatch(match)) {
+				return " "
+			}
+			return match
+		})
+	}
+	setPrice := func(micro int64) {
+		if p := f.maxMicro(); p < 0 || micro < p {
+			f.MaxPrice = FormatUSD(micro)
+		}
+	}
+	cut(pricePhraseRE, func(m []string) bool {
+		switch m[1] {
+		case "cent", "penny":
+			setPrice(10_000)
+		default:
+			setPrice(1_000_000)
+		}
+		return true
+	})
+	cut(priceAmountRE, func(m []string) bool {
+		micro, ok := ParseUSD(m[1])
+		if !ok {
+			return false
+		}
+		if unit := strings.TrimSpace(m[2]); strings.HasPrefix(unit, "cent") || unit == "¢" || unit == "c" {
+			micro /= 100
+		}
+		setPrice(micro)
+		return true
+	})
+	cut(priceTrailRE, func(m []string) bool {
+		micro, ok := ParseUSD(m[1])
+		if !ok {
+			return false
+		}
+		setPrice(micro)
+		return true
+	})
+	cut(freeRE, func([]string) bool { f.MaxPrice = "0"; return true })
+	cut(outputRE, func(m []string) bool { f.Output = outputWords[m[1]]; return f.Output != "" })
+	if f.Output == "" {
+		cut(outputBareRE, func(m []string) bool { f.Output = outputWords[m[1]]; return true })
+	}
+	cut(networkRE, func(m []string) bool { f.Network = m[1]; return true })
+	var text []string
+	words := Words(s)
+	for _, w := range words {
+		if t, ok := typeWords[w]; ok {
+			// "mcp" in "mcp server", "agent" and the rest name a type.
+			for _, typ := range t.types {
+				if !slices.Contains(f.Types, typ) {
+					f.Types = append(f.Types, typ)
+				}
+			}
+			if !t.keep {
+				continue
+			}
+		}
+		if stopWords[w] {
+			continue
+		}
+		if !slices.Contains(text, w) {
+			text = append(text, w)
+		}
+	}
+	slices.SortStableFunc(f.Types, func(a, b string) int { return slices.Index(Types, a) - slices.Index(Types, b) })
+	return f, strings.Join(text, " ")
+}
+
+// Words are a text's lower-cased words: runs of letters and digits.
+func Words(s string) []string {
+	return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+}
+
+func normalizeSpace(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// CheckFilters validates filters a caller or the model set: known types,
+// a known category, a USD amount, a known output and network. The error
+// names the field.
+func CheckFilters(f Filters, v Vocab) (Filters, string) {
+	var out Filters
+	for _, t := range f.Types {
+		t = strings.ToLower(strings.TrimSpace(t))
+		if t == "" {
+			continue
+		}
+		if !slices.Contains(Types, t) {
+			return out, "type is one or more of " + strings.Join(Types, ", ") + "."
+		}
+		if !slices.Contains(out.Types, t) {
+			out.Types = append(out.Types, t)
+		}
+	}
+	slices.SortStableFunc(out.Types, func(a, b string) int { return slices.Index(Types, a) - slices.Index(Types, b) })
+	if c := strings.ToLower(strings.TrimSpace(f.Category)); c != "" {
+		if !v.has(c) && c != "other" {
+			names := make([]string, 0, len(v.Categories))
+			for _, c := range v.Categories {
+				names = append(names, c.Name)
+			}
+			return out, "category is one of " + strings.Join(names, ", ") + "."
+		}
+		out.Category = c
+	}
+	if p := strings.TrimSpace(f.MaxPrice); p != "" {
+		n, ok := ParseUSD(p)
+		if !ok {
+			return out, "max_price is a USD amount, such as 0.01."
+		}
+		out.MaxPrice = FormatUSD(n)
+	}
+	if o := strings.ToLower(strings.TrimSpace(f.Output)); o != "" {
+		if !slices.Contains(Outputs, o) {
+			return out, "output is one of " + strings.Join(Outputs, ", ") + "."
+		}
+		out.Output = o
+	}
+	if n := strings.TrimSpace(f.Network); n != "" {
+		if out.Network = NetworkName(n); out.Network == "" {
+			return out, "network is base, polygon, ethereum, optimism, arbitrum or solana (or its CAIP-2 id)."
+		}
+	}
+	return out, ""
+}
+
+// merge applies the caller's explicit filters over parsed ones, field by
+// field: a set field wins, even empty (cleared).
+func merge(parsed, set Filters, keys map[string]bool) Filters {
+	if keys["type"] {
+		parsed.Types = set.Types
+	}
+	if keys["category"] {
+		parsed.Category = set.Category
+	}
+	if keys["max_price"] {
+		parsed.MaxPrice = set.MaxPrice
+	}
+	if keys["output"] {
+		parsed.Output = set.Output
+	}
+	if keys["network"] {
+		parsed.Network = set.Network
+	}
+	if parsed.Types == nil {
+		parsed.Types = []string{}
+	}
+	return parsed
+}
+
+// sentence reports whether q reads as a request worth the model: three or
+// more words, or a word the rules read as a filter cue.
+func sentence(q string) bool {
+	return len(Words(q)) >= 3
+}

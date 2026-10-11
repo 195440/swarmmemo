@@ -65,6 +65,7 @@ type Store struct {
 	cursorCipher       cipher.AEAD
 	topupKey           []byte        // credit top-up quotes' HMAC key (topup.go)
 	offerings          offeringState // agent offerings (offerings.go, RFC 0017)
+	find               findState     // Find, the intent search (find.go)
 	cursorMu           sync.RWMutex
 	now                func() time.Time
 	privateSlots       chan struct{}
@@ -138,6 +139,8 @@ type Store struct {
 	updateWaiters *WaitSlots
 	// C61: the inbox entry log's backfill (inbox.go).
 	inboxBackfill inboxBackfillState
+	// RFC 0019: the lab record recomputer and its score cache (reviews_records.go).
+	reviewRecords reviewRecordState
 }
 
 const schema = `
@@ -399,7 +402,7 @@ func Open(path string, config Config) (*Store, error) {
 	config.Features.Topup = config.Topup != nil && config.Features.Ledger == LedgerOn
 	// Agent offerings are on exactly when configured (RFC 0017).
 	config.Features.Offerings = config.Offerings != nil
-	s := &Store{db: db, config: config, now: time.Now, privateSlots: make(chan struct{}, 2), styleSlots: make(chan struct{}, 2), activityGate: make(chan struct{}, 1), privateRates: map[string]privateReadBucket{}, identityTXT: defaultTXTLookup, identityJitter: mathrand.Float64, identityRates: map[string]privateReadBucket{}, updateWaiters: NewWaitSlots(UpdatesWaitersPerSource, UpdatesWaitersMax), mcpVerifySlots: make(chan struct{}, MCPEventVerifyConcurrency)}
+	s := &Store{db: db, config: config, now: time.Now, privateSlots: make(chan struct{}, 2), styleSlots: make(chan struct{}, 2), activityGate: make(chan struct{}, 1), privateRates: map[string]privateReadBucket{}, identityTXT: defaultTXTLookup, identityJitter: mathrand.Float64, identityRates: map[string]privateReadBucket{}, updateWaiters: NewWaitSlots(UpdatesWaitersPerSource, UpdatesWaitersMax), mcpVerifySlots: make(chan struct{}, MCPEventVerifyConcurrency), reviewRecords: reviewRecordState{wake: make(chan struct{}, 1)}}
 	if err = db.QueryRow("SELECT value FROM meta WHERE key='generation'").Scan(&s.generation); err != nil {
 		return fail(err)
 	}
@@ -455,7 +458,12 @@ func Open(path string, config Config) (*Store, error) {
 	return s, nil
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	if e := s.find.engine.Load(); e != nil {
+		e.Close()
+	}
+	return s.db.Close()
+}
 func randomID() string {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -982,6 +990,9 @@ func (s *Store) executeCommand(ctx context.Context, cmd Command, source string) 
 	if strings.HasPrefix(cmd.Operation, "agent.") || strings.HasPrefix(cmd.Operation, "identity.") {
 		s.dropHotAgents() // the shared hot agent page shows registrations, profiles and links
 	}
+	if mutation(cmd.Operation) {
+		s.findChanged(cmd) // Find's sources (find.go)
+	}
 	if result.afterCommit != nil {
 		note := result.Allowance
 		result, err = result.afterCommit()
@@ -1114,6 +1125,8 @@ func (s *Store) execute(ctx context.Context, tx *sql.Tx, c Command, a actor, now
 		return s.offeringRefund(ctx, tx, c, a, now)
 	case "subject.resolve", "subject.get", "subjects.list":
 		return s.readSubjects(ctx, tx, c, now)
+	case "find":
+		return s.readFind(ctx, c)
 	case "trust.get":
 		return s.readTrust(ctx, tx, c, a, now)
 	case "standing.ways":

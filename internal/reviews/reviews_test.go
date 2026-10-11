@@ -93,6 +93,33 @@ func TestResolveRefusals(t *testing.T) {
 	}
 }
 
+// Big social sites name people by their own path rules (security review
+// C186 L2): any path on x.com and the like, a single segment on the code
+// hosts; a repository (OWNER/REPO) stays a subject.
+func TestResolveSocialHostPeople(t *testing.T) {
+	for _, in := range []string{
+		"x402:GET https://x.com/someone", "x402:GET https://twitter.com/someone/status/1", "mcp:https://mobile.twitter.com/someone",
+		"x402:GET https://www.linkedin.com/company/acme", "x402:GET https://facebook.com/someone", "mcp:https://m.facebook.com/someone/",
+		"x402:GET https://www.instagram.com/someone/", "x402:GET https://www.tiktok.com/someone", "x402:GET https://x.com:8443/someone",
+		"x402:GET https://github.com/someone", "mcp:https://github.com/someone/", "x402:GET https://github.com/sponsors/someone", "x402:GET https://gitlab.com/someone",
+		"x402:GET https://www.youtube.com/@someone", "x402:GET https://youtube.com/channel/UC123", "x402:GET https://youtube.com/c/someone",
+		"x402:GET https://www.reddit.com/u/someone", "x402:GET https://reddit.com/user/someone/comments", "x402:GET https://medium.com/@someone/a-post",
+	} {
+		var e *Error
+		if _, err := Resolve(in, opt); !errors.As(err, &e) || e.Code != "subject_refused" {
+			t.Errorf("%q: got %v, want subject_refused", in, err)
+		}
+	}
+	for _, in := range []string{
+		"mcp:https://github.com/owner/repo", "x402:GET https://github.com/owner/repo/releases", "x402:GET https://www.youtube.com/watch",
+		"x402:GET https://reddit.com/r/golang", "x402:GET https://api.x.com/2/tweets", "site:https://x.com/someone", "x402:GET https://medium.com/topics",
+	} {
+		if _, err := Resolve(in, opt); err != nil {
+			t.Errorf("%q: %v", in, err)
+		}
+	}
+}
+
 func TestSubjectIDVector(t *testing.T) {
 	// The id is base32 of SHA-256 over ["swarmmemo.subject.v1",type,key];
 	// any other implementation must reproduce this vector.
@@ -134,7 +161,7 @@ func TestParseReview(t *testing.T) {
 		{"subject": subject, "verdict": "good"},
 		{"subject": subject, "verdict": "mixed", "dimensions": map[string]any{"works": 90, "safe": 100}, "relationship": "customer", "evidence": []string{"call:" + strings.Repeat("a", 32)}},
 		{"subject": subject, "verdict": "good", "relationship": "lab", "rubric": rubric, "score": 84, "band": []int{78, 89}, "grade": "B", "flags": []string{"injection"},
-			"evidence": []string{"call:" + strings.Repeat("a", 32), "stamp:" + strings.Repeat("b", 64)},
+			"evidence":     []string{"call:" + strings.Repeat("a", 32), "stamp:" + strings.Repeat("b", 64)},
 			"observations": []any{map[string]any{"check": "R4", "pass": 3, "fail": 0, "evidence": []int{0}}, map[string]any{"check": "R3", "value": 420}, map[string]any{"check": "H4", "na": true}},
 			"record":       map[string]any{"sha256": strings.Repeat("c", 64), "doc": strings.Repeat("d", 32)}},
 		{"subject": subject, "verdict": "good", "relationship": "outside_source", "evidence": []string{"fetch:" + strings.Repeat("e", 32)},
@@ -186,7 +213,9 @@ func TestParseReview(t *testing.T) {
 	labBad(func(f map[string]any) { f["observations"] = []any{map[string]any{"check": "Z9", "pass": 1}} })
 	labBad(func(f map[string]any) { f["observations"] = []any{map[string]any{"check": "R3", "pass": 1}} })
 	labBad(func(f map[string]any) { f["observations"] = []any{map[string]any{"check": "R4", "value": 1}} })
-	labBad(func(f map[string]any) { f["observations"] = []any{map[string]any{"check": "R4", "pass": 1, "evidence": []int{1}}} })
+	labBad(func(f map[string]any) {
+		f["observations"] = []any{map[string]any{"check": "R4", "pass": 1, "evidence": []int{1}}}
+	})
 	labBad(func(f map[string]any) {
 		f["observations"] = []any{map[string]any{"check": "R4", "pass": 1}, map[string]any{"check": "R4", "fail": 1}}
 	})

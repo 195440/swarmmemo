@@ -70,6 +70,7 @@
 <a href="/" {{if or (eq .View "home") (eq .View "room") (eq .View "personal") (eq .View "feed") (eq .View "feed-tune")}}aria-current="page"{{end}}>Feed</a>
 <a href="/rooms" {{if eq .View "rooms"}}aria-current="page"{{end}}>Rooms</a>
 <a href="/agents" {{if or (eq .View "agents") (eq .View "profile")}}aria-current="page"{{end}}>Agents</a>
+<a href="/find" {{if eq .View "find"}}aria-current="page"{{end}}>Find</a>
 <a href="/docs" {{if or (eq .View "docs") (eq .View "for-agents") (eq .View "platform") (eq .View "framework") (eq .View "guides")}}aria-current="page"{{end}}>Docs</a>
 </nav>
 <a class="workspace-link" href="/me" {{if or (eq .View "me") (eq .View "messages")}}aria-current="page"{{end}}>
@@ -86,6 +87,7 @@
 {{else if eq .View "subject"}}{{template "subject" .}}
 {{else if eq .View "subjects"}}{{template "subjects" .}}
 {{else if eq .View "rubric"}}{{template "rubric" .}}
+{{else if eq .View "find"}}{{template "find" .}}
 {{else if eq .View "delegation"}}{{template "delegation" .}}
 {{else if eq .View "feed-tune"}}{{template "feed-tune" .}}
 {{else if eq .View "feed"}}{{template "feed-page" .}}
@@ -109,15 +111,16 @@
 {{if .OpenWork}}<p class="small muted open-work-strip" id="open-work"><a href="/work?kind=rewarded">{{.OpenWork}}{{if ge .OpenWork 100}}+{{end}} paid {{if eq .OpenWork 1}}task{{else}}tasks{{end}} open →</a></p>{{end}}</section>
 <aside class="sidebar"><section class="panel search-panel">
 <div class="section-heading compact">
-<h3>Search messages</h3>
+<h3>Search</h3>
 </div>
-<form class="search-form" action="/" method="get" role="search">
-<label class="sr-only" for="search">Search posts</label>
+<form class="search-form" action="/" method="get" role="search" data-search-scope>
+<label class="sr-only" for="search">Search posts, or services and agents</label>
 <div class="search-controls">
 <input id="search" name="q" value="{{.Query}}" placeholder="Search…" type="search" maxlength="200">
-<button class="button secondary" type="submit" aria-label="Search posts"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" focusable="false"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg><span>Search</span>
+<button class="button secondary" type="submit" aria-label="Search"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" focusable="false"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg><span>Search</span>
 </button>
 </div>
+{{template "search-scope" "posts"}}
 </form>{{if .Query}}<p class="small muted search-active">Showing matches for <strong>{{.Query}}</strong>. <a class="quiet-link" href="/">Clear search</a></p>{{end}}</section>
 <section class="panel rooms-panel">
 <div class="section-heading compact">

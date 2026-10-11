@@ -4,9 +4,11 @@ package board
 // core). A review is a signed post in room reviews whose page is the
 // subject's id, kind review, carrying data.review; comments are ordinary
 // replies in its thread. The subjects, reviews and review_evidence tables
-// are a derived index of those posts, written in the posting transaction:
-// never the source of truth, and nothing here deletes a row. REVIEWS gates
-// the write path and every read.
+// index those posts, written in the posting transaction (a lab record's
+// state after commit, reviews_records.go), and nothing here deletes a row.
+// They are not rebuildable from the events: evidence states, ownership and
+// standing were checked against the board as it stood when the review was
+// posted. REVIEWS gates the write path and every read.
 
 import (
 	"context"
@@ -19,11 +21,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"swarmmemo/internal/allowance"
 	"swarmmemo/internal/reviews"
-	"swarmmemo/internal/rubric"
 	"swarmmemo/internal/services"
 )
 
@@ -48,6 +50,7 @@ const (
 	ReviewOrderVersion    = 1
 	reviewThreadCountMax  = 1000
 	labRunsShown          = 10
+	otherRatersShown      = 20
 	reviewOffsetCursorMax = 10000
 )
 
@@ -61,6 +64,11 @@ var reviewClassRank = []string{"opinion", "free_use", "observed", "work", "paid_
 // lab and outside_source are shown apart and never in the community order.
 var ReviewRelationshipFactors = map[string]float64{"owner": 0, "affiliate": 0, "paid": 0, "competitor": 0.5, "outside_source": 0, "lab": 0}
 
+// reviewSchema (schema 30). reviews.event_id references events(id) and
+// review_evidence.event_id references reviews(event_id), with foreign keys
+// on: nothing deletes an event today (hides keep the row). Any erasure of
+// events added later must delete the event's review_evidence rows, then its
+// reviews row, first (TestReviewRowsBlockEventErasure).
 const reviewSchema = `
 CREATE TABLE IF NOT EXISTS subjects (
  id TEXT PRIMARY KEY, type TEXT NOT NULL, key TEXT NOT NULL, parent TEXT NOT NULL DEFAULT '',
@@ -126,23 +134,23 @@ type pendingReview struct {
 	account  string
 	author   string
 	previous string // the account's current review of the subject, if any
-	evidence []reviewEvidenceRow
-	raised   string
-	seasoned bool
 }
 
 type reviewEvidenceRow struct {
 	id, class, state string
 	detail           map[string]any
+	counterparty     string // a work item's other account, the one other reviewer who may cite it
 }
 
 // checkReview applies the review rules to a post before anything is
-// charged: REVIEWS on, a signed root key (never a worker key), room reviews,
-// a top-level kind review whose page is the subject's id, one current review
-// per account and subject (a second supersedes the first), the daily cap,
-// outside_source only for the operator's importer keys. It verifies the
-// evidence it can check locally and returns the review to index once the
-// post has its id; nil when the post is not a review.
+// charged, with point reads only: REVIEWS on, a signed root key (never a
+// worker key), room reviews (the operator's public room), a top-level kind
+// review whose page is the subject's id, the reserved relationships (lab for
+// the operator's lab keys, outside_source for its importer keys), the daily
+// cap and the lab record cap, one current review per account and subject (a
+// second supersedes the first, or replaces one that can take no new
+// version). The evidence is checked once the post is admitted and charged
+// (indexReview). nil when the post is not a review.
 func (s *Store) checkReview(ctx context.Context, tx *sql.Tx, c Command, a actor, d postData, now int64) (*pendingReview, error) {
 	if d.Review == nil {
 		// While REVIEWS is on, room reviews takes reviews and replies only.
@@ -173,8 +181,15 @@ func (s *Store) checkReview(ctx context.Context, tx *sql.Tx, c Command, a actor,
 	case c.To != "":
 		return nil, problem(400, "review_room", "A review is addressed to no one; it is public on its subject's page.")
 	}
-	if r.Relationship == "outside_source" && !s.allowedImporter(ctx, tx, a, now) {
-		return nil, problem(403, "review_relationship_reserved", "relationship outside_source is posted only by the operator's importer keys; review as yourself with another relationship.")
+	switch r.Relationship {
+	case "outside_source":
+		if !s.allowedImporter(ctx, tx, a, now) {
+			return nil, problem(403, "review_relationship_reserved", "relationship outside_source is posted only by the operator's importer keys; review as yourself with another relationship.")
+		}
+	case "lab":
+		if !s.listedAccount(ctx, tx, a, LabsParamsNamespace, now) {
+			return nil, problem(403, "review_relationship_reserved", "relationship lab is posted only by the operator's lab keys (the labs parameters); review as yourself with relationship tester, and cite your rubric's observations.")
+		}
 	}
 	if r.Subject.Type == reviews.TypeAgent {
 		var known int
@@ -185,12 +200,25 @@ func (s *Store) checkReview(ctx context.Context, tx *sql.Tx, c Command, a actor,
 			return nil, problem(404, "subject_not_found", "No SwarmMemo agent has that account fingerprint; an agent subject is agent:ACCOUNT (agent.get shows it).")
 		}
 	}
+	midnight := now - now%86400
 	var today int
-	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM reviews WHERE account=? AND created_at>=?", a.account, now-now%86400).Scan(&today); err != nil {
+	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM reviews WHERE account=? AND created_at>=?", a.account, midnight).Scan(&today); err != nil {
 		return nil, err
 	}
 	if today >= ReviewsPerAccountDay {
 		return nil, &Error{Status: 429, Code: "review_daily_limit", Message: fmt.Sprintf("An agent writes at most %d reviews (new versions included) per UTC day; nothing was published.", ReviewsPerAccountDay), RetryAfter: untilMidnight(now)}
+	}
+	if hasRecordDoc(r) {
+		// Recomputing a record is the costly part of a review: the account's
+		// records of today that failed or still wait are capped.
+		var open int
+		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM reviews r JOIN review_evidence v ON v.event_id=r.event_id AND v.evidence>=? AND v.evidence<?
+ WHERE r.account=? AND r.created_at>=? AND v.state IN ('unknown','failed')`, RecordEvidencePrefix, recordEvidenceEnd, a.account, midnight).Scan(&open); err != nil {
+			return nil, err
+		}
+		if open >= ReviewRecordFailuresPerDay {
+			return nil, &Error{Status: 429, Code: "review_record_limit", Message: fmt.Sprintf("At most %d of an agent's lab records a UTC day may fail or wait to be recomputed; check yours with swarmmemo rubric score before posting. Nothing was published.", ReviewRecordFailuresPerDay), RetryAfter: untilMidnight(now)}
+		}
 	}
 	p := &pendingReview{review: r, raw: string(d.Review), account: a.account, author: a.id}
 	var currentAuthor string
@@ -208,53 +236,116 @@ func (s *Store) checkReview(ctx context.Context, tx *sql.Tx, c Command, a actor,
 			return nil, problem(409, "review_supersede", "supersedes names a message that is not a review; a review supersedes only your current review of the same subject.")
 		}
 	case p.previous != "" && d.Supersedes != p.previous && currentAuthor == a.id:
-		return nil, &Error{Status: 409, Code: "review_exists", Message: fmt.Sprintf("You already reviewed this subject (%s): post the new review with data.supersedes %q, so history is kept and the newest counts.", p.previous, p.previous), Details: map[string]any{"current_review": p.previous}}
+		// A current review that can take no new version (hidden, or at
+		// MaxVersions) is replaced by a fresh review, so no account is ever
+		// locked out of a subject.
+		stuck, err := reviewFrozen(ctx, tx, p.previous)
+		if err != nil {
+			return nil, err
+		}
+		if !stuck || d.Supersedes != "" {
+			return nil, &Error{Status: 409, Code: "review_exists", Message: fmt.Sprintf("You already reviewed this subject (%s): post the new review with data.supersedes %q, so history is kept and the newest counts.", p.previous, p.previous), Details: map[string]any{"current_review": p.previous}}
+		}
 	}
 	// A rotated key cannot supersede its predecessor's post; its new review
 	// replaces the account's current one all the same (indexReview).
-	if p.evidence, err = s.verifyEvidence(ctx, tx, a, r, now); err != nil {
+	//
+	// The room is the operator's public room, opened by the first review
+	// whatever NAME_GATE says (a review never opens a room of its author's);
+	// room.create cannot claim the name (reservedRoomName). A row that is
+	// anything else holds no review.
+	var visibility, owner string
+	err = tx.QueryRowContext(ctx, "SELECT visibility,owner FROM rooms WHERE name=?", ReviewsRoom).Scan(&visibility, &owner)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		if _, err = tx.ExecContext(ctx, "INSERT INTO rooms(name,visibility,owner,created_at) VALUES(?,'public','',?)", ReviewsRoom, now); err != nil {
+			return nil, err
+		}
+	case err != nil:
 		return nil, err
-	}
-	if owner, err := s.ownsSubject(ctx, tx, a.account, r.Subject); err != nil {
-		return nil, err
-	} else if owner && r.Relationship != "owner" {
-		p.raised = "owner"
-	}
-	var seasoned int
-	if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM events e JOIN rooms r ON r.name=e.room WHERE e.account=? AND e.hidden=0 AND r.visibility='public' AND e.created_at<=?)", a.account, now-int64(VoterMinAge.Seconds())).Scan(&seasoned); err != nil {
-		return nil, err
-	}
-	p.seasoned = seasoned == 1
-	// The room is the operator's, opened by the first review whatever
-	// NAME_GATE says: a review never opens a room of its author's.
-	if _, err = tx.ExecContext(ctx, "INSERT OR IGNORE INTO rooms(name,visibility,owner,created_at) VALUES(?,'public','',?)", ReviewsRoom, now); err != nil {
-		return nil, err
+	case visibility != "public" || owner != "":
+		return nil, problem(409, "review_room_taken", "Room reviews on this board is not the operator's public room, so it holds no review; nothing was published. The operator frees it (RUNBOOK, Subjects and reviews).")
 	}
 	return p, nil
 }
 
-// indexReview writes the derived rows once the review's event exists: the
-// subject (created by its first review), the review (the account's current
-// one; its predecessor stays, not current) and its evidence states.
+func hasRecordDoc(r reviews.Review) bool {
+	return r.Relationship == "lab" && r.Record != nil && r.Record.Doc != ""
+}
+
+// reviewFrozen reports whether a review post can take no new version: a
+// version of it is hidden, or it has MaxVersions (checkSupersession's rules).
+func reviewFrozen(ctx context.Context, tx *sql.Tx, id string) (bool, error) {
+	var origin string
+	if err := tx.QueryRowContext(ctx, "SELECT CASE WHEN origin<>'' THEN origin ELSE id END FROM events WHERE id=?", id).Scan(&origin); err != nil {
+		return false, err
+	}
+	var versions int
+	var hidden bool
+	err := tx.QueryRowContext(ctx, "WITH "+messageVersions+" SELECT count(*),coalesce(max(hidden<>0),0) FROM v", origin).Scan(&versions, &hidden)
+	return hidden || versions >= MaxVersions, err
+}
+
+// indexReview writes the derived rows once the review's event exists and
+// the post is charged: the evidence checked against what this board holds,
+// ownership, the subject (created by its first review), the review (the
+// account's current one; its predecessor stays, not current) and its
+// evidence states. A lab record waits for the recomputer (reviews_records.go).
 func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, eventID, origin string, now int64) error {
-	sub := p.review.Subject
+	r := p.review
+	sub := r.Subject
+	evidence, err := s.verifyEvidence(ctx, tx, p.account, r, now)
+	if err != nil {
+		return err
+	}
+	owner, err := s.ownsSubject(ctx, tx, p.account, sub)
+	if err != nil {
+		return err
+	}
+	raised := ""
+	if owner && r.Relationship != "owner" {
+		raised = "owner"
+	}
+	var seasoned int
+	if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM events e JOIN rooms r ON r.name=e.room WHERE e.account=? AND e.hidden=0 AND r.visibility='public' AND e.created_at<=?)", p.account, now-int64(VoterMinAge.Seconds())).Scan(&seasoned); err != nil {
+		return err
+	}
 	parent := ""
 	if ps, ok := sub.Parent(); ok && ps.ID != sub.ID {
 		parent = ps.ID
 	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO subjects(id,type,key,parent,first_seen,last_seen) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET last_seen=excluded.last_seen", sub.ID, sub.Type, sub.Key, parent, now, now); err != nil {
+	if _, err = tx.ExecContext(ctx, "INSERT INTO subjects(id,type,key,parent,first_seen,last_seen) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET last_seen=excluded.last_seen", sub.ID, sub.Type, sub.Key, parent, now, now); err != nil {
 		return err
 	}
 	if p.previous != "" {
-		if _, err := tx.ExecContext(ctx, "UPDATE reviews SET current=0 WHERE event_id=?", p.previous); err != nil {
+		if _, err = tx.ExecContext(ctx, "UPDATE reviews SET current=0 WHERE event_id=?", p.previous); err != nil {
 			return err
+		}
+	}
+	// Evidence cited by two reviews counts once: for the other account's
+	// current review when that one already counts it, else for this one.
+	// Only a work item can be two accounts' evidence (its requester's and
+	// its worker's); calls, fetches and stamps bind to their own account.
+	// Fixed when posted, so the order reads it from the stored class.
+	for i := range evidence {
+		e := &evidence[i]
+		if e.state != "verified" || e.counterparty == "" {
+			continue
+		}
+		var first string
+		err = tx.QueryRowContext(ctx, `SELECT r.event_id FROM reviews r JOIN events ev ON ev.id=r.event_id JOIN review_evidence v ON v.event_id=r.event_id AND v.evidence=? AND v.state='verified'
+ WHERE r.subject=? AND r.account=? AND r.current=1 AND ev.hidden=0 AND json_extract(v.detail,'$.counted_for') IS NULL`, e.id, sub.ID, e.counterparty).Scan(&first)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if first != "" {
+			e.detail["counted_for"] = first
 		}
 	}
 	root := eventID
 	if origin != "" {
 		root = origin
 	}
-	r := p.review
 	dim := func(k string) int {
 		if v, ok := r.Dimensions[k]; ok {
 			return v
@@ -268,41 +359,39 @@ func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, e
 	if r.Band != nil {
 		lo, hi = r.Band[0], r.Band[1]
 	}
-	var rubric, version, sum string
+	var rubricID, version, sum string
 	if r.Rubric != nil {
-		rubric, version, sum = r.Rubric.ID, r.Rubric.Version, r.Rubric.SHA256
+		rubricID, version, sum = r.Rubric.ID, r.Rubric.Version, r.Rubric.SHA256
 	}
 	class := "opinion"
-	for _, e := range p.evidence {
-		if e.state == "verified" && slices.Index(reviewClassRank, e.class) > slices.Index(reviewClassRank, class) {
+	for _, e := range evidence {
+		if e.state == "verified" && e.detail["counted_for"] == nil && slices.Index(reviewClassRank, e.class) > slices.Index(reviewClassRank, class) {
 			class = e.class
 		}
 	}
-	seasoned := 0
-	if p.seasoned {
-		seasoned = 1
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO reviews(event_id,root_event,subject,account,author,root,verdict,relationship,relationship_raised,works,as_described,safe,good,rubric,rubric_version,rubric_sha256,score,band_lo,band_hi,grade,flags,evidence_class,seasoned,review,created_at,current)
- VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`, eventID, root, sub.ID, p.account, p.author, p.account, r.Verdict, r.Relationship, p.raised,
-		dim("works"), dim("as_described"), dim("safe"), dim("good"), rubric, version, sum, score, lo, hi, r.Grade, strings.Join(r.Flags, ","), class, seasoned, p.raw, now); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO reviews(event_id,root_event,subject,account,author,root,verdict,relationship,relationship_raised,works,as_described,safe,good,rubric,rubric_version,rubric_sha256,score,band_lo,band_hi,grade,flags,evidence_class,seasoned,review,created_at,current)
+ VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`, eventID, root, sub.ID, p.account, p.author, p.account, r.Verdict, r.Relationship, raised,
+		dim("works"), dim("as_described"), dim("safe"), dim("good"), rubricID, version, sum, score, lo, hi, r.Grade, strings.Join(r.Flags, ","), class, seasoned, p.raw, now); err != nil {
 		return err
 	}
-	for _, e := range p.evidence {
+	pending := false
+	for _, e := range evidence {
 		detail, _ := json.Marshal(e.detail)
-		if _, err := tx.ExecContext(ctx, "INSERT INTO review_evidence(event_id,evidence,class,state,checked_at,detail) VALUES(?,?,?,?,?,?)", eventID, e.id, e.class, e.state, now, string(detail)); err != nil {
+		if _, err = tx.ExecContext(ctx, "INSERT INTO review_evidence(event_id,evidence,class,state,checked_at,detail) VALUES(?,?,?,?,?,?)", eventID, e.id, e.class, e.state, now, string(detail)); err != nil {
 			return err
 		}
+		pending = pending || e.class == "record"
 	}
 	// Listed (in subjects.list and search engines) once two accounts review
-	// it, or its owner does (RFC 0015 §4.3). Never unlisted.
-	var accounts int
-	if err := tx.QueryRowContext(ctx, "SELECT count(DISTINCT r.account) FROM reviews r JOIN events e ON e.id=r.event_id WHERE r.subject=? AND r.current=1 AND e.hidden=0 AND r.relationship<>'outside_source'", sub.ID).Scan(&accounts); err != nil {
+	// it, or its verified owner does (RFC 0015 §4.3); a declared owner
+	// relationship lists nothing. Never unlisted. An account has one current
+	// review of a subject, so two such rows are two accounts.
+	if _, err = tx.ExecContext(ctx, `UPDATE subjects SET listed_at=?1 WHERE id=?2 AND listed_at=0 AND (?3 OR (SELECT count(*) FROM
+ (SELECT 1 FROM reviews r JOIN events e ON e.id=r.event_id WHERE r.subject=?2 AND r.current=1 AND e.hidden=0 AND r.relationship<>'outside_source' LIMIT 2))>=2)`, now, sub.ID, owner); err != nil {
 		return err
 	}
-	if accounts >= 2 || p.raised == "owner" || r.Relationship == "owner" {
-		if _, err := tx.ExecContext(ctx, "UPDATE subjects SET listed_at=? WHERE id=? AND listed_at=0", now, sub.ID); err != nil {
-			return err
-		}
+	if pending {
+		s.wakeReviewRecords()
 	}
 	return nil
 }
@@ -368,11 +457,12 @@ func subjectOwners(ctx context.Context, q interface {
 }
 
 // verifyEvidence checks each cited evidence id against what this board
-// holds, inside the posting transaction (RFC 0015 §5.2). A failed check
-// never refuses the review: the page shows the evidence as failed. Evidence
-// binds to the account that created it, so another account's call, fetch,
-// work or stamp fails here (without saying whether it exists).
-func (s *Store) verifyEvidence(ctx context.Context, tx *sql.Tx, a actor, r reviews.Review, now int64) ([]reviewEvidenceRow, error) {
+// holds, with point reads in the posting transaction (RFC 0015 §5.2). A
+// failed check never refuses the review: the page shows the evidence as
+// failed. Evidence binds to the account that created it, so another
+// account's call, fetch, work or stamp fails here (without saying whether it
+// exists). A lab record is added as a pending row for the recomputer.
+func (s *Store) verifyEvidence(ctx context.Context, tx *sql.Tx, account string, r reviews.Review, now int64) ([]reviewEvidenceRow, error) {
 	var out []reviewEvidenceRow
 	for _, id := range r.Evidence {
 		kind, value, _ := strings.Cut(id, ":")
@@ -381,16 +471,16 @@ func (s *Store) verifyEvidence(ctx context.Context, tx *sql.Tx, a actor, r revie
 		switch kind {
 		case "call":
 			row.class = "free_use"
-			err = s.verifyCallEvidence(ctx, tx, a, r.Subject, value, now, &row)
+			err = s.verifyCallEvidence(ctx, tx, account, r.Subject, value, now, &row)
 		case "fetch":
 			row.class = "observed"
-			err = s.verifyFetch(ctx, tx, a, r, value, now, &row)
+			err = s.verifyFetch(ctx, tx, account, r, value, now, &row)
 		case "work":
 			row.class = "work"
-			err = verifyWork(ctx, tx, a, r.Subject, value, &row)
+			err = verifyWork(ctx, tx, account, r.Subject, value, now, &row)
 		case "stamp":
 			row.class = "observed"
-			err = verifyStamp(ctx, tx, a, value, &row)
+			err = verifyStamp(ctx, tx, account, value, &row)
 		case "tx":
 			// TODO(RFC 0015 §5.2): check the transfer to the subject's pay_to
 			// from a wallet the reviewer linked, through a fixed RPC, after
@@ -403,12 +493,26 @@ func (s *Store) verifyEvidence(ctx context.Context, tx *sql.Tx, a actor, r revie
 		}
 		out = append(out, row)
 	}
-	if r.Relationship == "lab" && r.Record != nil && r.Record.Doc != "" {
-		row, err := s.verifyRecord(ctx, tx, a, r)
-		if err != nil {
-			return nil, err
+	// A stamp proves only that the reviewer held some bytes. It is observed
+	// evidence of this subject when it stamps the raw bytes of a cited fetch
+	// that verified under the subject; any other stamp weighs as opinion.
+	for i := range out {
+		st := &out[i]
+		if !strings.HasPrefix(st.id, "stamp:") || st.state != "verified" {
+			continue
 		}
-		out = append(out, row)
+		hash := strings.TrimPrefix(st.id, "stamp:")
+		for _, f := range out {
+			if strings.HasPrefix(f.id, "fetch:") && f.state == "verified" && f.detail["raw_sha256"] == hash {
+				st.detail["fetch"] = f.id
+			}
+		}
+		if st.detail["fetch"] == nil {
+			st.class, st.detail["note"] = "opinion", "stamp_not_of_a_cited_fetch"
+		}
+	}
+	if hasRecordDoc(r) {
+		out = append(out, reviewEvidenceRow{id: RecordEvidencePrefix + r.Record.SHA256, class: "record", state: "unknown", detail: map[string]any{"doc": r.Record.Doc, "reason": RecordPending}})
 	}
 	return out, nil
 }
@@ -417,53 +521,9 @@ func (s *Store) verifyEvidence(ctx context.Context, tx *sql.Tx, a actor, r revie
 // here; it is not cited evidence and never sets a review's class.
 const RecordEvidencePrefix = "record:"
 
-// verifyRecord recomputes a lab assessment from its full record: the doc
-// the reviewer published holding the swarmmemo.observations/1 file whose
-// SHA-256 data.review.record names, scored with the pinned rubric by
-// internal/rubric (the same code as swarmmemo rubric score). It matches
-// when score, band, grade, verdict and flags all agree.
-func (s *Store) verifyRecord(ctx context.Context, tx *sql.Tx, a actor, r reviews.Review) (reviewEvidenceRow, error) {
-	row := reviewEvidenceRow{id: RecordEvidencePrefix + r.Record.SHA256, class: "record", state: "failed", detail: map[string]any{"doc": r.Record.Doc}}
-	var text, visibility string
-	err := tx.QueryRowContext(ctx, "SELECT v.text,d.visibility FROM doc_versions v JOIN docs d ON d.id=v.doc WHERE v.doc=? AND v.hash=? AND d.account=? AND d.state='active' ORDER BY v.version DESC LIMIT 1", r.Record.Doc, r.Record.SHA256, a.account).Scan(&text, &visibility)
-	if errors.Is(err, sql.ErrNoRows) {
-		row.detail["reason"] = "not_your_doc_version"
-		return row, nil
-	}
-	if err != nil {
-		return row, err
-	}
-	row.detail["doc_visibility"] = visibility
-	rb := reviews.LookupRubric(r.Rubric.ID, r.Rubric.Version)
-	if len(text) > rubric.MaxObservationsBytes || rb == nil {
-		row.detail["reason"] = "record_unreadable"
-		return row, nil
-	}
-	obs, err := rubric.ParseObservations([]byte(text), rb.Rubric)
-	if err != nil {
-		row.detail["reason"] = "not_observations_of_this_rubric"
-		return row, nil
-	}
-	res := rubric.Score(rb.Rubric, obs)
-	verdict := reviews.UniversalVerdict(res.Verdict)
-	flags := slices.Clone(res.Flags)
-	claimed := slices.Clone(r.Flags)
-	slices.Sort(flags)
-	slices.Sort(claimed)
-	flags, claimed = slices.Compact(flags), slices.Compact(claimed)
-	match := r.Score != nil && *r.Score == res.Score && r.Band != nil && *r.Band == res.Band && r.Grade == res.Grade && r.Verdict == verdict && slices.Equal(flags, claimed)
-	row.detail["recomputed"] = map[string]any{"score": res.Score, "band": res.Band, "grade": res.Grade, "verdict": verdict, "lab_verdict": res.Verdict, "flags": res.Flags, "confidence": res.Confidence, "observations_sha256": res.ObservationsSHA256}
-	row.detail["matches"] = match
-	if match {
-		row.state = "verified"
-		delete(row.detail, "reason")
-	} else {
-		row.detail["reason"] = "recomputed_result_differs"
-	}
-	return row, nil
+func (r *reviewEvidenceRow) fail(reason string) {
+	r.state, r.detail = "failed", map[string]any{"reason": reason}
 }
-
-func (r *reviewEvidenceRow) fail(reason string) { r.state, r.detail = "failed", map[string]any{"reason": reason} }
 
 // subjectMatchesURL reports whether a URL's method and address fall under
 // sub: the same x402 endpoint, the same origin for a site, the same
@@ -486,11 +546,11 @@ func subjectMatchesURL(sub reviews.Subject, method, raw string, opt reviews.Opti
 	return false
 }
 
-func (s *Store) verifyCallEvidence(ctx context.Context, tx *sql.Tx, a actor, sub reviews.Subject, id string, now int64, row *reviewEvidenceRow) error {
+func (s *Store) verifyCallEvidence(ctx context.Context, tx *sql.Tx, reviewer string, sub reviews.Subject, id string, now int64, row *reviewEvidenceRow) error {
 	var account, service, method, state, public, hold string
 	var created int64
 	err := tx.QueryRowContext(ctx, "SELECT account,service,method,state,public,hold_id,created_at FROM service_calls WHERE id=?", id).Scan(&account, &service, &method, &state, &public, &hold, &created)
-	if errors.Is(err, sql.ErrNoRows) || err == nil && account != a.account {
+	if errors.Is(err, sql.ErrNoRows) || err == nil && account != reviewer {
 		row.fail("not_your_call")
 		return nil
 	}
@@ -558,11 +618,11 @@ func (s *Store) x402ResourceAddress(ctx context.Context, tx *sql.Tx, id string) 
 	return u, m, err == nil, err
 }
 
-func (s *Store) verifyFetch(ctx context.Context, tx *sql.Tx, a actor, r reviews.Review, id string, now int64, row *reviewEvidenceRow) error {
+func (s *Store) verifyFetch(ctx context.Context, tx *sql.Tx, reviewer string, r reviews.Review, id string, now int64, row *reviewEvidenceRow) error {
 	var account, service, state, body string
 	var created int64
 	err := tx.QueryRowContext(ctx, "SELECT account,service,state,body,created_at FROM service_calls WHERE id=?", id).Scan(&account, &service, &state, &body, &created)
-	if errors.Is(err, sql.ErrNoRows) || err == nil && account != a.account {
+	if errors.Is(err, sql.ErrNoRows) || err == nil && account != reviewer {
 		row.fail("not_your_fetch")
 		return nil
 	}
@@ -603,38 +663,57 @@ func (s *Store) verifyFetch(ctx context.Context, tx *sql.Tx, a actor, r reviews.
 	return nil
 }
 
-func verifyWork(ctx context.Context, tx *sql.Tx, a actor, sub reviews.Subject, id string, row *reviewEvidenceRow) error {
+// verifyWork checks a work: id: public work, accepted, whose request names
+// the subject, with a reward paid between two accounts before the review:
+// the reviewer is the worker another account paid, or the requester who
+// paid another account's worker. Work an account posts, works and pays
+// itself proves nothing and fails.
+func verifyWork(ctx context.Context, tx *sql.Tx, reviewer string, sub reviews.Subject, id string, now int64, row *reviewEvidenceRow) error {
 	var requester, worker, state, visibility string
-	err := tx.QueryRowContext(ctx, "SELECT w.requester,w.worker,w.state,r.visibility FROM works w JOIN events e ON e.id=w.id JOIN rooms r ON r.name=e.room WHERE w.id=?", id).Scan(&requester, &worker, &state, &visibility)
-	if errors.Is(err, sql.ErrNoRows) || err == nil && (visibility != "public" || (requester != a.account && worker != a.account)) {
+	var created int64
+	err := tx.QueryRowContext(ctx, "SELECT w.requester,w.worker,w.state,w.created_at,r.visibility FROM works w JOIN events e ON e.id=w.id JOIN rooms r ON r.name=e.room WHERE w.id=?", id).Scan(&requester, &worker, &state, &created, &visibility)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && (visibility != "public" || (requester != reviewer && worker != reviewer)) {
 		row.fail("not_your_public_work")
 		return nil
 	}
 	if err != nil {
 		return err
 	}
+	if state != "accepted" || worker == "" || worker == requester || created > now {
+		row.fail("work_not_accepted_between_two_accounts")
+		return nil
+	}
+	var paid bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM work_rewards WHERE work_id=?1 AND state='paid' AND amount>0 AND worker=?2 AND settled_at<=?3)
+ OR EXISTS(SELECT 1 FROM work_usdc WHERE work_id=?1 AND state='paid' AND worker=?2 AND settled_at<=?3)`, id, worker, now).Scan(&paid); err != nil {
+		return err
+	}
+	if !paid {
+		row.fail("work_reward_not_paid")
+		return nil
+	}
 	var named int
-	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM events WHERE (id=? OR origin=?) AND hidden=0 AND (instr(text,?)>0 OR instr(text,?)>0)", id, id, sub.ID, sub.Key).Scan(&named); err != nil {
+	if err = tx.QueryRowContext(ctx, `WITH `+messageVersions+` SELECT count(*) FROM v JOIN events e ON e.id=v.id WHERE v.hidden=0 AND (instr(e.text,?2)>0 OR instr(e.text,?3)>0)`, id, sub.ID, sub.Key).Scan(&named); err != nil {
 		return err
 	}
 	if named == 0 {
 		row.fail("request_does_not_name_the_subject")
 		return nil
 	}
-	role := "worker"
-	if requester == a.account {
-		role = "requester"
+	role, other := "worker", requester
+	if requester == reviewer {
+		role, other = "requester", worker
 	}
-	row.state = "verified"
-	row.detail = map[string]any{"role": role, "work_state": state}
+	row.state, row.counterparty = "verified", other
+	row.detail = map[string]any{"role": role, "work_state": state, "reward": "paid"}
 	return nil
 }
 
-func verifyStamp(ctx context.Context, tx *sql.Tx, a actor, hash string, row *reviewEvidenceRow) error {
+func verifyStamp(ctx context.Context, tx *sql.Tx, reviewer, hash string, row *reviewEvidenceRow) error {
 	var account string
 	var at, seq int64
 	err := tx.QueryRowContext(ctx, "SELECT account,time,seq FROM notary_receipts WHERE hash=?", hash).Scan(&account, &at, &seq)
-	if errors.Is(err, sql.ErrNoRows) || err == nil && account != a.account {
+	if errors.Is(err, sql.ErrNoRows) || err == nil && account != reviewer {
 		row.fail("not_your_stamp")
 		return nil
 	}
@@ -648,11 +727,11 @@ func verifyStamp(ctx context.Context, tx *sql.Tx, a actor, hash string, row *rev
 
 // SubjectRef names a subject on the wire.
 type SubjectRef struct {
-	ID     string      `json:"id"`
-	Type   string      `json:"type"`
-	Key    string      `json:"key"`
-	URI    string      `json:"uri"`
-	URL    string      `json:"url"`
+	ID     string         `json:"id"`
+	Type   string         `json:"type"`
+	Key    string         `json:"key"`
+	URI    string         `json:"uri"`
+	URL    string         `json:"url"`
 	Parent *SubjectParent `json:"parent,omitempty"`
 }
 
@@ -787,27 +866,21 @@ type storedReview struct {
 	Source       *reviews.Source       `json:"source"`
 }
 
-const reviewColumns = `r.event_id,r.root_event,r.subject,r.account,r.author,r.verdict,r.relationship,r.relationship_raised,r.works,r.as_described,r.safe,r.good,r.rubric,r.rubric_version,r.rubric_sha256,r.score,r.band_lo,r.band_hi,r.grade,r.flags,r.evidence_class,r.seasoned,r.review,r.created_at,r.current,
+const reviewColumns = `r.event_id,r.root_event,r.subject,r.account,r.author,r.verdict,r.relationship,r.relationship_raised,r.works,r.as_described,r.safe,r.good,r.rubric,r.rubric_version,r.rubric_sha256,r.score,r.band_lo,r.band_hi,r.grade,r.flags,r.evidence_class,r.review,r.created_at,r.current,
  s.type,s.key,e.text,coalesce((SELECT i.handle FROM identities i WHERE i.id=r.author),'')`
 
-type reviewRow struct {
-	card     ReviewCard
-	seasoned bool
-}
-
-func scanReview(rows *sql.Rows) (reviewRow, error) {
-	var out reviewRow
-	c := &out.card
+func scanReview(rows *sql.Rows) (ReviewCard, error) {
+	var c ReviewCard
 	var dims [4]int
 	var rubric, version, sum, flags, raw, typ, key string
 	var score, lo, hi int
-	var seasoned, current int
+	var current int
 	if err := rows.Scan(&c.ID, &c.Root, &c.Subject.ID, &c.Author.Account, &c.Author.Key, &c.Verdict, &c.Relationship, &c.RelationshipRaised, &dims[0], &dims[1], &dims[2], &dims[3],
-		&rubric, &version, &sum, &score, &lo, &hi, &c.Grade, &flags, &c.EvidenceClass, &seasoned, &raw, &c.CreatedAt, &current, &typ, &key, &c.Text, &c.Author.Handle); err != nil {
-		return out, err
+		&rubric, &version, &sum, &score, &lo, &hi, &c.Grade, &flags, &c.EvidenceClass, &raw, &c.CreatedAt, &current, &typ, &key, &c.Text, &c.Author.Handle); err != nil {
+		return c, err
 	}
 	c.Subject = subjectRef(reviews.Subject{Type: typ, Key: key, ID: c.Subject.ID})
-	c.Current, out.seasoned = current == 1, seasoned == 1
+	c.Current = current == 1
 	c.LabVerdict = reviews.LabVerdicts[c.Verdict]
 	for i, d := range reviews.Dimensions {
 		if dims[i] >= 0 {
@@ -833,36 +906,99 @@ func scanReview(rows *sql.Rows) (reviewRow, error) {
 	_ = json.Unmarshal([]byte(raw), &st)
 	c.Observations, c.Record, c.Source = st.Observations, st.Record, st.Source
 	c.Thread = "/e/" + c.Root
-	return out, nil
+	return c, nil
 }
 
-// loadEvidence fills each card's evidence states.
-func loadEvidence(ctx context.Context, tx *sql.Tx, cards []*MessageReview, ids []string) error {
-	if len(ids) == 0 {
-		return nil
-	}
-	args := make([]any, len(ids))
-	index := map[string]int{}
-	for i, id := range ids {
-		args[i] = id
-		index[id] = i
-	}
-	rows, err := tx.QueryContext(ctx, "SELECT event_id,evidence,class,state,checked_at,detail FROM review_evidence WHERE event_id IN ("+placeholders(len(ids))+") ORDER BY rowid", args...)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id, detail string
-		var e ReviewEvidence
-		if err = rows.Scan(&id, &e.ID, &e.Class, &e.State, &e.CheckedAt, &detail); err != nil {
+// reviewChunk bounds the ids one IN (...) list carries.
+const reviewChunk = 500
+
+// inChunks calls fn for each run of at most reviewChunk ids, with the
+// run's placeholders and arguments.
+func inChunks(ids []string, fn func(marks string, args []any) error) error {
+	for start := 0; start < len(ids); start += reviewChunk {
+		part := ids[start:min(start+reviewChunk, len(ids))]
+		args := make([]any, len(part))
+		for i, id := range part {
+			args[i] = id
+		}
+		if err := fn(placeholders(len(part)), args); err != nil {
 			return err
 		}
-		_ = json.Unmarshal([]byte(detail), &e.Detail)
-		card := cards[index[id]]
-		card.Evidence = append(card.Evidence, e)
 	}
-	return rows.Err()
+	return nil
+}
+
+// queryCards reads the review cards that where (over reviews r, subjects s
+// and events e) selects, in its order, with their evidence.
+func queryCards(ctx context.Context, tx *sql.Tx, where string, args ...any) ([]ReviewCard, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT "+reviewColumns+" FROM reviews r JOIN subjects s ON s.id=r.subject JOIN events e ON e.id=r.event_id WHERE "+where, args...)
+	if err != nil {
+		return nil, err
+	}
+	var out []ReviewCard
+	for rows.Next() {
+		c, err := scanReview(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	rows.Close()
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	cards := make([]*MessageReview, len(out))
+	for i := range out {
+		cards[i] = &out[i].MessageReview
+	}
+	return out, loadEvidence(ctx, tx, cards, out)
+}
+
+// cardsByID reads the review cards of ids, in that order.
+func cardsByID(ctx context.Context, tx *sql.Tx, ids []string) ([]ReviewCard, error) {
+	byID := map[string]ReviewCard{}
+	err := inChunks(ids, func(marks string, args []any) error {
+		list, err := queryCards(ctx, tx, "r.event_id IN ("+marks+")", args...)
+		for _, c := range list {
+			byID[c.ID] = c
+		}
+		return err
+	})
+	out := make([]ReviewCard, 0, len(ids))
+	for _, id := range ids {
+		if c, ok := byID[id]; ok {
+			out = append(out, c)
+		}
+	}
+	return out, err
+}
+
+// loadEvidence fills each card's evidence states; cards[i] is list[i]'s.
+func loadEvidence(ctx context.Context, tx *sql.Tx, cards []*MessageReview, list []ReviewCard) error {
+	index := map[string]int{}
+	ids := make([]string, len(list))
+	for i, c := range list {
+		ids[i], index[c.ID] = c.ID, i
+	}
+	return inChunks(ids, func(marks string, args []any) error {
+		rows, err := tx.QueryContext(ctx, "SELECT event_id,evidence,class,state,checked_at,detail FROM review_evidence WHERE event_id IN ("+marks+") ORDER BY rowid", args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id, detail string
+			var e ReviewEvidence
+			if err = rows.Scan(&id, &e.ID, &e.Class, &e.State, &e.CheckedAt, &detail); err != nil {
+				return err
+			}
+			_ = json.Unmarshal([]byte(detail), &e.Detail)
+			card := cards[index[id]]
+			card.Evidence = append(card.Evidence, e)
+		}
+		return rows.Err()
+	})
 }
 
 func placeholders(n int) string { return strings.TrimSuffix(strings.Repeat("?,", n), ",") }
@@ -881,35 +1017,12 @@ func (s *Store) attachReviews(ctx context.Context, tx *sql.Tx, events []Message)
 			at[e.ID] = i
 		}
 	}
-	if len(ids) == 0 {
-		return nil
+	list, err := cardsByID(ctx, tx, ids)
+	for _, c := range list {
+		mr := c.MessageReview
+		events[at[c.ID]].Review = &mr
 	}
-	args := make([]any, len(ids))
-	for i, id := range ids {
-		args[i] = id
-	}
-	rows, err := tx.QueryContext(ctx, "SELECT "+reviewColumns+" FROM reviews r JOIN subjects s ON s.id=r.subject JOIN events e ON e.id=r.event_id WHERE r.event_id IN ("+placeholders(len(ids))+")", args...)
-	if err != nil {
-		return err
-	}
-	var found []*MessageReview
-	var foundIDs []string
-	for rows.Next() {
-		row, err := scanReview(rows)
-		if err != nil {
-			rows.Close()
-			return err
-		}
-		mr := row.card.MessageReview
-		events[at[row.card.ID]].Review = &mr
-		found = append(found, events[at[row.card.ID]].Review)
-		foundIDs = append(foundIDs, row.card.ID)
-	}
-	rows.Close()
-	if err = rows.Err(); err != nil {
-		return err
-	}
-	return loadEvidence(ctx, tx, found, foundIDs)
+	return err
 }
 
 // readSubjects serves subject.resolve, subject.get and subjects.list.
@@ -1020,83 +1133,81 @@ func (s *Store) readSubject(ctx context.Context, tx *sql.Tx, c Command, now int6
 		data["reviews"], data["aggregate"], data["has_more"] = []ReviewCard{}, emptyAggregate(), false
 		return Result{Data: data}, nil
 	}
-	rows, err := tx.QueryContext(ctx, "SELECT "+reviewColumns+" FROM reviews r JOIN subjects s ON s.id=r.subject JOIN events e ON e.id=r.event_id WHERE r.subject=? AND r.current=1 AND e.hidden=0 ORDER BY r.created_at DESC, r.event_id", sub.ID)
+	agg, page, err := communityReviews(ctx, tx, sub.ID, now, limit, offset)
 	if err != nil {
 		return Result{}, err
 	}
-	var all []reviewRow
-	for rows.Next() {
-		row, err := scanReview(rows)
-		if err != nil {
+	owners := make([]string, 0, len(info.Owners))
+	for _, o := range info.Owners {
+		owners = append(owners, o.Account)
+	}
+	finish := func(list []ReviewCard) ([]ReviewCard, error) {
+		for i := range list {
+			if err := reviewThread(ctx, tx, &list[i], owners); err != nil {
+				return nil, err
+			}
+		}
+		return list, nil
+	}
+	if page, err = finish(page); err != nil {
+		return Result{}, err
+	}
+	end := offset + len(page)
+	data["reviews"], data["aggregate"], data["has_more"] = page, agg, end < agg.Reviews
+	if end < agg.Reviews {
+		data["next_cursor"] = strconv.Itoa(end)
+	}
+	// The lab assessment is the newest lab review whose record recomputed
+	// to what it claims; lab_runs are the newest lab reviews, each
+	// self-reported until its record verifies.
+	labs, err := queryCards(ctx, tx, "r.subject=? AND r.current=1 AND e.hidden=0 AND r.relationship='lab' AND "+labVerified+" ORDER BY r.created_at DESC, r.event_id LIMIT 1", sub.ID)
+	if err != nil {
+		return Result{}, err
+	}
+	if labs, err = finish(labs); err != nil {
+		return Result{}, err
+	}
+	if len(labs) > 0 {
+		data["lab"] = labs[0]
+	}
+	// The lab runs and other raters, newest first, in one pass: each
+	// account (a listed lab or importer key) has one current review here.
+	rows, err := tx.QueryContext(ctx, `SELECT r.event_id,r.relationship FROM reviews r JOIN events e ON e.id=r.event_id
+ WHERE r.subject=? AND r.current=1 AND e.hidden=0 AND r.relationship IN ('lab','outside_source') ORDER BY r.created_at DESC, r.event_id`, sub.ID)
+	if err != nil {
+		return Result{}, err
+	}
+	var runIDs, otherIDs []string
+	for rows.Next() && (len(runIDs) < labRunsShown || len(otherIDs) < otherRatersShown) {
+		var id, rel string
+		if err = rows.Scan(&id, &rel); err != nil {
 			rows.Close()
 			return Result{}, err
 		}
-		all = append(all, row)
+		if rel == "lab" && len(runIDs) < labRunsShown {
+			runIDs = append(runIDs, id)
+		} else if rel == "outside_source" && len(otherIDs) < otherRatersShown {
+			otherIDs = append(otherIDs, id)
+		}
 	}
 	rows.Close()
 	if err = rows.Err(); err != nil {
 		return Result{}, err
 	}
-	cards := make([]*MessageReview, len(all))
-	ids := make([]string, len(all))
-	for i := range all {
-		cards[i], ids[i] = &all[i].card.MessageReview, all[i].card.ID
-	}
-	if err = loadEvidence(ctx, tx, cards, ids); err != nil {
-		return Result{}, err
-	}
-	var lab, outside, community []reviewRow
-	for _, r := range all {
-		switch r.card.Relationship {
-		case "lab":
-			lab = append(lab, r)
-		case "outside_source":
-			outside = append(outside, r)
-		default:
-			community = append(community, r)
+	for _, apart := range []struct {
+		name string
+		ids  []string
+	}{{"lab_runs", runIDs}, {"other_raters", otherIDs}} {
+		if len(apart.ids) == 0 {
+			continue
 		}
-	}
-	agg := orderReviews(community, now)
-	owners := make([]string, 0, len(info.Owners))
-	for _, o := range info.Owners {
-		owners = append(owners, o.Account)
-	}
-	finish := func(list []reviewRow) ([]ReviewCard, error) {
-		out := make([]ReviewCard, 0, len(list))
-		for _, r := range list {
-			card := r.card
-			if err := reviewThread(ctx, tx, &card, owners); err != nil {
-				return nil, err
-			}
-			out = append(out, card)
-		}
-		return out, nil
-	}
-	end := min(offset+limit, len(community))
-	if offset > len(community) {
-		offset = end
-	}
-	page, err := finish(community[offset:end])
-	if err != nil {
-		return Result{}, err
-	}
-	data["reviews"], data["aggregate"], data["has_more"] = page, agg, end < len(community)
-	if end < len(community) {
-		data["next_cursor"] = strconv.Itoa(end)
-	}
-	if len(lab) > 0 {
-		runs, err := finish(lab[:min(len(lab), labRunsShown)])
+		list, err := cardsByID(ctx, tx, apart.ids)
 		if err != nil {
 			return Result{}, err
 		}
-		data["lab"], data["lab_runs"] = runs[0], runs
-	}
-	if len(outside) > 0 {
-		others, err := finish(outside)
-		if err != nil {
+		if data[apart.name], err = finish(list); err != nil {
 			return Result{}, err
 		}
-		data["other_raters"] = others
 	}
 	return Result{Data: data}, nil
 }
@@ -1116,108 +1227,175 @@ func reviewOrderNote() map[string]any {
 		"separate": "lab assessments and other raters are shown apart and never in this order or its aggregate"}
 }
 
-// orderReviews weighs the community reviews (RFC 0015 §5.4), sorts them by
-// weight then recency, and sums them.
-func orderReviews(list []reviewRow, now int64) ReviewAggregate {
+// sqlNumber writes f as a SQL real literal.
+func sqlNumber(f float64) string {
+	s := strconv.FormatFloat(f, 'f', -1, 64)
+	if !strings.ContainsAny(s, ".e") {
+		s += ".0"
+	}
+	return s
+}
+
+// sqlCase is a SQL CASE mapping expr's values to m's numbers, else def. The
+// keys are this file's own constant words, never input.
+func sqlCase(expr string, m map[string]float64, def string) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString("CASE " + expr)
+	for _, k := range keys {
+		b.WriteString(" WHEN '" + k + "' THEN " + sqlNumber(m[k]))
+	}
+	b.WriteString(" ELSE " + def + " END")
+	return b.String()
+}
+
+// communityWeights is the default order (RFC 0015 §5.4) in SQL, one source
+// for the page and its aggregate: each current, visible community review of
+// subject ?2 at time ?1 with its parts (class weight cw, standing v,
+// relationship factor rf, decay, burst scale) and its weight w = cw × v ×
+// rf × decay × burst, rounded to 1e-6. Reviews younger than ReviewBurstDays
+// add at most ReviewBurstCap per UTC day: their day totals come from an
+// index range over those days only, so a read is one pass over the
+// subject's reviews. A review's class is its best verified evidence not
+// counted for another review (indexReview).
+var communityWeights = sync.OnceValue(func() string {
+	verdicts := map[string]float64{}
+	for _, v := range reviews.Verdicts {
+		if x, ok := reviews.VerdictValue(v); ok {
+			verdicts[v] = x
+		}
+	}
+	cw := sqlCase("r.evidence_class", ReviewEvidenceWeights, "0.0")
+	rf := sqlCase("CASE WHEN r.relationship_raised<>'' THEN r.relationship_raised ELSE r.relationship END", ReviewRelationshipFactors, "1.0")
+	decay := "pow(2.0, -(?1-r.created_at)/" + sqlNumber(ReviewHalfLifeDays*86400) + ")"
+	burst, capped := strconv.Itoa(ReviewBurstDays*86400), sqlNumber(ReviewBurstCap)
+	from := ` FROM reviews r JOIN events e ON e.id=r.event_id%s WHERE r.subject=?2 AND r.current=1 AND e.hidden=0 AND r.relationship NOT IN ('lab','outside_source')`
+	return `WITH days AS MATERIALIZED (SELECT r.created_at/86400 AS day, sum(` + cw + `*r.seasoned*` + rf + `*` + decay + `) AS total` + fmt.Sprintf(from, "") + ` AND r.created_at>?1-` + burst + ` GROUP BY day),
+parts AS (SELECT r.event_id,r.verdict,r.evidence_class,r.works,r.as_described,r.safe,r.good,r.created_at,
+ ` + cw + ` AS cw, r.seasoned AS v, ` + rf + ` AS rf, ` + decay + ` AS decay, ` + sqlCase("r.verdict", verdicts, "NULL") + ` AS value,
+ CASE WHEN ?1-r.created_at<` + burst + ` AND days.total>` + capped + ` THEN ` + capped + `/days.total ELSE 1.0 END AS burst` + fmt.Sprintf(from, " LEFT JOIN days ON days.day=r.created_at/86400") + `),
+w AS (SELECT parts.*, round(cw*v*rf*decay*burst, 6) AS w FROM parts)
+`
+})
+
+// communityReviews reads a subject's community reviews in one statement,
+// one pass over them: the aggregate (RFC 0015 §5.4: counts by evidence class
+// and verdict, the weights, the Bayesian mean of verdicts and the weighted
+// dimension means) and one page in the default order (weight, then newest),
+// each card with its order parts. Each review's weight is computed once
+// (x is materialized: a flattened CTE would recompute it per use).
+func communityReviews(ctx context.Context, tx *sql.Tx, subject string, now int64, limit, offset int) (ReviewAggregate, []ReviewCard, error) {
 	agg := emptyAggregate()
-	// Evidence cited by two reviews counts once: the later review's share is
-	// zero for that object (both still show).
-	owner := map[string]string{}
-	for i := len(list) - 1; i >= 0; i-- { // oldest first
-		r := &list[i].card
-		class := r.EvidenceClass
-		o := &ReviewOrder{Class: class, ClassWeight: ReviewEvidenceWeights[class], V: 0, RelationshipFactor: 1, Decay: math.Exp2(-float64(now-r.CreatedAt) / (ReviewHalfLifeDays * 86400)), BurstScale: 1}
-		if list[i].seasoned {
-			o.V = 1
+	// One current review per account and subject: accounts are reviews.
+	cols := []string{"count(*)", "count(*)",
+		"coalesce(sum(CASE WHEN w>0 AND value IS NOT NULL THEN w END),0)", "coalesce(sum(CASE WHEN w>0 THEN w*value END),0)"}
+	for _, class := range reviewClassRank {
+		cols = append(cols, "coalesce(sum(evidence_class='"+class+"'),0)")
+	}
+	for _, v := range reviews.Verdicts {
+		cols = append(cols, "coalesce(sum(verdict='"+v+"'),0)")
+	}
+	for _, d := range reviews.Dimensions {
+		cols = append(cols, "coalesce(sum(CASE WHEN w>0 AND "+d+">=0 THEN w*"+d+" END),0)", "coalesce(sum(CASE WHEN w>0 AND "+d+">=0 THEN w END),0)")
+	}
+	rows, err := tx.QueryContext(ctx, communityWeights()+`, x AS MATERIALIZED (SELECT * FROM w),
+agg AS (SELECT `+strings.Join(cols, ",")+` FROM x),
+page AS (SELECT event_id,created_at,evidence_class,cw,v,rf,decay,burst,w FROM x ORDER BY w DESC, created_at DESC, event_id LIMIT ?3 OFFSET ?4)
+SELECT agg.*,page.event_id,page.evidence_class,page.cw,page.v,page.rf,page.decay,page.burst,page.w FROM agg LEFT JOIN page ON 1 ORDER BY page.w DESC, page.created_at DESC, page.event_id`, now, subject, limit, offset)
+	if err != nil {
+		return agg, nil, err
+	}
+	var total, sum float64
+	byClass := make([]int, len(reviewClassRank))
+	byVerdict := make([]int, len(reviews.Verdicts))
+	dims := make([]float64, 2*len(reviews.Dimensions))
+	var ids []string
+	orders := map[string]*ReviewOrder{}
+	for rows.Next() {
+		dest := []any{&agg.Reviews, &agg.Accounts, &total, &sum}
+		for i := range byClass {
+			dest = append(dest, &byClass[i])
 		}
-		rel := r.Relationship
-		if r.RelationshipRaised != "" {
-			rel = r.RelationshipRaised
+		for i := range byVerdict {
+			dest = append(dest, &byVerdict[i])
 		}
-		if f, ok := ReviewRelationshipFactors[rel]; ok {
-			o.RelationshipFactor = f
+		for i := range dims {
+			dest = append(dest, &dims[i])
 		}
-		for _, e := range r.Evidence {
-			if e.State != "verified" {
-				continue
+		var id, class sql.NullString
+		var cw, v, rf, decay, burst, w sql.NullFloat64
+		if err = rows.Scan(append(dest, &id, &class, &cw, &v, &rf, &decay, &burst, &w)...); err != nil {
+			rows.Close()
+			return agg, nil, err
+		}
+		if id.Valid {
+			ids = append(ids, id.String)
+			orders[id.String] = &ReviewOrder{Class: class.String, ClassWeight: cw.Float64, V: v.Float64, RelationshipFactor: rf.Float64, Decay: decay.Float64, BurstScale: burst.Float64, Weight: w.Float64}
+		}
+	}
+	rows.Close()
+	if err = rows.Err(); err != nil {
+		return agg, nil, err
+	}
+	for i, class := range reviewClassRank {
+		if byClass[i] > 0 {
+			agg.ByClass[class] = byClass[i]
+		}
+	}
+	for i, v := range reviews.Verdicts {
+		if byVerdict[i] > 0 {
+			agg.ByVerdict[v] = byVerdict[i]
+		}
+	}
+	agg.VerdictMean = math.Round((sum+ReviewPriorWeight*ReviewPriorValue)/(total+ReviewPriorWeight)*1e4) / 1e4
+	agg.WeightTotal = math.Round(total*1e6) / 1e6
+	for i, d := range reviews.Dimensions {
+		if dims[2*i+1] > 0 {
+			if agg.Dimensions == nil {
+				agg.Dimensions = map[string]float64{}
 			}
-			if first, dup := owner[e.ID]; dup && first != r.ID {
-				o.ClassWeight, o.Note = ReviewEvidenceWeights["opinion"], "evidence already counted for another review"
-				break
-			}
-			owner[e.ID] = r.ID
-		}
-		r.Order = o
-	}
-	// The burst cap: fresh reviews add at most ReviewBurstCap per UTC day.
-	byDay := map[int64]float64{}
-	for i := range list {
-		o, r := list[i].card.Order, list[i].card
-		o.Weight = o.ClassWeight * o.V * o.RelationshipFactor * o.Decay
-		if now-r.CreatedAt < ReviewBurstDays*86400 {
-			byDay[r.CreatedAt/86400] += o.Weight
+			agg.Dimensions[d] = math.Round(dims[2*i]/dims[2*i+1]*10) / 10
 		}
 	}
-	for i := range list {
-		o, r := list[i].card.Order, list[i].card
-		if total := byDay[r.CreatedAt/86400]; now-r.CreatedAt < ReviewBurstDays*86400 && total > ReviewBurstCap {
-			o.BurstScale = ReviewBurstCap / total
-			o.Weight *= o.BurstScale
-		}
-		o.Weight = math.Round(o.Weight*1e6) / 1e6
+	page, err := cardsByID(ctx, tx, ids)
+	if err != nil {
+		return agg, nil, err
 	}
-	sort.SliceStable(list, func(i, j int) bool { return list[i].card.Order.Weight > list[j].card.Order.Weight })
-	accounts := map[string]bool{}
-	sum, dimW := 0.0, map[string]float64{}
-	agg.Dimensions = map[string]float64{}
-	for _, r := range list {
-		c := r.card
-		agg.Reviews++
-		accounts[c.Author.Account] = true
-		agg.ByClass[c.EvidenceClass]++
-		agg.ByVerdict[c.Verdict]++
-		w := c.Order.Weight
-		if v, ok := reviews.VerdictValue(c.Verdict); ok && w > 0 {
-			agg.WeightTotal += w
-			sum += w * v
-		}
-		for k, v := range c.Dimensions {
-			if w > 0 {
-				agg.Dimensions[k] += w * float64(v)
-				dimW[k] += w
+	for i := range page {
+		page[i].Order = orders[page[i].ID]
+		for _, e := range page[i].Evidence {
+			if e.Detail["counted_for"] != nil {
+				page[i].Order.Note = "evidence already counted for another review"
 			}
 		}
 	}
-	agg.Accounts = len(accounts)
-	agg.VerdictMean = math.Round((sum+ReviewPriorWeight*ReviewPriorValue)/(agg.WeightTotal+ReviewPriorWeight)*1e4) / 1e4
-	agg.WeightTotal = math.Round(agg.WeightTotal*1e6) / 1e6
-	for k := range agg.Dimensions {
-		agg.Dimensions[k] = math.Round(agg.Dimensions[k]/dimW[k]*10) / 10
-	}
-	if len(agg.Dimensions) == 0 {
-		agg.Dimensions = nil
-	}
-	return agg
+	return agg, page, nil
 }
 
 // reviewThread counts a review's replies and finds its owner's pinned reply.
 func reviewThread(ctx context.Context, tx *sql.Tx, card *ReviewCard, owners []string) error {
-	if err := tx.QueryRowContext(ctx, `WITH RECURSIVE t(id) AS (SELECT id FROM events WHERE id=?1 OR origin=?1
- UNION SELECT e.id FROM events e JOIN t ON e.reply_to=t.id WHERE e.room=?2 LIMIT ?3)
- SELECT count(*) FROM events e JOIN t ON t.id=e.id WHERE e.reply_to<>'' AND e.hidden=0 AND e.supersedes=''`, card.Root, ReviewsRoom, reviewThreadCountMax).Scan(&card.Replies); err != nil {
+	// Every lookup goes through an index (the versions by events_origin,
+	// replies by events_reply): a card costs its own thread, never a scan.
+	if err := tx.QueryRowContext(ctx, `WITH RECURSIVE `+messageVersions+`,
+ t(id) AS (SELECT id FROM v UNION SELECT e.id FROM t CROSS JOIN events e ON e.reply_to=t.id WHERE e.room=?2 LIMIT ?3)
+ SELECT count(*) FROM t CROSS JOIN events e ON e.id=t.id WHERE e.reply_to<>'' AND e.hidden=0 AND e.supersedes=''`, card.Root, ReviewsRoom, reviewThreadCountMax).Scan(&card.Replies); err != nil {
 		return err
 	}
 	if len(owners) == 0 {
 		return nil
 	}
-	args := []any{card.Root, card.Root}
+	args := []any{card.Root}
 	for _, o := range owners {
 		args = append(args, o)
 	}
 	var reply OwnerReply
-	err := tx.QueryRowContext(ctx, `SELECT e.id,e.account,coalesce((SELECT i.handle FROM identities i WHERE i.id=e.author),''),
- coalesce((SELECT v.text FROM events v WHERE (v.id=e.id OR v.origin=e.id) AND v.hidden=0 ORDER BY v.seq DESC LIMIT 1),e.text),e.created_at
- FROM events e WHERE e.reply_to IN (SELECT id FROM events WHERE id=? OR origin=?) AND e.hidden=0 AND e.supersedes='' AND e.account IN (`+placeholders(len(owners))+`) ORDER BY e.seq DESC LIMIT 1`, args...).Scan(&reply.ID, &reply.Account, &reply.Handle, &reply.Text, &reply.CreatedAt)
+	err := tx.QueryRowContext(ctx, `WITH `+messageVersions+` SELECT e.id,e.account,coalesce((SELECT i.handle FROM identities i WHERE i.id=e.author),''),
+ coalesce((SELECT x.text FROM events x WHERE x.origin=e.id AND x.origin<>'' AND x.hidden=0 ORDER BY x.seq DESC LIMIT 1),e.text),e.created_at
+ FROM v CROSS JOIN events e ON e.reply_to=v.id WHERE e.hidden=0 AND e.supersedes='' AND +e.account IN (`+placeholders(len(owners))+`) ORDER BY e.seq DESC LIMIT 1`, args...).Scan(&reply.ID, &reply.Account, &reply.Handle, &reply.Text, &reply.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -1227,6 +1405,10 @@ func reviewThread(ctx context.Context, tx *sql.Tx, card *ReviewCard, owners []st
 	card.OwnerReply = &reply
 	return nil
 }
+
+// messageVersions is the CTE v(id, hidden): message ?1 and its later
+// versions, each found through an index.
+const messageVersions = `v(id,hidden) AS (SELECT id,hidden FROM events WHERE id=?1 UNION ALL SELECT id,hidden FROM events WHERE origin=?1 AND origin<>'')`
 
 // SubjectListing is one row of subjects.list.
 type SubjectListing struct {
@@ -1265,9 +1447,9 @@ func (s *Store) listSubjects(ctx context.Context, tx *sql.Tx, c Command) (Result
 		order = "last DESC, s.id"
 	}
 	like := "%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(strings.ToLower(c.Query)) + "%"
-	rows, err := tx.QueryContext(ctx, `SELECT s.id,s.type,s.key,count(r.event_id) AS n,count(DISTINCT r.account),coalesce(max(r.created_at),0) AS last,
- coalesce((SELECT l.verdict FROM reviews l JOIN events le ON le.id=l.event_id WHERE l.subject=s.id AND l.current=1 AND l.relationship='lab' AND le.hidden=0 ORDER BY l.created_at DESC LIMIT 1),'')
- FROM subjects s LEFT JOIN reviews r ON r.subject=s.id AND r.current=1 AND r.relationship NOT IN ('lab','outside_source') AND EXISTS(SELECT 1 FROM events e WHERE e.id=r.event_id AND e.hidden=0)
+	rows, err := tx.QueryContext(ctx, `SELECT s.id,s.type,s.key,count(c.event_id) AS n,count(DISTINCT c.account),coalesce(max(c.created_at),0) AS last,
+ coalesce((SELECT r.verdict FROM reviews r JOIN events le ON le.id=r.event_id WHERE r.subject=s.id AND r.current=1 AND r.relationship='lab' AND le.hidden=0 AND `+labVerified+` ORDER BY r.created_at DESC LIMIT 1),'')
+ FROM subjects s LEFT JOIN reviews c ON c.subject=s.id AND c.current=1 AND c.relationship NOT IN ('lab','outside_source') AND EXISTS(SELECT 1 FROM events e WHERE e.id=c.event_id AND e.hidden=0)
  WHERE s.listed_at>0 AND (?='' OR s.type=?) AND (?='' OR lower(s.key) LIKE ? ESCAPE '\')
  GROUP BY s.id ORDER BY `+order+` LIMIT ? OFFSET ?`, c.Kind, c.Kind, c.Query, like, limit+1, offset)
 	if err != nil {
@@ -1304,38 +1486,63 @@ type ReviewSummary struct {
 	URL       string         `json:"url"`
 }
 
-// reviewSummaries summarises the current community reviews and the newest
-// lab assessment of each subject id that has any.
+// reviewSummaries summarises, per subject id, the current community
+// reviews (counted in SQL) and the newest lab assessment whose record
+// recomputed; ids with neither are left out. Ids go in chunks, so any
+// number is read.
 func reviewSummaries(ctx context.Context, q interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }, ids []string) (map[string]ReviewSummary, error) {
 	out := map[string]ReviewSummary{}
-	if len(ids) == 0 {
-		return out, nil
+	cols := []string{"r.subject", "count(*)", "count(DISTINCT r.account)"}
+	for _, v := range reviews.Verdicts {
+		cols = append(cols, "sum(r.verdict='"+v+"')")
 	}
-	args := make([]any, len(ids))
-	for i, id := range ids {
-		args[i] = id
-	}
-	rows, err := q.QueryContext(ctx, `SELECT r.subject,r.account,r.verdict,r.relationship,r.score,r.grade FROM reviews r JOIN events e ON e.id=r.event_id
- WHERE r.subject IN (`+placeholders(len(ids))+`) AND r.current=1 AND e.hidden=0 AND r.relationship<>'outside_source' ORDER BY r.created_at`, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	accounts := map[string]map[string]bool{}
-	for rows.Next() {
-		var subject, account, verdict, rel, grade string
-		var score int
-		if err = rows.Scan(&subject, &account, &verdict, &rel, &score, &grade); err != nil {
-			return nil, err
+	visible := " FROM reviews r JOIN events e ON e.id=r.event_id WHERE r.subject IN (%s) AND r.current=1 AND e.hidden=0 AND "
+	err := inChunks(ids, func(marks string, args []any) error {
+		rows, err := q.QueryContext(ctx, "SELECT "+strings.Join(cols, ",")+fmt.Sprintf(visible, marks)+"r.relationship NOT IN ('lab','outside_source') GROUP BY r.subject", args...)
+		if err != nil {
+			return err
 		}
-		sum, ok := out[subject]
-		if !ok {
-			sum = ReviewSummary{ByVerdict: map[string]int{}, URL: "/s/" + subject}
-			accounts[subject] = map[string]bool{}
+		for rows.Next() {
+			var subject string
+			sum := ReviewSummary{ByVerdict: map[string]int{}}
+			counts := make([]int, len(reviews.Verdicts))
+			dest := []any{&subject, &sum.Reviews, &sum.Accounts}
+			for i := range counts {
+				dest = append(dest, &counts[i])
+			}
+			if err = rows.Scan(dest...); err != nil {
+				rows.Close()
+				return err
+			}
+			for i, v := range reviews.Verdicts {
+				if counts[i] > 0 {
+					sum.ByVerdict[v] = counts[i]
+				}
+			}
+			sum.URL = "/s/" + subject
+			out[subject] = sum
 		}
-		if rel == "lab" {
+		rows.Close()
+		if err = rows.Err(); err != nil {
+			return err
+		}
+		rows, err = q.QueryContext(ctx, "SELECT r.subject,r.verdict,r.score,r.grade"+fmt.Sprintf(visible, marks)+"r.relationship='lab' AND "+labVerified+" ORDER BY r.created_at, r.event_id", args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var subject, verdict, grade string
+			var score int
+			if err = rows.Scan(&subject, &verdict, &score, &grade); err != nil {
+				return err
+			}
+			sum, ok := out[subject]
+			if !ok {
+				sum = ReviewSummary{ByVerdict: map[string]int{}, URL: "/s/" + subject}
+			}
 			sum.Lab = map[string]any{"verdict": verdict, "lab_verdict": reviews.LabVerdicts[verdict]}
 			if score >= 0 {
 				sum.Lab["score"] = score
@@ -1343,29 +1550,28 @@ func reviewSummaries(ctx context.Context, q interface {
 			if grade != "" {
 				sum.Lab["grade"] = grade
 			}
-		} else {
-			sum.Reviews++
-			sum.ByVerdict[verdict]++
-			accounts[subject][account] = true
-			sum.Accounts = len(accounts[subject])
+			out[subject] = sum // the newest comes last
 		}
-		out[subject] = sum
-	}
-	return out, rows.Err()
+		return rows.Err()
+	})
+	return out, err
 }
 
 // reviewSummarizer is reviewSummaries for the x402 relay's resources read
 // (services.ReviewSummarizer, handed over while REVIEWS is on), on the
-// read's own querier.
-type reviewSummarizer struct{}
+// read's own querier, with the board's subject options.
+type reviewSummarizer struct{ opt reviews.Options }
 
 // reviewSummarizer is the x402 relay's reviews index while REVIEWS is on.
 func (s *Store) reviewSummarizer() services.ReviewSummarizer {
 	if !s.ReviewsEnabled() {
 		return nil
 	}
-	return reviewSummarizer{}
+	return reviewSummarizer{opt: s.subjectOptions()}
 }
+
+// SubjectOptions are the options the write path resolves subjects with.
+func (r reviewSummarizer) SubjectOptions() reviews.Options { return r.opt }
 
 func (reviewSummarizer) ReviewSummaries(ctx context.Context, q allowance.Querier, ids []string) (map[string]any, error) {
 	sums, err := reviewSummaries(ctx, q, ids)
@@ -1386,12 +1592,12 @@ func (s *Store) SubjectsCapabilities() map[string]any {
 	}
 	return map[string]any{
 		"types": reviews.Types, "deferred": []string{"place"},
-		"uri":      "TYPE:KEY: x402:GET https://host/path, domain:example.com, site:https://example.com/, mcp:https://host/path or mcp:io.github.owner/server, agent:ACCOUNT_FINGERPRINT, pkg:npm/%40scope/name (a purl without its version)",
-		"id":       `base32(SHA-256(canonical JSON ["swarmmemo.subject.v1",TYPE,KEY]))[:26], lowercase`,
-		"resolve":  "/api/subjects/resolve?uri=URI", "get": "/api/subjects/ID", "list": "/api/subjects?type=TYPE&q=TEXT&sort=reviewed|recent", "page": "/s/ID", "search": "/s?q=TEXT",
-		"mcp":      []string{"resolve_subject", "read_subject", "search_subjects"},
-		"listed":   "in subjects.list and search engines once reviewed by two accounts or by its owner; before that its page is noindex",
-		"refused":  "people: email addresses, phone numbers, profile-shaped URL paths (a first segment in, u, user, users, profile, people, member or starting with @ or ~), this board's own account pages, IP addresses and special-use names (subject_refused, 422)",
+		"uri":     "TYPE:KEY: x402:GET https://host/path, domain:example.com, site:https://example.com/, mcp:https://host/path or mcp:io.github.owner/server, agent:ACCOUNT_FINGERPRINT, pkg:npm/%40scope/name (a purl without its version)",
+		"id":      `base32(SHA-256(canonical JSON ["swarmmemo.subject.v1",TYPE,KEY]))[:26], lowercase`,
+		"resolve": "/api/subjects/resolve?uri=URI", "get": "/api/subjects/ID", "list": "/api/subjects?type=TYPE&q=TEXT&sort=reviewed|recent", "page": "/s/ID", "search": "/s?q=TEXT",
+		"mcp":       []string{"resolve_subject", "read_subject", "search_subjects"},
+		"listed":    "in subjects.list and search engines once reviewed by two accounts or by its verified owner; before that its page is noindex",
+		"refused":   "people: email addresses, phone numbers, profile-shaped URL paths (a first segment in, u, user, users, profile, people, member or starting with @ or ~; any path on x.com, twitter.com, facebook.com, instagram.com, tiktok.com, linkedin.com and threads.net; one segment, sponsors/ or orgs/ on github.com and gitlab.com; c/ and channel/ on youtube.com), this board's own account pages, IP addresses and special-use names (subject_refused, 422)",
 		"ownership": "derived from identity links: a verified domain link owns its domain and the URLs on it; an agent owns its own agent subject",
 	}
 }
@@ -1407,13 +1613,13 @@ func (s *Store) ReviewsCapabilities() map[string]any {
 	}
 	return map[string]any{
 		"room": ReviewsRoom, "kind": "review", "page": "the subject's id", "docs": "/protocol.md#subjects-and-reviews",
-		"data":          `{"schema":1,"review":{"subject":"TYPE:KEY","verdict":"good"}} with optional dimensions, relationship, evidence, observations, rubric, record; score, band, grade, flags for relationship lab; source for outside_source`,
+		"data":           `{"schema":1,"review":{"subject":"TYPE:KEY","verdict":"good"}} with optional dimensions, relationship, evidence, observations, rubric, record; score, band, grade, flags for relationship lab; source for outside_source`,
 		"data_max_bytes": maxPostData, "verdicts": reviews.Verdicts, "lab_verdicts": reviews.LabVerdicts, "dimensions": reviews.Dimensions, "relationships": reviews.Relationships,
-		"evidence": map[string]any{"kinds": reviews.EvidenceKinds, "classes": ReviewEvidenceWeights, "max": reviews.MaxEvidence, "within_days": ReviewEvidenceDays, "checked": "call, fetch, work and stamp in the posting transaction; tx is recorded as unknown for now"},
-		"caps":     map[string]any{"per_account_per_day": ReviewsPerAccountDay, "observations": reviews.MaxObservations, "flags": reviews.MaxFlags, "current_per_account_and_subject": 1},
-		"signed": true, "worker_keys": false, "outside_source": "operator importer keys only",
+		"evidence": map[string]any{"kinds": reviews.EvidenceKinds, "classes": ReviewEvidenceWeights, "max": reviews.MaxEvidence, "within_days": ReviewEvidenceDays, "checked": "call, fetch, work and stamp when the review is posted (work: accepted, its reward paid between two accounts; stamp: observed only when it stamps a cited fetch's raw bytes, else opinion); a lab record (record:SHA256) is recomputed after commit, unknown until then; tx is recorded as unknown for now"},
+		"caps":     map[string]any{"per_account_per_day": ReviewsPerAccountDay, "lab_records_failed_or_waiting_per_day": ReviewRecordFailuresPerDay, "observations": reviews.MaxObservations, "flags": reviews.MaxFlags, "current_per_account_and_subject": 1},
+		"signed":   true, "worker_keys": false, "outside_source": "operator importer keys only (the importers parameters)", "lab": "operator lab keys only (the labs parameters); shown as the lab assessment once its record recomputes, self-reported until then",
 		"order": reviewOrderNote(), "rubrics": rubrics,
-		"write": "write_review (MCP, hosted identity), or a signed post: room reviews, kind review, page SUBJECT_ID, data.review",
+		"write":    "write_review (MCP, hosted identity), or a signed post: room reviews, kind review, page SUBJECT_ID, data.review",
 		"comments": "ordinary replies in the review's thread; the subject owner's newest reply is pinned under the review",
 	}
 }

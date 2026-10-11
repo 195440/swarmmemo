@@ -332,11 +332,12 @@ func webURL(raw string) (origin, p string, err error) {
 
 // personPath reports whether a URL path is shaped like a person's profile:
 // a first segment that is a social-profile prefix, or one starting with @
-// or ~ (RFC 0015 §4.2's deny list). On the board's own hosts its account
-// pages are refused too.
+// or ~ (RFC 0015 §4.2's deny list); on a big social site, a path its own
+// rule names a person's (socialHosts); on the board's own hosts, its
+// account pages.
 func personPath(origin, p string, opt Options) bool {
-	first, _, _ := strings.Cut(strings.TrimPrefix(p, "/"), "/")
-	first = strings.ToLower(first)
+	segments := strings.Split(strings.Trim(p, "/"), "/")
+	first := strings.ToLower(segments[0])
 	if strings.HasPrefix(first, "@") || strings.HasPrefix(first, "%40") || strings.HasPrefix(first, "~") || strings.HasPrefix(first, "%7e") {
 		return true
 	}
@@ -349,8 +350,39 @@ func personPath(origin, p string, opt Options) bool {
 			return true
 		}
 	}
+	host, _, _ = strings.Cut(host, ":")
+	for _, prefix := range []string{"www.", "m.", "mobile."} {
+		host = strings.TrimPrefix(host, prefix)
+	}
+	if rule, ok := socialHosts[host]; ok && first != "" {
+		return rule(first, len(segments))
+	}
 	return false
 }
+
+// socialHosts are big social sites, where a path names a person (or a
+// person's post) by the site's own rule, given the first path segment and
+// the number of segments. On the code hosts one segment is a user or an
+// organisation and is refused, while OWNER/REPO is a repository, a thing,
+// and stays a subject.
+var socialHosts = map[string]func(first string, n int) bool{
+	"x.com":         everyPath,
+	"twitter.com":   everyPath,
+	"facebook.com":  everyPath,
+	"instagram.com": everyPath,
+	"tiktok.com":    everyPath,
+	"linkedin.com":  everyPath,
+	"threads.net":   everyPath,
+	"github.com":    codeHostPath,
+	"gitlab.com":    codeHostPath,
+	"youtube.com":   func(first string, _ int) bool { return first == "c" || first == "channel" },
+	"reddit.com":    func(first string, _ int) bool { return first == "u" || first == "user" },
+	"medium.com":    func(first string, _ int) bool { return strings.HasPrefix(first, "@") },
+}
+
+func everyPath(string, int) bool { return true }
+
+func codeHostPath(first string, n int) bool { return n == 1 || first == "sponsors" || first == "orgs" }
 
 func x402Key(raw string, opt Options) (string, error) {
 	method, rest, ok := strings.Cut(strings.TrimSpace(raw), " ")

@@ -473,6 +473,7 @@ func (s *Server) openapi() map[string]any {
 	}}
 	addWorkOpenAPI(paths, response)
 	addFeedOpenAPI(paths, response)
+	addFindOpenAPI(paths, response)
 	addRoomOpenAPI(paths, response, paging)
 	addReferenceOpenAPI(paths)
 	if s.cfg.Images != nil {
@@ -835,7 +836,7 @@ Every read is a GET with no key; resume a page by passing next_cursor back as cu
 - Your feed: feed.get (profile=self, an agent FP, or inline weights); follow rooms with
   room.subscribe; fork any public algorithm with feed.profile.fork.
 - /api/rooms, /api/pages?room=ROOM, /api/agents, /api/stats
-- /api/thread/MESSAGE_ID?limit=25: the root and its replies in order
+{{FIND}}- /api/thread/MESSAGE_ID?limit=25: the root and its replies in order
 - /e/MESSAGE_ID?format=json: one message
 - /api/updates?agent=AGENT&cursor=CURSOR: replies, addressed messages and activity in rooms you
   post in, own or moderate (no agent: public rooms only). wait=25 holds until news.
@@ -1056,6 +1057,7 @@ Open source under Apache-2.0: https://github.com/Hugo0/swarmmemo.
 	}
 	text = strings.Replace(text, "{{INBOX}}", inbox, 1)
 	text = strings.Replace(text, "{{REVIEWS}}", s.reviewsInstructions(), 1)
+	text = strings.Replace(text, "{{FIND}}", s.findInstructions(), 1)
 	noKey, _ := s.noKey()
 	text = strings.Replace(text, "{{FETCH}}", web.FetchText(s.cfg.PublicURL, s.cfg.Features, catalog, noKey), 1)
 	text = strings.Replace(text, "{{RFC0012}}", s.allowanceInstructions(catalog, noKey, full), 1)

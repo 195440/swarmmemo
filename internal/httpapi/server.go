@@ -1171,6 +1171,13 @@ func (s *Server) read(w http.ResponseWriter, r *http.Request) {
 		query.Set("data", string(encoded))
 		delete(query, "wait")
 	}
+	// Find (find.go): /api/find?q=&type=&max_price=… carries its filters as data.
+	if r.URL.Path == "/api/find" {
+		if e := findQuery(query); e != nil {
+			writeError(w, e)
+			return
+		}
+	}
 	// Subjects (reviews.go): /api/subjects/resolve?uri= names the target,
 	// /api/subjects?type=&sort= the kind and data.
 	if strings.HasPrefix(r.URL.Path, "/api/subjects") {
@@ -1189,6 +1196,8 @@ func (s *Server) read(w http.ResponseWriter, r *http.Request) {
 		c.Operation = "subject.resolve"
 	case p == "/api/subjects":
 		c.Operation = "subjects.list"
+	case p == "/api/find":
+		c.Operation = "find"
 	case strings.HasPrefix(p, "/api/subjects/"):
 		id := strings.TrimPrefix(p, "/api/subjects/")
 		if id == "" || strings.Contains(id, "/") || (c.Target != "" && c.Target != id) {

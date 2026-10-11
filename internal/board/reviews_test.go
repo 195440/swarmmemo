@@ -5,14 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"swarmmemo/internal/reviews"
-	"swarmmemo/internal/rubric"
 )
 
 // Subjects and reviews (RFC 0015 phase 1B, RFC 0019) on the real engine:
@@ -141,6 +138,24 @@ func TestReviewWriteRules(t *testing.T) {
 
 func subjectID(typ, key string) string { return reviews.SubjectID(typ, key) }
 
+// allowAccounts sets an operator account list (importers or labs) to keys.
+func allowAccounts(t *testing.T, s *Store, namespace string, keys ...ed25519.PrivateKey) {
+	t.Helper()
+	accounts := []string{}
+	for _, k := range keys {
+		accounts = append(accounts, keyID(k))
+	}
+	body, _ := json.Marshal(map[string]any{"schema": 1, "accounts": accounts})
+	if _, err := s.SetAllowanceParams(testContext, namespace, body, "test "+namespace, 0); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func rubricRef(id string) map[string]any {
+	r := reviews.LookupRubric(id, "")
+	return map[string]any{"id": r.ID, "version": r.Version, "sha256": r.SHA256}
+}
+
 func TestReviewWorkerKeyAndImporter(t *testing.T) {
 	s := reviewsStore(t)
 	key := keyFor(34)
@@ -172,6 +187,8 @@ func TestReviewWorkerKeyAndImporter(t *testing.T) {
 	if _, err = s.SetAllowanceParams(testContext, ImportersParamsNamespace, body, "test importer", 0); err != nil {
 		t.Fatal(err)
 	}
+	// The importers list opens outside_source only, never lab.
+	fails(t, s, reviewPost(t, key, reviewSubject, map[string]any{"relationship": "lab", "rubric": rubricRef("x402-endpoint")}, ""), "review_relationship_reserved")
 	run(t, s, reviewPost(t, key, reviewSubject, outside, ""))
 	data := readSubjectData(t, s, reviewSubject)
 	others, _ := data["other_raters"].([]ReviewCard)
@@ -227,6 +244,7 @@ func TestReviewEvidenceAndOrder(t *testing.T) {
 	run(t, s, reviewPost(t, bob, reviewSubject, map[string]any{"verdict": "mixed", "dimensions": map[string]any{"works": 50}, "evidence": ev("fetch:" + fetch)}, ""))
 	run(t, s, reviewPost(t, carol, reviewSubject, map[string]any{"verdict": "bad"}, ""))
 	r := reviews.LookupRubric("x402-endpoint", "")
+	allowAccounts(t, s, LabsParamsNamespace, lab)
 	run(t, s, reviewPost(t, lab, reviewSubject, map[string]any{"relationship": "lab", "rubric": map[string]any{"id": r.ID, "version": r.Version, "sha256": r.SHA256}, "score": 84, "band": []int{78, 89}, "grade": "B",
 		"observations": []any{map[string]any{"check": "R4", "pass": 3, "fail": 0}}}, ""))
 
@@ -235,9 +253,14 @@ func TestReviewEvidenceAndOrder(t *testing.T) {
 	if !info.Exists || !info.Listed || info.Parent == nil || info.Parent.URI != "domain:example.com" {
 		t.Fatalf("subject %+v", info)
 	}
-	labCard, _ := data["lab"].(ReviewCard)
-	if labCard.Relationship != "lab" || labCard.Grade != "B" || *labCard.Score != 84 || labCard.LabVerdict != "proceed" || len(labCard.Observations) != 1 {
-		t.Fatalf("lab card %+v", labCard)
+	// A lab review without a recomputed record is a self-reported run, never
+	// the subject's lab assessment (security review C186 H1).
+	if _, ok := data["lab"]; ok {
+		t.Fatalf("a lab run without a verified record is the lab assessment: %+v", data["lab"])
+	}
+	runs, _ := data["lab_runs"].([]ReviewCard)
+	if len(runs) != 1 || runs[0].Relationship != "lab" || runs[0].Grade != "B" || *runs[0].Score != 84 || runs[0].LabVerdict != "proceed" || len(runs[0].Observations) != 1 {
+		t.Fatalf("lab runs %+v", runs)
 	}
 	list := data["reviews"].([]ReviewCard)
 	if len(list) != 3 || list[0].ID != aliceID {
@@ -274,7 +297,7 @@ func TestReviewEvidenceAndOrder(t *testing.T) {
 	}
 	// The x402 summary and subject.resolve read the same index.
 	sums, err := reviewSummaries(testContext, s.db, []string{sub.ID, "aaaaaaaaaaaaaaaaaaaaaaaaaa"})
-	if err != nil || len(sums) != 1 || sums[sub.ID].Reviews != 3 || sums[sub.ID].Lab["grade"] != "B" {
+	if err != nil || len(sums) != 1 || sums[sub.ID].Reviews != 3 || sums[sub.ID].Accounts != 3 || sums[sub.ID].ByVerdict["mixed"] != 1 || sums[sub.ID].Lab != nil {
 		t.Fatalf("summaries %+v (%v)", sums, err)
 	}
 	res := run(t, s, Command{Operation: "subject.resolve", Target: "GET https://API.example.com/v1/search?q=2"}).Data
@@ -288,7 +311,7 @@ func TestReviewEvidenceAndOrder(t *testing.T) {
 	}
 	// subjects.list lists it (three accounts); a hidden review leaves the page.
 	l := run(t, s, Command{Operation: "subjects.list", Query: "API.EXAMPLE"}).Data["subjects"].([]SubjectListing)
-	if len(l) != 1 || l[0].ID != sub.ID || l[0].Reviews != 3 || l[0].Lab != "good" {
+	if len(l) != 1 || l[0].ID != sub.ID || l[0].Reviews != 3 || l[0].Lab != "" {
 		t.Fatalf("list %+v", l)
 	}
 	if _, err = s.db.Exec("UPDATE events SET hidden=1 WHERE id=?", aliceID); err != nil {
@@ -339,47 +362,6 @@ func TestReviewOwnerAndThread(t *testing.T) {
 	run(t, s, reviewPost(t, reviewer, "agent:"+keyID(owner), map[string]any{}, ""))
 	if got := readSubjectData(t, s, "agent:"+keyID(owner))["subject"].(SubjectInfo); len(got.Owners) != 1 || got.Owners[0].Link != "self" {
 		t.Fatalf("agent owners %+v", got.Owners)
-	}
-}
-
-// A lab assessment whose full record is a doc of the reviewer's is
-// recomputed with internal/rubric (the code behind swarmmemo rubric score):
-// matching claims verify, any other claim fails, and the card says so.
-func TestReviewLabRecordRecomputed(t *testing.T) {
-	s := reviewsStore(t)
-	lab := keyFor(70)
-	register(t, s, lab)
-	obs, err := os.ReadFile(filepath.Join("..", "rubric", "testdata", "obs-healthy.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	rb := reviews.LookupRubric("x402-endpoint", "")
-	parsed, err := rubric.ParseObservations(obs, rb.Rubric)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := rubric.Score(rb.Rubric, parsed)
-	sum := sha256Hex(obs)
-	doc := strings.Repeat("d", 32)
-	if _, err = s.db.Exec("INSERT INTO docs(id,account,title,version,hash,bytes,stored,created_at,updated_at,visibility) VALUES(?,?,'lab record',1,?,?,?,1,1,'unlisted')", doc, keyID(lab), sum, len(obs), len(obs)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.db.Exec("INSERT INTO doc_versions(id,doc,version,title,text,bytes,hash,author,created_at) VALUES(?,?,1,'lab record',?,?,?,?,1)", strings.Repeat("e", 32), doc, string(obs), len(obs), sum, keyID(lab)); err != nil {
-		t.Fatal(err)
-	}
-	fields := func(score int) map[string]any {
-		return map[string]any{"relationship": "lab", "verdict": reviews.UniversalVerdict(want.Verdict), "rubric": map[string]any{"id": rb.ID, "version": rb.Version, "sha256": rb.SHA256},
-			"score": score, "band": []int{min(score, want.Band[0]), max(score, want.Band[1])}, "grade": want.Grade, "record": map[string]any{"sha256": sum, "doc": doc}}
-	}
-	first := run(t, s, reviewPost(t, lab, reviewSubject, fields(want.Score), "")).Receipt.ID
-	card := readSubjectData(t, s, reviewSubject)["lab"].(ReviewCard)
-	if len(card.Evidence) != 1 || card.Evidence[0].ID != RecordEvidencePrefix+sum || card.Evidence[0].State != "verified" || card.Evidence[0].Detail["matches"] != true {
-		t.Fatalf("recomputed record %+v", card.Evidence)
-	}
-	run(t, s, reviewPost(t, lab, reviewSubject, fields(want.Score-1), first))
-	card = readSubjectData(t, s, reviewSubject)["lab"].(ReviewCard)
-	if card.Evidence[0].State != "failed" || card.Evidence[0].Detail["reason"] != "recomputed_result_differs" || card.EvidenceClass != "opinion" {
-		t.Fatalf("a claim the record does not support %+v", card.Evidence)
 	}
 }
 

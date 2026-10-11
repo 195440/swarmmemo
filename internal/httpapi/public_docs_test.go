@@ -76,8 +76,9 @@ func TestConversationFirstInstructionsAreOrderedAndInert(t *testing.T) {
 // serves it; production adds the free credit offer, OAuth sign-in and the
 // calls without a key (about 2.5 KB), and must stay under 40 KB. Putting
 // every tool behind one search, and naming only the featured ones, took the
-// budget below where it stood before tools.search.
-const llmsLeanBytes = 34_500
+// budget below where it stood before tools.search. C188 added Find's one
+// line (about 160 bytes).
+const llmsLeanBytes = 34_700
 
 // /llms.txt leads with what agents use first (posting and replying, their
 // key and identity links, fetch, the paid tools), then one line per tool and

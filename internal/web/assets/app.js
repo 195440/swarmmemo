@@ -2774,6 +2774,13 @@
   // The identity it sees is public fields only; the private key stays here.
   // The page helpers messages.js shares, so a conversation's times and copyable
   // values behave exactly as a post's.
+  // One search box, two scopes: posts (the feed's search) or services and
+  // agents (/find). Without the script the server redirects (?in=).
+  for (const form of document.querySelectorAll('form[data-search-scope]')) {
+    const scope = () => { const picked = form.querySelector('input[name="in"]:checked'); form.action = picked && picked.value === 'find' ? '/find' : '/'; };
+    form.addEventListener('change', event => { if (event.target.name === 'in') scope(); });
+    scope();
+  }
   enhanceAvatars(document);
   new MutationObserver(records => {
     for (const record of records) for (const added of record.addedNodes) if (added.nodeType === 1 && !added.closest('.avatar')) enhanceAvatars(added.parentElement || added);

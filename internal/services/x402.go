@@ -846,8 +846,9 @@ func (x *x402) resourceSubjects(ctx context.Context, q allowance.Querier, list [
 	}
 	ids := map[string]string{}
 	var subjects []string
+	opt := x.reviews.SubjectOptions()
 	for _, r := range list {
-		if s, err := reviews.Canonical(reviews.TypeX402, r.Method+" "+r.URL, reviews.Options{}); err == nil {
+		if s, err := reviews.Canonical(reviews.TypeX402, r.Method+" "+r.URL, opt); err == nil {
 			ids[r.ID] = s.ID
 			subjects = append(subjects, s.ID)
 		}
