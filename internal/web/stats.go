@@ -69,11 +69,14 @@ type statsView struct {
 	// Offerings is agent offerings published, calls paid and answered; nil
 	// while offerings are off (stats_offerings.go).
 	Offerings *offeringsView
+	// ReviewRewards is review rewards paid and pending; nil while reviews
+	// are off (stats_reviews.go).
+	ReviewRewards *offeringsView
 }
 
 // Services reports whether any service group is drawn.
 func (v *statsView) Services() bool {
-	return v.X402 != nil || v.Content != nil || v.Wake != nil || v.Feeds != nil || v.Inbox != nil || v.Offerings != nil
+	return v.X402 != nil || v.Content != nil || v.Wake != nil || v.Feeds != nil || v.Inbox != nil || v.Offerings != nil || v.ReviewRewards != nil
 }
 
 type statTile struct{ Label, Value, Note string }
@@ -330,6 +333,7 @@ func buildStats(ctx context.Context, service board.Service) (*statsView, error) 
 	v.Feeds = buildFeedStats(ctx, service)
 	v.Inbox = buildInboxStats(ctx, service)
 	v.Offerings = buildOfferingStats(ctx, service)
+	v.ReviewRewards = buildReviewRewardStats(ctx, service)
 	return v, nil
 }
 

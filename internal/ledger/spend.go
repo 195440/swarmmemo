@@ -729,7 +729,13 @@ func (l *Ledger) Balance(ctx context.Context, q allowance.Querier, s allowance.S
 // drawn from the day's tier-0 pool, so issuance stays within the budget;
 // paid units come from a funding adapter and never decay. Reason is public.
 func (l *Ledger) Mint(ctx context.Context, q allowance.Querier, account string, r allowance.Resource, b allowance.Bucket, units int64, reason string, now int64) error {
-	_, err := l.mint(ctx, q, account, r, b, units, reason, Ref{}, false, now)
+	return l.MintRef(ctx, q, account, r, b, units, reason, Ref{}, now)
+}
+
+// MintRef is Mint journalled with ref: the service, operation and public id
+// of what the lot pays for (a review reward names its review).
+func (l *Ledger) MintRef(ctx context.Context, q allowance.Querier, account string, r allowance.Resource, b allowance.Bucket, units int64, reason string, ref Ref, now int64) error {
+	_, err := l.mint(ctx, q, account, r, b, units, reason, ref, false, now)
 	return err
 }
 

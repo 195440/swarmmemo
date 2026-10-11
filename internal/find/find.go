@@ -208,6 +208,9 @@ type Hit struct {
 	Score       float64  `json:"score"`
 	Untrusted   bool     `json:"description_is_untrusted,omitempty"`
 	Explain     *Explain `json:"explain,omitempty"`
+	// ReviewReward is the board's standing offer for reviewing this
+	// subject while it has slots left; set by the board after the search.
+	ReviewReward any `json:"review_reward,omitempty"`
 }
 
 // LabMark is the newest lab assessment, as a result shows it.

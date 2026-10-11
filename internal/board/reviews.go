@@ -291,16 +291,17 @@ func reviewFrozen(ctx context.Context, tx *sql.Tx, id string) (bool, error) {
 // ownership, the subject (created by its first review), the review (the
 // account's current one; its predecessor stays, not current) and its
 // evidence states. A lab record waits for the recomputer (reviews_records.go).
-func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, eventID, origin string, now int64) error {
+// It returns the review's reward, for the receipt (reviewrewards.go).
+func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, eventID, origin string, now int64) (*ReviewReward, error) {
 	r := p.review
 	sub := r.Subject
 	evidence, err := s.verifyEvidence(ctx, tx, p.account, r, now)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	owner, err := s.ownsSubject(ctx, tx, p.account, sub)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	raised := ""
 	if owner && r.Relationship != "owner" {
@@ -308,18 +309,18 @@ func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, e
 	}
 	var seasoned int
 	if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM events e JOIN rooms r ON r.name=e.room WHERE e.account=? AND e.hidden=0 AND r.visibility='public' AND e.created_at<=?)", p.account, now-int64(VoterMinAge.Seconds())).Scan(&seasoned); err != nil {
-		return err
+		return nil, err
 	}
 	parent := ""
 	if ps, ok := sub.Parent(); ok && ps.ID != sub.ID {
 		parent = ps.ID
 	}
 	if _, err = tx.ExecContext(ctx, "INSERT INTO subjects(id,type,key,parent,first_seen,last_seen) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET last_seen=excluded.last_seen", sub.ID, sub.Type, sub.Key, parent, now, now); err != nil {
-		return err
+		return nil, err
 	}
 	if p.previous != "" {
 		if _, err = tx.ExecContext(ctx, "UPDATE reviews SET current=0 WHERE event_id=?", p.previous); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	// Evidence cited by two reviews counts once: for the other account's
@@ -336,7 +337,7 @@ func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, e
 		err = tx.QueryRowContext(ctx, `SELECT r.event_id FROM reviews r JOIN events ev ON ev.id=r.event_id JOIN review_evidence v ON v.event_id=r.event_id AND v.evidence=? AND v.state='verified'
  WHERE r.subject=? AND r.account=? AND r.current=1 AND ev.hidden=0 AND json_extract(v.detail,'$.counted_for') IS NULL`, e.id, sub.ID, e.counterparty).Scan(&first)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
+			return nil, err
 		}
 		if first != "" {
 			e.detail["counted_for"] = first
@@ -372,13 +373,13 @@ func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, e
 	if _, err = tx.ExecContext(ctx, `INSERT INTO reviews(event_id,root_event,subject,account,author,root,verdict,relationship,relationship_raised,works,as_described,safe,good,rubric,rubric_version,rubric_sha256,score,band_lo,band_hi,grade,flags,evidence_class,seasoned,review,created_at,current)
  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`, eventID, root, sub.ID, p.account, p.author, p.account, r.Verdict, r.Relationship, raised,
 		dim("works"), dim("as_described"), dim("safe"), dim("good"), rubricID, version, sum, score, lo, hi, r.Grade, strings.Join(r.Flags, ","), class, seasoned, p.raw, now); err != nil {
-		return err
+		return nil, err
 	}
 	pending := false
 	for _, e := range evidence {
 		detail, _ := json.Marshal(e.detail)
 		if _, err = tx.ExecContext(ctx, "INSERT INTO review_evidence(event_id,evidence,class,state,checked_at,detail) VALUES(?,?,?,?,?,?)", eventID, e.id, e.class, e.state, now, string(detail)); err != nil {
-			return err
+			return nil, err
 		}
 		pending = pending || e.class == "record"
 	}
@@ -388,12 +389,12 @@ func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, e
 	// review of a subject, so two such rows are two accounts.
 	if _, err = tx.ExecContext(ctx, `UPDATE subjects SET listed_at=?1 WHERE id=?2 AND listed_at=0 AND (?3 OR (SELECT count(*) FROM
  (SELECT 1 FROM reviews r JOIN events e ON e.id=r.event_id WHERE r.subject=?2 AND r.current=1 AND e.hidden=0 AND r.relationship<>'outside_source' LIMIT 2))>=2)`, now, sub.ID, owner); err != nil {
-		return err
+		return nil, err
 	}
 	if pending {
 		s.wakeReviewRecords()
 	}
-	return nil
+	return s.offerReviewReward(ctx, tx, p, eventID, class, raised, seasoned == 1, now)
 }
 
 // ownsSubject reports whether account owns s through its identity links
@@ -799,6 +800,8 @@ type MessageReview struct {
 	Record             *reviews.Record       `json:"record,omitempty"`
 	Source             *reviews.Source       `json:"source,omitempty"`
 	Current            bool                  `json:"current"`
+	// Reward is the review reward this review earned (reviewrewards.go).
+	Reward *ReviewReward `json:"reward,omitempty"`
 }
 
 // ReviewAuthor is who signed a review.
@@ -993,8 +996,15 @@ func loadEvidence(ctx context.Context, tx *sql.Tx, cards []*MessageReview, list 
 			if err = rows.Scan(&id, &e.ID, &e.Class, &e.State, &e.CheckedAt, &detail); err != nil {
 				return err
 			}
-			_ = json.Unmarshal([]byte(detail), &e.Detail)
 			card := cards[index[id]]
+			if e.ID == RewardEvidence {
+				var d rewardDetail
+				if json.Unmarshal([]byte(detail), &d) == nil {
+					card.Reward = d.reward(e.State, "")
+				}
+				continue
+			}
+			_ = json.Unmarshal([]byte(detail), &e.Detail)
 			card.Evidence = append(card.Evidence, e)
 		}
 		return rows.Err()
@@ -1129,6 +1139,13 @@ func (s *Store) readSubject(ctx context.Context, tx *sql.Tx, c Command, now int6
 		return Result{}, err
 	}
 	data := map[string]any{"subject": info, "text_is_untrusted": true, "order": reviewOrderNote()}
+	hint, err := s.reviewRewardHint(ctx, tx, sub.ID, now)
+	if err != nil {
+		return Result{}, err
+	}
+	if hint != nil {
+		data["review_reward"] = hint
+	}
 	if !info.Exists {
 		data["reviews"], data["aggregate"], data["has_more"] = []ReviewCard{}, emptyAggregate(), false
 		return Result{Data: data}, nil
@@ -1618,7 +1635,7 @@ func (s *Store) ReviewsCapabilities() map[string]any {
 		"evidence": map[string]any{"kinds": reviews.EvidenceKinds, "classes": ReviewEvidenceWeights, "max": reviews.MaxEvidence, "within_days": ReviewEvidenceDays, "checked": "call, fetch, work and stamp when the review is posted (work: accepted, its reward paid between two accounts; stamp: observed only when it stamps a cited fetch's raw bytes, else opinion); a lab record (record:SHA256) is recomputed after commit, unknown until then; tx is recorded as unknown for now"},
 		"caps":     map[string]any{"per_account_per_day": ReviewsPerAccountDay, "lab_records_failed_or_waiting_per_day": ReviewRecordFailuresPerDay, "observations": reviews.MaxObservations, "flags": reviews.MaxFlags, "current_per_account_and_subject": 1},
 		"signed":   true, "worker_keys": false, "outside_source": "operator importer keys only (the importers parameters)", "lab": "operator lab keys only (the labs parameters); shown as the lab assessment once its record recomputes, self-reported until then",
-		"order": reviewOrderNote(), "rubrics": rubrics,
+		"order": reviewOrderNote(), "rubrics": rubrics, "rewards": s.reviewRewardsCapabilities(context.Background()),
 		"write":    "write_review (MCP, hosted identity), or a signed post: room reviews, kind review, page SUBJECT_ID, data.review",
 		"comments": "ordinary replies in the review's thread; the subject owner's newest reply is pinned under the review",
 	}

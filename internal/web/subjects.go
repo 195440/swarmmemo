@@ -32,6 +32,8 @@ type subjectPage struct {
 	Verdicts     string
 	NextCursor   string
 	Relay        bool
+	// Reward is the standing review reward offer while slots are left.
+	Reward *board.ReviewRewardHint
 }
 
 // subjectSearch is /s and /s?q=.
@@ -191,6 +193,7 @@ func loadSubject(r *http.Request, p *page, execute func(board.Command) (board.Re
 	v.Reviews, _ = res.Data["reviews"].([]board.ReviewCard)
 	v.Aggregate, _ = res.Data["aggregate"].(board.ReviewAggregate)
 	v.NextCursor, _ = res.Data["next_cursor"].(string)
+	v.Reward, _ = res.Data["review_reward"].(*board.ReviewRewardHint)
 	v.Counts, v.Verdicts = countsLine(v.Aggregate)
 	v.Relay = v.Info.Type == reviews.TypeX402
 	p.View, p.SubjectView = "subject", v

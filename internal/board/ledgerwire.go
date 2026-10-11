@@ -272,7 +272,13 @@ func (s *Store) SweepAllowance(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return n + m + v, tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return 0, err
+	}
+	// Then review rewards whose hold is over, in a transaction of their
+	// own, so they never hold up the sweep (reviewrewards.go).
+	r, err := s.SweepReviewRewards(ctx)
+	return n + m + v + r, err
 }
 
 // ledgerCharge is charge() with ALLOWANCE_LEDGER=on.
@@ -656,13 +662,24 @@ func (s *Store) readAllowance(ctx context.Context, tx *sql.Tx, c Command, a acto
 		return Result{}, err
 	}
 	st := b.Standing
-	return Result{Data: map[string]any{"schema": 1, "agent": agent, "ledger": s.config.Features.Ledger.String(), "model": "waterfall",
+	data := map[string]any{"schema": 1, "agent": agent, "ledger": s.config.Features.Ledger.String(), "model": "waterfall",
 		"claim":     "implicit, on the first spend of each UTC day",
 		"tier":      int(st.Tier),
 		"tier_name": tierNames[st.Tier],
 		"reason":    st.Reason,
 		"standing":  map[string]any{"tier": int(st.Tier), "name": tierNames[st.Tier], "weight_ppm": st.WeightPPM, "source": st.Source, "reason": st.Reason},
-		"resources": resources, "resets_at": b.ResetsAt, "params_version": b.ParamsVersion}}, nil
+		"resources": resources, "resets_at": b.ResetsAt, "params_version": b.ParamsVersion}
+	// Review rewards on their way (pending) and settled this week.
+	if subj.Signed {
+		rewards, err := s.agentReviewRewards(ctx, tx, subj.ID, now)
+		if err != nil {
+			return Result{}, err
+		}
+		if rewards != nil {
+			data["review_rewards"] = rewards
+		}
+	}
+	return Result{Data: data}, nil
 }
 
 // changeAllowance is allowance.transfer and allowance.transfer.cancel.

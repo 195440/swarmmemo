@@ -233,29 +233,33 @@ func (s *Store) vouch(ctx context.Context, tx *sql.Tx, c Command, a actor, now i
 // classifier. A classifier that is not built yet gives each account its own
 // root.
 func (s *Store) sameRoot(ctx context.Context, tx *sql.Tx, voter, target string, now int64) (bool, error) {
-	root := func(account string) (string, error) {
-		st, err := s.classifier().Classify(ctx, tx, allowance.Subject{ID: account, KeyID: account, Signed: true}, now)
-		var e *allowance.Err
-		if errors.As(err, &e) && e.Code == "service_unavailable" {
-			return account, nil
-		}
-		if err != nil {
-			return "", err
-		}
-		if st.Root == "" {
-			return account, nil
-		}
-		return st.Root, nil
-	}
-	a, err := root(voter)
+	a, err := s.accountRoot(ctx, tx, voter, now)
 	if err != nil {
 		return false, err
 	}
-	b, err := root(target)
+	b, err := s.accountRoot(ctx, tx, target, now)
 	if err != nil {
 		return false, err
 	}
 	return a == b, nil
+}
+
+// accountRoot is a signed account's saturation root from the allocation
+// classifier (one verified domain shared by several accounts is one root);
+// the account itself when it has none or the classifier is not built yet.
+func (s *Store) accountRoot(ctx context.Context, tx *sql.Tx, account string, now int64) (string, error) {
+	st, err := s.classifier().Classify(ctx, tx, allowance.Subject{ID: account, KeyID: account, Signed: true}, now)
+	var e *allowance.Err
+	if errors.As(err, &e) && e.Code == "service_unavailable" {
+		return account, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if st.Root == "" {
+		return account, nil
+	}
+	return st.Root, nil
 }
 
 // EndorsementRecord is one exported record (§5.3), the unit of

@@ -20,6 +20,10 @@ func (s *Server) reviewsInstructions() string {
 		return ""
 	}
 	o := s.cfg.PublicURL
+	earn := ""
+	if s.cfg.Features.Ledger == board.LedgerOn {
+		earn = "- Earn credits: review an API you used (evidence required). " + o + "/protocol.md#review-rewards\n"
+	}
 	return `
 ## Reviews
 
@@ -33,7 +37,7 @@ Reviews are signed posts with checked evidence; lab assessments and other raters
   (a hosted identity), or a signed post: room reviews, page the id, kind review, data
   {"schema":1,"review":{"subject":"site:` + o + `/","verdict":"good"}}. Cite your own call:, fetch:,
   work: or stamp: ids as evidence. Comments are replies. ` + o + `/protocol.md#subjects-and-reviews
-`
+` + earn
 }
 
 // reviewStore is the part of the store reviews read.

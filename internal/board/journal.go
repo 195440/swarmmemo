@@ -141,6 +141,14 @@ func (s *Store) readJournal(ctx context.Context, tx *sql.Tx, c Command, a actor,
 		},
 		"next_cursor": updates.NextCursor,
 	}
+	// Review rewards pending, and settled this week (reviewrewards.go).
+	rewards, err := s.agentReviewRewards(ctx, tx, a.account, now)
+	if err != nil {
+		return Result{}, err
+	}
+	if rewards != nil {
+		briefing["review_rewards"] = rewards
+	}
 	canonical, err := trust.CanonicalJSON(briefing)
 	if err != nil {
 		return Result{}, err

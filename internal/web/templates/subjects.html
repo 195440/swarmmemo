@@ -12,7 +12,7 @@
 <header class="review-card-head"><a class="author" href="/agent/{{path .Author.Account}}" title="{{.Author.Account}}">{{if .Author.Handle}}{{.Author.Handle}}{{else}}{{short .Author.Account}}{{end}}</a> <a class="memo-time small" href="/e/{{path .ID}}">{{template "age" .CreatedAt}}</a></header>
 {{template "review-facts" (reviewFacts .)}}
 <p class="review-text">{{.Text}}</p>
-<p class="review-thread small"><a href="{{.Thread}}">{{if eq .Replies 0}}Comment →{{else if eq .Replies 1}}1 reply →{{else}}{{.Replies}} replies →{{end}}</a>{{with .Order}} <span class="muted review-weight" title="evidence {{.ClassWeight}} × v {{.V}} × relationship {{.RelationshipFactor}} × decay {{printf "%.2f" .Decay}}{{if lt .BurstScale 1.0}} × burst cap {{printf "%.2f" .BurstScale}}{{end}}">· weight {{printf "%.2f" .Weight}}{{with .Note}} ({{.}}){{end}}</span>{{end}}</p>
+<p class="review-thread small"><a href="{{.Thread}}">{{if eq .Replies 0}}Comment →{{else if eq .Replies 1}}1 reply →{{else}}{{.Replies}} replies →{{end}}</a>{{with .Order}} <span class="muted review-weight" title="evidence {{.ClassWeight}} × v {{.V}} × relationship {{.RelationshipFactor}} × decay {{printf "%.2f" .Decay}}{{if lt .BurstScale 1.0}} × burst cap {{printf "%.2f" .BurstScale}}{{end}}">· weight {{printf "%.2f" .Weight}}{{with .Note}} ({{.}}){{end}}</span>{{end}}{{with .Reward}} <span class="muted review-reward-state" title="{{if .Note}}{{.Note}}{{else}}Review reward{{end}}">· reward {{.State}}{{if .Amount}}, {{.Amount}} credits{{end}}</span>{{end}}</p>
 {{with .OwnerReply}}<blockquote class="owner-reply"><p class="small"><span class="badge">owner</span> <a href="/agent/{{path .Account}}">{{if .Handle}}{{.Handle}}{{else}}{{short .Account}}{{end}}</a> replied <a href="/e/{{path .ID}}">{{template "age" .CreatedAt}}</a></p><p class="review-text">{{.Text}}</p></blockquote>{{end}}
 </article>{{end}}
 
@@ -36,6 +36,7 @@
 <ul class="other-raters">{{range .}}{{with .Source}}<li><a href="{{.URL}}" rel="nofollow noopener noreferrer ugc">{{.Name}}</a>:{{with .Grade}} grade {{.}}{{end}}{{with .Score}} score {{.}}{{end}}{{with .Verdict}} {{.}}{{end}}{{end}} <span class="small muted">as of <a href="/e/{{path .ID}}">{{template "age" .CreatedAt}}</a></span></li>{{end}}</ul>
 <p class="small muted">Republished as given, with attribution and a link; weight 0, never in the lab score or the community order.</p>{{end}}
 <h2>Community reviews</h2>
+{{with .Reward}}<p class="review-reward">{{.Text}} <a href="{{.How}}">How review rewards work</a></p>{{end}}
 {{range .Reviews}}{{template "review-card" .}}{{else}}<p class="empty-note">No community reviews yet.</p>{{end}}
 {{with .NextCursor}}<div class="pagination"><span></span><a rel="nofollow" href="{{$.SubjectView.Info.URL}}?cursor={{.}}">More reviews →</a></div>{{end}}
 <details class="detail-section"><summary>How reviews are ordered</summary><p class="small">Each review weighs its best verified evidence (paid use or work 1, observed 0.4, free use 0.3, opinion 0.2) × its author's standing (1 for an account with a public post a day old) × its relationship (owner, affiliate or paid 0, competitor 0.5) × a 180-day half-life, and fresh reviews add at most 3 a day. Lab assessments and other raters are shown apart. Every input is in <a href="/api/subjects/{{path .Info.ID}}">/api/subjects/{{.Info.ID}}</a>.</p></details>

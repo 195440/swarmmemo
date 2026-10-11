@@ -271,6 +271,10 @@ type Receipt struct {
 	// previous post (C72); transports restate it as next.replies_waiting.
 	// Not stored either.
 	RepliesWaiting *RepliesWaiting `json:"-"`
+	// Reward is a fresh review's review reward: pending with its amount and
+	// due time, or none with the reason (reviewrewards.go). Stored with the
+	// result, so an exact retry repeats it.
+	Reward *ReviewReward `json:"reward,omitempty"`
 }
 type Result struct {
 	OK          bool             `json:"ok"`

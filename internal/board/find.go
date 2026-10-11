@@ -234,8 +234,37 @@ func (s *Store) readFind(ctx context.Context, c Command) (Result, error) {
 		if err != nil {
 			return Result{}, problem(503, "find_unavailable", "Find is temporarily unavailable; try again shortly.")
 		}
+		if ans.Results, err = s.findRewardHints(ctx, ans.Results); err != nil {
+			return Result{}, err
+		}
 		return Result{Data: FindAnswerData(ans)}, nil
 	}}, nil
+}
+
+// findRewardHints sets the review reward offer on a copy of the hits whose
+// subject has slots left (reviewrewards.go). It runs after the read's
+// transaction, so its short read takes the pool.
+func (s *Store) findRewardHints(ctx context.Context, hits []find.Hit) ([]find.Hit, error) {
+	var ids []string
+	for _, h := range hits {
+		if h.SubjectID != "" {
+			ids = append(ids, h.SubjectID)
+		}
+	}
+	if len(ids) == 0 {
+		return hits, nil
+	}
+	hints, err := s.reviewRewardHints(ctx, s.db, ids, s.now().Unix())
+	if err != nil || len(hints) == 0 {
+		return hits, err
+	}
+	out := slices.Clone(hits)
+	for i := range out {
+		if h, ok := hints[out[i].SubjectID]; ok {
+			out[i].ReviewReward = h
+		}
+	}
+	return out, nil
 }
 
 // FindAnswerData is an answer as a read's data.

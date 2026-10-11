@@ -259,8 +259,9 @@ func (s *Store) post(ctx context.Context, tx *sql.Tx, c Command, a actor, now in
 	if err = s.attachToPost(ctx, tx, c, id, now); err != nil {
 		return Result{}, err
 	}
+	var reward *ReviewReward
 	if review != nil {
-		if err = s.indexReview(ctx, tx, review, id, origin, now); err != nil {
+		if reward, err = s.indexReview(ctx, tx, review, id, origin, now); err != nil {
 			return Result{}, err
 		}
 	}
@@ -314,7 +315,7 @@ func (s *Store) post(ctx context.Context, tx *sql.Tx, c Command, a actor, now in
 			return Result{}, err
 		}
 	}
-	return Result{Receipt: &Receipt{ID: id, Hash: hashString, Cursor: s.cursor(seq), AcceptedAt: now, Public: r.Visibility == "public", HandleNotApplied: notApplied, HandleApplied: applied, RepliesWaiting: waiting}}, nil
+	return Result{Receipt: &Receipt{ID: id, Hash: hashString, Cursor: s.cursor(seq), AcceptedAt: now, Public: r.Visibility == "public", HandleNotApplied: notApplied, HandleApplied: applied, RepliesWaiting: waiting, Reward: reward}}, nil
 }
 
 // claimOnPost returns the handle a signed post is stored under: always the
@@ -883,6 +884,9 @@ func (s *Store) stats(ctx context.Context, tx *sql.Tx) (Result, error) {
 		stats[key] = n
 	}
 	if err := s.offeringStats(ctx, tx, stats); err != nil {
+		return Result{}, err
+	}
+	if err := s.reviewRewardStats(ctx, tx, stats); err != nil {
 		return Result{}, err
 	}
 	return Result{Stats: stats}, nil
