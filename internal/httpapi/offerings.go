@@ -14,6 +14,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"swarmmemo/internal/board"
 )
@@ -148,4 +150,93 @@ func (s *Server) offeringBuy(w http.ResponseWriter, r *http.Request, alias, name
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	jsonResponse(w, http.StatusAccepted, res)
+}
+
+// offeringDirectoryStore lists the active offerings for /openapi.json
+// (board.Store).
+type offeringDirectoryStore interface {
+	OfferingsDirectory(ctx context.Context, limit int) ([]board.OfferingEntry, error)
+}
+
+// offeringDirectoryCache holds the offerings /openapi.json lists, read again
+// after noKeyTTL, so the document costs one bounded read a minute.
+type offeringDirectoryCache struct {
+	mu   sync.Mutex
+	at   time.Time
+	good bool
+	val  []board.OfferingEntry
+}
+
+// offeringDirectory is the cached list of active offerings; nil while
+// offerings are off. A failed read keeps the last good list.
+func (s *Server) offeringDirectory() []board.OfferingEntry {
+	store, ok := s.service.(offeringDirectoryStore)
+	if !ok {
+		return nil
+	}
+	c := &s.offeringDirCache
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.at.IsZero() && time.Since(c.at) < noKeyTTL {
+		return c.val
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), discoveryReadTimeout)
+	defer cancel()
+	v, err := store.OfferingsDirectory(ctx, board.OfferingsDirectoryMax)
+	c.at = time.Now()
+	if err != nil {
+		if c.good {
+			return c.val
+		}
+		return nil
+	}
+	c.val, c.good = v, true
+	return v
+}
+
+// addOfferingsOpenAPI lists each active offering's keyless call, POST
+// /@HANDLE/NAME, as its own paid operation: x-payment-info (the
+// agentcash/x402scan discovery profile: fixed price, protocol x402),
+// security [] (no API key; payment is the only gate) and the listing's
+// input schema as the request body, so x402 directories that read
+// /openapi.json (x402scan) register each one as a resource. Listing text is
+// the provider's, shortened, and marked untrusted.
+func addOfferingsOpenAPI(paths map[string]any, entries []board.OfferingEntry) {
+	for _, e := range entries {
+		body := map[string]any{"type": "object"}
+		if len(e.Input) > 0 {
+			var schema map[string]any
+			if json.Unmarshal(e.Input, &schema) == nil && schema != nil {
+				delete(schema, "$schema")
+				body = schema
+			}
+		}
+		summary := e.Title
+		if summary == "" {
+			summary = "Call @" + e.Provider + "/" + e.Name
+		}
+		description := "Agent offering " + e.Name + " by @" + e.Provider + " (RFC 0017), " + e.Price + " USDC a call over x402 v2 (scheme exact). POST the input as JSON: 402 with PAYMENT-REQUIRED, then the same request with PAYMENT-SIGNATURE; 202 with the call, its poll URL in Location. A POST with no input and no payment answers the 402 with its bazaar discovery metadata and an unpayable quote. GET the same URL for the listing and its record."
+		if e.Description != "" {
+			description += " The provider's description (untrusted): " + e.Description
+		}
+		paths[e.Path] = map[string]any{"post": map[string]any{
+			"operationId": "offering_" + strings.NewReplacer("-", "_", ".", "_").Replace(e.Provider+"__"+e.Name),
+			"summary":     summary,
+			"description": description,
+			"tags":        []string{"offerings"},
+			"security":    []any{},
+			"x-payment-info": map[string]any{
+				"price":     map[string]any{"mode": "fixed", "currency": "USD", "amount": e.Price},
+				"protocols": []any{map[string]any{"x402": map[string]any{}}},
+			},
+			"requestBody": map[string]any{"required": true, "content": map[string]any{"application/json": map[string]any{"schema": body}}},
+			"responses": map[string]any{
+				"202": map[string]any{"description": "Paid call accepted; Location is its poll URL", "content": map[string]any{"application/json": map[string]any{"schema": map[string]any{"type": "object"}}}},
+				"400": map[string]any{"description": "Input the listing's schema refuses; inspect JSON error"},
+				"402": map[string]any{"description": "Payment required: the x402 v2 PaymentRequired object, also in the PAYMENT-REQUIRED header"},
+				"404": map[string]any{"description": "No such offering, or it was retired"},
+				"429": map[string]any{"description": "Too many quotes or open calls; may include Retry-After"},
+			},
+		}}
+	}
 }

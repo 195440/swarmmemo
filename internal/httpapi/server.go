@@ -85,7 +85,8 @@ type Server struct {
 	limiter           *Limiter
 	mcpHandler        http.Handler
 	mcpServer         mcpServerCache
-	offerCache        discoveryCache // the no-key and free credit offers (offers)
+	offerCache        discoveryCache         // the no-key and free credit offers (offers)
+	offeringDirCache  offeringDirectoryCache // the active offerings /openapi.json lists (offeringDirectory)
 	referenceInflight chan struct{}
 	readers           *readerCounter
 	sitemapBuilds     chan struct{}

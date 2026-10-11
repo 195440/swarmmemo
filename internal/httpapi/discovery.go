@@ -260,7 +260,11 @@ func (s *Server) discovery(w http.ResponseWriter, r *http.Request) bool {
 		fmt.Fprint(w, common+"Disallow: /references\nDisallow: /api/references\n\n")
 		fmt.Fprintf(w, "Sitemap: %s/sitemap.xml\n", s.cfg.PublicURL)
 	case "/openapi.json":
-		jsonResponse(w, 200, s.openapi())
+		doc := s.openapi()
+		addOfferingsOpenAPI(doc["paths"].(map[string]any), s.offeringDirectory())
+		// Offerings are read again after a minute; caches may keep it as long.
+		w.Header().Set("Cache-Control", "public, max-age=60")
+		jsonResponse(w, 200, doc)
 	case "/exports":
 		jsonResponse(w, 200, map[string]any{"schema_version": 1, "format": "JSONL", "url": s.cfg.PublicURL + "/v1/export", "pagination": "X-Next-Cursor response header; pass cursor on next request", "minimum_age_seconds": s.cfg.ArchiveDelaySeconds, "private_data": false, "third_party_publisher": "Separate daily job; archive availability is not guaranteed by this endpoint", "policy": s.cfg.PublicURL + "/policy"})
 	case "/feed.json", "/feed.atom":

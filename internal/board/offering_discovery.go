@@ -12,11 +12,14 @@ package board
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"math"
 	"sort"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"swarmmemo/internal/services"
 )
@@ -232,4 +235,91 @@ func exampleValue(p inputProp) (any, bool) {
 		return true, true
 	}
 	return nil, false
+}
+
+// OfferingsDirectoryMax bounds the offerings OfferingsDirectory lists, and
+// with OfferingDirectoryTextBytes the size /openapi.json grows by.
+const (
+	OfferingsDirectoryMax      = 50
+	OfferingDirectoryTextBytes = 280
+)
+
+// OfferingEntry is one active offering as /openapi.json lists it: public
+// listing fields only (the provider's text, shortened, is untrusted).
+type OfferingEntry struct {
+	Path        string          // /@HANDLE/NAME (or /@ACCOUNT/NAME)
+	Provider    string          // the handle, or the account without one
+	Name        string          // the offering's name
+	Title       string          // the listing's title
+	Description string          // its description, at most OfferingDirectoryTextBytes
+	Price       string          // canonical USDC, as the listing shows it
+	Input       json.RawMessage // the input schema, if the listing has one
+}
+
+// OfferingsDirectory lists up to limit (at most OfferingsDirectoryMax)
+// active offerings, retired ones never, in offering.list's order: offerings
+// with paid calls in their record window first, then the newest. Nil while
+// offerings are off.
+func (s *Store) OfferingsDirectory(ctx context.Context, limit int) ([]OfferingEntry, error) {
+	if !s.OfferingsEnabled() {
+		return nil, nil
+	}
+	if limit <= 0 || limit > OfferingsDirectoryMax {
+		limit = OfferingsDirectoryMax
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, "SELECT "+offeringCols+" FROM offerings o WHERE state='active'"+
+		` ORDER BY (SELECT count(*) FROM offering_calls c WHERE c.account=o.account AND c.name=o.name AND c.created_at>=? AND c.state IN ('paid','answered','overdue','refunded')) DESC, updated_at DESC, account, name LIMIT ?`,
+		time.Now().Unix()-OfferingRecordDays*86400, limit)
+	if err != nil {
+		return nil, err
+	}
+	var list []offeringRow
+	for rows.Next() {
+		o, err := scanOffering(rows.Scan)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		list = append(list, o)
+	}
+	if err = closeRows(rows); err != nil {
+		return nil, err
+	}
+	out := make([]OfferingEntry, 0, len(list))
+	for _, o := range list {
+		_, handle, err := providerOf(ctx, tx, o.Account)
+		if err != nil {
+			return nil, err
+		}
+		provider := handle
+		if provider == "" {
+			provider = o.Account
+		}
+		e := OfferingEntry{Path: offeringPath(o.Account, handle, o.Name), Provider: provider, Name: o.Name,
+			Title: shortText(o.Listing.Title), Description: shortText(o.Listing.Description), Price: o.Listing.Price}
+		if len(o.Listing.Input) > 0 && json.Valid(o.Listing.Input) {
+			e.Input = o.Listing.Input
+		}
+		out = append(out, e)
+	}
+	return out, nil
+}
+
+// shortText is s cut to OfferingDirectoryTextBytes on a rune boundary,
+// with an ellipsis when cut.
+func shortText(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= OfferingDirectoryTextBytes {
+		return s
+	}
+	cut := OfferingDirectoryTextBytes - len("…")
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return strings.TrimSpace(s[:cut]) + "…"
 }

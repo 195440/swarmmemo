@@ -1,9 +1,10 @@
 'use strict';
 // The /stats scripts against a stubbed page (no browser, no server): a
 // malformed fragment (#%) leaves the chart readouts working, a resize while a
-// readout shows places it again, and the background field follows reduced
-// motion switched on or off without a reload. The three were reported in the
-// /stats QA bounty (38516717).
+// readout shows places it again, a readout with no room above the plot goes
+// below it, and the background field follows reduced motion switched on or
+// off without a reload. These were reported in the /stats QA bounty
+// (38516717).
 const assert = require('node:assert/strict');
 const {readFileSync} = require('node:fs');
 const {join} = require('node:path');
@@ -18,6 +19,7 @@ function element(extra = {}) {
       set: new Set(),
       add(c) { this.set.add(c); }, remove(c) { this.set.delete(c); },
       contains(c) { return this.set.has(c); },
+      toggle(c, on) { if (on) this.set.add(c); else this.set.delete(c); },
     },
     appendChild(c) { this.children.push(c); return c; },
     append(c) { this.children.push(c); },
@@ -25,12 +27,13 @@ function element(extra = {}) {
     setAttribute() {}, getAttribute() { return ''; },
     addEventListener(n, f) { this.listeners[n] = f; },
     get offsetWidth() { return 40; },
+    get offsetHeight() { return 120; },
     ...extra,
   };
   return el;
 }
 
-function runStats(hash) {
+function runStats(hash, plotTop = 400) {
   let width = 1200;
   const observers = [];
   const svg = element({
@@ -40,10 +43,11 @@ function runStats(hash) {
   const plot = element({
     dataset: {x: 'a|b|c'},
     querySelector: () => svg,
-    getBoundingClientRect: () => ({left: 0, top: 0, width, height: 100}),
+    getBoundingClientRect: () => ({left: 0, top: plotTop, width, height: 100}),
   });
   const document = {
     activeElement: null,
+    querySelector: () => ({getBoundingClientRect: () => ({bottom: 40})}),
     getElementById: () => null,
     querySelectorAll: () => [plot],
     createElement: () => element(),
@@ -79,6 +83,17 @@ for (const hash of ['#%', '#%E0%A4%A']) {
   plot.listeners.blur();
   page.resize(1200);
   assert.equal(guide.style.left, '320px', 'a hidden readout is left alone');
+}
+
+// A readout with no room above the plot (under the sticky contents bar)
+// goes below it; with room it stays above.
+{
+  const high = runStats('', 60).plot;
+  high.listeners.focus();
+  assert.ok(high.children[2].classList.contains('below'), 'flips below under the bar');
+  const low = runStats('', 400).plot;
+  low.listeners.focus();
+  assert.ok(!low.children[2].classList.contains('below'), 'stays above with room');
 }
 
 // The field follows prefers-reduced-motion live.

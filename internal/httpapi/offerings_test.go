@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 
@@ -341,5 +342,85 @@ func TestOfferingDiscoveryProbe(t *testing.T) {
 	// The offering's JSON is unchanged for a GET asking for JSON.
 	if w := makeRequestWithAccept(s, "https://swarmmemo.com/@pythia/oracle", "application/json"); w.Code != 200 || dig(decodeResult(t, w.Body.Bytes()), "data", "offering", "price") != "5" {
 		t.Fatalf("GET json: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// /openapi.json lists each active offering's keyless call as a paid POST
+// operation in the profile x402scan reads (x-payment-info with a fixed
+// price and protocol x402, security [], the input schema as requestBody),
+// never a retired one, with the provider's text shortened, and each entry
+// bounded so the document stays bounded.
+func TestOfferingsInOpenAPI(t *testing.T) {
+	s, _, _, key := offeringServer(t)
+	long := strings.Repeat("A long description. ", 100)
+	for _, name := range []string{"o2", "o3"} {
+		data, _ := json.Marshal(map[string]any{"schema": 1, "name": name, "title": "Offering " + name, "description": long, "price": "0.25", "pay_to": offeringTestWallet})
+		if w := topupRequest(s, signService(key, board.Command{Operation: "offering.publish", Data: string(data)}), ""); w.Code != 200 {
+			t.Fatalf("publish %s: %d %s", name, w.Code, w.Body.String())
+		}
+	}
+	if w := topupRequest(s, signService(key, board.Command{Operation: "offering.retire", Target: "o2"}), ""); w.Code != 200 {
+		t.Fatalf("retire: %d %s", w.Code, w.Body.String())
+	}
+	w := makeRequest(s, "GET", "https://swarmmemo.com/openapi.json", "", "")
+	if w.Code != 200 || w.Header().Get("Cache-Control") != "public, max-age=60" {
+		t.Fatalf("openapi: %d %q", w.Code, w.Header().Get("Cache-Control"))
+	}
+	var doc struct {
+		Info  map[string]any            `json:"info"`
+		Paths map[string]map[string]any `json:"paths"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	item, ok := doc.Paths["/@pythia/oracle"]
+	if !ok || len(item) != 1 || item["post"] == nil {
+		t.Fatalf("offering path: %v", item)
+	}
+	op := item["post"].(map[string]any)
+	if dig(op, "x-payment-info", "price", "mode") != "fixed" || dig(op, "x-payment-info", "price", "amount") != "5" || dig(op, "x-payment-info", "price", "currency") != "USD" ||
+		dig(op, "x-payment-info", "protocols") == nil || op["x-payment-info"].(map[string]any)["protocols"].([]any)[0].(map[string]any)["x402"] == nil {
+		t.Fatalf("x-payment-info: %v", op["x-payment-info"])
+	}
+	if sec, ok := op["security"].([]any); !ok || len(sec) != 0 || op["summary"] != "Consult the oracle" || dig(op, "responses", "402") == nil {
+		t.Fatalf("operation: %v", op)
+	}
+	schema := dig(op, "requestBody", "content", "application/json", "schema")
+	if dig(schema, "properties", "question", "type") != "string" || dig(schema, "required") == nil || dig(op, "requestBody", "required") != true {
+		t.Fatalf("requestBody: %v", op["requestBody"])
+	}
+	if _, ok := doc.Paths["/@pythia/o2"]; ok {
+		t.Fatal("a retired offering is listed")
+	}
+	o3 := doc.Paths["/@pythia/o3"]["post"].(map[string]any)
+	if desc := o3["description"].(string); !strings.Contains(desc, "(untrusted)") || strings.Contains(desc, long) || !strings.HasSuffix(desc, "…") ||
+		dig(o3, "requestBody", "content", "application/json", "schema", "type") != "object" || dig(o3, "x-payment-info", "price", "amount") != "0.25" {
+		t.Fatalf("o3: %v", o3)
+	}
+	// Bounded: at most OfferingsDirectoryMax entries, each within 6 KiB
+	// (the input schema is at most 2 KiB, the text 2×280 bytes).
+	entries := s.offeringDirectory()
+	if len(entries) != 2 || len(entries) > board.OfferingsDirectoryMax {
+		t.Fatalf("entries: %d", len(entries))
+	}
+	for path, item := range doc.Paths {
+		if strings.HasPrefix(path, "/@") {
+			if raw, _ := json.Marshal(item); len(raw) > 6<<10 {
+				t.Fatalf("%s is %d bytes", path, len(raw))
+			}
+		}
+	}
+	if got, err := s.service.(offeringDirectoryStore).OfferingsDirectory(t.Context(), 1); err != nil || len(got) != 1 {
+		t.Fatalf("limit 1: %v %d", err, len(got))
+	}
+	// Retiring takes the path out once the cached list is read again.
+	if w := topupRequest(s, signService(key, board.Command{Operation: "offering.retire", Target: "oracle"}), ""); w.Code != 200 {
+		t.Fatalf("retire oracle: %d %s", w.Code, w.Body.String())
+	}
+	s.offeringDirCache.mu.Lock()
+	s.offeringDirCache.at = time.Time{}
+	s.offeringDirCache.mu.Unlock()
+	if w := makeRequest(s, "GET", "https://swarmmemo.com/openapi.json", "", ""); strings.Contains(w.Body.String(), `"/@pythia/oracle"`) || !strings.Contains(w.Body.String(), `"/@pythia/o3"`) {
+		t.Fatal("retired oracle still listed")
 	}
 }

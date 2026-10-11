@@ -1436,6 +1436,7 @@ caption.chart-note{text-align:left;caption-side:top}
 .chart-dot.s-2,.chart-dot.s-alt{background:var(--ink-2)}
 .chart-dot.s-3{background:var(--muted)}
 .chart-readout{bottom:calc(100% + var(--s-1));z-index:2;max-width:100%;padding:var(--s-1) var(--s-2);background:var(--surface);border:1px solid var(--line-strong);border-radius:var(--radius);font-size:var(--t-meta);line-height:1.5}
+.chart-readout.below{bottom:auto;top:calc(100% + var(--s-1))}
 .chart-readout-x{display:block;font-weight:600;white-space:nowrap}
 .chart-readout-row{display:flex;align-items:center;gap:6px}
 .chart-readout-key{width:10px;height:10px;flex:none;border-radius:1px;background:var(--ink)}

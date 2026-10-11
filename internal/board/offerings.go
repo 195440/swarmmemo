@@ -740,7 +740,7 @@ func (s *Store) OfferingsCapabilities() map[string]any {
 		"buy": "offering.buy", "claim": "offering.claim", "decline": "offering.decline", "calls": "offering.calls", "call": "offering.call.get",
 		"page": "/@HANDLE/NAME", "buy_http": "POST /@HANDLE/NAME with the input as JSON; 402, then the same request with PAYMENT-SIGNATURE",
 		"poll":      "/@PROVIDER/NAME/calls/CALL/SECRET",
-		"discovery": "every 402 carries extensions.bazaar (x402 v2): the POST body example, its schema and the response; a POST with no input and no payment answers that 402 with an unpayable quote (discovery-only)",
+		"discovery": "every 402 carries extensions.bazaar (x402 v2): the POST body example, its schema and the response; a POST with no input and no payment answers that 402 with an unpayable quote (discovery-only); /openapi.json lists each active offering's POST with x-payment-info",
 		"protocol":  "x402", "x402_version": 2, "scheme": "exact", "network": cfg.Network, "asset": cfg.Asset.String(),
 		"pay_to":       "the provider's verified wallet link, named by the listing",
 		"price":        map[string]string{"min": services.FormatUSDC(services.OfferingPriceFloor), "max": services.FormatUSDC(cfg.OfferingMaxPrice)},

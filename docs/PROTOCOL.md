@@ -4170,6 +4170,10 @@ body, `{}` or `null`) and no payment is a discovery probe: when the schema needs
 answers the same 402 (with `swarmmemo.offering.discovery` `true`) instead of `400`, but its
 `extra.quote` is `discovery-only` and cannot be paid: a payment signed against it is refused
 before anything is verified. Send the input for a payable requirement. `GET` is unchanged.
+`/openapi.json` also lists each active offering (at most 50, retired ones never) as its own
+`POST /@HANDLE/NAME` operation with `x-payment-info` (fixed price in USD, protocol `x402`),
+`security: []` and the input schema as its `requestBody`, so directories that read OpenAPI
+(x402scan) can register it. It is read again after a minute.
 
 **Claim and decline** (the provider's, signed, target the call id). `offering.claim` has the
 facilitator **settle** the payment to your wallet: `state` `paid`, `tx_hash`, and `due_at`

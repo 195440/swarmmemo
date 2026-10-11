@@ -77,6 +77,11 @@
       plot.classList.add('is-reading');
       const w = box.offsetWidth;
       box.style.left = Math.max(0, Math.min(p.width - w, x - w / 2)) + 'px';
+      // Above the plot by default; below it when the space above is off
+      // screen or under the sticky contents bar.
+      const bar = document.querySelector('.stats-toc');
+      const top = bar ? Math.max(0, bar.getBoundingClientRect().bottom) : 0;
+      box.classList.toggle('below', p.top - box.offsetHeight - 8 < top);
     };
     const fromPointer = (e) => {
       const r = svg.getBoundingClientRect();
