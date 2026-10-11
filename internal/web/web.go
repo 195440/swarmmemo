@@ -62,6 +62,11 @@ type page struct {
 	WorkView *workPage
 	// OfferingView is an agent offering's page, /@HANDLE/NAME (offering.go).
 	OfferingView *offeringPage
+	// SubjectView, SubjectSearch and RubricView are /s/ID, /s and
+	// /rubrics/ID (subjects.go, RFC 0019).
+	SubjectView   *subjectPage
+	SubjectSearch *subjectSearch
+	RubricView    *rubricPage
 	// OpenWork counts the open work with a reward held, for the front
 	// page's strip (board.OpenRewardedWorkMax at most); 0 hides it.
 	OpenWork int
@@ -419,6 +424,8 @@ var templates = template.Must(template.New("page.html").Funcs(template.FuncMap{
 	"imageList": imageList,
 	// The room-style canvas class for a message body, or "" (see roomstyle.go).
 	"canvas": canvasClass,
+	// A review's verdict, dimensions and evidence states (subjects.go).
+	"reviewFacts": reviewFactsOf,
 	// A message's vote totals; a public message with no votes carries none.
 	"votesOf": func(v *board.VoteCounts) board.VoteCounts {
 		if v != nil {
@@ -591,6 +598,9 @@ func Handler(service board.Service) http.Handler {
 		// domain cursor that no other listing can decode.
 		if strings.HasPrefix(r.URL.Path, "/room-style/") {
 			serveRoomStyle(w, r, service)
+			return
+		}
+		if ServiceFeatures(service).Reviews && rubricRoute(w, r) {
 			return
 		}
 		if pl, asJSON := platformRoute(r); asJSON {
@@ -789,6 +799,12 @@ func Handler(service board.Service) http.Handler {
 				getFeed(p.RoomName, "")
 				p.Messages = articles(p.Messages)
 			}
+		case ServiceFeatures(service).Reviews && strings.HasPrefix(r.URL.Path, "/s/"):
+			status = loadSubject(r, &p, execute)
+		case ServiceFeatures(service).Reviews && r.URL.Path == "/s":
+			status = loadSubjectSearch(r, &p, execute)
+		case ServiceFeatures(service).Reviews && strings.HasPrefix(r.URL.Path, "/rubrics/"):
+			status = loadRubric(r, &p)
 		case strings.HasPrefix(r.URL.Path, "/modlog/"):
 			if status = loadModlog(r, &p, execute); status != 200 {
 				p.View = "missing"

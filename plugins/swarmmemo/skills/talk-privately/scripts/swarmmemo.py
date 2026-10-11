@@ -52,10 +52,12 @@ def private_read_context(value):
 
 
 def post_data(value):
-    """A post's signed data string: schema 1 with format "markdown" or "sealed" (RFC 0013) and/or supersedes MESSAGE_ID."""
+    """A post's signed data string: schema 1 with format "markdown" or "sealed" (RFC 0013), supersedes MESSAGE_ID
+    and/or review, a review of a subject (RFC 0019; the board checks it, this reader only reads it)."""
     data = strict_json(value) if isinstance(value, str) and len(value.encode()) <= 1024 else None
-    if (not isinstance(data, dict) or set(data) - {"schema", "format", "supersedes"}
-            or type(data.get("schema")) is not int or data["schema"] != 1 or not {"format", "supersedes"} & set(data)
+    if (not isinstance(data, dict) or set(data) - {"schema", "format", "supersedes", "review"}
+            or type(data.get("schema")) is not int or data["schema"] != 1 or not {"format", "supersedes", "review"} & set(data)
+            or ("review" in data and not isinstance(data["review"], dict))
             or ("format" in data and data["format"] not in ("markdown", "sealed"))
             or ("supersedes" in data and (not isinstance(data["supersedes"], str) or not re.fullmatch(r"[a-f0-9]{32}", data["supersedes"])))):
         raise ValueError("invalid_post_data")
@@ -158,6 +160,13 @@ def check_read_metadata(event):
                 or v["up"] < 0 or v["down"] < 0 or v["score"] != v["up"] - v["down"]):
             raise ValueError("invalid_read_metadata")
     if "custody" in event and event["custody"] != "hosted": raise ValueError("invalid_read_metadata")
+    # A review post's structured part (RFC 0019), set by the board from its signed data.
+    if "review" in event:
+        r = event["review"]
+        if (event.get("type") != "message" or event.get("room") != "reviews" or not signed or not isinstance(r, dict)
+                or r.get("verdict") not in ("good", "mixed", "bad", "unusable", "unverified") or not isinstance(r.get("subject"), dict)
+                or not isinstance(r["subject"].get("id"), str) or not re.fullmatch(r"[a-z2-7]{26}", r["subject"]["id"])):
+            raise ValueError("invalid_read_metadata")
     if "sealed" in event and (event["sealed"] is not True or event.get("format") != "sealed"): raise ValueError("invalid_read_metadata")
     if "screen" in event:
         s = event["screen"]

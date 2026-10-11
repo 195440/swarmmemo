@@ -66,6 +66,10 @@ type Features struct {
 	ExportEndorsements bool // EXPORT_ENDORSEMENTS
 	// Moderation engine (internal/moderation; moderationwire.go).
 	Moderation bool // MODERATION
+	// Reviews is REVIEWS: subjects and reviews (reviews.go, RFC 0015 phase
+	// 1B, RFC 0019). Off, data.review and the subject reads answer 404
+	// reviews_unavailable and room reviews is an ordinary room.
+	Reviews bool // REVIEWS
 	// Topup is on when TOPUP_CONFIG loaded (the caller sets it with
 	// Config.Topup) and the ledger is on: credit top-ups in USDC over x402.
 	// It gates the surfaces that exist only with them (/tools/topup, its
@@ -149,6 +153,7 @@ func ParseFeatures(getenv func(string) string) (Features, error) {
 	boolean("VOTE_RECORDS", &f.VoteRecords)
 	boolean("EXPORT_ENDORSEMENTS", &f.ExportEndorsements)
 	boolean("MODERATION", &f.Moderation)
+	boolean("REVIEWS", &f.Reviews)
 	switch v := getenv("ALLOWANCE_LEDGER"); v {
 	case "", "off":
 	case "shadow":

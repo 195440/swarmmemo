@@ -54,10 +54,14 @@
     box.className = 'chart-readout';
     box.setAttribute('role', 'status');
     plot.parentNode.insertBefore(box, plot);
+    let at = n - 1;
+    // Leaving the chart puts the line back on the latest day, so it never
+    // names a day the chart no longer marks.
     const off = () => {
       plot.classList.remove('is-reading');
+      at = n - 1;
+      fill();
     };
-    let at = n - 1;
     const fill = () => {
       box.replaceChildren();
       make('b', 'chart-readout-x', box).textContent = xs[at] + (at === n - 1 ? ' (so far)' : '');

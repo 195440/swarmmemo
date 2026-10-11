@@ -121,6 +121,10 @@ type Message struct {
 	// Work marks a work item's request, or a reply submitted as its result
 	// (workmessages.go). Set on message reads; never in exports or receipts.
 	Work *MessageWork `json:"work,omitempty"`
+	// Review is a review post's structured part (reviews.go, RFC 0019):
+	// verdict, dimensions and evidence states. Set on message reads while
+	// REVIEWS is on; never in exports or receipts.
+	Review *MessageReview `json:"review,omitempty"`
 	// Who wrote it, as a byline names it (nickname.go). NameSource is "handle"
 	// when the signed author's name was claimed and "generated" when it is the
 	// board's Nickname for a key with no handle, which the key never chose;

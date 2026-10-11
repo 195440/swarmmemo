@@ -1739,3 +1739,38 @@ caption.chart-note{text-align:left;caption-side:top}
 .connect-embed-terms{padding-left:1.25em}
 .site-grants{list-style:none;padding:0;margin:var(--s-3) 0;display:grid;gap:var(--s-2,8px)}
 .site-grants li{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s-3);justify-content:space-between;overflow-wrap:anywhere}
+
+/* ---------- subjects and reviews (/s/ID, review cards on /e/ID; RFC 0019) ---------- */
+.page-heading h1.subject-key{font-family:var(--mono);font-size:var(--t-title);line-height:1.35;overflow-wrap:anywhere;word-break:break-word}
+.review-card{border-bottom:1px solid var(--line);padding:var(--s-4) 0;overflow-wrap:anywhere;min-width:0}
+.review-card-head{display:flex;flex-wrap:wrap;gap:var(--s-2);align-items:baseline;font-size:var(--t-ui)}
+.review-facts{margin:var(--s-2) 0}
+.review-on-memo{margin:0 0 var(--s-3);padding:var(--s-2) var(--s-3);border-left:3px solid var(--line-strong)}
+.review-subject-line{margin:0 0 var(--s-1);font-size:var(--t-ui);overflow-wrap:anywhere}
+.review-verdict{display:flex;flex-wrap:wrap;align-items:baseline;gap:var(--s-2);margin:0 0 var(--s-2)}
+.review-verdict-word{font-family:var(--mono);font-size:var(--t-ui);text-transform:uppercase;letter-spacing:.04em;border:1px solid var(--line-strong);border-radius:var(--radius);padding:0 6px}
+.verdict-bad,.verdict-unusable{border-color:var(--alert);color:var(--alert)}
+.review-score{font-family:var(--mono)}
+.review-dims{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:var(--s-1) var(--s-4);margin:0 0 var(--s-2);font-size:var(--t-meta)}
+.review-dims div{display:flex;align-items:center;gap:var(--s-2);min-width:0}
+.review-dims dt{flex:0 0 7.5em;color:var(--muted)}
+.review-dims dd{display:flex;align-items:center;gap:var(--s-2);margin:0;min-width:0;flex:1}
+.review-dims dd span{min-width:3ch;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.review-dims meter{flex:1;min-width:48px;height:8px}
+.review-evidence{list-style:none;padding:0;margin:0 0 var(--s-2);font-size:var(--t-meta)}
+.review-evidence li{overflow-wrap:anywhere;margin:2px 0}
+.evidence-failed .badge{border-color:var(--alert);color:var(--alert)}
+.review-text{white-space:pre-wrap;margin:var(--s-2) 0}
+.owner-reply{margin:var(--s-2) 0 0;padding:var(--s-2) var(--s-3);border-left:3px solid var(--line-strong);background:var(--surface-2)}
+.other-raters{padding-left:1.25em;font-size:var(--t-ui)}
+.subject-search{display:flex;flex-wrap:wrap;gap:var(--s-2);align-items:center;margin:0 0 var(--s-4)}
+.subject-search input{flex:1 1 220px;min-width:0;min-height:var(--control-h)}
+.subject-results{padding-left:1.25em;overflow-wrap:anywhere}
+.subject-results li{margin:var(--s-2) 0}
+.rubric-checks{margin:0 0 var(--s-4)}
+.rubric-checks th,.rubric-checks td{text-align:left;vertical-align:top;padding:var(--s-2) var(--s-2) var(--s-2) 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+@media (max-width:560px){
+  .rubric-checks thead{display:none}
+  .rubric-checks tr{display:block;border-bottom:1px solid var(--line);padding:var(--s-2) 0}
+  .rubric-checks th,.rubric-checks td{display:block;border:0;padding:2px 0}
+}

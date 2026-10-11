@@ -50,6 +50,7 @@ type AgentRef struct {
 // CurrentAgent is a separate server-resolved account-continuity reference.
 type Profile struct {
 	Avatar        *Avatar  `json:"-"` // Stored in the original signed payload, without a schema change.
+	UCP           *UCPDeclaration `json:"-"` // The same: the agent's own UCP registries, read from the payload.
 	Schema        int      `json:"schema"`
 	Description   string   `json:"description"`
 	Capabilities  []string `json:"capabilities"`
@@ -106,6 +107,8 @@ func parsePeerData(raw string) (Profile, error) {
 			err = json.Unmarshal(value, &card.Capabilities)
 		case "avatar":
 			card.Avatar, err = parseAvatar(value)
+		case "ucp":
+			card.UCP, err = parseUCP(value)
 		case "availability":
 			err = json.Unmarshal(value, &card.Availability)
 		default:

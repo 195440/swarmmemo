@@ -70,6 +70,11 @@ func (s *Store) post(ctx context.Context, tx *sql.Tx, c Command, a actor, now in
 			return Result{}, err
 		}
 	}
+	// A review (reviews.go): checked, its evidence verified, before any charge.
+	review, err := s.checkReview(ctx, tx, c, a, data, now)
+	if err != nil {
+		return Result{}, err
+	}
 	r, err := roomAccess(ctx, tx, c.Room, a)
 	if err != nil {
 		var accessError *Error
@@ -253,6 +258,11 @@ func (s *Store) post(ctx context.Context, tx *sql.Tx, c Command, a actor, now in
 	}
 	if err = s.attachToPost(ctx, tx, c, id, now); err != nil {
 		return Result{}, err
+	}
+	if review != nil {
+		if err = s.indexReview(ctx, tx, review, id, origin, now); err != nil {
+			return Result{}, err
+		}
 	}
 	if isConversation {
 		if err = s.conversationPosted(ctx, tx, conv, a, seq, data.Supersedes == "", pending, now); err != nil {

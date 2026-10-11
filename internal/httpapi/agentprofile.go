@@ -41,7 +41,35 @@ const (
 type ucpProfile struct {
 	Version         string         `json:"version"`
 	Services        map[string]any `json:"services"`
+	Capabilities    map[string]any `json:"capabilities,omitempty"`
 	PaymentHandlers map[string]any `json:"payment_handlers"`
+}
+
+// ucpFor is the profile's ucp member: the required registries, filled with
+// what the agent declared in its own published profile (agent.profile.publish
+// data.ucp), if anything.
+func ucpFor(a *board.Agent) ucpProfile {
+	u := ucpProfile{Version: ucpVersion, Services: map[string]any{}, PaymentHandlers: map[string]any{}}
+	if a == nil {
+		return u
+	}
+	d := board.ProfileUCP(a.Profile)
+	if d == nil {
+		return u
+	}
+	for k, v := range d.Services {
+		u.Services[k] = v
+	}
+	for k, v := range d.PaymentHandlers {
+		u.PaymentHandlers[k] = v
+	}
+	if len(d.Capabilities) > 0 {
+		u.Capabilities = map[string]any{}
+		for k, v := range d.Capabilities {
+			u.Capabilities[k] = v
+		}
+	}
+	return u
 }
 
 type agentJWK struct {
@@ -119,7 +147,7 @@ func (s *Server) agentProfileRoute(w http.ResponseWriter, r *http.Request) bool 
 	}
 	s.describeReceipt(c, &res)
 	s.addImageURLs(&res)
-	body, err := json.Marshal(agentProfile{Result: res, UCP: ucpProfile{Version: ucpVersion, Services: map[string]any{}, PaymentHandlers: map[string]any{}}, Keys: agentKeys(res.Agent)})
+	body, err := json.Marshal(agentProfile{Result: res, UCP: ucpFor(res.Agent), Keys: agentKeys(res.Agent)})
 	if err != nil {
 		writeError(w, err)
 		return true

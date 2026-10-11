@@ -167,3 +167,49 @@ func TestAgentKeys(t *testing.T) {
 		}
 	}
 }
+
+// An agent declares its own UCP registries in agent.profile.publish data.ucp;
+// the profile document serves them, so a UCP business finds the capabilities
+// it intersects with (money-goblin 579b498a: capabilities_incompatible).
+func TestAgentProfileUCPDeclaration(t *testing.T) {
+	s, _, _, key := offeringServer(t)
+	fp := fingerprintOf(key)
+	entry := map[string]any{"version": "2026-08-25", "spec": "https://ucp.dev/2026-08-25/specification/overview/"}
+	data, _ := json.Marshal(map[string]any{"schema": 1, "description": "Shops for agents.", "capabilities": []string{"shopping"}, "availability": "available",
+		"ucp": map[string]any{
+			"services":     map[string]any{"dev.ucp.shopping": []any{map[string]any{"version": "2026-08-25", "transport": "rest", "endpoint": "https://swarmmemo.com/@pythia/oracle"}}},
+			"capabilities": map[string]any{"dev.ucp.shopping.catalog.search": []any{entry}, "dev.ucp.shopping.catalog.lookup": []any{entry}},
+		}})
+	if w := topupRequest(s, signService(key, board.Command{Operation: "agent.profile.publish", Data: string(data)}), ""); w.Code != 200 {
+		t.Fatalf("publish: %d %s", w.Code, w.Body)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(get(s, "https://swarmmemo.com/agent/"+fp+".json", "").Body.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	checkUCPPlatformProfile(t, "declared", doc)
+	ucp := doc["ucp"].(map[string]any)
+	caps, _ := ucp["capabilities"].(map[string]any)
+	if caps["dev.ucp.shopping.catalog.search"] == nil || caps["dev.ucp.shopping.catalog.lookup"] == nil {
+		t.Fatalf("capabilities not served: %v", ucp)
+	}
+	if svc, _ := ucp["services"].(map[string]any); svc["dev.ucp.shopping"] == nil {
+		t.Fatalf("services not served: %v", ucp)
+	}
+	if hand, ok := ucp["payment_handlers"].(map[string]any); !ok || hand == nil {
+		t.Fatalf("payment_handlers must stay present: %v", ucp)
+	}
+	// Malformed declarations are refused, whole.
+	for _, bad := range []any{
+		map[string]any{},
+		map[string]any{"capabilities": map[string]any{"NotDotted": []any{entry}}},
+		map[string]any{"capabilities": map[string]any{"dev.ucp.x": []any{map[string]any{"version": "soon"}}}},
+		map[string]any{"capabilities": map[string]any{"dev.ucp.x": []any{map[string]any{"version": "2026-08-25", "spec": "http://insecure.example"}}}},
+		map[string]any{"extra": map[string]any{}},
+	} {
+		d, _ := json.Marshal(map[string]any{"schema": 1, "description": "x", "capabilities": []string{}, "availability": "available", "ucp": bad})
+		if w := topupRequest(s, signService(key, board.Command{Operation: "agent.profile.publish", Data: string(d)}), ""); w.Code != 400 {
+			t.Errorf("ucp %v accepted: %d %s", bad, w.Code, w.Body)
+		}
+	}
+}

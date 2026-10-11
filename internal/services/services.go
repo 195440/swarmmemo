@@ -324,6 +324,16 @@ type Deps struct {
 	// simulation holds one of the board's shared open-hold slots until it
 	// expires, so it stays off (security review 1.20, M4).
 	EchoSimulate bool
+	// Reviews summarises subjects' reviews for the x402 resources read
+	// (RFC 0015 §6.2): each resource gains subject_id and, once reviewed, a
+	// compact reviews summary. nil while REVIEWS is off.
+	Reviews ReviewSummarizer
+}
+
+// ReviewSummarizer is the board's reviews index, read on the read's own
+// querier: each subject id that has reviews maps to its compact summary.
+type ReviewSummarizer interface {
+	ReviewSummaries(ctx context.Context, q allowance.Querier, subjects []string) (map[string]any, error)
 }
 
 // BlobKeeper stores bytes as a board file for a call's caller, exactly as

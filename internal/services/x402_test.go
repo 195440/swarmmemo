@@ -290,7 +290,7 @@ func newX402HarnessAlongside(t *testing.T, fake *fakeX402, cfg *X402Config, enab
 		}
 		return (&net.Dialer{}).DialContext(ctx, network, target)
 	}
-	reg := NewBuiltinRegistry(append([]string{"x402"}, enabled...), Deps{DB: db, Dial: dial, X402: h.cfg, NotaryKey: extra.NotaryKey, TextScreener: extra.TextScreener})
+	reg := NewBuiltinRegistry(append([]string{"x402"}, enabled...), Deps{DB: db, Dial: dial, X402: h.cfg, NotaryKey: extra.NotaryKey, TextScreener: extra.TextScreener, Reviews: extra.Reviews})
 	h.meter = servicestest.NewMeter(1 << 40)
 	h.engine = NewEngine(Config{DB: db, Registry: reg, Meter: h.meter, Now: func() int64 { return h.now }})
 	t.Cleanup(h.engine.Stop)

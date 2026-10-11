@@ -63,6 +63,7 @@ import (
 	"unicode/utf8"
 
 	"swarmmemo/internal/allowance"
+	"swarmmemo/internal/reviews"
 )
 
 // x402 bounds.
@@ -191,6 +192,9 @@ type x402 struct {
 	screener TextScreener
 	// fr is the open bundler catalogue (keybundler_open.go); nil while off.
 	fr *bundlerState
+	// reviews summarises each resource's subject (Deps.Reviews); nil while
+	// REVIEWS is off.
+	reviews ReviewSummarizer
 }
 
 func newX402(d Deps) Provider {
@@ -198,7 +202,7 @@ func newX402(d Deps) Provider {
 	if d.X402 == nil || d.DB == nil || d.Dial == nil || d.X402.Signer == nil {
 		return x // not configured: listed if enabled, but every call is service_unavailable
 	}
-	x.cfg, x.db, x.screener = d.X402, d.DB, d.TextScreener
+	x.cfg, x.db, x.screener, x.reviews = d.X402, d.DB, d.TextScreener, d.Reviews
 	x.byID = map[string]*X402Resource{}
 	for i := range x.cfg.Resources {
 		indexResource(&x.cfg.Resources[i])
@@ -833,6 +837,25 @@ func (x *x402) unanswered(c Call, p x402Plan, pay *payment, code string) Result 
 	return Result{Body: canonicalJSON(out), Used: c.Price.For(r.amount), Public: pub}
 }
 
+// resourceSubjects names each resource's review subject (x402:METHOD URL,
+// RFC 0015 §4.2) and reads the summaries of those that have reviews; both
+// empty while REVIEWS is off.
+func (x *x402) resourceSubjects(ctx context.Context, q allowance.Querier, list []*X402Resource) (map[string]string, map[string]any, error) {
+	if x.reviews == nil || len(list) == 0 {
+		return nil, nil, nil
+	}
+	ids := map[string]string{}
+	var subjects []string
+	for _, r := range list {
+		if s, err := reviews.Canonical(reviews.TypeX402, r.Method+" "+r.URL, reviews.Options{}); err == nil {
+			ids[r.ID] = s.ID
+			subjects = append(subjects, s.ID)
+		}
+	}
+	sums, err := x.reviews.ReviewSummaries(ctx, q, subjects)
+	return ids, sums, err
+}
+
 // Read serves "resources": a page of the catalogue that matches the search,
 // best first, with maximum prices in USD and in credits; the categories; the
 // caps; and what is left of today's budget.
@@ -854,6 +877,10 @@ func (x *x402) Read(ctx context.Context, q allowance.Querier, c Call) (json.RawM
 		return nil, err
 	}
 	page := x.search(s)
+	subjects, summaries, err := x.resourceSubjects(ctx, q, page.resources)
+	if err != nil {
+		return nil, err
+	}
 	resources := []any{}
 	for _, r := range page.resources {
 		m := min(r.MaxAmount, x.cfg.PerCall)
@@ -871,6 +898,12 @@ func (x *x402) Read(ctx context.Context, q allowance.Querier, c Call) (json.RawM
 		}
 		if st, ok := page.stats[r.ID]; ok {
 			entry["calls_30d"], entry["failed_30d"] = st.ok, st.failed
+		}
+		if id, ok := subjects[r.ID]; ok {
+			entry["subject_id"] = id
+			if sum, ok := summaries[id]; ok {
+				entry["reviews"] = sum
+			}
 		}
 		resources = append(resources, entry)
 	}

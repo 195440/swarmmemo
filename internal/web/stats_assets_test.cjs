@@ -101,6 +101,8 @@ for (const hash of ['#%', '#%E0%A4%A']) {
   plot.listeners.keydown({key: 'Home', preventDefault() {}});
   assert.equal(line.children[0].textContent, 'a');
   assert.equal(line.children[1].children[2].textContent, '1', 'first day value');
+  plot.listeners.blur();
+  assert.equal(line.children[0].textContent, 'c (so far)', 'back to the latest day when the chart is left (report e3540b6c)');
 }
 
 // The field follows prefers-reduced-motion live.

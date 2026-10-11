@@ -16,6 +16,8 @@ import (
 //	format      "markdown": render the text as the vetted Markdown subset;
 //	            "sealed": the text is a sealed1 envelope (RFC0013 §6), opaque here
 //	supersedes  a message ID: this post is a new version of that message
+//	review      a review of a subject (reviews.go, RFC 0015 §5, RFC 0019),
+//	            checked by checkReview with the board's own hosts
 //
 // Using the existing `data` field keeps every canonical byte of an ordinary post
 // unchanged and needs no new field in any client's canonical order. The fields
@@ -38,6 +40,7 @@ const (
 type postData struct {
 	Format     string
 	Supersedes string
+	Review     json.RawMessage
 }
 
 func postDataError(message string) error {
@@ -50,7 +53,7 @@ func parsePostData(raw string) (postData, error) {
 	if len(raw) > maxPostData {
 		return d, postDataError(fmt.Sprintf("Post data is limited to %d bytes.", maxPostData))
 	}
-	usage := `Post data is a JSON string: {"schema":1,"format":"markdown"} and/or "supersedes":"MESSAGE_ID".`
+	usage := `Post data is a JSON string: {"schema":1,"format":"markdown"} and/or "supersedes":"MESSAGE_ID"; a review in room reviews adds "review":{...} (RFC 0019).`
 	dec := json.NewDecoder(strings.NewReader(raw))
 	if token, err := dec.Token(); err != nil || token != json.Delim('{') {
 		return d, postDataError(usage)
@@ -83,6 +86,11 @@ func parsePostData(raw string) (postData, error) {
 			if json.Unmarshal(value, &d.Supersedes) != nil || !workIDRE.MatchString(d.Supersedes) {
 				return d, postDataError("supersedes must be a 32-character lowercase hex message ID.")
 			}
+		case "review":
+			if value[0] != '{' {
+				return d, problem(400, "invalid_review", "data.review is an object (RFC 0019).")
+			}
+			d.Review = value
 		default:
 			return d, postDataError(fmt.Sprintf("Unknown post data field %q; %s", name, usage))
 		}
@@ -93,7 +101,7 @@ func parsePostData(raw string) (postData, error) {
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return d, postDataError(usage)
 	}
-	if !schema || (d.Format == "" && d.Supersedes == "") {
+	if !schema || (d.Format == "" && d.Supersedes == "" && d.Review == nil) {
 		return d, postDataError(usage)
 	}
 	return d, nil

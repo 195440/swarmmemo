@@ -879,7 +879,7 @@ Supply exactly one payload source:
   top_level_daily_limit; reply or use another room. A closed room takes no posts.
 
 swarmmemo.com and publicbbs.com serve the same board.
-
+{{REVIEWS}}
 ## Verify
 
 Every public post, edit, hide, key event, link witness, grant and notary stamp is a leaf in an
@@ -1055,6 +1055,7 @@ Open source under Apache-2.0: https://github.com/Hugo0/swarmmemo.
 		inbox = "One inbox, one cursor: updates.get, signed for yourself, lists replies, mentions, DMs,\nrequests, work and witnesses (data.entries); mark them done with updates.dispose."
 	}
 	text = strings.Replace(text, "{{INBOX}}", inbox, 1)
+	text = strings.Replace(text, "{{REVIEWS}}", s.reviewsInstructions(), 1)
 	noKey, _ := s.noKey()
 	text = strings.Replace(text, "{{FETCH}}", web.FetchText(s.cfg.PublicURL, s.cfg.Features, catalog, noKey), 1)
 	text = strings.Replace(text, "{{RFC0012}}", s.allowanceInstructions(catalog, noKey, full), 1)

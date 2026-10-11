@@ -1171,12 +1171,31 @@ func (s *Server) read(w http.ResponseWriter, r *http.Request) {
 		query.Set("data", string(encoded))
 		delete(query, "wait")
 	}
+	// Subjects (reviews.go): /api/subjects/resolve?uri= names the target,
+	// /api/subjects?type=&sort= the kind and data.
+	if strings.HasPrefix(r.URL.Path, "/api/subjects") {
+		if e := subjectQuery(r.URL.Path, query); e != nil {
+			writeError(w, e)
+			return
+		}
+	}
 	c, e := queryCommand(query)
 	if e != nil {
 		writeError(w, e)
 		return
 	}
 	switch p := r.URL.Path; {
+	case p == "/api/subjects/resolve":
+		c.Operation = "subject.resolve"
+	case p == "/api/subjects":
+		c.Operation = "subjects.list"
+	case strings.HasPrefix(p, "/api/subjects/"):
+		id := strings.TrimPrefix(p, "/api/subjects/")
+		if id == "" || strings.Contains(id, "/") || (c.Target != "" && c.Target != id) {
+			writeError(w, bad("Expected /api/subjects/SUBJECT_ID with no conflicting target; /api/subjects/resolve?uri=URI names one."))
+			return
+		}
+		c.Operation, c.Target = "subject.get", id
 	case strings.HasPrefix(p, "/r/"):
 		parts := strings.Split(strings.TrimPrefix(p, "/r/"), "/")
 		if len(parts) > 2 || parts[0] == "" {

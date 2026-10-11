@@ -268,7 +268,11 @@ CREATE TABLE IF NOT EXISTS leases (
 // the body) and its indexes: refund_tx UNIQUE, caller, the overdue and the
 // lapsed-closure sweeps (offering_answers.go, C173). A schema-28 answer
 // envelope is split into the columns once.
-const SchemaVersion = 29
+//
+// 30: subjects, reviews and review_evidence, the derived index of reviews
+// (reviews.go, RFC 0015 §6.4 and RFC 0019, C186). Additive, but a schema-29
+// binary would publish reviews without indexing them.
+const SchemaVersion = 30
 
 // connPragmas are the per-connection PRAGMAs, in modernc.org/sqlite's DSN
 // syntax. journal_mode=WAL is stored in the database file and set at Open.
@@ -1108,6 +1112,8 @@ func (s *Store) execute(ctx context.Context, tx *sql.Tx, c Command, a actor, now
 		return s.offeringAnswer(ctx, tx, c, a, now)
 	case "offering.refund":
 		return s.offeringRefund(ctx, tx, c, a, now)
+	case "subject.resolve", "subject.get", "subjects.list":
+		return s.readSubjects(ctx, tx, c, now)
 	case "trust.get":
 		return s.readTrust(ctx, tx, c, a, now)
 	case "standing.ways":

@@ -199,6 +199,10 @@ func migrateSchema(tx *sql.Tx, version int) error {
 	if err := migrateOfferingCalls29(tx, version); err != nil {
 		return err
 	}
+	// Schema 30: subjects, reviews and review_evidence (reviews.go, C186).
+	if _, err := tx.Exec(reviewSchema); err != nil {
+		return err
+	}
 	_, err := tx.Exec(fmt.Sprintf("PRAGMA user_version=%d;", SchemaVersion))
 	return err
 }
