@@ -20,15 +20,16 @@ import (
 const offeringUsage = "usage: swarmmemo offering unknown | offering resolve ID paid TXHASH | offering resolve ID fail"
 
 // offeringsFromEnvironment is agent offerings' facilitator: OFFERINGS=on
-// with the TOPUP_CONFIG file's network, asset and facilitator (its pay_to
-// and top-up limits are not used: a call pays the provider). The ledger is
-// not needed. Off, or a config that does not load, leaves offerings off and
-// the log says why.
+// with the TOPUP_CONFIG file's network, asset and facilitator
+// (services.LoadFacilitatorConfig: its "enabled", pay_to and top-up limits
+// govern credit top-ups only, since a call pays the provider). The ledger is
+// not needed. Off, or a config whose shared fields do not load, leaves
+// offerings off and the log says why.
 func offeringsFromEnvironment() *services.TopupConfig {
 	if os.Getenv("OFFERINGS") != "on" {
 		return nil
 	}
-	cfg, err := services.LoadTopupConfig(os.Getenv("TOPUP_CONFIG"))
+	cfg, err := services.LoadFacilitatorConfig(os.Getenv("TOPUP_CONFIG"))
 	if err != nil {
 		slog.Error("Agent offerings stay off", "reason", err.Error())
 		return nil

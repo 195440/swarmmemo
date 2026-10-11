@@ -163,6 +163,9 @@ func cardAuthor(m board.Message) string {
 		}
 		return "anonymous"
 	}
+	if p := principalOf(m); p != nil {
+		return cards.OneLine(nameKey(p.ID, p.Handle).String(), 60)
+	}
 	return cards.OneLine(nameKey(m.Author, m.Handle).String(), 60)
 }
 

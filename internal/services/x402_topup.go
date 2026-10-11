@@ -137,9 +137,31 @@ type topupConfigFile struct {
 var ErrTopupDisabled = errors.New("topup: the config says enabled: false")
 
 // LoadTopupConfig reads the operator's TOPUP_CONFIG file and, when it names
-// one, the facilitator's bearer token file (owner-only, like a key). Errors
-// name the field, never a secret.
+// one, the facilitator's bearer token file (owner-only, like a key), for
+// credit top-ups: "enabled" must be true. Errors name the field, never a
+// secret.
 func LoadTopupConfig(path string) (*TopupConfig, error) {
+	raw, err := readTopupConfig(path)
+	if err != nil {
+		return nil, err
+	}
+	return ParseTopupConfig(raw, readPrivateFile)
+}
+
+// LoadFacilitatorConfig is LoadTopupConfig for agent offerings (RFC 0017):
+// only the shared x402 fields (network, asset, asset_name, asset_version,
+// facilitator_url, facilitator_token_file, offerings). "enabled", pay_to and
+// limits govern credit top-ups alone and are not read, so offerings run
+// with top-ups off.
+func LoadFacilitatorConfig(path string) (*TopupConfig, error) {
+	raw, err := readTopupConfig(path)
+	if err != nil {
+		return nil, err
+	}
+	return ParseFacilitatorConfig(raw, readPrivateFile)
+}
+
+func readTopupConfig(path string) ([]byte, error) {
 	if path == "" {
 		return nil, errors.New("topup: TOPUP_CONFIG is not set")
 	}
@@ -147,11 +169,16 @@ func LoadTopupConfig(path string) (*TopupConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("topup: read config: %w", err)
 	}
-	return ParseTopupConfig(raw, readPrivateFile)
+	return raw, nil
 }
 
-// ParseTopupConfig validates a config already read; readKey reads the
-// facilitator token file (nil: the config must not name one).
+func badTopupField(field string) error {
+	return fmt.Errorf("topup: config field %s is missing or invalid", field)
+}
+
+// ParseTopupConfig validates a config already read, for credit top-ups;
+// readKey reads the facilitator token file (nil: the config must not name
+// one).
 func ParseTopupConfig(raw []byte, readKey func(string) ([]byte, error)) (*TopupConfig, error) {
 	var f topupConfigFile
 	if err := StrictObject(raw, &f); err != nil {
@@ -160,44 +187,14 @@ func ParseTopupConfig(raw []byte, readKey func(string) ([]byte, error)) (*TopupC
 	if !f.Enabled {
 		return nil, ErrTopupDisabled
 	}
-	bad := func(field string) error { return fmt.Errorf("topup: config field %s is missing or invalid", field) }
-	if f.Schema.String() != "1" {
-		return nil, bad("schema (must be 1)")
+	c, err := parseFacilitatorFields(&f, readKey)
+	if err != nil {
+		return nil, err
 	}
-	c := &TopupConfig{AssetName: f.AssetName, AssetVersion: f.AssetVersion}
-	if !x402NetworkRE.MatchString(f.Network) {
-		return nil, bad(`network (CAIP-2 "eip155:CHAIN_ID")`)
-	}
-	c.Network = f.Network
+	bad := badTopupField
 	var ok bool
-	if c.Asset, ok = ParseEVMAddress(f.Asset); !ok || c.Asset == (EVMAddress{}) {
-		return nil, bad("asset")
-	}
-	if !x402TokenNameRE.MatchString(f.AssetName) {
-		return nil, bad("asset_name")
-	}
-	if !x402TokenNameRE.MatchString(f.AssetVersion) {
-		return nil, bad("asset_version")
-	}
 	if c.PayTo, ok = ParseEVMAddress(f.PayTo); !ok || c.PayTo == (EVMAddress{}) || c.PayTo == c.Asset {
 		return nil, bad("pay_to (the operator's receiving address)")
-	}
-	if err := checkX402URL(f.FacilitatorURL); err != nil {
-		return nil, bad("facilitator_url (" + err.Error() + ")")
-	}
-	c.FacilitatorURL = strings.TrimRight(f.FacilitatorURL, "/")
-	if f.FacilitatorTokenFile != "" {
-		if readKey == nil {
-			return nil, bad("facilitator_token_file")
-		}
-		token, err := readKey(f.FacilitatorTokenFile)
-		if err != nil {
-			return nil, fmt.Errorf("topup: facilitator_token_file: %w", err)
-		}
-		c.facilitatorToken = strings.TrimSpace(string(token))
-		if c.facilitatorToken == "" || len(c.facilitatorToken) > 4096 || strings.ContainsAny(c.facilitatorToken, "\r\n\t ") || !utf8.ValidString(c.facilitatorToken) {
-			return nil, bad("facilitator_token_file (one token on one line)")
-		}
 	}
 	limits := []struct {
 		text, name string
@@ -222,6 +219,58 @@ func ParseTopupConfig(raw []byte, readKey func(string) ([]byte, error)) (*TopupC
 	}
 	if c.Min > c.Max || c.Max > c.AccountDaily || c.AccountDaily > c.BoardDaily {
 		return nil, errors.New("topup: limits must satisfy min <= max <= account_daily <= board_daily")
+	}
+	return c, nil
+}
+
+// ParseFacilitatorConfig validates a config already read, for agent
+// offerings: the shared fields only, whatever "enabled" says (see
+// LoadFacilitatorConfig). The result has no PayTo and no top-up limits.
+func ParseFacilitatorConfig(raw []byte, readKey func(string) ([]byte, error)) (*TopupConfig, error) {
+	var f topupConfigFile
+	if err := StrictObject(raw, &f); err != nil {
+		return nil, errors.New("topup: config is not strict JSON with only the documented fields")
+	}
+	return parseFacilitatorFields(&f, readKey)
+}
+
+// parseFacilitatorFields validates the fields top-ups and offerings share.
+func parseFacilitatorFields(f *topupConfigFile, readKey func(string) ([]byte, error)) (*TopupConfig, error) {
+	bad := badTopupField
+	if f.Schema.String() != "1" {
+		return nil, bad("schema (must be 1)")
+	}
+	c := &TopupConfig{AssetName: f.AssetName, AssetVersion: f.AssetVersion}
+	if !x402NetworkRE.MatchString(f.Network) {
+		return nil, bad(`network (CAIP-2 "eip155:CHAIN_ID")`)
+	}
+	c.Network = f.Network
+	var ok bool
+	if c.Asset, ok = ParseEVMAddress(f.Asset); !ok || c.Asset == (EVMAddress{}) {
+		return nil, bad("asset")
+	}
+	if !x402TokenNameRE.MatchString(f.AssetName) {
+		return nil, bad("asset_name")
+	}
+	if !x402TokenNameRE.MatchString(f.AssetVersion) {
+		return nil, bad("asset_version")
+	}
+	if err := checkX402URL(f.FacilitatorURL); err != nil {
+		return nil, bad("facilitator_url (" + err.Error() + ")")
+	}
+	c.FacilitatorURL = strings.TrimRight(f.FacilitatorURL, "/")
+	if f.FacilitatorTokenFile != "" {
+		if readKey == nil {
+			return nil, bad("facilitator_token_file")
+		}
+		token, err := readKey(f.FacilitatorTokenFile)
+		if err != nil {
+			return nil, fmt.Errorf("topup: facilitator_token_file: %w", err)
+		}
+		c.facilitatorToken = strings.TrimSpace(string(token))
+		if c.facilitatorToken == "" || len(c.facilitatorToken) > 4096 || strings.ContainsAny(c.facilitatorToken, "\r\n\t ") || !utf8.ValidString(c.facilitatorToken) {
+			return nil, bad("facilitator_token_file (one token on one line)")
+		}
 	}
 	c.OfferingMaxPrice, c.OfferingMaxTimeout = OfferingPriceCeiling, OfferingTimeoutCeiling
 	if f.Offerings.MaxPrice != "" {

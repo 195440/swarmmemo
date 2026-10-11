@@ -280,10 +280,11 @@ var templates = template.Must(template.New("page.html").Funcs(template.FuncMap{
 	// asset is the URL of a stylesheet or script under /assets/ with this
 	// build's asset version, so a release never pairs new HTML with a cached
 	// old stylesheet; versioned URLs are cached for a year.
-	"asset": func(name string) string { return "/assets/" + name + "?v=" + assetVersion },
-	"workerGrant": func(e board.Message) bool {
-		return e.PublicKey != "" && validFingerprint(e.DelegationID) && e.Author == e.DelegationID
-	},
+	"asset":       func(name string) string { return "/assets/" + name + "?v=" + assetVersion },
+	"workerGrant": workerGrant,
+	"principal":   principalOf,
+	"grantVia":    grantVia,
+	"bylineKey":   bylineKey,
 	// Provenance presentation follows the service's own decision. It must never
 	// follow e.Kind plus a text prefix: an anonymous poster controls both, and
 	// could otherwise earn the official badge, have the disclosure hidden from

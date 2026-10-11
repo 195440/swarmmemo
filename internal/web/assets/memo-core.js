@@ -109,5 +109,13 @@ const SwarmMemoCore = (() => {
     if (handle) return [handle];
     return m.nickname ? [part('generated-name', m.nickname, nameNotes.generated), ...(byline ? [] : [' ', part('name-tag', 'key ' + fp.slice(0, 8), '')]), part('sr-only', ' (generated name; no handle claimed)', '')] : [fp.slice(0, 12)];
   }
-  return Object.freeze({fields, canonical, b64, unb64, sigil, ageLabel, exactTime, isSendChord, icon, paths, workLine, nameNotes, authorNodes});
+  // A worker key's post as its principal's (principal.go): who for
+  // authorNodes, via the byline marker and its glossary key; else null.
+  function principalOf(m) {
+    const hex = /^[a-f0-9]{64}$/, p = m.principal;
+    if (!p || !m.public_key || m.delegation_id !== m.author || !hex.test(m.author) || !hex.test(p.id)) return null;
+    let host = ''; try { host = new URL(p.origin).host; } catch (_) {}
+    return {p, host, who: {...m, author: p.id, author_handle: p.handle, handle: '', nickname: p.nickname}, via: host ? {label: 'via ' + host, key: 'site-signin'} : {label: 'via worker key', key: 'worker'}};
+  }
+  return Object.freeze({fields, canonical, b64, unb64, sigil, ageLabel, exactTime, isSendChord, icon, paths, workLine, nameNotes, authorNodes, principalOf});
 })();

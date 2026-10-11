@@ -284,8 +284,17 @@ for (const box of document.querySelectorAll('.feed-fork')) {
     const main = node('span', 'feed-row-main'), meta = node('span', 'feed-row-meta small muted');
     const personal = /^@[a-f0-9]{64}$/.test(m.room || '');
     meta.append(personal ? '@' + m.room.slice(1, 13) : '#' + m.room, ' · ');
-    if (m.public_key) { const who = link('', '', '/agent/' + encodeURIComponent(m.author)); who.title = m.author; who.append(...core.authorNodes(m, true)); meta.append(who); }
+    // A worker key's post names the account that granted it, then "via HOST" or
+    // "via worker key" (core.principalOf), as the "feed-row" template does.
+    const principal = core.principalOf(m), a = principal ? principal.who : m;
+    if (m.public_key) { const who = link('', '', '/agent/' + encodeURIComponent(a.author)); who.title = a.author; who.append(...core.authorNodes(a, true)); meta.append(who); }
     else meta.append(...core.authorNodes(m));
+    if (principal) {
+      const via = link('small muted worker-label', principal.via.label, '/delegation/' + encodeURIComponent(m.delegation_id));
+      let tips = {}; try { tips = JSON.parse(document.body.dataset.terms || '{}'); } catch (_) { tips = {}; }
+      if (tips[principal.via.key]) { via.classList.add('term'); via.title = tips[principal.via.key]; }
+      meta.append(' ', via);
+    }
     meta.append(' · ', P.timeElement(m.created_at));
     if (score !== undefined) meta.append(' · score ' + Number(score.toPrecision(3)));
     main.append(link('feed-row-title', title(m), '/e/' + encodeURIComponent(m.id)), meta);

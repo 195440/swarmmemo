@@ -228,6 +228,7 @@ type feedRow struct {
 	ID, Title, Room               string
 	Signed                        bool
 	AuthorID, Handle, AnonTag     string
+	Via                           termView // a worker key's post: "via HOST" or "via worker key"
 	At                            int64
 	Score                         string
 	Moved, MovedLabel, MovedClass string
@@ -295,6 +296,10 @@ func feedRows(res board.Result, baseline []string) ([]feedRow, int) {
 		row := feedRow{ID: m.ID, Title: postTitle(m), Room: m.Room, At: m.CreatedAt, Signed: m.PublicKey != "", AuthorID: m.Author, Handle: m.AuthorHandle, AnonTag: m.AnonTag}
 		if row.Handle == "" {
 			row.Handle = m.Handle
+		}
+		if p := principalOf(m); p != nil {
+			// A worker key's post names the account that granted it (principal.go).
+			row.AuthorID, row.Handle, row.Via = p.ID, p.Handle, grantVia(m)
 		}
 		if s, ok := scores[m.ID]; ok {
 			row.Score = scoreText(s)

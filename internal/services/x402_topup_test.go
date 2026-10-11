@@ -75,6 +75,55 @@ func TestTopupConfigParsing(t *testing.T) {
 	}
 }
 
+// Offerings read only the shared fields: "enabled" false, pay_to and limits
+// govern top-ups alone; a malformed shared field refuses both.
+func TestFacilitatorConfigParsing(t *testing.T) {
+	disabled := strings.Replace(topupTestConfig, `"enabled":true`, `"enabled":false`, 1)
+	if _, err := ParseTopupConfig([]byte(disabled), nil); !errors.Is(err, ErrTopupDisabled) {
+		t.Fatalf("top-ups with enabled false: %v", err)
+	}
+	for name, raw := range map[string]string{
+		"enabled":             topupTestConfig,
+		"disabled":            disabled,
+		"disabled, no pay_to": strings.Replace(disabled, `"pay_to":"0x1111111111111111111111111111111111111111",`, "", 1),
+		"enabled, bad limits": strings.Replace(topupTestConfig, `"schema":1`, `"schema":1,"limits":{"min":"9","max":"1"}`, 1),
+	} {
+		cfg, err := ParseFacilitatorConfig([]byte(raw), nil)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if cfg.Network != "eip155:8453" || cfg.FacilitatorURL != "https://facilitator.example.com" || cfg.AssetName != "USD Coin" ||
+			cfg.OfferingMaxPrice != OfferingPriceCeiling || cfg.OfferingMaxTimeout != OfferingTimeoutCeiling || cfg.PayTo != (EVMAddress{}) {
+			t.Fatalf("%s: %+v", name, cfg)
+		}
+	}
+	cfg, err := ParseFacilitatorConfig([]byte(strings.Replace(disabled, `"schema":1`, `"schema":1,"offerings":{"max_price":"2","max_timeout_seconds":600}`, 1)), nil)
+	if err != nil || cfg.OfferingMaxPrice != 2_000_000 || cfg.OfferingMaxTimeout != 600 {
+		t.Fatalf("offerings fields: %v %+v", err, cfg)
+	}
+	for _, enabled := range []string{`"enabled":true`, `"enabled":false`} {
+		base := strings.Replace(topupTestConfig, `"enabled":true`, enabled, 1)
+		for name, bad := range map[string]string{
+			"schema":          strings.Replace(base, `"schema":1`, `"schema":2`, 1),
+			"network":         strings.Replace(base, "eip155:8453", "base", 1),
+			"asset":           strings.Replace(base, "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "0x0000000000000000000000000000000000000000", 1),
+			"asset_name":      strings.Replace(base, `"USD Coin"`, `""`, 1),
+			"asset_version":   strings.Replace(base, `"asset_version":"2"`, `"asset_version":""`, 1),
+			"facilitator_url": strings.Replace(base, "https://facilitator", "http://facilitator", 1),
+			"token file":      strings.Replace(base, `"schema":1`, `"schema":1,"facilitator_token_file":"/x"`, 1),
+			"max_price":       strings.Replace(base, `"schema":1`, `"schema":1,"offerings":{"max_price":"1000"}`, 1),
+			"unknown field":   strings.Replace(base, `"schema":1`, `"schema":1,"wallet_key_file":"k"`, 1),
+		} {
+			if _, err := ParseFacilitatorConfig([]byte(bad), nil); err == nil {
+				t.Errorf("%s %s: offerings accepted", enabled, name)
+			}
+			if _, err := ParseTopupConfig([]byte(bad), nil); err == nil {
+				t.Errorf("%s %s: top-ups accepted", enabled, name)
+			}
+		}
+	}
+}
+
 func TestTopupPaymentCheck(t *testing.T) {
 	cfg, _ := ParseTopupConfig([]byte(topupTestConfig), nil)
 	r := TopupRequirement{Amount: 250_000, Quote: "4000.salt.mac", Expires: 4000}

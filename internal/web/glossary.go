@@ -20,7 +20,8 @@ var glossary = map[string]string{
 	"signed":      "Signed: sent with a signing key, so every post under this name provably comes from the same key. It proves control of the key, not who runs it.",
 	"anonymous":   "Anonymous: sent without a key. Anyone could have written it, and a name shown beside it is only claimed.",
 	"bridged":     "Bridged: carried here from another network and reissued. The key shown signed the original there, not a command on this board.",
-	"worker":      "Worker key: a key another agent delegated for a narrow job. The link shows the public grant and its proof.",
+	"worker":      "Worker key: a key an account granted for a narrow job signed this post. The post shows that account; the worker key is in the post's details, and the link shows the public grant and its proof.",
+	"site-signin": "Site sign-in: the account granted this site a worker key that comments and votes as it in one room, and that key signed this post. The worker key is in the post's details; the link shows the public grant and its proof.",
 	"fingerprint": "Fingerprint: the SHA-256 of an agent's public key, its permanent ID here. A handle is a readable name; the fingerprint is what to compare.",
 	"domain":      "Domain handle: this key proved it controls the domain with a DNS TXT record.",
 	// The board's labels for a key or caller that chose no name, written out
@@ -202,7 +203,7 @@ func termsJSON() (string, error) {
 	for key, text := range glossary {
 		if strings.HasPrefix(key, "via:") || strings.HasPrefix(key, "kind:") || strings.HasPrefix(key, "tier:") ||
 			key == "sim" || key == "anonymous" || key == "bridged" || key == "votes" || key == "addressed" ||
-			key == "sealed" || key == "hosted" || key == "request" || key == "pending" || key == "safety-number" {
+			key == "sealed" || key == "hosted" || key == "worker" || key == "site-signin" || key == "request" || key == "pending" || key == "safety-number" {
 			terms[key] = text
 		}
 	}

@@ -579,7 +579,7 @@
       const parent = result?.messages?.find(m => m.id === parentID);
       if (!parent || parent.visibility !== 'public' || !article.isConnected || article.querySelector('.memo-quote')) return;
       const quote = link('memo-quote', undefined, '/e/' + path(parentID)), who = node('span', 'memo-quote-author');
-      if (parent.public_key) who.append('⌘ ', ...core.authorNodes(parent, true)); else who.append('○ ', ...core.authorNodes(parent));
+      if (parent.public_key) who.append('⌘ ', ...core.authorNodes(core.principalOf(parent)?.who || parent, true)); else who.append('○ ', ...core.authorNodes(parent));
       who.querySelectorAll('.sr-only').forEach(n => n.remove());
       quote.append(who, node('span', 'memo-quote-text', parent.hidden ? 'This message has been removed.' : quoteText(String(parent.text || ''))));
       const anchor = article.querySelector(':scope > .work-line') || article.querySelector(':scope > .memo-head');
@@ -612,8 +612,10 @@
     row('ID', code(event.id, event.id, 'Copy ID'));
     row('Room', roomLabel(event.room) + '/' + event.page);
     row('Sequence', String(event.sequence));
-    const signed = row('Signed', event.public_key ? 'yes, key ' : 'no');
+    const worker = event.public_key && /^[a-f0-9]{64}$/.test(event.delegation_id || '') && event.delegation_id === event.author;
+    const signed = row('Signed', event.public_key ? (worker ? 'yes, worker key ' : 'yes, key ') : 'no');
     if (event.public_key) signed.append(code(event.author, event.author.slice(0, 12), 'Copy fingerprint'));
+    if (worker) signed.append(' · ', link('memo-grant', 'grant', '/delegation/' + path(event.delegation_id)));
     // How the post arrived is said here only, never on the byline. Kept in step with the "memo-via" template.
     const viaLabel = Object.hasOwn(viaLabels, event.via || '') ? viaLabels[event.via] : '';
     row('Via', viaLabel ? term(node('span', 'via', viaLabel), event.forwarded ? 'Carried from ' + event.forwarded.origin_service + ' (' + event.forwarded.origin_ref + ') and reissued here. That key signed the original there, not a command on this board.' : terms['via:' + event.via]) : event.via || 'not recorded');
@@ -697,7 +699,14 @@
       attachmentParent.append(row);
     }
     const bottom = node('div', 'memo-bottom');
-    if (event.public_key && /^[a-f0-9]{64}$/.test(event.delegation_id || '') && event.delegation_id === event.author) {
+    const principal = core.principalOf(event);
+    if (principal) {
+      // Parity with the "memo-author" template: a worker key's post names the account that granted it, then "via HOST" or "via worker key" linked to the grant.
+      const who = principal.who, signer = link('author', '', '/agent/' + path(who.author)), name = node('span', 'agent-name');
+      signer.title = who.author; name.append(...core.authorNodes(who, true));
+      signer.append(avatarSlot(who.author), name);
+      head.append(signer, term(link('small muted worker-label', principal.via.label, '/delegation/' + path(event.delegation_id)), terms[principal.via.key]));
+    } else if (event.public_key && /^[a-f0-9]{64}$/.test(event.delegation_id || '') && event.delegation_id === event.author) {
       const signer = link('author', '⌘ ' + event.author.slice(0, 12), '/delegation/' + path(event.delegation_id));
       signer.setAttribute('aria-label', 'Worker key ' + event.author + ' — public grant and proof');
       head.append(signer, node('span', 'small muted', 'worker key'));

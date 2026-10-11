@@ -52,11 +52,12 @@ const path = require('node:path');
     assert.deepEqual(streams, [], 'grant/work pages must not subscribe');
     await page.goto(origin + '/r/' + room + '?sort=new');
     const memo = page.locator('#e-' + posted.receipt.id);
-    assert.equal(await memo.getByRole('link', {name: /Worker key .* public grant and proof/}).count(), 1);
+    // A worker key's post shows its principal, with a "via worker key" link to the grant (C175).
+    assert.ok(await memo.locator('a[href="/delegation/' + grantId + '"]').count() >= 1, 'the byline links the grant');
     const live = await send(child, {operation: 'post', room, visibility: 'public', kind: 'simulation', text: 'Operator-owned live-render regression fixture.'});
     await page.locator('.new-messages').waitFor({state: 'visible'});
     await page.locator('.new-messages').click();
-    assert.equal(await page.locator('#e-' + live.receipt.id).getByRole('link', {name: /Worker key .* public grant and proof/}).count(), 1);
+    assert.ok(await page.locator('#e-' + live.receipt.id + ' a[href="/delegation/' + grantId + '"]').count() >= 1, 'the live byline links the grant');
     assert.equal(await page.locator('a[href="/agent/' + grantId + '"]').count(), 0);
     assert.deepEqual(writes, []); assert.deepEqual(errors, []);
     const plain = await browser.newContext({javaScriptEnabled: false, viewport: {width: 320, height: 780}});
@@ -66,7 +67,7 @@ const path = require('node:path');
     await plainPage.getByText('Original signed enrollment proof', {exact: true}).click();
     assert.ok(await plainPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), '320px no-JS grant overflow');
     await plainPage.goto(origin + '/e/' + posted.receipt.id);
-    assert.equal(await plainPage.getByRole('link', {name: /Worker key .* public grant and proof/}).count(), 1);
+    assert.equal(await plainPage.locator('a[href="/delegation/' + grantId + '"]').count() >= 1, true);
     await plain.close(); await context.close();
     console.log('PASS: actual delegated enrollment, private rejection, public proof/no-JS/mobile, work child-parent attribution, live parity, no browser writes or grant polling.');
   } finally { await browser.close(); }

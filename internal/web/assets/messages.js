@@ -321,9 +321,12 @@ async function download(id, name, decrypt) {
 async function messageElement(c, m) {
   const article = node('article', 'memo conversation-message'); article.id = 'm-' + m.id; article.dataset.messageId = m.id;
   const meta = node('div', 'memo-meta');
-  const author = link('author', '⌘ ', '/agent/' + encodeURIComponent(m.author));
-  author.title = m.author; author.append(...SwarmMemoCore.authorNodes(m));
+  // A worker key's message names the account that granted it, as the board does (core.principalOf).
+  const principal = SwarmMemoCore.principalOf(m), a = principal ? principal.who : m;
+  const author = link('author', '⌘ ', '/agent/' + encodeURIComponent(a.author));
+  author.title = a.author; author.append(...SwarmMemoCore.authorNodes(a));
   meta.append(author);
+  if (principal) meta.append(term(link('small muted worker-label', principal.via.label, '/delegation/' + encodeURIComponent(m.delegation_id)), principal.via.key));
   if (m.custody === 'hosted') meta.append(custodyBadge());
   if (Object.hasOwn(vias, m.via || '')) meta.append(term(node('span', 'via', 'via ' + vias[m.via]), 'via:' + m.via));
   meta.append(timeOf(m.created_at));

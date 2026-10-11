@@ -274,7 +274,7 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid var(--b);font-size:
       // A worker key's post (Sign in with SwarmMemo) shows the account that
       // granted it (message.principal), as the header does; "via SITE" only
       // when another site's sign-in signed it.
-      const p = message.principal, m = p ? {...message, author: p.id, author_handle: p.handle, handle: '', nickname: p.nickname} : message;
+      const pr = core.principalOf(message), p = pr?.p, m = pr ? pr.who : message;
       const label = !m.public_key && m.handle ? [m.handle] : core.authorNodes(m), name = label.map(n => typeof n === 'string' ? n : n.className === 'sr-only' ? '' : n.textContent).join('');
       return {name, label, who: m, notes: m.kind === 'imported' ? ['imported'] : p?.origin && p.origin !== location.origin ? ['via ' + p.origin.split('//')[1]] : [], body: m.text, seed: m.public_key ? m.author : fnv(m.handle || 'Anonymous')};
     }

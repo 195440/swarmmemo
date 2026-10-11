@@ -62,6 +62,67 @@ func TestDelegationPublicSSRProofAndActualSigner(t *testing.T) {
 	}
 }
 
+// A worker key's post names its principal (the granting account) as the
+// author, marked "via HOST" for a site sign-in or "via worker key" otherwise,
+// with the worker key's fingerprint and grant in its details (C175).
+func TestDelegatedPostShowsPrincipal(t *testing.T) {
+	principalID := strings.Repeat("e", 64)
+	for _, tc := range []struct {
+		name   string
+		p      board.Principal
+		marker string
+		tipKey string
+	}{
+		{"site sign-in", board.Principal{ID: principalID, Handle: "alice", Origin: "https://blog.example:8443"}, "via blog.example:8443", "site-signin"},
+		{"worker key", board.Principal{ID: principalID, Nickname: board.Nickname(principalID)}, "via worker key", "worker"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := tc.p
+			msg := board.Message{ID: "child-memo", Room: "lobby", Page: "main", Kind: "note", Visibility: "public", Author: webGrantID, PublicKey: "child-key", DelegationID: webGrantID, Text: "Signed by a worker key", Handle: "must-not-borrow-alias", Principal: &p}
+			s := &testService{execute: func(c board.Command) (board.Result, error) {
+				if c.Operation == "messages.list" {
+					return board.Result{OK: true, Messages: []board.Message{msg}}, nil
+				}
+				return board.Result{OK: true}, nil
+			}}
+			w := httptest.NewRecorder()
+			Handler(s).ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+			body := w.Body.String()
+			name := "alice"
+			if p.Handle == "" {
+				name = board.Nickname(principalID)
+			}
+			for _, want := range []string{
+				`<a class="author" href="/agent/` + principalID + `" title="` + principalID + `">`,
+				name,
+				`<a class="small muted worker-label term" href="/delegation/` + webGrantID + `" title="` + strings.ReplaceAll(tip(tc.tipKey), "'", "&#39;") + `">` + tc.marker + `</a>`,
+				`yes, worker key <code data-copy="` + webGrantID + `"`,
+				`<a class="memo-grant" href="/delegation/` + webGrantID + `">grant</a>`,
+			} {
+				if !strings.Contains(body, want) {
+					t.Errorf("missing %q", want)
+				}
+			}
+			if strings.Contains(body, `href="/agent/`+webGrantID+`"`) || strings.Contains(body, "must-not-borrow-alias") || strings.Contains(body, "⌘ "+webGrantID[:12]) {
+				t.Fatal("worker key shown as the author")
+			}
+			// Edit, moderation and reply targets still follow the actual signer.
+			if !strings.Contains(body, `data-reply-author="`+webGrantID+`"`) {
+				t.Error("reply target must stay the signer")
+			}
+		})
+	}
+	// Without a principal (an older read), the worker key itself is the byline.
+	msg := board.Message{ID: "child-memo", Room: "lobby", Page: "main", Kind: "note", Author: webGrantID, PublicKey: "child-key", DelegationID: webGrantID, Text: "x"}
+	if principalOf(msg) != nil || grantVia(msg).Label != "" || bylineKey(msg).Name == "" {
+		t.Fatal("no principal, no marker")
+	}
+	msg.Principal = &board.Principal{ID: "not-a-fingerprint"}
+	if principalOf(msg) != nil {
+		t.Fatal("an invalid principal must not be shown")
+	}
+}
+
 func TestDelegationSSRUnavailableEquivalence(t *testing.T) {
 	var expected string
 	for _, mode := range []string{"missing", "private-disclosure", "private-room", "wrong-room", "wrong-id"} {

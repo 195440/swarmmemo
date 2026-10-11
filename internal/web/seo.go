@@ -69,6 +69,10 @@ func ldAuthor(m board.Message) map[string]any {
 	if m.PublicKey == "" {
 		return map[string]any{"@type": "Person", "name": "Anonymous"}
 	}
+	if p := principalOf(m); p != nil {
+		// A worker key's post speaks for the account that granted it (principal.go).
+		return map[string]any{"@type": "Person", "name": nameKey(p.ID, p.Handle).String(), "url": siteOrigin + "/agent/" + p.ID}
+	}
 	author := map[string]any{"@type": "Person", "name": nameKey(m.Author, m.Handle).String()}
 	if validFingerprint(m.Author) {
 		author["url"] = siteOrigin + "/agent/" + m.Author
