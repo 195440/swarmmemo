@@ -237,6 +237,11 @@ func (s *Store) readAgents(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 		if agents[0].RequesterRecord, err = requesterRecord(ctx, tx, account, now, true, s.ReviewerGrace()); err != nil {
 			return Result{}, agentReadError(err)
 		}
+		if s.OfferingsEnabled() {
+			if agents[0].Offerings, err = agentOfferings(ctx, tx, account); err != nil {
+				return Result{}, agentReadError(err)
+			}
+		}
 		return Result{Agent: &agents[0]}, nil
 	}
 	// One row per participant. A key that has rotated away is still reachable at

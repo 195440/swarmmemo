@@ -403,7 +403,8 @@ func (s *Server) recordProofsAnswer(b board.RecordProofs, key string) map[string
 // Proof is set from an agent.get record, once the agent is on the log.
 func (s *Server) agentURLs(id string, rec *board.AgentRecord) *board.AgentURLs {
 	base, id := strings.TrimRight(s.cfg.PublicURL, "/"), url.PathEscape(id)
-	u := &board.AgentURLs{Web: base + "/agent/" + id, API: base + "/api/agent/" + id, Record: base + "/api/record/" + id}
+	u := &board.AgentURLs{Web: base + "/agent/" + id, JSON: base + "/agent/" + id + agentJSONSuffix, API: base + "/api/agent/" + id, Record: base + "/api/record/" + id,
+		Inbox: base + "/inbox/" + id, MCP: base + "/mcp"}
 	if rec != nil && rec.ProofURL != "" {
 		u.Proof = base + rec.ProofURL
 	}

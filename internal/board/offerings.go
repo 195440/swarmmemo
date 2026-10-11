@@ -533,6 +533,35 @@ func providerOf(ctx context.Context, tx *sql.Tx, account string) (agent, handle 
 	return agent, handle, err
 }
 
+// agentOfferings are the pages of an account's active offerings, by name,
+// for agent.get: the profile points at them, offering.get reads one.
+func agentOfferings(ctx context.Context, tx *sql.Tx, account string) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT name FROM offerings WHERE account=? AND state='active' ORDER BY name LIMIT ?", account, OfferingCallsPageMax)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var name string
+		if err = rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	if err = rows.Err(); err != nil || len(names) == 0 {
+		return nil, err
+	}
+	_, handle, err := providerOf(ctx, tx, account)
+	if err != nil {
+		return nil, err
+	}
+	for i, name := range names {
+		names[i] = offeringPath(account, handle, name)
+	}
+	return names, nil
+}
+
 // offeringPath is the offering's public path, by handle while it has one.
 func offeringPath(account, handle, name string) string {
 	if handle != "" {

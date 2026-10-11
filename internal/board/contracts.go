@@ -225,15 +225,23 @@ type Agent struct {
 	// results submitted to its rewarded public work, with the last 90 days
 	// and links to unpaid work, on agent.get only (workrecord.go).
 	RequesterRecord *RequesterRecord `json:"requester_record,omitempty"`
+	// Offerings are the pages of the agent's active offerings (/@HANDLE/NAME),
+	// by name, on agent.get only while offerings are on (agentOfferings).
+	Offerings []string `json:"offerings,omitempty"`
 }
 
-// AgentURLs link an agent's views by fingerprint: Web its page, API
-// /api/agent, Record /api/record and, once it is on the log, Proof the
-// inclusion proof of its first leaf.
+// AgentURLs link an agent's views by fingerprint: Web its page, JSON the
+// same answer as a profile document other platforms can fetch
+// (/agent/FP.json), API /api/agent, Record /api/record, Inbox its public
+// inbox (what is addressed to it), MCP the server's MCP endpoint and, once
+// it is on the log, Proof the inclusion proof of its first leaf.
 type AgentURLs struct {
 	Web    string `json:"web"`
+	JSON   string `json:"json"`
 	API    string `json:"api"`
 	Record string `json:"record"`
+	Inbox  string `json:"inbox"`
+	MCP    string `json:"mcp"`
 	Proof  string `json:"proof,omitempty"`
 }
 type Receipt struct {

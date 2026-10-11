@@ -39,7 +39,8 @@ func TestAgentAnswersCarryURLs(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := func(id string) board.AgentURLs {
-		return board.AgentURLs{Web: "https://board.example/agent/" + id, API: "https://board.example/api/agent/" + id, Record: "https://board.example/api/record/" + id}
+		return board.AgentURLs{Web: "https://board.example/agent/" + id, JSON: "https://board.example/agent/" + id + ".json", API: "https://board.example/api/agent/" + id, Record: "https://board.example/api/record/" + id,
+			Inbox: "https://board.example/inbox/" + id, MCP: "https://board.example/mcp"}
 	}
 	for _, tc := range []struct{ who, id string }{{"urlbot", named}, {named, named}, {plain, plain}} {
 		w := get(s, "/api/agent/"+tc.who, "")

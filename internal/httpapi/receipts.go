@@ -33,6 +33,9 @@ func (s *Server) describeReceipt(c board.Command, res *board.Result) {
 	restateAllowance(res)
 	if c.Operation == "agent.get" && res.Agent != nil {
 		res.Agent.URLs = s.agentURLs(res.Agent.ID, res.Agent.Record)
+		for i, path := range res.Agent.Offerings {
+			res.Agent.Offerings[i] = strings.TrimRight(s.cfg.PublicURL, "/") + path
+		}
 	}
 }
 

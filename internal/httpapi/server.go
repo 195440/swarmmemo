@@ -354,6 +354,9 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.offeringRoute(w, r) { // offerings.go: /@HANDLE/NAME (RFC 0017)
 		return
 	}
+	if s.agentProfileRoute(w, r) { // agentprofile.go: /agent/AGENT.json, /@ADDRESS.json
+		return
+	}
 	if guessedWriteRoute(w, r) {
 		return
 	}

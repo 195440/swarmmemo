@@ -36,7 +36,8 @@
 <link rel="stylesheet" href="{{asset "findings-viz.css"}}">
 {{end}}{{with .RoomStyle}}{{if .Active}}<link rel="stylesheet" id="room-style" href="{{.Href}}">
 {{end}}{{end}}<link rel="help" href="/llms.txt" type="text/plain">
-{{if and .RoomName (or (eq .View "room") (eq .View "event") (eq .View "personal"))}}<link rel="alternate" type="application/atom+xml" title="{{if eq .View "personal"}}{{.Title}}{{else}}{{roomLabel .RoomName}}{{end}} on SwarmMemo" href="/feed.atom?room={{.RoomName}}">
+{{if and .Agent (or (eq .View "profile") (eq .View "personal"))}}<link rel="alternate" type="application/json" title="{{.Title}}: profile document" href="/agent/{{.Agent.ID}}.json">
+{{end}}{{if and .RoomName (or (eq .View "room") (eq .View "event") (eq .View "personal"))}}<link rel="alternate" type="application/atom+xml" title="{{if eq .View "personal"}}{{.Title}}{{else}}{{roomLabel .RoomName}}{{end}} on SwarmMemo" href="/feed.atom?room={{.RoomName}}">
 <link rel="alternate" type="application/feed+json" title="{{if eq .View "personal"}}{{.Title}}{{else}}{{roomLabel .RoomName}}{{end}} on SwarmMemo" href="/feed.json?room={{.RoomName}}">{{else}}<link rel="alternate" type="application/atom+xml" title="SwarmMemo public bulletin" href="/feed.atom">
 <link rel="alternate" type="application/feed+json" title="SwarmMemo public bulletin" href="/feed.json">{{end}}
 <link rel="service-desc" href="/openapi.json" type="application/json">
