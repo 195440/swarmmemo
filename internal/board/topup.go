@@ -38,6 +38,7 @@ import (
 
 	"swarmmemo/internal/allowance"
 	"swarmmemo/internal/ledger"
+	paywire "swarmmemo/internal/pay"
 	"swarmmemo/internal/services"
 )
 
@@ -65,21 +66,6 @@ const TopupPageMax = 50
 // detached from the caller, so a client that hangs up does not abandon a
 // settlement half way.
 const topupSettleTimeout = 75 * time.Second
-
-type paymentKey struct{}
-
-// WithPayment records the x402 payment header an HTTP request carried
-// (PAYMENT-SIGNATURE or X-PAYMENT), for credits.topup. It is outside the
-// signed envelope: the payment is itself signed by the payer, and the quote
-// it accepts binds it to the account and the amount.
-func WithPayment(ctx context.Context, header string) context.Context {
-	return context.WithValue(ctx, paymentKey{}, header)
-}
-
-func paymentFrom(ctx context.Context) string {
-	v, _ := ctx.Value(paymentKey{}).(string)
-	return v
-}
 
 // openTopup makes the quote key once (credit_topups is in the versioned
 // schema, migrate.go) and turns rows a crash left
@@ -164,8 +150,25 @@ func topupData(raw string) (string, error) {
 	return d.Payment, nil
 }
 
-// creditsTopup is credits.topup.
+// creditsTopup is credits.topup. An MPP credential's refusal carries a
+// fresh challenge (withFreshChallenge): the same command without it.
 func (s *Store) creditsTopup(ctx context.Context, tx *sql.Tx, c Command, a actor, now int64) (Result, error) {
+	res, err := s.creditsTopupOnce(ctx, tx, c, a, now)
+	if err != nil && s.mpp.topup != nil {
+		data, _ := topupData(c.Data)
+		if cred, cerr := requestCred(ctx, data, s.mpp.topup); cerr == nil && cred.wire == paywire.WireMPP {
+			err = withFreshChallenge(err, func() error {
+				fresh := c
+				fresh.Data = ""
+				_, ferr := s.creditsTopupOnce(withoutPayment(ctx), tx, fresh, a, now)
+				return ferr
+			})
+		}
+	}
+	return res, err
+}
+
+func (s *Store) creditsTopupOnce(ctx context.Context, tx *sql.Tx, c Command, a actor, now int64) (Result, error) {
 	if err := requireSigned(a); err != nil {
 		return Result{}, err
 	}
@@ -180,12 +183,11 @@ func (s *Store) creditsTopup(ctx context.Context, tx *sql.Tx, c Command, a actor
 	if err != nil {
 		return Result{}, err
 	}
-	if header := paymentFrom(ctx); header != "" {
-		if payment != "" && payment != header {
-			return Result{}, problem(400, "payment_invalid", "The payment header and data.payment differ; send one.")
-		}
-		payment = header
+	cred, err := requestCred(ctx, payment, s.mpp.topup)
+	if err != nil {
+		return Result{}, err
 	}
+	payment = cred.raw
 	day := now / 86400
 	var used int64
 	if err = tx.QueryRowContext(ctx, "SELECT coalesce(sum(amount),0) FROM credit_topups WHERE account=? AND day=? AND state IN ('settling','credited','unknown')", a.account, day).Scan(&used); err != nil {
@@ -206,27 +208,42 @@ func (s *Store) creditsTopup(ctx context.Context, tx *sql.Tx, c Command, a actor
 	if payment == "" {
 		return Result{}, s.paymentRequired(a.account, c.Amount, now)
 	}
-	p, err := services.ParseTopupPayment(payment)
-	if err != nil {
-		return Result{}, topupError(err)
-	}
-	req, err := s.checkTopupQuote(p.Quote, a.account, c.Amount)
-	if err != nil {
-		return Result{}, err
-	}
-	if err = cfg.Check(p, req, now); err != nil {
-		return Result{}, topupError(err)
+	var p services.TopupPayment
+	var req services.TopupRequirement
+	ref := ""
+	if cred.wire == paywire.WireMPP {
+		// MPP: the quote in opaque, checked with our key, then the
+		// challenge bound to the ask it stands for (mpp.go).
+		p, ref, err = mppIntake(s.mpp.topup, cred, now, false, func(quote string) (paywire.Ask, error) {
+			if req, err = s.checkTopupQuote(quote, a.account, c.Amount); err != nil {
+				return paywire.Ask{}, err
+			}
+			return topupAsk(cfg, req, "", ""), nil
+		})
+		if err != nil {
+			return Result{}, err
+		}
+	} else {
+		if p, err = services.ParseTopupPayment(payment); err != nil {
+			return Result{}, topupError(err)
+		}
+		if req, err = s.checkTopupQuote(p.Quote, a.account, c.Amount); err != nil {
+			return Result{}, err
+		}
+		if err = cfg.Check(p, req, now); err != nil {
+			return Result{}, topupError(err)
+		}
 	}
 	// One authorization, one top-up, ever: a nonce is taken again only when
 	// the facilitator could not even verify it (nothing moved), by the same
 	// account for the same amount.
 	id := "tu_" + randomID()
-	err = tx.QueryRowContext(ctx, `INSERT INTO credit_topups(id,account,agent,amount,day,network,asset,pay_to,payer,auth_nonce,valid_before,state,created_at)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,'settling',?)
-ON CONFLICT(auth_nonce) DO UPDATE SET state='settling',reason='',retryable=0,agent=excluded.agent,payer=excluded.payer,day=excluded.day,valid_before=excluded.valid_before,created_at=excluded.created_at,settled_at=0
+	err = tx.QueryRowContext(ctx, `INSERT INTO credit_topups(id,account,agent,amount,day,network,asset,pay_to,payer,auth_nonce,valid_before,state,created_at,protocol,payment_ref)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,'settling',?,?,?)
+ON CONFLICT(auth_nonce) DO UPDATE SET state='settling',reason='',retryable=0,agent=excluded.agent,payer=excluded.payer,day=excluded.day,valid_before=excluded.valid_before,created_at=excluded.created_at,settled_at=0,protocol=excluded.protocol,payment_ref=excluded.payment_ref
  WHERE credit_topups.state='failed' AND credit_topups.retryable=1 AND credit_topups.account=excluded.account AND credit_topups.amount=excluded.amount
 RETURNING id`,
-		id, a.account, a.id, c.Amount, day, cfg.Network, cfg.Asset.String(), cfg.PayTo.String(), p.From.String(), p.Nonce, p.ValidBefore, now).Scan(&id)
+		id, a.account, a.id, c.Amount, day, cfg.Network, cfg.Asset.String(), cfg.PayTo.String(), p.From.String(), p.Nonce, p.ValidBefore, now, cred.wire, ref).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Result{}, problem(409, "payment_replayed", "This payment authorization was already presented; one authorization tops up once. Read credits.topups for its receipt.")
 	}
@@ -246,13 +263,29 @@ RETURNING id`,
 }
 
 // paymentRequired is the 402 answer: the x402 v2 PaymentRequired object in
-// details (and, over HTTP, in the PAYMENT-REQUIRED header).
+// details (and, over HTTP, in the PAYMENT-REQUIRED header) and, while MPP is
+// on, MPP's challenge in details.mpp (and in WWW-Authenticate).
 func (s *Store) paymentRequired(account string, amount, now int64) error {
 	cfg := s.config.Topup
 	req := s.newTopupQuote(account, amount, now)
-	body, header := cfg.PaymentRequired(req, "https://"+s.config.ServiceID+"/v1/command", fmt.Sprintf("Top up %d SwarmMemo credits (%s USDC)", amount, services.FormatUSDC(amount)))
-	return &Error{Status: 402, Code: "payment_required", Message: fmt.Sprintf("Pay %s USDC on %s to top up %d credits: sign the requirement in details.x402.accepts (x402 v2, exact, EIP-3009) within %d seconds and send the same command again with the payment in the PAYMENT-SIGNATURE header or as data {\"schema\":1,\"payment\":\"BASE64\"}.", services.FormatUSDC(amount), cfg.Network, amount, services.TopupQuoteSeconds),
-		Details: map[string]any{"x402": body, "payment_required": header}}
+	resource, description := "https://"+s.config.ServiceID+"/v1/command", fmt.Sprintf("Top up %d SwarmMemo credits (%s USDC)", amount, services.FormatUSDC(amount))
+	body, header := cfg.PaymentRequired(req, resource, description)
+	details := map[string]any{"x402": body, "payment_required": header}
+	message := fmt.Sprintf("Pay %s USDC on %s to top up %d credits: sign the requirement in details.x402.accepts (x402 v2, exact, EIP-3009) within %d seconds and send the same command again with the payment in the PAYMENT-SIGNATURE header or as data {\"schema\":1,\"payment\":\"BASE64\"}.", services.FormatUSDC(amount), cfg.Network, amount, services.TopupQuoteSeconds)
+	if offerMPP(s.mpp.topup, cfg, topupAsk(cfg, req, resource, description), details) {
+		message += mppNote
+	}
+	return &Error{Status: 402, Code: "payment_required", Message: message, Details: details}
+}
+
+// mppNote is the 402 message's MPP sentence while MPP is on.
+const mppNote = " Or pay with MPP: answer the Payment challenge in details.mpp.www_authenticate (the WWW-Authenticate header; method evm, intent charge, credential type authorization, nonce keccak256(id ‖ realm)) in Authorization: Payment, or as data.payment \"Payment BASE64URL\"."
+
+// topupAsk is the ask a top-up quote stands for, on any wire: what
+// cfg.PaymentRequired offers for req.
+func topupAsk(cfg *services.TopupConfig, req services.TopupRequirement, resource, description string) paywire.Ask {
+	return paywire.Ask{PayTo: cfg.PayTo, Amount: req.Amount, Quote: req.Quote, Expires: req.Expires, MaxTimeout: services.TopupQuoteSeconds,
+		Resource: resource, Description: description}
 }
 
 // topupError maps a payment refusal to its public error.
@@ -315,8 +348,20 @@ func (s *Store) settleTopup(ctx context.Context, account, id string, p services.
 		slog.Error("Credit top-up settled but not credited: resolve it with swarmmemo topup resolve", "topup", id, "transaction", st.Transaction, "error", err.Error())
 		return Result{}, &Error{Status: 502, Code: "payment_unsettled", Message: "The payment's settlement could not be confirmed, so no credit was added yet. Do not pay again: the operator reconciles it, and credits.topups shows its state."}
 	}
-	data := map[string]any{"topup": row.view(), "payment_response": s.paymentResponse(row)}
-	return Result{Data: data}, nil
+	return Result{Data: s.topupPaid(row)}, nil
+}
+
+// topupPaid is a credited top-up's answer: its receipt and, by its wire,
+// x402's PAYMENT-RESPONSE value or MPP's Payment-Receipt value.
+func (s *Store) topupPaid(row topupRow) map[string]any {
+	if row.Protocol == paywire.WireMPP {
+		data := map[string]any{"topup": row.view()}
+		if r := mppReceipt(s.mpp.topup, row.TxHash, row.Payer, row.PaymentRef, row.SettledAt); r != "" {
+			data["payment_receipt"] = r
+		}
+		return data
+	}
+	return map[string]any{"topup": row.view(), "payment_response": s.paymentResponse(row)}
 }
 
 // paymentResponse is the x402 SettlementResponse for a credited top-up, in
@@ -347,7 +392,7 @@ func (s *Store) creditTopup(ctx context.Context, account, id, from, txHash strin
 	if err != nil {
 		return topupRow{}, err
 	}
-	lot, err := s.ledger.led.TopUp(ctx, tx, account, allowance.Credit, row.Amount, "top-up "+id+" ("+services.FormatUSDC(row.Amount)+" USDC, x402)",
+	lot, err := s.ledger.led.TopUp(ctx, tx, account, allowance.Credit, row.Amount, "top-up "+id+" ("+services.FormatUSDC(row.Amount)+" USDC, "+row.Protocol+")",
 		ledger.Ref{Service: "board", Op: "credits.topup", PublicRef: id}, now)
 	if err != nil {
 		return topupRow{}, err
@@ -374,13 +419,14 @@ type topupRow struct {
 	State, Reason, TxHash             string
 	Retryable                         bool
 	ValidBefore, CreatedAt, SettledAt int64
+	Protocol, PaymentRef              string // the wire (x402, mpp) and an MPP payment's challenge id
 }
 
-const topupCols = "seq,id,account,agent,amount,day,network,asset,pay_to,payer,state,reason,tx_hash,retryable,valid_before,created_at,settled_at"
+const topupCols = "seq,id,account,agent,amount,day,network,asset,pay_to,payer,state,reason,tx_hash,retryable,valid_before,created_at,settled_at,protocol,payment_ref"
 
 func scanTopup(scan func(...any) error) (topupRow, error) {
 	var r topupRow
-	err := scan(&r.Seq, &r.ID, &r.Account, &r.Agent, &r.Amount, &r.Day, &r.Network, &r.Asset, &r.PayTo, &r.Payer, &r.State, &r.Reason, &r.TxHash, &r.Retryable, &r.ValidBefore, &r.CreatedAt, &r.SettledAt)
+	err := scan(&r.Seq, &r.ID, &r.Account, &r.Agent, &r.Amount, &r.Day, &r.Network, &r.Asset, &r.PayTo, &r.Payer, &r.State, &r.Reason, &r.TxHash, &r.Retryable, &r.ValidBefore, &r.CreatedAt, &r.SettledAt, &r.Protocol, &r.PaymentRef)
 	return r, err
 }
 
@@ -406,6 +452,9 @@ func (r topupRow) view() map[string]any {
 	if r.Reason != "" {
 		v["reason"] = r.Reason
 	}
+	if r.Protocol == paywire.WireMPP {
+		v["protocol"] = r.Protocol
+	}
 	return v
 }
 
@@ -420,7 +469,7 @@ func (s *Store) topupRetry(ctx context.Context, tx *sql.Tx, a actor, stored Resu
 	}
 	switch row.State {
 	case "credited":
-		return Result{OK: true, Data: map[string]any{"topup": row.view(), "payment_response": s.paymentResponse(row)}}, nil
+		return Result{OK: true, Data: s.topupPaid(row)}, nil
 	case "settling":
 		return Result{}, &Error{Status: 409, Code: "request_in_flight", Message: "This top-up is still settling; retry after retry_after seconds with the same request ID.", RetryAfter: 5}
 	case "failed":
@@ -488,7 +537,7 @@ func (s *Store) TopupCapabilities() map[string]any {
 		return nil
 	}
 	cfg := s.config.Topup
-	return map[string]any{
+	caps := map[string]any{
 		"operation": "credits.topup", "receipts": "credits.topups", "mcp_tool": "credits_topup",
 		"protocol": "x402", "x402_version": 2, "scheme": "exact", "network": cfg.Network, "asset": cfg.Asset.String(), "pay_to": cfg.PayTo.String(),
 		"unit":       "1 credit = 1 micro-USDC; no margin on top-ups",
@@ -499,6 +548,11 @@ func (s *Store) TopupCapabilities() map[string]any {
 		"withdrawal": false,
 		"docs":       "/tools/topup",
 	}
+	if s.mpp.topup != nil {
+		caps["protocols"] = []string{paywire.WireX402, paywire.WireMPP}
+		caps["mpp"] = s.mppTerms(cfg)
+	}
+	return caps
 }
 
 // ResolveTopup is the operator's verdict on a top-up whose settlement is

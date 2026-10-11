@@ -79,6 +79,11 @@ type Features struct {
 	// OFFERINGS=on with TOPUP_CONFIG; the caller never sets it): it gates
 	// /tools/offerings and its links (RFC 0017).
 	Offerings bool
+	// MPP is MPP (on or off, the default; C202b, mpp.go): credit top-ups
+	// and agent offerings also offer and accept MPP, the "Payment" HTTP
+	// authentication scheme (evm charge, EIP-3009 authorization), beside
+	// x402, on the same rail. Off, nothing on the wire changes.
+	MPP bool
 	// InboxEntries is INBOX_ENTRIES (C61, inbox.go): off (the default),
 	// shadow, which writes every account's inbox entry log in the producing
 	// transactions and backfills the last 30 days while every read still
@@ -171,6 +176,13 @@ func ParseFeatures(getenv func(string) string) (Features, error) {
 		f.Trust = TrustAllocation
 	default:
 		errs = append(errs, fmt.Sprintf("TRUST must be off, shadow or allocation, not %q", v))
+	}
+	switch v := getenv("MPP"); v {
+	case "", "off":
+	case "on":
+		f.MPP = true
+	default:
+		errs = append(errs, fmt.Sprintf("MPP must be on or off, not %q", v))
 	}
 	switch v := getenv("INBOX_ENTRIES"); v {
 	case "", "off":

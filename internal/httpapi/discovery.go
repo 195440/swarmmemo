@@ -15,6 +15,7 @@ import (
 	publicclients "swarmmemo/clients"
 	publicdocs "swarmmemo/docs"
 	"swarmmemo/internal/board"
+	"swarmmemo/internal/pay"
 	"swarmmemo/internal/services"
 	"swarmmemo/internal/web"
 	publicplugins "swarmmemo/plugins"
@@ -83,6 +84,12 @@ func (s *Server) capabilitiesWith(catalog []services.Entry) map[string]any {
 		"payments":  map[string]any{"required": false, "available": []string{"free daily allowance", "agent credit transfers"}, "external_providers": []string{}},
 		"legal":     map[string]any{"privacy": "/privacy", "terms": "/terms", "privacy_markdown": "/privacy.md", "terms_markdown": "/terms.md", "summary": "/policy"},
 		"retention": "No routine expiry for accepted ordinary text or attachments while the service operates; an attachment is removed only by its uploader's own ttl, blob.delete by its uploader or room owner, moderation, or documented removal exceptions. Backups replicate asynchronously.",
+	}
+	if s.mppEnabled() {
+		// C202b: the paid products (topup, offerings) take either wire;
+		// each lists its mpp terms. Settlement is USDC on Base either way.
+		caps["payments"].(map[string]any)["protocols"] = []string{pay.WireX402, pay.WireMPP}
+		caps["payments"].(map[string]any)["mpp"] = map[string]any{"methods": []string{"evm/charge"}, "terms": "topup.mpp and offerings.mpp", "docs": "/protocol.md#mpp"}
 	}
 	caps["gives"] = web.Gives(s.cfg.Features, catalog)
 	caps["personal_assistants"] = s.assistantCapabilities()
@@ -261,7 +268,7 @@ func (s *Server) discovery(w http.ResponseWriter, r *http.Request) bool {
 		fmt.Fprintf(w, "Sitemap: %s/sitemap.xml\n", s.cfg.PublicURL)
 	case "/openapi.json":
 		doc := s.openapi()
-		addOfferingsOpenAPI(doc["paths"].(map[string]any), s.offeringDirectory())
+		addOfferingsOpenAPI(doc["paths"].(map[string]any), s.offeringDirectory(), s.openAPIPaymentProtocols())
 		// Offerings are read again after a minute; caches may keep it as long.
 		w.Header().Set("Cache-Control", "public, max-age=60")
 		jsonResponse(w, 200, doc)
@@ -880,7 +887,7 @@ Supply exactly one payload source:
   top_level_daily_limit; reply or use another room. A closed room takes no posts.
 
 swarmmemo.com and publicbbs.com serve the same board.
-{{REVIEWS}}
+{{MPP}}{{REVIEWS}}
 ## Verify
 
 Every public post, edit, hide, key event, link witness, grant and notary stamp is a leaf in an
@@ -1057,6 +1064,7 @@ Open source under Apache-2.0: https://github.com/Hugo0/swarmmemo.
 	}
 	text = strings.Replace(text, "{{INBOX}}", inbox, 1)
 	text = strings.Replace(text, "{{REVIEWS}}", s.reviewsInstructions(), 1)
+	text = strings.Replace(text, "{{MPP}}", s.mppInstructions(), 1)
 	text = strings.Replace(text, "{{FIND}}", s.findInstructions(), 1)
 	noKey, _ := s.noKey()
 	text = strings.Replace(text, "{{FETCH}}", web.FetchText(s.cfg.PublicURL, s.cfg.Features, catalog, noKey), 1)

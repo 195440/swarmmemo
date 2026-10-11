@@ -38,6 +38,7 @@ import (
 	"strings"
 	"time"
 
+	paywire "swarmmemo/internal/pay"
 	"swarmmemo/internal/services"
 )
 
@@ -350,6 +351,38 @@ type sealedAuth struct {
 	Quote      string `json:"quote"`
 	Expires    int64  `json:"expires"`
 	MaxTimeout int64  `json:"max_timeout"`
+	// Wire is "mpp" for an MPP credential (Payment then holds its
+	// base64url); absent for x402, so x402's sealed bytes are as before.
+	Wire string `json:"wire,omitempty"`
+}
+
+// sealedWire is the sealed Wire of a credential's wire: "" for x402.
+func sealedWire(wire string) string {
+	if wire == paywire.WireMPP {
+		return wire
+	}
+	return ""
+}
+
+// sealedPayment is a sealed authorization as the facilitator's payment:
+// x402's payload parsed again, or MPP's credential (parsed only; Bound held
+// it to its challenge at intake).
+func sealedPayment(v sealedAuth) (services.TopupPayment, error) {
+	if v.Wire == paywire.WireMPP {
+		x, err := paywire.ParseMPPCredential(v.Payment, paywire.MPPAuthorizationField)
+		if err != nil {
+			return services.TopupPayment{}, err
+		}
+		return x.Payment(), nil
+	}
+	return services.ParseTopupPayment(v.Payment)
+}
+
+// offeringAsk is the ask an offering quote's requirement stands for, on
+// any wire: what cfg.PaymentRequiredWith offers for req.
+func offeringAsk(req services.X402Requirement, resource, description string, extensions map[string]any) paywire.Ask {
+	return paywire.Ask{PayTo: req.PayTo, Amount: req.Amount, Quote: req.Quote, Expires: req.Expires, MaxTimeout: req.MaxTimeout,
+		Resource: resource, Description: description, Extensions: extensions}
 }
 
 func offeringAAD(id string) []byte { return []byte("swarmmemo-offering-auth/1\x00" + id) }
@@ -397,8 +430,31 @@ func pollPath(account, name, id, secret string) string {
 	return "/@" + account + "/" + name + "/calls/" + id + "/" + secret
 }
 
-// offeringBuy is offering.buy.
+// offeringBuy is offering.buy. An MPP credential's refusal carries a fresh
+// challenge (withFreshChallenge): the same call's input without it.
 func (s *Store) offeringBuy(ctx context.Context, tx *sql.Tx, c Command, a actor, now int64) (Result, error) {
+	res, err := s.offeringBuyOnce(ctx, tx, c, a, now)
+	if err != nil && s.mpp.offerings != nil {
+		var d buyData
+		if services.StrictObject([]byte(c.Data), &d) == nil {
+			if cred, cerr := requestCred(ctx, d.Payment, s.mpp.offerings); cerr == nil && cred.wire == paywire.WireMPP {
+				err = withFreshChallenge(err, func() error {
+					raw, merr := json.Marshal(map[string]any{"schema": 1, "input": d.Input})
+					if merr != nil {
+						return merr
+					}
+					fresh := c
+					fresh.Data = string(raw)
+					_, ferr := s.offeringBuyOnce(withoutPayment(ctx), tx, fresh, a, now)
+					return ferr
+				})
+			}
+		}
+	}
+	return res, err
+}
+
+func (s *Store) offeringBuyOnce(ctx context.Context, tx *sql.Tx, c Command, a actor, now int64) (Result, error) {
 	if !s.OfferingsEnabled() {
 		return Result{}, offeringsUnavailable()
 	}
@@ -424,12 +480,11 @@ func (s *Store) offeringBuy(ctx context.Context, tx *sql.Tx, c Command, a actor,
 		}
 		probe = true
 	}
-	if header := paymentFrom(ctx); header != "" {
-		if payment != "" && payment != header {
-			return Result{}, problem(400, "payment_invalid", "The payment header and data.payment differ; send one.")
-		}
-		payment = header
+	cred, err := requestCred(ctx, payment, s.mpp.offerings)
+	if err != nil {
+		return Result{}, err
 	}
+	payment = cred.raw
 	caller := ""
 	if a.signed {
 		caller = a.id
@@ -460,24 +515,48 @@ func (s *Store) offeringBuy(ctx context.Context, tx *sql.Tx, c Command, a actor,
 			return Result{}, err
 		}
 		path := offeringPath(account, handle, name)
-		body, header := cfg.PaymentRequiredWith(req, "https://"+s.config.ServiceID+path, fmt.Sprintf("%s (%s USDC, %s)", o.Listing.Title, o.Listing.Price, path), map[string]any{"bazaar": offeringBazaar(o)})
+		resource, description, extensions := "https://"+s.config.ServiceID+path, fmt.Sprintf("%s (%s USDC, %s)", o.Listing.Title, o.Listing.Price, path), map[string]any{"bazaar": offeringBazaar(o)}
+		body, header := cfg.PaymentRequiredWith(req, resource, description, extensions)
 		if probe {
+			details := map[string]any{"x402": body, "payment_required": header, "offering": map[string]any{"path": path, "rev": o.Rev, "price": o.Listing.Price, "claim_window": window, "sla": o.SLA, "discovery": true}}
+			// The MPP challenge is as unpayable: its opaque carries the
+			// same discovery-only quote, which checkOfferingQuote refuses.
+			offerMPP(s.mpp.offerings, cfg, offeringAsk(req, resource, description, extensions), details)
 			return Result{}, &Error{Status: 402, Code: "payment_required", Message: fmt.Sprintf("This offering costs %s USDC a call. This answer describes it for discovery and cannot be paid: POST the call's input (extensions.bazaar shows an example; offering.get its schema) for a requirement to sign.", o.Listing.Price),
-				Details: map[string]any{"x402": body, "payment_required": header, "offering": map[string]any{"path": path, "rev": o.Rev, "price": o.Listing.Price, "claim_window": window, "sla": o.SLA, "discovery": true}}}
+				Details: details}
 		}
-		return Result{}, &Error{Status: 402, Code: "payment_required", Message: fmt.Sprintf("Pay %s USDC on %s to %s, the provider's wallet: sign the requirement in details.x402.accepts (x402 v2, exact, EIP-3009) within %d seconds and send the same request again with the payment in the PAYMENT-SIGNATURE header (or data.payment). The payment is only verified now; it settles when the provider claims the call, and nothing is charged if it is declined or not claimed within %d seconds.", o.Listing.Price, cfg.Network, o.Listing.PayTo, services.TopupQuoteSeconds, window),
-			Details: map[string]any{"x402": body, "payment_required": header, "offering": map[string]any{"path": path, "rev": o.Rev, "price": o.Listing.Price, "claim_window": window, "sla": o.SLA, "input_sha256": inputSHA}}}
+		details := map[string]any{"x402": body, "payment_required": header, "offering": map[string]any{"path": path, "rev": o.Rev, "price": o.Listing.Price, "claim_window": window, "sla": o.SLA, "input_sha256": inputSHA}}
+		message := fmt.Sprintf("Pay %s USDC on %s to %s, the provider's wallet: sign the requirement in details.x402.accepts (x402 v2, exact, EIP-3009) within %d seconds and send the same request again with the payment in the PAYMENT-SIGNATURE header (or data.payment). The payment is only verified now; it settles when the provider claims the call, and nothing is charged if it is declined or not claimed within %d seconds.", o.Listing.Price, cfg.Network, o.Listing.PayTo, services.TopupQuoteSeconds, window)
+		if offerMPP(s.mpp.offerings, cfg, offeringAsk(req, resource, description, extensions), details) {
+			message += mppNote + fmt.Sprintf(" An MPP authorization's validBefore bounds the claim window: sign it for now plus %d seconds.", window+services.X402ValidBeforeMargin)
+		}
+		return Result{}, &Error{Status: 402, Code: "payment_required", Message: message, Details: details}
 	}
-	p, err := services.ParseTopupPayment(payment)
-	if err != nil {
-		return Result{}, offeringPaymentError(err)
-	}
-	req, err := s.checkOfferingQuote(p.Quote, o, inputSHA, caller)
-	if err != nil {
-		return Result{}, err
-	}
-	if err = cfg.CheckRequirement(p, req, now); err != nil {
-		return Result{}, offeringPaymentError(err)
+	var p services.TopupPayment
+	var req services.X402Requirement
+	ref := ""
+	if cred.wire == paywire.WireMPP {
+		// MPP: the quote in opaque, checked with our key, then the
+		// challenge bound to the ask it stands for (mpp.go).
+		p, ref, err = mppIntake(s.mpp.offerings, cred, now, true, func(quote string) (paywire.Ask, error) {
+			if req, err = s.checkOfferingQuote(quote, o, inputSHA, caller); err != nil {
+				return paywire.Ask{}, err
+			}
+			return offeringAsk(req, "", "", nil), nil
+		})
+		if err != nil {
+			return Result{}, err
+		}
+	} else {
+		if p, err = services.ParseTopupPayment(payment); err != nil {
+			return Result{}, offeringPaymentError(err)
+		}
+		if req, err = s.checkOfferingQuote(p.Quote, o, inputSHA, caller); err != nil {
+			return Result{}, err
+		}
+		if err = cfg.CheckRequirement(p, req, now); err != nil {
+			return Result{}, offeringPaymentError(err)
+		}
 	}
 	claimBy := min(now+window, p.ValidBefore-services.X402ValidBeforeMargin)
 	if claimBy-now < OfferingClaimMinimum {
@@ -515,18 +594,18 @@ func (s *Store) offeringBuy(ctx context.Context, tx *sql.Tx, c Command, a actor,
 	if id == "" {
 		id = "oc_" + randomID()
 	}
-	sealed, err := s.sealAuth(id, sealedAuth{Payment: payment, Quote: p.Quote, Expires: req.Expires, MaxTimeout: req.MaxTimeout})
+	sealed, err := s.sealAuth(id, sealedAuth{Payment: payment, Quote: p.Quote, Expires: req.Expires, MaxTimeout: req.MaxTimeout, Wire: sealedWire(cred.wire)})
 	if err != nil {
 		return Result{}, err
 	}
 	poll := s.pollSecret(id, p.Quote)
 	if existing.id != "" {
-		_, err = tx.ExecContext(ctx, `UPDATE offering_calls SET state='verifying',reason='',retryable=0,auth=?,auth_key=?,caller=?,input=?,claim_by=?,valid_before=?,created_at=?,closed_at=0 WHERE id=? AND state='failed' AND retryable=1`,
-			sealed, s.offerings.keyID, caller, input, claimBy, p.ValidBefore, now, id)
+		_, err = tx.ExecContext(ctx, `UPDATE offering_calls SET state='verifying',reason='',retryable=0,auth=?,auth_key=?,caller=?,input=?,claim_by=?,valid_before=?,created_at=?,closed_at=0,protocol=?,payment_ref=? WHERE id=? AND state='failed' AND retryable=1`,
+			sealed, s.offerings.keyID, caller, input, claimBy, p.ValidBefore, now, cred.wire, ref, id)
 	} else {
-		_, err = tx.ExecContext(ctx, `INSERT INTO offering_calls(id,account,name,rev,caller,payer,amount,network,asset,pay_to,input,input_sha256,auth,auth_key,auth_nonce,quote_hash,valid_before,state,poll_hash,created_at,claim_by)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'verifying',?,?,?)`,
-			id, account, name, o.Rev, caller, p.From.String(), o.Price, cfg.Network, cfg.Asset.String(), req.PayTo.String(), input, inputSHA, sealed, s.offerings.keyID, p.Nonce, quoteHash, p.ValidBefore, sha256Hex([]byte(poll)), now, claimBy)
+		_, err = tx.ExecContext(ctx, `INSERT INTO offering_calls(id,account,name,rev,caller,payer,amount,network,asset,pay_to,input,input_sha256,auth,auth_key,auth_nonce,quote_hash,valid_before,state,poll_hash,created_at,claim_by,protocol,payment_ref)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'verifying',?,?,?,?,?)`,
+			id, account, name, o.Rev, caller, p.From.String(), o.Price, cfg.Network, cfg.Asset.String(), req.PayTo.String(), input, inputSHA, sealed, s.offerings.keyID, p.Nonce, quoteHash, p.ValidBefore, sha256Hex([]byte(poll)), now, claimBy, cred.wire, ref)
 	}
 	if err != nil {
 		return Result{}, err
@@ -656,7 +735,7 @@ func (s *Store) offeringCallResult(ctx context.Context, q interface {
 		}
 		return Result{}, offeringPaymentError(&services.TopupError{Code: "payment_rejected", Reason: call.Reason, Definite: true})
 	}
-	v := call.callerView(now)
+	v := s.withReceipt(call, call.callerView(now))
 	secret := s.pollSecret(id, quote)
 	if sha256Hex([]byte(secret)) == call.PollHash {
 		v["poll"] = pollPath(call.Account, call.Name, call.ID, secret)
@@ -687,17 +766,14 @@ func (s *Store) offeringRetry(ctx context.Context, tx *sql.Tx, c Command, stored
 		}
 		return Result{OK: true, Data: map[string]any{"call": call.providerView(now)}}, nil
 	}
-	quote := ""
-	payment := paymentFrom(ctx)
-	if payment == "" {
+	cred := paymentCredFrom(ctx)
+	if cred.raw == "" {
 		var d buyData
 		if services.StrictObject([]byte(c.Data), &d) == nil {
-			payment = d.Payment
+			cred = dataCred(d.Payment, s.mpp.offerings)
 		}
 	}
-	if p, err := services.ParseTopupPayment(payment); err == nil {
-		quote = p.Quote
-	}
+	quote := credQuote(cred)
 	res, err := s.offeringCallResult(ctx, tx, id, quote, now)
 	if err == nil {
 		res.OK = true
@@ -816,7 +892,7 @@ func (s *Store) settleCall(ctx context.Context, id string) (Result, error) {
 		// Nothing was sent to the facilitator: nothing moved.
 		return fail("failed", "authorization_unavailable", problem(409, "offering_payment_failed", "The caller's payment could not be settled (its authorization is unavailable); nothing moved and the call is failed. Do not start it."))
 	}
-	p, err := services.ParseTopupPayment(v.Payment)
+	p, err := sealedPayment(v)
 	if err != nil {
 		return fail("failed", "authorization_unavailable", problem(409, "offering_payment_failed", "The caller's payment could not be settled; nothing moved and the call is failed. Do not start it."))
 	}
@@ -878,15 +954,16 @@ type callRow struct {
 	Rev, Amount, ValidBefore, CreatedAt, ClaimBy, ClaimedAt     int64
 	DueAt, SettledAt, AnsweredAt, ClosedAt                      int64
 	Retryable                                                   bool
+	Protocol, PaymentRef                                        string // the wire (x402, mpp) and an MPP payment's challenge id
 }
 
-const callCols = "seq,id,account,name,rev,caller,payer,amount,network,asset,pay_to,input,input_sha256,input_screen,input_scores,state,reason,retryable,tx_hash,poll_hash,answer_sha256,answer,refund_tx,valid_before,created_at,claim_by,claimed_at,due_at,settled_at,answered_at,closed_at,answer_content_type,answer_screen,answer_scores,answer_statement,answer_stamp,answer_late"
+const callCols = "seq,id,account,name,rev,caller,payer,amount,network,asset,pay_to,input,input_sha256,input_screen,input_scores,state,reason,retryable,tx_hash,poll_hash,answer_sha256,answer,refund_tx,valid_before,created_at,claim_by,claimed_at,due_at,settled_at,answered_at,closed_at,answer_content_type,answer_screen,answer_scores,answer_statement,answer_stamp,answer_late,protocol,payment_ref"
 
 func scanCall(scan func(...any) error) (callRow, error) {
 	var r callRow
 	err := scan(&r.Seq, &r.ID, &r.Account, &r.Name, &r.Rev, &r.Caller, &r.Payer, &r.Amount, &r.Network, &r.Asset, &r.PayTo, &r.Input, &r.InputSHA256, &r.InputScreen, &r.InputScores,
 		&r.State, &r.Reason, &r.Retryable, &r.TxHash, &r.PollHash, &r.AnswerSHA256, &r.Answer, &r.RefundTx, &r.ValidBefore, &r.CreatedAt, &r.ClaimBy, &r.ClaimedAt, &r.DueAt, &r.SettledAt, &r.AnsweredAt, &r.ClosedAt,
-		&r.AnswerContentType, &r.AnswerScreen, &r.AnswerScores, &r.AnswerStatement, &r.AnswerStamp, &r.AnswerLate)
+		&r.AnswerContentType, &r.AnswerScreen, &r.AnswerScores, &r.AnswerStatement, &r.AnswerStamp, &r.AnswerLate, &r.Protocol, &r.PaymentRef)
 	return r, err
 }
 
@@ -939,6 +1016,21 @@ func (r callRow) common(now int64) map[string]any {
 	}
 	if r.Reason != "" && r.State != "declined" {
 		v["reason"] = r.Reason
+	}
+	if r.Protocol == paywire.WireMPP {
+		v["protocol"] = r.Protocol
+	}
+	return v
+}
+
+// withReceipt adds an MPP call's Payment-Receipt value to the caller's view
+// v once its payment settled (MPP issues a receipt only for a settled
+// payment, so the 202 carries none: the poll answer does).
+func (s *Store) withReceipt(r callRow, v map[string]any) map[string]any {
+	if r.Protocol == paywire.WireMPP && r.TxHash != "" {
+		if receipt := mppReceipt(s.mpp.offerings, r.TxHash, r.Payer, r.PaymentRef, r.SettledAt); receipt != "" {
+			v["payment_receipt"] = receipt
+		}
 	}
 	return v
 }
@@ -1143,7 +1235,7 @@ func (s *Store) OfferingPoll(ctx context.Context, alias, name, id, secret string
 	if last := max(call.CreatedAt, call.SettledAt, call.AnsweredAt, call.ClosedAt); now-last > OfferingPollDays*86400 {
 		return nil, problem(404, "offering_call_not_found", fmt.Sprintf("This poll URL answered for %d days after the call's last change and has expired; a signed caller still reads its call with offering.call.get.", OfferingPollDays))
 	}
-	return call.callerView(now), nil
+	return s.withReceipt(call, call.callerView(now)), nil
 }
 
 // ---- the sweep and the operator -------------------------------------------

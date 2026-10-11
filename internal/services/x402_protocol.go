@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"swarmmemo/internal/pay"
 )
 
 // x402 wire bounds.
@@ -83,18 +85,7 @@ type x402Extra struct {
 	AssetTransferMethod string `json:"assetTransferMethod"`
 }
 
-func decodeBase64JSON(s string) ([]byte, bool) {
-	if s == "" || len(s) > x402HeaderBytes {
-		return nil, false
-	}
-	s = strings.TrimSpace(s)
-	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
-		if b, err := enc.DecodeString(s); err == nil {
-			return b, true
-		}
-	}
-	return nil, false
-}
+func decodeBase64JSON(s string) ([]byte, bool) { return pay.DecodeBase64JSON(s, x402HeaderBytes) }
 
 // boundedJSON decodes a bounded, valid UTF-8 JSON object leniently: an
 // upstream's unknown fields are ignored, never trusted.
@@ -147,10 +138,7 @@ func parseX402Required(header string, body []byte) (x402Required, bool) {
 	return r, true
 }
 
-func isObject(raw json.RawMessage) bool {
-	raw = bytes.TrimSpace(raw)
-	return len(raw) > 1 && raw[0] == '{'
-}
+func isObject(raw json.RawMessage) bool { return pay.IsObject(raw) }
 
 var atomicAmountRE = regexp.MustCompile(`^[1-9][0-9]{0,17}$`)
 
@@ -237,19 +225,12 @@ func chooseX402(r x402Required, want x402Want) (x402Choice, error) {
 	return x402Choice{}, refusal("x402_not_payable")
 }
 
-type x402AuthorizationWire struct {
-	From        string `json:"from"`
-	To          string `json:"to"`
-	Value       string `json:"value"`
-	ValidAfter  string `json:"validAfter"`
-	ValidBefore string `json:"validBefore"`
-	Nonce       string `json:"nonce"`
-}
-
-type x402ExactPayload struct {
-	Signature     string                `json:"signature"`
-	Authorization x402AuthorizationWire `json:"authorization"`
-}
+// x402AuthorizationWire and x402ExactPayload are internal/pay's, shared by
+// the client (here) and server (pay) sides of the wire.
+type (
+	x402AuthorizationWire = pay.X402AuthorizationWire
+	x402ExactPayload      = pay.X402ExactPayload
+)
 
 type x402PayloadV2 struct {
 	Version    int              `json:"x402Version"`

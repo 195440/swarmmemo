@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -15,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"swarmmemo/internal/allowance"
+	"swarmmemo/internal/pay"
 )
 
 // Data is a parsed service.call or service.read data field:
@@ -33,7 +33,7 @@ type Data struct {
 
 const (
 	// JSONDepthMax bounds the nesting of data and of args.
-	JSONDepthMax = 16
+	JSONDepthMax = pay.JSONDepthMax
 	// MaxCostMax bounds max_cost, so no price arithmetic can overflow.
 	MaxCostMax = 1 << 40
 )
@@ -235,97 +235,11 @@ func UnknownArg(name string) string {
 	return name + " is not an argument this method takes"
 }
 
-var errStructure = errors.New("services: malformed JSON structure")
-
 // checkStructure walks raw once: exactly one top-level object, no duplicate
-// key in any object (case-insensitively), depth bounded, nothing after the value.
-func checkStructure(raw []byte) error {
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
-	var stack []*frame
-	first := true
-	for {
-		tok, err := dec.Token()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		if first {
-			if d, ok := tok.(json.Delim); !ok || d != '{' {
-				return errStructure
-			}
-		} else if len(stack) == 0 {
-			return errStructure // a second top-level value
-		}
-		first = false
-		var top *frame
-		if len(stack) > 0 {
-			top = stack[len(stack)-1]
-		}
-		if top != nil && top.object && top.key {
-			if d, ok := tok.(json.Delim); ok && d == '}' {
-				stack = stack[:len(stack)-1]
-				if len(stack) > 0 {
-					stack[len(stack)-1].valueDone()
-				}
-				continue
-			}
-			name, ok := tok.(string)
-			// encoding/json matches field names case-insensitively, so keys
-			// that differ only in case are duplicates too: "method" and
-			// "METHOD" would let the last one win where another reader sees
-			// the first (security review 1.20, L12).
-			folded := strings.ToLower(strings.ToUpper(name))
-			if !ok || top.keys[folded] {
-				return errStructure
-			}
-			top.keys[folded] = true
-			top.key = false
-			continue
-		}
-		switch d := tok.(type) {
-		case json.Delim:
-			switch d {
-			case '{', '[':
-				if len(stack) >= JSONDepthMax {
-					return errStructure
-				}
-				stack = append(stack, &frame{object: d == '{', keys: map[string]bool{}, key: d == '{'})
-			case ']':
-				stack = stack[:len(stack)-1]
-				if len(stack) > 0 {
-					stack[len(stack)-1].valueDone()
-				}
-			default:
-				return errStructure
-			}
-		default:
-			if top != nil {
-				top.valueDone()
-			}
-		}
-	}
-	if first || len(stack) != 0 {
-		return errStructure
-	}
-	return nil
-}
-
-// frame is one open object or array in checkStructure.
-type frame struct {
-	object bool
-	keys   map[string]bool
-	key    bool // the next token in this object is a key
-}
-
-// valueDone records that a value ended inside f: in an object, a key is next.
-func (f *frame) valueDone() {
-	if f.object {
-		f.key = true
-	}
-}
+// key in any object (case-insensitively), depth bounded by JSONDepthMax,
+// nothing after the value. It is pay.CheckStructure, shared with the
+// payment wires (C202a).
+func checkStructure(raw []byte) error { return pay.CheckStructure(raw, JSONDepthMax) }
 
 // Encodings every provider shares: one implementation each.
 

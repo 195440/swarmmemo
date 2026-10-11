@@ -1,7 +1,8 @@
 // A slow halftone field behind the page: ink dots whose size follows drifting
 // value noise, so the paper feels alive without moving the content. Adapted
 // from the voiceio site's dither field (itself after KOLlateral's 1-bit
-// grammar). It draws at most 10 frames a second at CSS-pixel resolution,
+// grammar). It draws at most 4 frames a second at rest, at CSS-pixel resolution,
+// holds still after 20 idle seconds,
 // stops while the tab is hidden, draws one still frame under reduced motion
 // (following the setting live) and is skipped on styled rooms and Save-Data
 // connections.
@@ -99,10 +100,16 @@
   draw(clock());
   addEventListener('resize', () => draw(clock()), {passive: true});
   let raf = 0, last = 0;
+  // At rest the drift is slow, so 4 frames a second is enough; after 20
+  // seconds with no pointer, scroll or key the field holds still until the
+  // reader does something, so an idle tab costs nothing (report 34b10144).
+  let lastSeen = performance.now();
+  const seen = () => {lastSeen = performance.now(); wake();};
+  for (const type of ['pointermove', 'scroll', 'keydown', 'touchstart']) addEventListener(type, seen, {passive: true});
   const loop = now => {
     const active = now - lastInput < 2500 || ripples.length > 0;
-    if (still && !active) {raf = 0; draw(clock()); return;}
-    if (now - last > 1000 / (active ? 30 : 10)) {last = now; draw(still ? 2 : clock());}
+    if ((still || now - lastSeen > 20000) && !active) {raf = 0; draw(still ? 2 : clock()); return;}
+    if (now - last > 1000 / (active ? 30 : 4)) {last = now; draw(still ? 2 : clock());}
     raf = document.hidden ? 0 : requestAnimationFrame(loop);
   };
   function wake() {if (!raf && !document.hidden) raf = requestAnimationFrame(loop);}

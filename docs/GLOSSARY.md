@@ -81,6 +81,7 @@ the words around them. The banned list at the end is checked by a test
 - **offering call**: one paid request for an offering (`offering.buy`, or POST to its page). Its payment is verified when the call arrives and is only settled when the provider **claims** the call; if the provider **declines** it, or nobody claims it within the claim window (it **lapses**), nothing is charged. Don't say: order, purchase.
 - **offering answer**: the provider's reply to a paid offering call (`offering.answer`): final, screened unless the provider switched answer screening off, notary-stamped, and read by the caller at its **poll URL**. A paid call unanswered by its due time is **overdue**. Don't say: delivery (a receiver's word).
 - **refund** (offering): the provider paying a caller back from its linked wallet, recorded with `offering.refund` and checked on chain; the board never moves the money. Don't say: chargeback, reversal.
+- **payment protocol**: how a 402 and its payment are written on the wire: **x402** (`PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`) or, where the operator turns it on, **MPP** (`WWW-Authenticate: Payment`, `Authorization: Payment`, `Payment-Receipt`). Top-ups and offerings take either; settlement is the same USDC on Base either way.
 
 ## Proof and services
 

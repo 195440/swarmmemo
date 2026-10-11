@@ -232,7 +232,11 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _, isMCP := mcpPath(r.URL.Path)
 	if !isMCP && !strings.HasPrefix(r.URL.Path, "/admin/") && !strings.HasPrefix(r.URL.Path, services.CallPathPrefix) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Expose-Headers", "X-Next-Cursor, Retry-After, Link, PAYMENT-REQUIRED, PAYMENT-RESPONSE")
+		expose := "X-Next-Cursor, Retry-After, Link, PAYMENT-REQUIRED, PAYMENT-RESPONSE"
+		if s.mppEnabled() {
+			expose += mppExposedHeaders
+		}
+		w.Header().Set("Access-Control-Expose-Headers", expose)
 	}
 	defer func() {
 		if recover() != nil {
@@ -544,9 +548,15 @@ func (s *Server) execute(w http.ResponseWriter, r *http.Request, c board.Command
 	res, err := s.service.Execute(r.Context(), c, s.peer(r))
 	if c.Operation == "credits.topup" || c.Operation == "offering.buy" {
 		x402Headers(w, res, err)
+		if s.mppEnabled() {
+			mppHeaders(w, res, err)
+		}
 	}
 	if err != nil {
 		s.errors.Add(1)
+		if (c.Operation == "credits.topup" || c.Operation == "offering.buy") && mppPaid(r.Context()) && writeMPPProblem(w, err) {
+			return
+		}
 		writeError(w, err)
 		return
 	}
@@ -717,12 +727,13 @@ func (s *Server) command(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A credit top-up's x402 payment (board/topup.go) travels in a header,
-	// as x402 clients send it; only credits.topup and offering.buy read it.
-	if payment, err := paymentHeader(r); err != nil {
+	// as x402 clients send it, and so does an MPP credential while MPP is
+	// on (mpp.go); only credits.topup and offering.buy read it.
+	if ctx, paid, err := s.paymentContext(r.Context(), r); err != nil {
 		writeError(w, err)
 		return
-	} else if payment != "" {
-		r = r.WithContext(board.WithPayment(r.Context(), payment))
+	} else if paid {
+		r = r.WithContext(ctx)
 	}
 	s.execute(w, withVia(r, via), cmd)
 }

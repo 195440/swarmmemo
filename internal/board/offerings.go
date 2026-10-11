@@ -771,7 +771,7 @@ func (s *Store) OfferingsCapabilities() map[string]any {
 		return nil
 	}
 	cfg := s.config.Offerings
-	return map[string]any{
+	caps := map[string]any{
 		"publish": "offering.publish", "retire": "offering.retire", "list": "offering.list", "get": "offering.get",
 		"buy": "offering.buy", "claim": "offering.claim", "decline": "offering.decline", "calls": "offering.calls", "call": "offering.call.get",
 		"page": "/@HANDLE/NAME", "buy_http": "POST /@HANDLE/NAME with the input as JSON; 402, then the same request with PAYMENT-SIGNATURE",
@@ -801,4 +801,12 @@ func (s *Store) OfferingsCapabilities() map[string]any {
 		"docs":   "/protocol.md#agent-offerings",
 		"how_to": "/tools/offerings",
 	}
+	if s.mpp.offerings != nil {
+		caps["protocols"] = []string{"x402", "mpp"}
+		mpp := s.mppTerms(cfg)
+		mpp["receipt"] = "on the poll answer (payment_receipt and the Payment-Receipt header) once the call is paid, never on the 202: the payment settles when the provider claims"
+		mpp["valid_before"] = "the authorization's validBefore bounds the claim window: sign it for now plus claim_window plus 30 seconds"
+		caps["mpp"] = mpp
+	}
+	return caps
 }

@@ -51,7 +51,11 @@ func (s *Server) offeringRoute(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Expose-Headers", "PAYMENT-REQUIRED, Location, Retry-After")
+	expose := "PAYMENT-REQUIRED, Location, Retry-After"
+	if s.mppEnabled() {
+		expose += mppExposedHeaders
+	}
+	w.Header().Set("Access-Control-Expose-Headers", expose)
 	parts := strings.Split(tail, "/")
 	switch {
 	case len(parts) == 1 && r.Method == http.MethodPost:
@@ -75,6 +79,10 @@ func (s *Server) offeringRoute(w http.ResponseWriter, r *http.Request) bool {
 		if err != nil {
 			writeError(w, err)
 			return true
+		}
+		// An MPP call's receipt, once paid (the poll keeps no-store).
+		if receipt, ok := v["payment_receipt"].(string); ok && receipt != "" {
+			w.Header().Set("Payment-Receipt", receipt)
 		}
 		jsonResponse(w, 200, map[string]any{"ok": true, "data": map[string]any{"call": v}})
 	case len(parts) == 1 || (len(parts) == 4 && parts[1] == "calls"):
@@ -106,15 +114,12 @@ func (s *Server) offeringBuy(w http.ResponseWriter, r *http.Request, alias, name
 		return
 	}
 	data, _ := json.Marshal(map[string]any{"schema": 1, "input": json.RawMessage(input)})
-	ctx := r.Context()
-	payment, err := paymentHeader(r)
+	ctx, paid, err := s.paymentContext(r.Context(), r)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	if payment != "" {
-		ctx = board.WithPayment(ctx, payment)
-	} else {
+	if !paid {
 		// A directory's probe (no input, no payment) gets the 402 with its
 		// discovery metadata, unpayable, not invalid_offering_input.
 		ctx = board.WithDiscoveryProbe(ctx)
@@ -122,7 +127,14 @@ func (s *Server) offeringBuy(w http.ResponseWriter, r *http.Request, alias, name
 	r = withClient(r.WithContext(ctx))
 	res, err := s.service.Execute(r.Context(), board.Command{Operation: "offering.buy", Target: alias + "/" + name, Data: string(data)}, s.peer(r))
 	if err != nil {
+		if s.mppEnabled() {
+			mppHeaders(w, res, err)
+		}
 		var be *board.Error
+		if mppPaid(r.Context()) && writeMPPProblem(w, err) {
+			s.errors.Add(1)
+			return
+		}
 		if errors.As(err, &be) && be.Code == "payment_required" {
 			if d, ok := be.Details.(map[string]any); ok {
 				if h, ok := d["payment_required"].(string); ok {
@@ -200,8 +212,11 @@ func (s *Server) offeringDirectory() []board.OfferingEntry {
 // security [] (no API key; payment is the only gate) and the listing's
 // input schema as the request body, so x402 directories that read
 // /openapi.json (x402scan) register each one as a resource. Listing text is
-// the provider's, shortened, and marked untrusted.
-func addOfferingsOpenAPI(paths map[string]any, entries []board.OfferingEntry) {
+// the provider's, shortened, and marked untrusted. protocols is
+// x-payment-info.protocols: x402 and, while MPP is on, MPP
+// (openAPIPaymentProtocols).
+func addOfferingsOpenAPI(paths map[string]any, entries []board.OfferingEntry, protocols []any) {
+	mpp := len(protocols) > 1
 	for _, e := range entries {
 		body := map[string]any{"type": "object"}
 		if len(e.Input) > 0 {
@@ -216,6 +231,9 @@ func addOfferingsOpenAPI(paths map[string]any, entries []board.OfferingEntry) {
 			summary = "Call @" + e.Provider + "/" + e.Name
 		}
 		description := "Agent offering " + e.Name + " by @" + e.Provider + " (RFC 0017), " + e.Price + " USDC a call over x402 v2 (scheme exact). POST the input as JSON: 402 with PAYMENT-REQUIRED, then the same request with PAYMENT-SIGNATURE; 202 with the call, its poll URL in Location. A POST with no input and no payment answers the 402 with its bazaar discovery metadata and an unpayable quote. GET the same URL for the listing and its record."
+		if mpp {
+			description += " Or pay with MPP: the 402 also carries WWW-Authenticate: Payment (method evm, intent charge); send the same request with Authorization: Payment; the receipt is on the poll answer once paid."
+		}
 		if e.Description != "" {
 			description += " The provider's description (untrusted): " + e.Description
 		}
@@ -227,7 +245,7 @@ func addOfferingsOpenAPI(paths map[string]any, entries []board.OfferingEntry) {
 			"security":    []any{},
 			"x-payment-info": map[string]any{
 				"price":     map[string]any{"mode": "fixed", "currency": "USD", "amount": e.Price},
-				"protocols": []any{map[string]any{"x402": map[string]any{}}},
+				"protocols": protocols,
 			},
 			"requestBody": map[string]any{"required": true, "content": map[string]any{"application/json": map[string]any{"schema": body}}},
 			"responses": map[string]any{

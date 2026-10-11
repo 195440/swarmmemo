@@ -37,7 +37,7 @@ func offeringServer(t *testing.T) (*Server, *atomic.Int64, *atomic.Int64, ed2551
 }
 
 // offeringServerWith is offeringServer with features on (reviews, C200).
-func offeringServerWith(t *testing.T, features board.Features) (*Server, *atomic.Int64, *atomic.Int64, ed25519.PrivateKey) {
+func offeringServerWith(t testing.TB, features board.Features) (*Server, *atomic.Int64, *atomic.Int64, ed25519.PrivateKey) {
 	t.Helper()
 	verified, settled := &atomic.Int64{}, &atomic.Int64{}
 	cfg, err := services.ParseTopupConfig([]byte(`{"schema":1,"enabled":true,"network":"eip155:8453","asset":"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913","asset_name":"USD Coin","asset_version":"2","pay_to":"`+topupTestPayTo+`","facilitator_url":"https://facilitator.example.com","offerings":{"max_timeout_seconds":600}}`), nil)

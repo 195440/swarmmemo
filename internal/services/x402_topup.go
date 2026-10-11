@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,11 +26,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"swarmmemo/internal/pay"
 )
 
 // Top-up bounds and defaults, in credits (micro-USDC).
@@ -53,7 +53,7 @@ const (
 	TopupQuoteSeconds = 300
 	// TopupPaymentBytes bounds a payment header (base64), and the same
 	// payment carried in a command's data.
-	TopupPaymentBytes = 8 << 10
+	TopupPaymentBytes = pay.X402PaymentBytes
 	// topupFacilitatorBytes bounds a facilitator answer we read.
 	topupFacilitatorBytes = 16 << 10
 	// topupFacilitatorTimeout bounds each facilitator call; settling waits
@@ -61,7 +61,7 @@ const (
 	topupFacilitatorTimeout = 30 * time.Second
 	// topupValidBeforeMargin is how long an authorization must still be
 	// valid when it reaches us, so it cannot lapse while it settles.
-	topupValidBeforeMargin = 30
+	topupValidBeforeMargin = pay.ValidBeforeMargin
 	// X402ValidBeforeMargin is topupValidBeforeMargin for a caller that
 	// settles later (offerings): an authorization must still be valid this
 	// long when it is settled.
@@ -330,13 +330,14 @@ type TopupRequirement struct {
 // configured network and asset: Amount atomic units to PayTo, good until
 // Expires, Quote binding it, MaxTimeout its maxTimeoutSeconds. A top-up's
 // pays the operator for TopupQuoteSeconds; an offering's (RFC 0017) pays
-// the provider's linked wallet within its claim window.
-type X402Requirement struct {
-	PayTo      EVMAddress
-	Amount     int64
-	Quote      string
-	Expires    int64
-	MaxTimeout int64
+// the provider's linked wallet within its claim window. It is
+// pay.X402Requirement (C202a: the x402 server wire lives in internal/pay).
+type X402Requirement = pay.X402Requirement
+
+// Rail is the configured network and asset as internal/pay's rail, which
+// both payment wires (x402 and MPP) share.
+func (c *TopupConfig) Rail() pay.Rail {
+	return pay.Rail{Network: c.Network, Asset: c.Asset, AssetName: c.AssetName, AssetVersion: c.AssetVersion}
 }
 
 // topup is r as the general requirement: our receiving address.
@@ -344,27 +345,10 @@ func (c *TopupConfig) topup(r TopupRequirement) X402Requirement {
 	return X402Requirement{PayTo: c.PayTo, Amount: r.Amount, Quote: r.Quote, Expires: r.Expires, MaxTimeout: TopupQuoteSeconds}
 }
 
-type topupExtraWire struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-	Quote   string `json:"quote"`
-}
-
-type topupRequirementWire struct {
-	Scheme            string         `json:"scheme"`
-	Network           string         `json:"network"`
-	Amount            string         `json:"amount"`
-	Asset             string         `json:"asset"`
-	PayTo             string         `json:"payTo"`
-	MaxTimeoutSeconds int64          `json:"maxTimeoutSeconds"`
-	Extra             topupExtraWire `json:"extra"`
-}
+type topupRequirementWire = pay.X402RequirementWire
 
 // wire is r as an x402 v2 PaymentRequirements object.
-func (c *TopupConfig) wire(r X402Requirement) topupRequirementWire {
-	return topupRequirementWire{Scheme: "exact", Network: c.Network, Amount: strconv.FormatInt(r.Amount, 10), Asset: c.Asset.String(),
-		PayTo: r.PayTo.String(), MaxTimeoutSeconds: r.MaxTimeout, Extra: topupExtraWire{Name: c.AssetName, Version: c.AssetVersion, Quote: r.Quote}}
-}
+func (c *TopupConfig) wire(r X402Requirement) topupRequirementWire { return c.Rail().X402Accept(r) }
 
 // PaymentRequired is the x402 v2 PaymentRequired object for r, and its
 // base64 encoding for the PAYMENT-REQUIRED header.
@@ -380,33 +364,13 @@ func (c *TopupConfig) PaymentRequiredFor(r X402Requirement, resourceURL, descrip
 // PaymentRequiredWith is PaymentRequiredFor with the x402 v2 extensions
 // object (e.g. "bazaar" discovery metadata); nil omits it.
 func (c *TopupConfig) PaymentRequiredWith(r X402Requirement, resourceURL, description string, extensions map[string]any) (map[string]any, string) {
-	body := map[string]any{
-		"x402Version": 2,
-		"error":       "payment required",
-		"resource":    map[string]any{"url": resourceURL, "description": description, "mimeType": "application/json"},
-		"accepts":     []topupRequirementWire{c.wire(r)},
-	}
-	if extensions != nil {
-		body["extensions"] = extensions
-	}
-	raw, _ := json.Marshal(body)
-	return body, base64.StdEncoding.EncodeToString(raw)
+	return c.Rail().X402PaymentRequired(r, resourceURL, description, extensions)
 }
 
 // TopupPayment is a parsed x402 v2 payment payload for the exact EVM
-// scheme: what the payer accepted, and its signed EIP-3009 authorization.
-type TopupPayment struct {
-	// Accepted is the requirement the payer says it accepted.
-	Scheme, Network, Asset, PayTo, Amount string
-	Name, Version, Quote                  string
-	// The authorization.
-	From, To                EVMAddress
-	Value                   int64
-	ValidAfter, ValidBefore int64
-	Nonce                   string // "0x" + 64 lowercase hex
-	Signature               string // "0x" + 130 lowercase hex
-	resource                json.RawMessage
-}
+// scheme: what the payer accepted, and its signed EIP-3009 authorization
+// (pay.X402Payment).
+type TopupPayment = pay.X402Payment
 
 // TopupError is a refusal of a top-up payment: Code is the public error
 // code, Definite says nothing can have settled (no money moved).
@@ -430,97 +394,26 @@ const TopupFacilitatorUnavailable = "facilitator_unavailable"
 
 func topupRefusal(code string) error { return &TopupError{Code: code, Definite: true} }
 
-var (
-	evmNonceRE     = regexp.MustCompile(`^0x[0-9a-fA-F]{64}$`)
-	evmSignatureRE = regexp.MustCompile(`^0x[0-9a-fA-F]{130}$`)
-	unixSecondsRE  = regexp.MustCompile(`^(0|[1-9][0-9]{0,11})$`)
-	topupQuoteRE   = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
-)
-
-type topupPayloadWire struct {
-	Version    json.Number     `json:"x402Version"`
-	Resource   json.RawMessage `json:"resource"`
-	Accepted   json.RawMessage `json:"accepted"`
-	Payload    json.RawMessage `json:"payload"`
-	Extensions json.RawMessage `json:"extensions"`
-}
-
-type topupAcceptedWire struct {
-	Scheme            string          `json:"scheme"`
-	Network           string          `json:"network"`
-	Amount            string          `json:"amount"`
-	Asset             string          `json:"asset"`
-	PayTo             string          `json:"payTo"`
-	MaxTimeoutSeconds json.Number     `json:"maxTimeoutSeconds"`
-	Extra             json.RawMessage `json:"extra"`
-}
-
-type topupAcceptedExtraWire struct {
-	Name                string `json:"name"`
-	Version             string `json:"version"`
-	Quote               string `json:"quote"`
-	AssetTransferMethod string `json:"assetTransferMethod"`
+// topupFromPay is a wire's refusal as a top-up refusal: the same code,
+// Definite (a wire refuses before anything can move).
+func topupFromPay(err error) error {
+	if err == nil {
+		return nil
+	}
+	var r *pay.Refusal
+	if errors.As(err, &r) {
+		return topupRefusal(r.Code)
+	}
+	return topupRefusal("payment_invalid")
 }
 
 // ParseTopupPayment reads a PAYMENT-SIGNATURE (or X-PAYMENT) header value:
 // base64 of one x402 v2 payment payload for the exact scheme, every field
-// well formed. The payload and its authorization are strict (no unknown
-// field); the envelope's resource and extensions are bounded and never
-// trusted. Any malformation is payment_invalid.
+// well formed (pay.ParseX402Payment). Any malformation is payment_invalid.
 func ParseTopupPayment(header string) (TopupPayment, error) {
-	invalid := topupRefusal("payment_invalid")
-	header = strings.TrimSpace(header)
-	if header == "" || len(header) > TopupPaymentBytes {
-		return TopupPayment{}, invalid
-	}
-	raw, ok := decodeBase64JSON(header)
-	if !ok || len(raw) > TopupPaymentBytes {
-		return TopupPayment{}, invalid
-	}
-	var w topupPayloadWire
-	if StrictObject(raw, &w) != nil || w.Version.String() != "2" || !isObject(w.Accepted) || !isObject(w.Payload) {
-		return TopupPayment{}, invalid
-	}
-	if (len(w.Resource) > 0 && string(w.Resource) != "null" && (!isObject(w.Resource) || len(w.Resource) > x402RawFieldBytes)) ||
-		(len(w.Extensions) > 0 && string(w.Extensions) != "null" && (!isObject(w.Extensions) || len(w.Extensions) > x402RawFieldBytes)) {
-		return TopupPayment{}, invalid
-	}
-	var acc topupAcceptedWire
-	if StrictObject(w.Accepted, &acc) != nil || !isObject(acc.Extra) {
-		return TopupPayment{}, invalid
-	}
-	var extra topupAcceptedExtraWire
-	if StrictObject(acc.Extra, &extra) != nil || !topupQuoteRE.MatchString(extra.Quote) {
-		return TopupPayment{}, invalid
-	}
-	var pl x402ExactPayload
-	if StrictObject(w.Payload, &pl) != nil {
-		return TopupPayment{}, invalid
-	}
-	a := pl.Authorization
-	p := TopupPayment{Scheme: acc.Scheme, Network: acc.Network, Asset: acc.Asset, PayTo: acc.PayTo, Amount: acc.Amount,
-		Name: extra.Name, Version: extra.Version, Quote: extra.Quote}
-	if extra.AssetTransferMethod != "" && extra.AssetTransferMethod != "eip3009" {
-		return TopupPayment{}, invalid
-	}
-	if p.From, ok = ParseEVMAddress(a.From); !ok || p.From == (EVMAddress{}) {
-		return TopupPayment{}, invalid
-	}
-	if p.To, ok = ParseEVMAddress(a.To); !ok {
-		return TopupPayment{}, invalid
-	}
-	if !atomicAmountRE.MatchString(a.Value) || !unixSecondsRE.MatchString(a.ValidAfter) || !unixSecondsRE.MatchString(a.ValidBefore) {
-		return TopupPayment{}, invalid
-	}
-	p.Value, _ = strconv.ParseInt(a.Value, 10, 64)
-	p.ValidAfter, _ = strconv.ParseInt(a.ValidAfter, 10, 64)
-	p.ValidBefore, _ = strconv.ParseInt(a.ValidBefore, 10, 64)
-	if !evmNonceRE.MatchString(a.Nonce) || !evmSignatureRE.MatchString(pl.Signature) {
-		return TopupPayment{}, invalid
-	}
-	p.Nonce, p.Signature = strings.ToLower(a.Nonce), strings.ToLower(pl.Signature)
-	if isObject(w.Resource) {
-		p.resource = w.Resource
+	p, err := pay.ParseX402Payment(header)
+	if err != nil {
+		return TopupPayment{}, topupFromPay(err)
 	}
 	return p, nil
 }
@@ -538,26 +431,7 @@ func (c *TopupConfig) Check(p TopupPayment, r TopupRequirement, now int64) error
 // CheckRequirement is Check for any requirement we issue: r.PayTo is the
 // recipient the accepted requirement and the authorization must both name.
 func (c *TopupConfig) CheckRequirement(p TopupPayment, r X402Requirement, now int64) error {
-	mismatch := topupRefusal("payment_mismatch")
-	if p.Scheme != "exact" || p.Network != c.Network || p.Quote != r.Quote {
-		return mismatch
-	}
-	if asset, ok := ParseEVMAddress(p.Asset); !ok || asset != c.Asset {
-		return mismatch
-	}
-	if payTo, ok := ParseEVMAddress(p.PayTo); !ok || r.PayTo == (EVMAddress{}) || payTo != r.PayTo || p.To != r.PayTo {
-		return mismatch
-	}
-	if (p.Name != "" && p.Name != c.AssetName) || (p.Version != "" && p.Version != c.AssetVersion) {
-		return mismatch
-	}
-	if p.Amount != strconv.FormatInt(r.Amount, 10) || p.Value != r.Amount {
-		return mismatch
-	}
-	if r.Expires < now || p.ValidBefore < now+topupValidBeforeMargin || p.ValidAfter > now || p.ValidAfter >= p.ValidBefore {
-		return topupRefusal("payment_expired")
-	}
-	return nil
+	return topupFromPay(c.Rail().CheckX402(p, r, now))
 }
 
 // facilitatorBody is the /verify and /settle request: our own requirement,
@@ -571,8 +445,8 @@ func (c *TopupConfig) facilitatorBody(p TopupPayment, r X402Requirement) ([]byte
 			From: p.From.String(), To: p.To.String(), Value: strconv.FormatInt(p.Value, 10),
 			ValidAfter: strconv.FormatInt(p.ValidAfter, 10), ValidBefore: strconv.FormatInt(p.ValidBefore, 10), Nonce: p.Nonce}},
 	}
-	if p.resource != nil {
-		payload["resource"] = p.resource
+	if p.Resource != nil {
+		payload["resource"] = p.Resource
 	}
 	return json.Marshal(map[string]any{"x402Version": 2, "paymentPayload": payload, "paymentRequirements": req})
 }

@@ -207,6 +207,10 @@ func migrateSchema(tx *sql.Tx, version int) error {
 	if err := migrateInboxRead31(tx, version); err != nil {
 		return err
 	}
+	// Schema 32: credit_topups and offering_calls protocol and payment_ref (mpp.go, C202b).
+	if err := migratePaymentProtocol32(tx); err != nil {
+		return err
+	}
 	_, err := tx.Exec(fmt.Sprintf("PRAGMA user_version=%d;", SchemaVersion))
 	return err
 }

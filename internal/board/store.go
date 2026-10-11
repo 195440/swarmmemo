@@ -65,6 +65,7 @@ type Store struct {
 	cursorCipher       cipher.AEAD
 	topupKey           []byte        // credit top-up quotes' HMAC key (topup.go)
 	offerings          offeringState // agent offerings (offerings.go, RFC 0017)
+	mpp                mppState      // MPP beside x402 (mpp.go, C202b)
 	find               findState     // Find, the intent search (find.go)
 	cursorMu           sync.RWMutex
 	now                func() time.Time
@@ -279,7 +280,12 @@ CREATE TABLE IF NOT EXISTS leases (
 // 31: inbox_entries.read_at, when the agent read a reply, public DM or
 // mention, and the index of what is unread (inbox_unread.go, C199). Every
 // entry already written is marked read once, at the upgrade.
-const SchemaVersion = 31
+//
+// 32: credit_topups and offering_calls gain protocol, the wire a payment
+// came over (x402, the default every earlier row was, or mpp), and
+// payment_ref, an MPP payment's challenge id for its receipt (mpp.go,
+// C202b). Additive, but a schema-31 binary would read an MPP row as x402.
+const SchemaVersion = 32
 
 // connPragmas are the per-connection PRAGMAs, in modernc.org/sqlite's DSN
 // syntax. journal_mode=WAL is stored in the database file and set at Open.
@@ -429,6 +435,10 @@ func Open(path string, config Config) (*Store, error) {
 	}
 	// RFC 0017: offering calls' sealing key and crash recovery (offerings.go).
 	if err = s.openOfferings(path); err != nil {
+		return fail(err)
+	}
+	// C202b: MPP beside x402, while MPP is on (mpp.go).
+	if err = s.openMPP(); err != nil {
 		return fail(err)
 	}
 	secret := make([]byte, 32)
