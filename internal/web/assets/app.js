@@ -2373,6 +2373,10 @@
   // included: a background tab is where the badge matters. Its cursor
   // and what is still unseen live in localStorage, so every tab shows the same
   // number and opening the thing clears it. Only counts and ids are kept.
+  // Where the board keeps read state (data.unread.updates, C199) the board's
+  // list is the truth and localStorage only its cache: what this page shows
+  // is marked read with one signed updates.mark_read, batched, so a reply
+  // read on a phone is read on the laptop at its next poll.
   const notifySlot = 'swarmmemo.notify.v1', notifyEvery = 60000;
   const notify = (() => {
     const fp = identity?.fingerprint;
@@ -2386,8 +2390,9 @@
     const slot = notifySlot + ':' + fp;
     const load = () => { try { const saved = JSON.parse(localStorage.getItem(slot) || localStorage.getItem(notifySlot) || 'null'); return saved?.fp === fp ? saved : null; } catch (_) { return null; } };
     const save = state => { try { localStorage.setItem(slot, JSON.stringify(state)); } catch (_) { /* A convenience: without storage each tab counts alone. */ } };
-    const blank = () => ({fp, cursor: '', polled_at: 0, rooms: 0, requests: 0, replies: [], addressed: [], mentions: []});
+    const blank = () => ({fp, cursor: '', polled_at: 0, rooms: 0, requests: 0, replies: [], addressed: [], mentions: [], server: false, seen: []});
     const cap = list => list.slice(-99);
+    let seenTimer = 0, flushing = false;
     function drawIcon() {
       if (!icon || badgedIcon) return;
       const img = new Image();
@@ -2443,13 +2448,45 @@
     // What this page shows counts as seen: your public inbox clears addressed
     // messages, and a thread clears the replies on it.
     function markSeen(state) {
-      const view = document.body.dataset.view;
-      let changed = false;
-      if (view === 'inbox' && document.body.dataset.inbox === fp && state.addressed.length) { state.addressed = []; changed = true; }
+      const view = document.body.dataset.view, read = [];
+      if (view === 'inbox' && document.body.dataset.inbox === fp && state.addressed.length) { read.push(...state.addressed); state.addressed = []; }
       if (view === 'inbox' || view === 'event') {
-        for (const key of personal) { const list = state[key] || [], left = list.filter(id => !document.getElementById('e-' + id)); if (left.length !== list.length) { state[key] = left; changed = true; } }
+        for (const key of personal) { const list = state[key] || [], left = list.filter(id => !document.getElementById('e-' + id)); if (left.length !== list.length) { read.push(...list.filter(id => !left.includes(id))); state[key] = left; } }
       }
-      return changed;
+      queueRead(state, read);
+      return read.length > 0;
+    }
+    // Read state on the board: ids wait in state.seen (every tab and the next
+    // page see them) until one updates.mark_read takes them; the board's list
+    // never brings back an id still waiting there.
+    function queueRead(state, ids) {
+      if (!state.server || !ids.length) return;
+      state.seen = [...new Set([...(state.seen || []), ...ids])].slice(-300);
+      clearTimeout(seenTimer); seenTimer = setTimeout(flushRead, 600);
+    }
+    function fromBoard(state, updates) {
+      const waiting = new Set(state.seen || []);
+      state.server = true;
+      for (const key of personal) state[key] = cap((Array.isArray(updates[key]) ? updates[key] : []).filter(id => !waiting.has(id)).reverse());
+    }
+    async function markRead(data, ids = []) {
+      const result = await request({operation: 'updates.mark_read', target: fp, data: JSON.stringify({schema: 1, ...data}), request_id: uuid()}, true);
+      const state = load() || blank();
+      state.seen = (state.seen || []).filter(id => !ids.includes(id));
+      if (result.data?.unread?.updates) fromBoard(state, result.data.unread.updates);
+      save(state); render(state);
+    }
+    async function flushRead() {
+      clearTimeout(seenTimer);
+      const ids = (load()?.seen || []).slice(0, 100);
+      if (flushing || !ids.length) return;
+      flushing = true;
+      try { await markRead({ids}, ids); if ((load()?.seen || []).length) seenTimer = setTimeout(flushRead, 600); }
+      catch (error) {
+        // The board no longer keeps read state: this browser keeps it again.
+        // Anything else is retried by the next poll.
+        if (error.code === 'service_unavailable') { const state = load() || blank(); state.server = false; state.seen = []; save(state); }
+      } finally { flushing = false; }
     }
     async function poll(force = false) {
       if (!fp) return;
@@ -2466,13 +2503,16 @@
         const result = await request({operation: 'updates.get', target: fp, data: JSON.stringify({schema: 1, counts: true}), ...(baseline ? {limit: 1} : {cursor: state.cursor, limit: 50})}, true);
         const data = result.data || {}, conversation = new Set(data.conversations || []);
         state = load() || state;
-        if (!baseline) for (const key of personal) state[key] = cap([...new Set([...(state[key] || []), ...(data[key] || []).filter(id => !conversation.has(id))])]);
+        // The board's read state, whatever the cursor; else what is new since it.
+        if (data.unread?.updates) fromBoard(state, data.unread.updates);
+        else { state.server = false; if (!baseline) for (const key of personal) state[key] = cap([...new Set([...(state[key] || []), ...(data[key] || []).filter(id => !conversation.has(id))])]); }
         state.cursor = result.next_cursor || state.cursor;
         state.rooms = Array.isArray(data.unread?.rooms) ? data.unread.rooms.length : 0;
         state.requests = Array.isArray(data.requests) ? data.requests.length : 0;
         // Where the board keeps dispositions, data.waiting is the server's own count of what waits for an answer.
         state.waiting = typeof data.waiting === 'number' ? data.waiting : null;
         flagNew(state); markSeen(state); save(state); render(state);
+        if (state.seen?.length) flushRead();
       } catch (error) {
         if (error.code === 'cursor_reset' || error.code === 'invalid_cursor') { state.cursor = ''; save(state); }
       } finally { polling = false; if (again) { again = false; poll(true); } }
@@ -2484,6 +2524,8 @@
       window.addEventListener('storage', event => { if (event.key === slot) render(load()); });
       flagNew(load(), true);
       render(load());
+      // What an earlier page queued as read and could not send yet.
+      if (load()?.seen?.length) seenTimer = setTimeout(flushRead, 600);
       capabilitiesReady.then(() => poll()).finally(schedule);
     }
     return {
@@ -2498,8 +2540,16 @@
       refresh() { return poll(true); },
       // What is still new, by id and reason, for the Inbox on Me.
       unread() { const state = load() || blank(); return {ids: new Set(newIds(state)), state}; },
-      // Mark all read: the Inbox's button. Conversations keep their own unread counts.
-      markAllRead() { const state = load() || blank(); for (const key of personal) state[key] = []; save(state); render(state); },
+      // One reply, public DM or mention was opened (an Inbox row): it is read
+      // on the board, whether or not its page can show it. It stays new here
+      // until that page has marked it.
+      read(id) { const state = load() || blank(); queueRead(state, [id]); save(state); },
+      // Mark all read: the Inbox's button, on the board too where it keeps read
+      // state. Conversations keep their own unread counts.
+      markAllRead() {
+        const state = load() || blank(); for (const key of personal) state[key] = []; state.seen = []; save(state); render(state);
+        if (state.server) return markRead({all: true}).catch(() => poll(true));
+      },
     };
   })();
 
@@ -2507,8 +2557,9 @@
   // The place the badge on Me leads to. One signed updates.get of this key's
   // own inbox, newest first (with message text: you opened your inbox), keeps
   // the replies, public DMs and mentions, not conversations or room activity.
-  // What the notifier still holds as new is marked Unread and listed first;
-  // the rest stay listed, marked Read. Each item opens its permalink, where the
+  // What the notifier still holds as new (the board's read state where it
+  // keeps one) is marked Unread and listed first; the rest stay listed,
+  // marked Read. Opening a row marks it read. Each item opens its permalink, where the
   // reply is loaded, centred and marked.
   (function inboxList() {
     const list = $('inbox-list'); if (!list) return;
@@ -2560,6 +2611,8 @@
       loaded = true; draw();
     }
     markAll?.addEventListener('click', () => notify.markAllRead());
+    // Opening a row reads it, on every device where the board keeps read state.
+    list.addEventListener('click', event => { const a = event.target.closest?.('a.inbox-row-link'); if (a?.dataset.id) notify.read(a.dataset.id); });
     document.addEventListener('swarmmemo:notify', draw);
     capabilitiesReady.then(load).catch(error => say(error.message));
   })();

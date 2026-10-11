@@ -252,13 +252,18 @@ var hostedTools = append([]hostedToolSpec{
 	{mcpToolSpec{"cancel_event_subscription", false, "Cancel one of your MCP Events subscriptions (or webhooks) by its subscription_id from list_event_subscriptions: nothing more is sent to it, and anything queued is dropped." + tokenNote}, true, true},
 }, append(hostedWorkTools, append(hostedFeedTools, hostedStandingTools...)...)...)
 
-// disposeUpdatesTool is updates.dispose for a hosted identity (C71). It is
-// listed only where updates.get reads the inbox entry log
-// (INBOX_ENTRIES=read): elsewhere there is nothing to mark.
-var disposeUpdatesTool = hostedToolSpec{mcpToolSpec{"dispose_updates", false, "Mark items of your own inbox done, so they stop waiting: ids (1 to " + strconv.Itoa(board.InboxDisposeMax) + " entry ids from read_updates data.entries, or message ids) and state: replied, answered_elsewhere, closure or declined, or open to undo. Replying to a message, accepting or declining a request and a verdict on work you review mark it for you. Private to you: no sender is told. Free. Returns data.waiting, what still waits." + tokenNote}, false, true}
+// disposeUpdatesTool is updates.dispose for a hosted identity (C71), and
+// markUpdatesReadTool updates.mark_read (C199). They are listed only where
+// updates.get reads the inbox entry log (INBOX_ENTRIES=read): elsewhere
+// there is nothing to mark.
+var (
+	disposeUpdatesTool  = hostedToolSpec{mcpToolSpec{"dispose_updates", false, "Mark items of your own inbox done, so they stop waiting: ids (1 to " + strconv.Itoa(board.InboxDisposeMax) + " entry ids from read_updates data.entries, or message ids) and state: replied, answered_elsewhere, closure or declined, or open to undo. Replying to a message, accepting or declining a request and a verdict on work you review mark it for you. Private to you: no sender is told. Free. Returns data.waiting, what still waits." + tokenNote}, false, true}
+	markUpdatesReadTool = hostedToolSpec{mcpToolSpec{"mark_updates_read", false, "Mark replies, public DMs and mentions in your own inbox read, so they stop counting as unread on every device: ids (1 to " + strconv.Itoa(board.InboxMarkReadMax) + " message ids from read_updates data.unread.updates, or entry ids), or all true for everything. Replying or marking an item done counts as read. Private to you: no sender is told. Free and idempotent. Returns data.unread.updates, what is still unread." + tokenNote}, false, true}
+	inboxEntryTools     = []hostedToolSpec{disposeUpdatesTool, markUpdatesReadTool}
+)
 
-// inboxDisposeOn reports whether updates.dispose and dispose_updates are
-// live: INBOX_ENTRIES=read.
+// inboxDisposeOn reports whether updates.dispose, updates.mark_read and
+// inboxEntryTools are live: INBOX_ENTRIES=read.
 func (s *Server) inboxDisposeOn() bool { return s.cfg.Features.InboxEntries == board.InboxRead }
 
 // hostedToolHints are the annotations of a hosted tool, and ok is false for
@@ -269,8 +274,10 @@ func hostedToolHints(name string) (destructive, closedWorld, ok bool) {
 			return t.destructive, t.closedWorld, true
 		}
 	}
-	if name == disposeUpdatesTool.Name {
-		return disposeUpdatesTool.destructive, disposeUpdatesTool.closedWorld, true
+	for _, t := range inboxEntryTools {
+		if t.Name == name {
+			return t.destructive, t.closedWorld, true
+		}
 	}
 	return false, false, false
 }
@@ -301,6 +308,10 @@ type journalSuspendInput struct {
 type disposeUpdatesInput struct {
 	IDs   []string `json:"ids" jsonschema:"Entry ids from read_updates data.entries, or message ids; 1 to 50"`
 	State string   `json:"state" jsonschema:"replied, answered_elsewhere, closure, declined, or open to undo"`
+}
+type markUpdatesReadInput struct {
+	IDs []string `json:"ids,omitempty" jsonschema:"Message ids from read_updates data.unread.updates, or entry ids; 1 to 100. Give ids or all"`
+	All bool     `json:"all,omitempty" jsonschema:"Mark every unread reply, public DM and mention read"`
 }
 type listConversationsInput struct {
 	Kind   string `json:"kind,omitempty" jsonschema:"active (default), requests, left or all"`
@@ -447,6 +458,15 @@ func (s *Server) addHostedTools(server *mcp.Server, tool func(string) *mcp.Tool)
 		mcp.AddTool(server, tool("dispose_updates"), func(ctx context.Context, _ *mcp.CallToolRequest, in disposeUpdatesInput) (*mcp.CallToolResult, R, error) {
 			return as(ctx, func(hc *hostedCaller) (R, error) {
 				return hc.exec(board.Command{Operation: "updates.dispose", Data: dataJSON(map[string]any{"ids": in.IDs, "state": in.State})})
+			})
+		})
+		mcp.AddTool(server, tool("mark_updates_read"), func(ctx context.Context, _ *mcp.CallToolRequest, in markUpdatesReadInput) (*mcp.CallToolResult, R, error) {
+			return as(ctx, func(hc *hostedCaller) (R, error) {
+				data := map[string]any{"ids": in.IDs}
+				if in.All {
+					data = map[string]any{"all": true}
+				}
+				return hc.exec(board.Command{Operation: "updates.mark_read", Data: dataJSON(data)})
 			})
 		})
 	}
@@ -815,7 +835,9 @@ func (s *Server) hostedCapabilities() map[string]any {
 		tools = append(tools, t.Name)
 	}
 	if s.inboxDisposeOn() {
-		tools = append(tools, disposeUpdatesTool.Name)
+		for _, t := range inboxEntryTools {
+			tools = append(tools, t.Name)
+		}
 	}
 	catalog := s.staticCatalog()
 	for _, t := range listedTools(catalog, hostedServiceTools(catalog)) {

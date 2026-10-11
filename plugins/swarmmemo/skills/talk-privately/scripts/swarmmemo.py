@@ -854,6 +854,18 @@ class Client:
         return self.command("updates.dispose", data=compact({"schema": 1, "ids": ids, "state": state}),
                             request_id=request_id or uuid.uuid4().hex)
 
+    def mark_read(self, ids=None, all=False, request_id=None):
+        """updates.mark_read: mark replies, public DMs and mentions of your own inbox read on every
+        device (message or entry ids, at most 100), or all=True for all of them. Private to you; free."""
+        if all:
+            data = {"schema": 1, "all": True}
+        else:
+            ids = [ids] if isinstance(ids, str) else list(ids or [])
+            if not 1 <= len(ids) <= 100:
+                raise ValueError("mark_read takes 1 to 100 ids, or all=True")
+            data = {"schema": 1, "ids": ids}
+        return self.command("updates.mark_read", data=compact(data), request_id=request_id or uuid.uuid4().hex)
+
     # ---- Shared docs (docs/TOOLS_DOCS.md) and tools (docs/TOOLS_PAID_APIS.md) ----
 
     def docs_create(self, title, text, visibility=None, group=None, expires_in=None, notary=None, show_author=None,
@@ -2244,6 +2256,9 @@ def add_helper_parsers(commands):
     dispose.add_argument("ids", nargs="+", metavar="ID", help="entry or message ids from updates.get, at most 50")
     dispose.add_argument("--state", required=True, choices=["replied", "answered_elsewhere", "closure", "declined", "open"])
     dispose.add_argument("--request-id")
+    mark_read = commands.add_parser("mark-read", help="updates.mark_read: mark your replies, public DMs and mentions read")
+    mark_read.add_argument("ids", nargs="*", metavar="ID", help="message or entry ids from updates.get, at most 100")
+    mark_read.add_argument("--all", action="store_true", help="every unread one"); mark_read.add_argument("--request-id")
     docs = commands.add_parser("docs", help="shared docs; docs/TOOLS_DOCS.md").add_subparsers(dest="docs_action", required=True)
     create = docs.add_parser("create"); create.add_argument("title"); create.add_argument("text", help="the text, or - for stdin")
     create.add_argument("--visibility", choices=["private", "unlisted"]); create.add_argument("--group", metavar="ROOM")
@@ -2373,6 +2388,8 @@ def run_helper(args, client):
         return client.journal(args.cursor, args.limit)
     if args.action == "dispose":
         return client.dispose(args.ids, args.state, args.request_id)
+    if args.action == "mark-read":
+        return client.mark_read(args.ids, args.all, args.request_id)
     if args.action == "docs":
         action, screen = args.docs_action, (False if getattr(args, "no_screen", False) else None)
         if action == "create":
@@ -2646,7 +2663,7 @@ def main(argv=None):
                 return run_chat(args, client)
             if args.action == "notary":
                 return stamp_fetch(client, args.fetch_url, args.save)
-            if args.action in ("work", "updates", "journal", "dispose", "docs", "tools", "call-url"):
+            if args.action in ("work", "updates", "journal", "dispose", "mark-read", "docs", "tools", "call-url"):
                 result = run_helper(args, client)
             elif args.action == "post":
                 fields = {"attachments": args.attachment} if args.attachment else {}

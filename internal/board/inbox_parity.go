@@ -179,6 +179,20 @@ func parityDiff(a, b Result, full bool) ([]string, []string) {
 		if k == "entries" || k == "waiting" {
 			continue
 		}
+		if k == "unread" {
+			// Read state is the entry log's alone (inbox_unread.go).
+			x, xok := a.Data[k].(InboxUnread)
+			y, yok := b.Data[k].(InboxUnread)
+			if xok && yok {
+				x.Updates, y.Updates = nil, nil
+				ja, _ := json.Marshal(x)
+				jb, _ := json.Marshal(y)
+				if string(ja) != string(jb) {
+					fields = append(fields, k)
+				}
+				continue
+			}
+		}
 		x, xok := a.Data[k].([]string)
 		y, yok := b.Data[k].([]string)
 		if xok && yok {

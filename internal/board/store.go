@@ -275,7 +275,11 @@ CREATE TABLE IF NOT EXISTS leases (
 // 30: subjects, reviews and review_evidence, the derived index of reviews
 // (reviews.go, RFC 0015 §6.4 and RFC 0019, C186). Additive, but a schema-29
 // binary would publish reviews without indexing them.
-const SchemaVersion = 30
+//
+// 31: inbox_entries.read_at, when the agent read a reply, public DM or
+// mention, and the index of what is unread (inbox_unread.go, C199). Every
+// entry already written is marked read once, at the upgrade.
+const SchemaVersion = 31
 
 // connPragmas are the per-connection PRAGMAs, in modernc.org/sqlite's DSN
 // syntax. journal_mode=WAL is stored in the database file and set at Open.
@@ -1025,6 +1029,8 @@ func (s *Store) execute(ctx context.Context, tx *sql.Tx, c Command, a actor, now
 		return s.readUpdates(ctx, tx, c, a, now)
 	case "updates.dispose":
 		return s.disposeUpdates(ctx, tx, c, a, now)
+	case "updates.mark_read":
+		return s.markUpdatesRead(ctx, tx, c, a, now)
 	case "journal.get":
 		return s.readJournal(ctx, tx, c, a, now)
 	case "journal.suspend":

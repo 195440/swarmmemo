@@ -279,8 +279,9 @@ func encodeInboxDetail(detail map[string]any) string {
 // over live rows changes nothing. eventSeq is the newest message's sequence
 // the entries follow (-1: read it now), created the time they happened. It
 // returns the entries it wrote, with their ids: what push delivers
-// (inbox_push.go), once per entry.
-func addInboxEntries(ctx context.Context, tx *sql.Tx, entries []inboxEntry, eventSeq, created int64) ([]inboxEntry, error) {
+// (inbox_push.go), once per entry. readAt is 0 for news; the backfill
+// passes created, since history is not news (inbox_unread.go).
+func addInboxEntries(ctx context.Context, tx *sql.Tx, entries []inboxEntry, eventSeq, created, readAt int64) ([]inboxEntry, error) {
 	if len(entries) == 0 {
 		return nil, nil
 	}
@@ -292,9 +293,9 @@ func addInboxEntries(ctx context.Context, tx *sql.Tx, entries []inboxEntry, even
 	var added []inboxEntry
 	for _, e := range entries {
 		e.id = randomID()
-		res, err := tx.ExecContext(ctx, `INSERT INTO inbox_entries(id,account,kind,reasons,subject,room,actor,event_seq,detail,needs_answer,created_at)
- VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(account,kind,subject) DO NOTHING`,
-			e.id, e.account, e.kind, strings.Join(e.reasons, ","), e.subject, e.room, e.actor, eventSeq, e.detail, e.needsAnswer, created)
+		res, err := tx.ExecContext(ctx, `INSERT INTO inbox_entries(id,account,kind,reasons,subject,room,actor,event_seq,detail,needs_answer,created_at,read_at)
+ VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(account,kind,subject) DO NOTHING`,
+			e.id, e.account, e.kind, strings.Join(e.reasons, ","), e.subject, e.room, e.actor, eventSeq, e.detail, e.needsAnswer, created, readAt)
 		if err != nil {
 			return added, err
 		}
@@ -319,7 +320,7 @@ func (s *Store) recordInbox(ctx context.Context, tx *sql.Tx, src inboxSource) ([
 	if err != nil {
 		return nil, err
 	}
-	added, err := addInboxEntries(ctx, tx, entries, -1, src.at)
+	added, err := addInboxEntries(ctx, tx, entries, -1, src.at, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -407,7 +408,7 @@ func (v serviceBoardView) AddInboxEntry(ctx context.Context, tx *sql.Tx, e servi
 	if err != nil {
 		return err
 	}
-	added, err := addInboxEntries(ctx, tx, entries, -1, e.At)
+	added, err := addInboxEntries(ctx, tx, entries, -1, e.At, 0)
 	if err != nil || !v.s.inboxRead(ctx) {
 		return err
 	}
@@ -612,7 +613,7 @@ func backfillPosts(ctx context.Context, tx *sql.Tx, after, cutoff int64) (int64,
 		if err != nil {
 			return after, 0, 0, err
 		}
-		n, err := addInboxEntries(ctx, tx, entries, p.seq, p.src.at)
+		n, err := addInboxEntries(ctx, tx, entries, p.seq, p.src.at, p.src.at)
 		if err != nil {
 			return after, 0, 0, err
 		}
@@ -692,7 +693,7 @@ func backfillRows(ctx context.Context, tx *sql.Tx, rows *sql.Rows, after int64, 
 		if err != nil {
 			return after, 0, 0, err
 		}
-		n, err := addInboxEntries(ctx, tx, entries, it.eventSeq, it.src.at)
+		n, err := addInboxEntries(ctx, tx, entries, it.eventSeq, it.src.at, it.src.at)
 		if err != nil {
 			return after, 0, 0, err
 		}

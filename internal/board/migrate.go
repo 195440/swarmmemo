@@ -203,6 +203,10 @@ func migrateSchema(tx *sql.Tx, version int) error {
 	if _, err := tx.Exec(reviewSchema); err != nil {
 		return err
 	}
+	// Schema 31: inbox_entries.read_at and the unread index (inbox_unread.go, C199).
+	if err := migrateInboxRead31(tx, version); err != nil {
+		return err
+	}
 	_, err := tx.Exec(fmt.Sprintf("PRAGMA user_version=%d;", SchemaVersion))
 	return err
 }

@@ -304,6 +304,15 @@ func (s *Store) readUpdatesFromEntries(ctx context.Context, tx *sql.Tx, c Comman
 		if err = s.addInbox(ctx, tx, a, events, data); err != nil {
 			return Result{}, err
 		}
+		// data.unread.updates: the replies, public DMs and mentions not yet
+		// read, whatever the cursor (inbox_unread.go).
+		unread := data["unread"].(InboxUnread)
+		updates, err := inboxUnreadUpdates(ctx, tx, account, a.account, now)
+		if err != nil {
+			return Result{}, err
+		}
+		unread.Updates = &updates
+		data["unread"] = unread
 	}
 	entries, err := s.inboxPage(ctx, tx, c.Cursor, since, account, a.account, own, limit, now)
 	if err != nil {

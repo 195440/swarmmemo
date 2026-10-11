@@ -37,6 +37,11 @@ func legacyView(t *testing.T, r Result) string {
 		if k != "entries" && k != "waiting" {
 			data[k] = v
 		}
+		// Read state is the entry log's alone (C199).
+		if u, ok := v.(InboxUnread); ok {
+			u.Updates = nil
+			data[k] = u
+		}
 	}
 	raw, err := json.Marshal(map[string]any{"messages": r.Messages, "data": data})
 	if err != nil {

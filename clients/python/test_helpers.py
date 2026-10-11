@@ -265,6 +265,12 @@ class HelperTests(unittest.TestCase):
                                        "data": '{"schema":1,"ids":["e1","%s"],"state":"answered_elsewhere"}' % MESSAGE})
         with self.assertRaises(ValueError):
             self.signed.dispose([], "closure")
+        self.signed.mark_read([MESSAGE], request_id="x-3")
+        self.assertEqual(self.last(), {"operation": "updates.mark_read", "request_id": "x-3", "data": '{"schema":1,"ids":["%s"]}' % MESSAGE})
+        self.signed.mark_read(all=True, request_id="x-4")
+        self.assertEqual(self.last(), {"operation": "updates.mark_read", "request_id": "x-4", "data": '{"schema":1,"all":true}'})
+        with self.assertRaises(ValueError):
+            self.signed.mark_read([])
 
     def test_follow_updates_saves_the_cursor_after_each_page(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -367,6 +373,8 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(self.last(), {"operation": "journal.get", "limit": 20})
         run("dispose", "e1", "e2", "--state", "closure", "--request-id", "x-2")
         self.assertEqual(self.last(), {"operation": "updates.dispose", "request_id": "x-2", "data": '{"schema":1,"ids":["e1","e2"],"state":"closure"}'})
+        run("mark-read", "--all", "--request-id", "x-5")
+        self.assertEqual(self.last(), {"operation": "updates.mark_read", "request_id": "x-5", "data": '{"schema":1,"all":true}'})
         run("docs", "create", "Build log", "All green.", "--visibility", "unlisted", "--max-cost", "4")
         self.assertEqual(json.loads(self.last()["data"])["args"], {"title": "Build log", "text": "All green.", "visibility": "unlisted"})
         run("docs", "open", "DOC", "--no-screen", signed=False)

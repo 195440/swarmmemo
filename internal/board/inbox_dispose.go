@@ -115,24 +115,8 @@ type disposeData struct {
 // inbox, by entry id or by subject (a message id names every version of
 // it). Signed, own inbox only, free and idempotent.
 func (s *Store) disposeUpdates(ctx context.Context, tx *sql.Tx, c Command, a actor, now int64) (Result, error) {
-	if err := requireSigned(a); err != nil {
+	if err := s.ownInbox(ctx, tx, c, a, "updates.dispose marks"); err != nil {
 		return Result{}, err
-	}
-	if a.grant != nil {
-		return Result{}, problem(403, "own_inbox_only", "Only the agent itself can mark its inbox; sign as that agent.")
-	}
-	if c.Target != "" {
-		var account string
-		err := tx.QueryRowContext(ctx, "SELECT account FROM identities WHERE id=?", c.Target).Scan(&account)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return Result{}, err
-		}
-		if c.Target != a.id && account != a.account {
-			return Result{}, problem(403, "own_inbox_only", "Only the agent itself can mark its inbox; sign as that agent.")
-		}
-	}
-	if !s.inboxRead(ctx) {
-		return Result{}, problem(503, "service_unavailable", "updates.dispose marks entries of the inbox entry log, which this board does not read yet (/capabilities inbox.enabled).")
 	}
 	var d disposeData
 	if services.StrictObject([]byte(c.Data), &d) != nil || d.Schema != 1 || len(d.IDs) == 0 || len(d.IDs) > InboxDisposeMax {
@@ -141,42 +125,8 @@ func (s *Store) disposeUpdates(ctx context.Context, tx *sql.Tx, c Command, a act
 	if !slices.Contains(InboxDisposeStates, d.State) {
 		return Result{}, problem(400, "invalid_disposition", "state is replied, answered_elsewhere, closure, declined or open.")
 	}
-	ids := []string{}
-	for _, id := range d.IDs {
-		if id == "" || len(id) > inboxDisposeIDMax || strings.ContainsAny(id, "\x00\n") {
-			return Result{}, problem(400, "invalid_request", fmt.Sprintf("Each id is an entry id or a message id from updates.get, at most %d bytes.", inboxDisposeIDMax))
-		}
-		if !slices.Contains(ids, id) {
-			ids = append(ids, id)
-		}
-	}
-	// The entries named: by id, by subject, and every version of a message
-	// either names.
-	marks := "?" + strings.Repeat(",?", len(ids)-1)
-	args := []any{}
-	for _, id := range ids {
-		args = append(args, id)
-	}
-	named := `WITH named(x) AS (VALUES (` + strings.Join(strings.Split(marks, ","), "),(") + `)),
- subj(s) AS (SELECT x FROM named UNION SELECT subject FROM inbox_entries WHERE account=? AND id IN (SELECT x FROM named)),
- roots(r) AS (SELECT CASE WHEN origin<>'' THEN origin ELSE id END FROM events WHERE id IN (SELECT s FROM subj)),
- chain(s) AS (SELECT s FROM subj UNION SELECT id FROM events WHERE id IN (SELECT r FROM roots) UNION SELECT id FROM events WHERE origin IN (SELECT r FROM roots) AND origin<>'')
-`
-	args = append(args, a.account)
-	rows, err := tx.QueryContext(ctx, named+"SELECT id FROM inbox_entries WHERE account=? AND (id IN (SELECT x FROM named) OR subject IN (SELECT s FROM chain)) ORDER BY seq", append(slices.Clone(args), a.account)...)
+	matched, err := namedEntries(ctx, tx, a.account, d.IDs)
 	if err != nil {
-		return Result{}, err
-	}
-	matched := []string{}
-	for rows.Next() {
-		var id string
-		if err = rows.Scan(&id); err != nil {
-			rows.Close()
-			return Result{}, err
-		}
-		matched = append(matched, id)
-	}
-	if err = closeRows(rows); err != nil {
 		return Result{}, err
 	}
 	if len(matched) == 0 {
@@ -190,7 +140,7 @@ func (s *Store) disposeUpdates(ctx context.Context, tx *sql.Tx, c Command, a act
 	// open leaves an entry never disposed untouched, so a reply can still
 	// mark it. Reopening one sets disposed_at: it then stays open until the
 	// agent says otherwise.
-	res, err := tx.ExecContext(ctx, `UPDATE inbox_entries SET disposition=?,disposed_at=? WHERE account=? AND disposition<>? AND id IN (`+marks+`)`,
+	res, err := tx.ExecContext(ctx, `UPDATE inbox_entries SET disposition=?,disposed_at=? WHERE account=? AND disposition<>? AND id IN (?`+strings.Repeat(",?", len(matched)-1)+`)`,
 		append([]any{state, now, a.account, state}, toAny(matched)...)...)
 	if err != nil {
 		return Result{}, err
@@ -209,6 +159,70 @@ func toAny(list []string) []any {
 		out[i] = v
 	}
 	return out
+}
+
+// ownInbox is the check every mark of an inbox makes (updates.dispose,
+// updates.mark_read): signed by the agent itself, not a worker key, target
+// (when given) one of its own keys, and the board reading the entry log.
+// does names the operation for the 503 ("updates.dispose marks").
+func (s *Store) ownInbox(ctx context.Context, tx *sql.Tx, c Command, a actor, does string) error {
+	if err := requireSigned(a); err != nil {
+		return err
+	}
+	if a.grant != nil {
+		return problem(403, "own_inbox_only", "Only the agent itself can mark its inbox; sign as that agent.")
+	}
+	if c.Target != "" {
+		var account string
+		err := tx.QueryRowContext(ctx, "SELECT account FROM identities WHERE id=?", c.Target).Scan(&account)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if c.Target != a.id && account != a.account {
+			return problem(403, "own_inbox_only", "Only the agent itself can mark its inbox; sign as that agent.")
+		}
+	}
+	if !s.inboxRead(ctx) {
+		return problem(503, "service_unavailable", does+" entries of the inbox entry log, which this board does not read yet (/capabilities inbox.enabled).")
+	}
+	return nil
+}
+
+// namedEntries is the ids of account's entries that list names, in log
+// order: by entry id, by subject, and every version of a message either
+// names. Each id is non-empty, one line and at most inboxDisposeIDMax bytes.
+func namedEntries(ctx context.Context, tx *sql.Tx, account string, list []string) ([]string, error) {
+	ids := []string{}
+	for _, id := range list {
+		if id == "" || len(id) > inboxDisposeIDMax || strings.ContainsAny(id, "\x00\n") {
+			return nil, problem(400, "invalid_request", fmt.Sprintf("Each id is an entry id or a message id from updates.get, at most %d bytes.", inboxDisposeIDMax))
+		}
+		if !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
+	}
+	matched := []string{}
+	if len(ids) == 0 {
+		return matched, nil
+	}
+	values := "(?)" + strings.Repeat(",(?)", len(ids)-1)
+	rows, err := tx.QueryContext(ctx, `WITH named(x) AS (VALUES `+values+`),
+ subj(s) AS (SELECT x FROM named UNION SELECT subject FROM inbox_entries WHERE account=? AND id IN (SELECT x FROM named)),
+ roots(r) AS (SELECT CASE WHEN origin<>'' THEN origin ELSE id END FROM events WHERE id IN (SELECT s FROM subj)),
+ chain(s) AS (SELECT s FROM subj UNION SELECT id FROM events WHERE id IN (SELECT r FROM roots) UNION SELECT id FROM events WHERE origin IN (SELECT r FROM roots) AND origin<>'')
+SELECT id FROM inbox_entries WHERE account=? AND (id IN (SELECT x FROM named) OR subject IN (SELECT s FROM chain)) ORDER BY seq`, append(toAny(ids), account, account)...)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var id string
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		matched = append(matched, id)
+	}
+	return matched, closeRows(rows)
 }
 
 // inboxOpenFilter is what makes an entry waiting: it needs an answer, has no

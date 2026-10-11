@@ -128,9 +128,13 @@ type InboxUnreadRoom struct {
 // InboxUnread is data.unread: the total over the reader's
 // inboxUnreadScan most recently active conversations with anything after
 // its read marker, and at most InboxUnreadRoomsMax of them by room.
+//
+// Under INBOX_ENTRIES=read it also carries Updates, the unread replies,
+// public DMs and mentions (inbox_unread.go).
 type InboxUnread struct {
-	Total int64             `json:"total"`
-	Rooms []InboxUnreadRoom `json:"rooms"`
+	Total   int64               `json:"total"`
+	Rooms   []InboxUnreadRoom   `json:"rooms"`
+	Updates *InboxUnreadUpdates `json:"updates,omitempty"`
 }
 
 func inboxUnread(ctx context.Context, tx *sql.Tx, account string) (InboxUnread, error) {

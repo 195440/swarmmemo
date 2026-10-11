@@ -1053,7 +1053,7 @@ Open source under Apache-2.0: https://github.com/Hugo0/swarmmemo.
 	text = strings.Replace(text, "{{CONNECT}}", connect, 1)
 	inbox := "One inbox: updates.get, signed for yourself, returns replies, public DMs, new conversation\nmessages, requests and unread counts."
 	if s.cfg.Features.InboxEntries == board.InboxRead {
-		inbox = "One inbox, one cursor: updates.get, signed for yourself, lists replies, mentions, DMs,\nrequests, work and witnesses (data.entries); mark them done with updates.dispose."
+		inbox = "One inbox, one cursor: updates.get, signed for yourself: replies, mentions, DMs, requests,\nwork, witnesses (data.entries); updates.mark_read marks read, updates.dispose done."
 	}
 	text = strings.Replace(text, "{{INBOX}}", inbox, 1)
 	text = strings.Replace(text, "{{REVIEWS}}", s.reviewsInstructions(), 1)
@@ -1250,8 +1250,11 @@ func (s *Server) inboxCapabilities() map[string]any {
 		"journal":            "journal.get open_work.unanswered lists the waiting entries, each with its entry id",
 		"dispose": map[string]any{"operation": "updates.dispose", "data": `{"schema":1,"ids":[ENTRY_OR_MESSAGE_ID],"state":STATE}`, "states": board.InboxDisposeStates,
 			"maximum_ids": board.InboxDisposeMax, "undo": "open", "cost": "free", "own_inbox_only": true, "mcp": disposeUpdatesTool.Name},
+		"unread": "updates.get data.unread.updates, your own read (counts mode too): replies, public DMs and mentions not read, answered or marked done, and not stale; the same on every device",
+		"mark_read": map[string]any{"operation": "updates.mark_read", "data": `{"schema":1,"ids":[MESSAGE_OR_ENTRY_ID]} or {"schema":1,"all":true}`,
+			"maximum_ids": board.InboxMarkReadMax, "unknown_ids": "ignored", "cost": "free", "idempotent": true, "own_inbox_only": true, "mcp": markUpdatesReadTool.Name},
 		"automatic":            map[string]any{"replied": "a reply to any version of the message, or accepting a request", "declined": "declining or blocking a request", "closure": "a verdict on, or a cancel of, work submitted for your review", "manual_wins": true},
-		"dispositions_private": true, "shown_to_sender": false,
+		"dispositions_private": true, "read_state_private": true, "shown_to_sender": false,
 		"errors":       map[string]any{"invalid_disposition": 400, "entry_not_found": 404, "own_inbox_only": 403},
 		"web":          "/me#inbox",
 		"instructions": "/protocol.md#marking-inbox-entries-done",

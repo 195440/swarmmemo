@@ -41,8 +41,9 @@ func TestInboxEntriesSurfaces(t *testing.T) {
 	}
 }
 
-// C61 step 3 (C71): /capabilities inbox, the /llms.txt line and the MCP tool
-// dispose_updates exist only under INBOX_ENTRIES=read; shadow lists none.
+// C61 step 3 (C71), C199: /capabilities inbox, the /llms.txt line and the
+// MCP tools dispose_updates and mark_updates_read exist only under
+// INBOX_ENTRIES=read; shadow lists none.
 func TestInboxDispositionSurfaces(t *testing.T) {
 	for _, mode := range []board.InboxMode{board.InboxShadow, board.InboxRead} {
 		s, _ := catalogServer(board.Features{InboxEntries: mode})
@@ -53,29 +54,38 @@ func TestInboxDispositionSurfaces(t *testing.T) {
 					Operation string   `json:"operation"`
 					States    []string `json:"states"`
 				} `json:"dispose"`
-				Private bool `json:"dispositions_private"`
+				Private  bool `json:"dispositions_private"`
+				MarkRead struct {
+					Operation string `json:"operation"`
+					MCP       string `json:"mcp"`
+				} `json:"mark_read"`
 			} `json:"inbox"`
 		}
 		if err := json.Unmarshal(makeRequest(s, "GET", "/capabilities", "", "").Body.Bytes(), &caps); err != nil {
 			t.Fatal(err)
 		}
-		if caps.Inbox.Enabled != (mode == board.InboxRead) || caps.Inbox.Dispose.Operation != "updates.dispose" || len(caps.Inbox.Dispose.States) != 5 || !caps.Inbox.Private {
+		if caps.Inbox.Enabled != (mode == board.InboxRead) || caps.Inbox.Dispose.Operation != "updates.dispose" || len(caps.Inbox.Dispose.States) != 5 || !caps.Inbox.Private ||
+			caps.Inbox.MarkRead.Operation != "updates.mark_read" || caps.Inbox.MarkRead.MCP != "mark_updates_read" {
 			t.Fatalf("%v: inbox %+v", mode, caps.Inbox)
 		}
 		llms := makeRequest(s, "GET", "/llms.txt", "", "").Body.String()
-		if strings.Contains(llms, "updates.dispose") != (mode == board.InboxRead) {
+		if strings.Contains(llms, "updates.dispose") != (mode == board.InboxRead) || strings.Contains(llms, "updates.mark_read") != (mode == board.InboxRead) {
 			t.Fatalf("%v: /llms.txt dispose line", mode)
 		}
 	}
 
 	_, shadow := hostedServerWith(t, board.Features{InboxEntries: board.InboxShadow})
-	if _, ok := listTools(t, shadow, "/mcp")["dispose_updates"]; ok {
-		t.Fatal("shadow lists dispose_updates")
+	for _, name := range []string{"dispose_updates", "mark_updates_read"} {
+		if _, ok := listTools(t, shadow, "/mcp")[name]; ok {
+			t.Fatal("shadow lists " + name)
+		}
 	}
 	_, s := hostedServerWith(t, board.Features{InboxEntries: board.InboxRead})
 	for _, path := range []string{"/mcp", web.AssistantMCPPath} {
-		if _, ok := listTools(t, s, path)["dispose_updates"]; !ok {
-			t.Fatalf("%s lacks dispose_updates", path)
+		for _, name := range []string{"dispose_updates", "mark_updates_read"} {
+			if _, ok := listTools(t, s, path)[name]; !ok {
+				t.Fatalf("%s lacks %s", path, name)
+			}
 		}
 	}
 	// A hosted identity with a message addressed to it: it waits, then it
@@ -101,5 +111,30 @@ func TestInboxDispositionSurfaces(t *testing.T) {
 	}
 	if _, failure := callTool(t, s, "/mcp/t/"+token, "", "dispose_updates", map[string]any{"ids": []string{"no-such-entry"}, "state": "closure"}); !strings.HasPrefix(failure, "404 entry_not_found") {
 		t.Fatalf("an unknown id: %q", failure)
+	}
+
+	// C199: read state, at parity with the browser. Answered elsewhere is
+	// read; a new public DM is unread until mark_updates_read.
+	unread := func() []any {
+		read := mustTool(t, s, "/mcp/t/"+token, "", "read_updates", map[string]any{})
+		list, _ := dig(read, "data", "unread", "updates", "addressed").([]any)
+		return list
+	}
+	if got := unread(); len(got) != 0 {
+		t.Fatalf("unread after dispose: %v", got)
+	}
+	again := dig(mustTool(t, s, "/mcp", "", "post_message", map[string]any{"text": "another question", "to": agent}), "receipt", "id").(string)
+	if got := unread(); len(got) != 1 || got[0] != again {
+		t.Fatalf("unread before mark_updates_read: %v", got)
+	}
+	marked := mustTool(t, s, "/mcp/t/"+token, "", "mark_updates_read", map[string]any{"ids": []string{again}})
+	if dig(marked, "data", "changed") != float64(1) || dig(marked, "data", "unread", "updates", "total") != float64(0) || len(unread()) != 0 {
+		t.Fatalf("mark_updates_read: %v", marked)
+	}
+	if all := mustTool(t, s, "/mcp/t/"+token, "", "mark_updates_read", map[string]any{"all": true}); dig(all, "data", "changed") != float64(0) {
+		t.Fatalf("mark_updates_read all: %v", all)
+	}
+	if _, failure := callTool(t, s, "/mcp/t/"+token, "", "mark_updates_read", map[string]any{}); !strings.HasPrefix(failure, "400 invalid_request") {
+		t.Fatalf("neither ids nor all: %q", failure)
 	}
 }

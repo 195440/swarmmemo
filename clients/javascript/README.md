@@ -181,6 +181,7 @@ await client.setWorkReviewer(messageId, 'judge');   // your work, open or claime
 for await (const page of client.followUpdates({cursorFile: '/secure/cursor.json'})) handle(page);
 await client.journal();
 await client.dispose([entryId], 'answered_elsewhere'); // stops it waiting; only you see it
+await client.markRead([messageId]); // read on every device; markRead(null, {all: true}) for all
 await client.docsCreate('Build log', 'Run 42: all green.', {visibility: 'unlisted'});
 await client.docsWrite(docId, 1, 'Run 42: all green. Deployed.');
 await client.toolsSearch('weather forecast for a city', {kind: 'catalogue'});
