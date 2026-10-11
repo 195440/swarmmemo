@@ -33,14 +33,17 @@ function element(extra = {}) {
   return el;
 }
 
-function runStats(hash, plotTop = 400) {
+function runStats(hash, plotTop = 400, figureTop = 0) {
   let width = 1200;
   const observers = [];
   const svg = element({
     getBoundingClientRect: () => ({left: 0, top: 0, width, height: 100}),
     querySelectorAll: () => [element({dataset: {label: 'posts', values: '1|2|3', ys: '10|20|30'}, getAttribute: () => 's-posts'})],
   });
+  const figure = element({getBoundingClientRect: () => ({top: figureTop})});
   const plot = element({
+    parentNode: figure,
+    closest: () => figure,
     dataset: {x: 'a|b|c'},
     querySelector: () => svg,
     getBoundingClientRect: () => ({left: 0, top: plotTop, width, height: 100}),
@@ -60,7 +63,7 @@ function runStats(hash, plotTop = 400) {
     document, location: {hash}, ResizeObserver, Math,
     window: {addEventListener() {}},
   });
-  return {plot, observers, resize(w) { width = w; observers.forEach((o) => o.f()); }};
+  return {plot, figure, observers, resize(w) { width = w; observers.forEach((o) => o.f()); }};
 }
 
 // A malformed fragment no longer aborts the readouts.
@@ -94,6 +97,20 @@ for (const hash of ['#%', '#%E0%A4%A']) {
   const low = runStats('', 400).plot;
   low.listeners.focus();
   assert.ok(!low.children[2].classList.contains('below'), 'stays above with room');
+  // Room under the bar but above the chart's own top is the tiles' room.
+  const tiles = runStats('', 400, 350).plot;
+  tiles.listeners.focus();
+  assert.ok(tiles.children[2].classList.contains('below'), 'does not open over what sits above the chart');
+}
+
+// The selected day is announced from a status line outside the role=img plot.
+{
+  const {plot, figure} = runStats('');
+  plot.listeners.focus();
+  plot.listeners.keydown({key: 'Home', preventDefault() {}});
+  const status = figure.children[0];
+  assert.ok(status.className === 'sr-only', 'status line beside the plot');
+  assert.equal(status.textContent, 'a: posts 1');
 }
 
 // The field follows prefers-reduced-motion live.

@@ -48,7 +48,11 @@
     const guide = make('span', 'chart-guide', plot);
     const dots = series.map((s) => (s.ys ? make('span', 'chart-dot ' + s.cls, plot) : null));
     const box = make('div', 'chart-readout', plot);
-    box.setAttribute('aria-live', 'polite');
+    box.setAttribute('aria-hidden', 'true');
+    // The plot is role=img, so screen readers skip what changes inside it:
+    // the day's values are announced from a status line beside the plot.
+    const said = make('span', 'sr-only', plot.parentNode);
+    said.setAttribute('role', 'status');
     const off = () => {
       plot.classList.remove('is-reading');
     };
@@ -78,10 +82,13 @@
       const w = box.offsetWidth;
       box.style.left = Math.max(0, Math.min(p.width - w, x - w / 2)) + 'px';
       // Above the plot by default; below it when the space above is off
-      // screen or under the sticky contents bar.
+      // screen, under the sticky contents bar, or outside the chart (over
+      // the headline tiles or the chart before it).
       const bar = document.querySelector('.stats-toc');
-      const top = bar ? Math.max(0, bar.getBoundingClientRect().bottom) : 0;
+      const chart = plot.closest('figure');
+      const top = Math.max(0, bar ? bar.getBoundingClientRect().bottom : 0, chart ? chart.getBoundingClientRect().top : 0);
       box.classList.toggle('below', p.top - box.offsetHeight - 8 < top);
+      said.textContent = xs[at] + (at === n - 1 ? ' (so far)' : '') + ': ' + series.map((s) => s.label + ' ' + s.values[at]).join(', ');
     };
     const fromPointer = (e) => {
       const r = svg.getBoundingClientRect();

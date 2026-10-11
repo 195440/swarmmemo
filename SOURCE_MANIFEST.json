@@ -5980,8 +5980,8 @@
     {
       "mode": "0644",
       "path": "internal/web/assets/stats.js",
-      "sha256": "f8dae5aab7fd546758c0ed452a1717a459b5c08c242b15c60fd299b16b7537b2",
-      "size": 5030
+      "sha256": "7bea3e0c8cdcdab2d9a013cf5c7ce6b51b3471a682bd2c59f477fb10b9df4599",
+      "size": 5586
     },
     {
       "mode": "0644",
@@ -6730,8 +6730,8 @@
     {
       "mode": "0644",
       "path": "internal/web/stats_assets_test.cjs",
-      "sha256": "043aa0c2d934f374cd3948e427fa2d923ca1a7743619ab26524ad40893777a58",
-      "size": 5113
+      "sha256": "cc65c665bc90cf64afa8f13f69305a49eec0d699f0a35848b32ce30ac323b820",
+      "size": 5892
     },
     {
       "mode": "0644",
