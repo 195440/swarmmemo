@@ -542,12 +542,12 @@ func (r *reviewEvidenceRow) fail(reason string) {
 }
 
 // subjectMatchesURL reports whether a URL's method and address fall under
-// sub: the same x402 endpoint, the same origin for a site, the same
-// registrable domain for a domain.
+// sub: the same endpoint (x402 or mpp), the same origin for a site, the
+// same registrable domain for a domain.
 func subjectMatchesURL(sub reviews.Subject, method, raw string, opt reviews.Options) bool {
 	switch sub.Type {
-	case reviews.TypeX402:
-		got, err := reviews.Canonical(reviews.TypeX402, strings.ToUpper(method)+" "+raw, opt)
+	case reviews.TypeX402, reviews.TypeMPP:
+		got, err := reviews.Canonical(sub.Type, strings.ToUpper(method)+" "+raw, opt)
 		return err == nil && got.ID == sub.ID
 	case reviews.TypeSite:
 		got, err := reviews.Canonical(reviews.TypeSite, raw, opt)
@@ -781,6 +781,42 @@ type SubjectInfo struct {
 	FirstSeen int64          `json:"first_seen,omitempty"`
 	LastSeen  int64          `json:"last_seen,omitempty"`
 	Owners    []SubjectOwner `json:"owners,omitempty"`
+	// Siblings name the same endpoint under the other endpoint types (an
+	// x402 subject's mpp subject and the reverse), each with its reviews'
+	// summary once reviewed; subject.get fills them.
+	Siblings []SubjectSibling `json:"also_reviewed_as,omitempty"`
+}
+
+// SubjectSibling is a sibling subject on a subject's page: where it is,
+// and its reviews' summary once it has reviews.
+type SubjectSibling struct {
+	SubjectParent
+	Reviews *ReviewSummary `json:"reviews,omitempty"`
+}
+
+// subjectSiblings are sub's siblings with what is known of their reviews.
+func subjectSiblings(ctx context.Context, tx *sql.Tx, sub reviews.Subject) ([]SubjectSibling, error) {
+	sibs := sub.Siblings()
+	if len(sibs) == 0 {
+		return nil, nil
+	}
+	ids := make([]string, 0, len(sibs))
+	for _, s := range sibs {
+		ids = append(ids, s.ID)
+	}
+	sums, err := reviewSummaries(ctx, tx, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SubjectSibling, 0, len(sibs))
+	for _, s := range sibs {
+		sib := SubjectSibling{SubjectParent: SubjectParent{ID: s.ID, Type: s.Type, Key: s.Key, URI: s.URI(), URL: "/s/" + s.ID}}
+		if sum, ok := sums[s.ID]; ok {
+			sib.Reviews = &sum
+		}
+		out = append(out, sib)
+	}
+	return out, nil
 }
 
 // ReviewEvidence is one cited evidence id and what the board found.
@@ -1163,6 +1199,9 @@ func (s *Store) readSubject(ctx context.Context, tx *sql.Tx, c Command, now int6
 		return Result{}, err
 	}
 	if info.Owners, err = subjectOwners(ctx, tx, sub, s.subjectOptions()); err != nil {
+		return Result{}, err
+	}
+	if info.Siblings, err = subjectSiblings(ctx, tx, sub); err != nil {
 		return Result{}, err
 	}
 	data := map[string]any{"subject": info, "text_is_untrusted": true, "order": reviewOrderNote()}

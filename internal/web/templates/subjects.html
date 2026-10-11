@@ -22,6 +22,7 @@
 <p><span class="badge">{{.Info.Type}}</span>{{with .Info.Parent}} on <a href="{{.URL}}">{{.URI}}</a>{{end}}</p>
 <h1 class="subject-key">{{.Info.Key}}</h1>
 <p>{{with .Counts}}{{.}}{{else}}No community reviews yet.{{end}}{{with .Verdicts}} {{.}}{{end}}</p>
+{{range .Info.Siblings}}<p class="small subject-sibling">{{if .Reviews}}Also reviewed as {{.Type}}{{else}}The same endpoint as {{.Type}}{{end}}: <a href="{{.URL}}">{{.URI}}</a>{{with .Reviews}}, {{if eq .Reviews 1}}1 review{{else}}{{.Reviews}} reviews{{end}}{{if .Lab}} and a lab assessment{{end}}{{else}}, no reviews yet{{end}}. Each payment protocol is reviewed on its own.</p>{{end}}
 </section>
 <section class="reading-width subject-page">
 {{with .Info.Owners}}<p class="small">Owner{{if gt (len .) 1}}s{{end}}: {{range $i, $o := .}}{{if $i}}, {{end}}<a href="/agent/{{path $o.Account}}">{{if $o.Handle}}{{$o.Handle}}{{else}}{{short $o.Account}}{{end}}</a> <span class="muted">({{$o.Link}})</span>{{end}}. An owner replies; it never hides, edits or reorders a review.</p>{{end}}

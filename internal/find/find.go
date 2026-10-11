@@ -1,7 +1,7 @@
 // Package find is Find: one intent search over everything SwarmMemo can
-// rate or call (its own tools, the paid x402 APIs it relays, agent
-// offerings, agents, and the reviewed sites, domains, MCP servers and
-// packages of the reviews core).
+// rate or call (its own tools, the paid x402 APIs it relays, the MPP
+// directory's APIs it lists, agent offerings, agents, and the reviewed
+// sites, domains, MCP servers and packages of the reviews core).
 //
 // A query goes through three steps, each its own part of this package:
 //
@@ -33,8 +33,8 @@ import (
 )
 
 // Types of result, as the wire names them. TypeService is a SwarmMemo
-// tool or a paid x402 API (both called with service.call), told apart by
-// Kind.
+// tool or a paid x402 API (both called with service.call), or a paid API
+// only MPP lists (paid by the agent's own MPP client), told apart by Kind.
 const (
 	TypeService  = "service"
 	TypeOffering = "offering"
@@ -52,7 +52,29 @@ var Types = []string{TypeService, TypeOffering, TypeAgent, TypeSite, TypeDomain,
 const (
 	KindTool = "tool" // a SwarmMemo tool, swarmmemo:SERVICE.METHOD
 	KindX402 = "x402" // a paid API the x402 relay calls
+	KindMPP  = "mpp"  // a paid API the MPP directory lists: listed, never relayed
 )
+
+// Protocols are the payment protocol families a filter may name: a doc
+// matches when one of its protocols is the family (x402) or in it
+// (mpp/tempo, mpp/stripe and mpp/evm are mpp).
+var Protocols = []string{"x402", "mpp"}
+
+// protocolFamilies is a doc's protocols as the index's protocol column
+// holds them: each family once, space-separated and padded, so a filter is
+// one instr().
+func protocolFamilies(protocols []string) string {
+	out := " "
+	for _, f := range Protocols {
+		for _, p := range protocols {
+			if p == f || strings.HasPrefix(p, f+"/") {
+				out += f + " "
+				break
+			}
+		}
+	}
+	return out
+}
 
 // Outputs a filter may ask for.
 var Outputs = []string{"json", "text", "html", "image", "audio", "video"}
@@ -61,7 +83,7 @@ var Outputs = []string{"json", "text", "html", "image", "audio", "video"}
 var Networks = map[string]string{
 	"eip155:8453": "base", "eip155:84532": "base-sepolia", "eip155:137": "polygon", "eip155:80002": "polygon-amoy",
 	"eip155:1": "ethereum", "eip155:10": "optimism", "eip155:42161": "arbitrum",
-	"solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp": "solana",
+	"solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp": "solana", "eip155:4217": "tempo",
 }
 
 // NetworkName is the short name of a CAIP-2 network id or a short name;
@@ -95,7 +117,7 @@ const (
 // Doc is one entry of the index, as a source gives it.
 type Doc struct {
 	Type        string // one of Types
-	Kind        string // a service's kind: KindTool or KindX402
+	Kind        string // a service's kind: KindTool, KindX402 or KindMPP
 	ID          string // unique within Type
 	Name        string
 	Description string
@@ -106,10 +128,25 @@ type Doc struct {
 	PriceText   string // the price as shown, when it is not in USD ("5 credits")
 	Network     string // a Networks name, or ""
 	Output      string // one of Outputs, or ""
-	SubjectID   string // its subject in the reviews core, or ""
-	Review      string // where its reviews are read and written: /s/ID, or /s?q=URI before the first
-	Untrusted   bool   // Description is text from outside SwarmMemo (an upstream or an agent)
-	Quality     Quality
+	// Protocols are the payment protocols it takes: x402, mpp/METHOD.
+	Protocols []string
+	SubjectID string // its subject in the reviews core, or ""
+	Review    string // where its reviews are read and written: /s/ID, or /s?q=URI before the first
+	// Also are its sibling subjects with reviews: the same endpoint under
+	// another protocol's subject type (x402 and mpp). Shown, never ranked.
+	Also      []Also
+	Untrusted bool // Description is text from outside SwarmMemo (an upstream or an agent)
+	Quality   Quality
+}
+
+// Also is one sibling subject a result shows beside its own: its type, id,
+// page and what is known of its reviews.
+type Also struct {
+	Type      string   `json:"type"`
+	SubjectID string   `json:"subject_id"`
+	ReviewURL string   `json:"review_url"`
+	Lab       *LabMark `json:"lab,omitempty"`
+	Reviews   *Reviews `json:"reviews,omitempty"`
 }
 
 // Quality is what the ranking may weigh, all of it public.
@@ -144,6 +181,7 @@ type Filters struct {
 	MaxPrice string   `json:"max_price"` // USD, a decimal string; "" none
 	Output   string   `json:"output"`
 	Network  string   `json:"network"`
+	Protocol string   `json:"protocol"` // x402 or mpp
 }
 
 // maxMicro is MaxPrice in micro-USD; -1 when none.
@@ -160,7 +198,7 @@ func (f Filters) maxMicro() int64 {
 
 // Empty reports whether no filter applies.
 func (f Filters) Empty() bool {
-	return len(f.Types) == 0 && f.Category == "" && f.MaxPrice == "" && f.Output == "" && f.Network == ""
+	return len(f.Types) == 0 && f.Category == "" && f.MaxPrice == "" && f.Output == "" && f.Network == "" && f.Protocol == ""
 }
 
 // Request is one search.
@@ -200,8 +238,10 @@ type Hit struct {
 	PriceText   string   `json:"price_text,omitempty"`
 	Network     string   `json:"network,omitempty"`
 	Output      string   `json:"output,omitempty"`
+	Protocols   []string `json:"protocols,omitempty"`
 	SubjectID   string   `json:"subject_id,omitempty"`
 	ReviewURL   string   `json:"review_url,omitempty"`
+	Also        []Also   `json:"also_reviewed_as,omitempty"`
 	State       string   `json:"state,omitempty"`
 	Lab         *LabMark `json:"lab,omitempty"`
 	Reviews     *Reviews `json:"reviews,omitempty"`

@@ -1742,6 +1742,7 @@ caption.chart-note{text-align:left;caption-side:top}
 
 /* ---------- subjects and reviews (/s/ID, review cards on /e/ID; RFC 0019) ---------- */
 .page-heading h1.subject-key{font-family:var(--mono);font-size:var(--t-title);line-height:1.35;overflow-wrap:anywhere;word-break:break-word}
+.subject-sibling{overflow-wrap:anywhere;word-break:break-word}
 .review-card{border-bottom:1px solid var(--line);padding:var(--s-4) 0;overflow-wrap:anywhere;min-width:0}
 .review-card-head{display:flex;flex-wrap:wrap;gap:var(--s-2);align-items:baseline;font-size:var(--t-ui)}
 .review-facts{margin:var(--s-2) 0}

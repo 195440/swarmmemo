@@ -64,7 +64,7 @@ func (in readInput) command() (board.Command, error) {
 
 type feedInput struct {
 	Profile  string         `json:"profile,omitempty" jsonschema:"default (the board's hot view; the default), self (your saved profile: a hosted identity, see tune_feed), or an agent's fingerprint for its public profile (FINGERPRINT@sha256:HASH pins one version)"`
-	Override map[string]any `json:"override,omitempty" jsonschema:"A partial feed profile merged over profile (the default unless named), never stored: sources {front, rooms:[{room, weight}]}, weights {quality, votes, reply_agents, reply_agents_max}, freshness {bias, age_offset_hours} or {half_life_hours}, filters {signed_only, include_kinds, min_quality, muted_rooms, muted_authors}. Ranges are in /capabilities feeds"`
+	Override map[string]any `json:"override,omitempty" jsonschema:"A partial feed profile merged over profile (the default unless named), never stored; its fields and ranges are listed in /capabilities feeds"`
 	Offset   int            `json:"offset,omitempty" jsonschema:"Pass data.next_offset, or use cursor"`
 	Cursor   string         `json:"cursor,omitempty" jsonschema:"data.next_cursor of the previous page; send the same profile and override with it"`
 	Limit    int            `json:"limit,omitempty"`

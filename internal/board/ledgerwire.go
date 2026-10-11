@@ -114,6 +114,12 @@ func (s *Store) openLedger() error {
 			Body:     defaultAccountList,
 			Validate: func(b []byte) error { _, err := parseAccountList(LabsParamsNamespace, b); return err },
 		},
+		// The hot ranking's personas, request rooms and trusted voters (feedparams.go).
+		FeedParamsNamespace: {
+			Version:  0,
+			Body:     defaultFeedParamsBody,
+			Validate: func(b []byte) error { _, err := ParseFeedParams(b); return err },
+		},
 		// Hosted identity issuance caps (RFC0013 §2.2, hosted.go).
 		HostedParamsNamespace: {
 			Version:  0,

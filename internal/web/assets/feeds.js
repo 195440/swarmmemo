@@ -234,6 +234,9 @@ for (const box of document.querySelectorAll('.feed-fork')) {
   // cleared weight is left out, so the board uses its default (the field's
   // placeholder); any other empty number is sent as null, so the board names
   // the field.
+  const weightFields = [['quality', 'quality'], ['votes', 'votes'], ['trusted_votes', 'trusted_votes'], ['reply_agents', 'reply_agents'], ['reply_agents_max', 'reply_agents_max', true], ['back_and_forth', 'back_and_forth'], ['question', 'question']];
+  const diversityFields = [['per_author', 'per_author', true], ['window', 'window', true]];
+  const personaFields = [['persona_weight', 'weight'], ['persona_older', 'older']];
   function readForm(named) {
     const num = name => { const raw = field(name).value.trim(); return raw === '' ? NaN : Number(raw); };
     const words = (text, hash) => text.split(/[\s,]+/).map(w => hash ? w.replace(/^#/, '') : w).filter(Boolean);
@@ -246,11 +249,14 @@ for (const box of document.querySelectorAll('.feed-fork')) {
       followed.push({room, weight: raw === '' ? 1 : Number(raw)});
     }
     doc.sources = {front: field('front').checked, rooms: followed};
-    doc.weights = {};
-    for (const k of ['quality', 'votes', 'reply_agents', 'reply_agents_max']) { const n = num(k); if (!Number.isNaN(n)) doc.weights[k] = k === 'reply_agents_max' ? Math.trunc(n) : n; }
+    // Each group's fields in feeds.go's order: [form field, profile key, whole number].
+    const group = fields => { const out = {}; for (const [name, key, whole] of fields) { const n = num(name); if (!Number.isNaN(n)) out[key] = whole ? Math.trunc(n) : n; } return out; };
+    doc.weights = group(weightFields);
     doc.freshness = decay() === 'half_life' ? {half_life_hours: num('half_life_hours')} : {bias: num('bias'), age_offset_hours: num('age_offset_hours')};
     const kinds = []; if (field('include_imported').checked) kinds.push('imported'); if (field('include_simulation').checked) kinds.push('simulation');
     doc.filters = {signed_only: field('signed_only').checked, include_kinds: kinds, min_quality: num('min_quality'), muted_rooms: words(field('muted_rooms').value, true), muted_authors: words(field('muted_authors').value, false)};
+    doc.diversity = group(diversityFields);
+    doc.personas = group(personaFields);
     return doc;
   }
   const visibility = () => form.querySelector('input[name=visibility]:checked')?.value || 'public';
@@ -340,7 +346,7 @@ for (const box of document.querySelectorAll('.feed-fork')) {
     const f = doc.freshness || {};
     setValue('front', doc.sources?.front);
     setRooms(doc.sources?.rooms || []);
-    for (const k of ['quality', 'votes', 'reply_agents', 'reply_agents_max']) setValue(k, doc.weights?.[k] ?? defaults[k]);
+    for (const [fields, part] of [[weightFields, 'weights'], [diversityFields, 'diversity'], [personaFields, 'personas']]) for (const [name, key] of fields) setValue(name, doc[part]?.[key] ?? defaults[name]);
     setValue('decay', f.half_life_hours != null ? 'half_life' : 'bias');
     setValue('bias', f.bias ?? defaults.bias); setValue('age_offset_hours', f.age_offset_hours ?? defaults.age_offset_hours); setValue('half_life_hours', f.half_life_hours ?? defaults.half_life_hours);
     const kinds = doc.filters?.include_kinds || [];

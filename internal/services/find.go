@@ -2,8 +2,9 @@ package services
 
 // What Find (internal/find) indexes from the services: the categories and
 // their words (x402Categories, the one list), the SwarmMemo tools, and the
-// x402 catalogue's resources as the resources read lists them. Reads only:
-// the snapshot and the registry, no network, no transaction held.
+// catalogue's entries as the resources read lists them (x402 resources,
+// then the MPP directory's entries no x402 resource lists). Reads only: the
+// snapshot and the registry, no network, no transaction held.
 
 import (
 	"context"
@@ -73,23 +74,26 @@ func (e *Engine) ToolListings(ctx context.Context, q allowance.Querier, now int6
 	return out, nil
 }
 
-// X402Listing is one resource of the x402 catalogue as Find indexes it:
-// what the resources read lists, with our own calls' record.
+// X402Listing is one entry of the catalogue as Find indexes it: what the
+// resources read lists, with our own calls' record.
 type X402Listing struct {
-	ID       string
-	Method   string
-	URL      string // canonical; indexed for its words, never shown
-	Summary  string // the served summary: "" while an open one is unscreened or withheld
-	Category string
-	Network  string // CAIP-2
-	MaxPrice int64  // atomic units of the asset, capped at the per-call cap
-	Decimals int
-	Pinned   bool
-	Callable bool
-	Calls    int64 // our answered calls, last 30 days
-	Failed   int64 // our failed calls, last 30 days
-	Demoted  bool  // most of our recent calls failed
-	Subject  string
+	ID        string
+	Kind      string   // KindX402 (the relay may call it) or KindMPP (listed only)
+	Protocols []string // x402 and mpp/METHOD, as the resources read lists them
+	Method    string
+	URL       string // indexed for its words; shown for an MPP entry only
+	Summary   string // the served summary: "" while an open one is unscreened or withheld
+	Category  string
+	Network   string // CAIP-2, or ""
+	MaxPrice  int64  // atomic units of the asset, capped at the per-call cap; -1 unpriced
+	Decimals  int
+	Pinned    bool
+	Callable  bool
+	Reason    string // why an MPP entry is not callable
+	Calls     int64  // our answered calls, last 30 days
+	Failed    int64  // our failed calls, last 30 days
+	Demoted   bool   // most of our recent calls failed
+	Subject   string
 }
 
 // X402Listings are the resources the resources read would list: the
@@ -111,7 +115,7 @@ func (r *Registry) X402Listings() []X402Listing {
 	denied := x.cat.denied.Load()
 	var out []X402Listing
 	add := func(res *X402Resource) {
-		l := X402Listing{ID: res.ID, Method: res.Method, URL: res.URL, Summary: res.servedSummary(), Category: res.Category, Network: x.cfg.Network,
+		l := X402Listing{ID: res.ID, Kind: KindX402, Protocols: snap.protocolsOf(res), Method: res.Method, URL: res.URL, Summary: res.servedSummary(), Category: res.Category, Network: x.cfg.Network,
 			MaxPrice: min(res.MaxAmount, x.cfg.PerCall), Decimals: x.cfg.Decimals, Pinned: !res.Open, Callable: x.callable(res)}
 		if st, ok := snap.stats[res.ID]; ok {
 			l.Calls, l.Failed, l.Demoted = st.ok, st.failed, st.demoted()
@@ -135,6 +139,14 @@ func (r *Registry) X402Listings() []X402Listing {
 		if !denied.has(res) {
 			add(res)
 		}
+	}
+	for _, e := range snap.mpp.only {
+		l := X402Listing{ID: e.ID, Kind: KindMPP, Protocols: e.Protocols, Method: e.Method, URL: e.URL, Summary: e.servedSummary(), Category: e.Category,
+			Network: e.Network, MaxPrice: e.Price, Decimals: 6, Reason: e.Reason(x.cfg.Network)}
+		if s, err := reviews.Canonical(reviews.TypeMPP, e.Method+" "+e.URL, reviews.Options{}); err == nil {
+			l.Subject = s.ID
+		}
+		out = append(out, l)
 	}
 	return out
 }

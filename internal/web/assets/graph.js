@@ -1146,7 +1146,7 @@ $('graph-search-input').addEventListener('input', (e) => {
       }));
       ul.hidden = !body.results.length;
     } catch (err) {
-      // The server keeps two generations (about ten minutes); after that this page's node IDs are stale.
+      // The server keeps a generation while this page reads it (and the one before the current); after ten idle minutes this page's node IDs are stale.
       if (!/rebuilt/.test(err && err.message)) return; // keep typing
       const ul = $('graph-search-results'), li = el('li'), b = el('button', '', 'The map has been updated. Reload to search');
       b.type = 'button'; b.addEventListener('click', () => location.reload());

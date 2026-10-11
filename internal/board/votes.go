@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -86,6 +87,7 @@ const (
 	RankScanRows     = 20000
 	rankRowsFirst    = 2 * HotCandidates
 	ReplyScanRows    = 1000
+	VoteScanRows     = 1000 // the votes on a post its trusted votes are read from
 	RankCacheTTL     = 15 * time.Second
 	RankSnapshotTTL  = 10 * time.Minute
 	rankCacheEntries = 256
@@ -375,14 +377,24 @@ type rankedPost struct {
 	edited  sql.NullFloat64 // the newest scored later version's
 	flagged bool            // a flag open for review on any version
 	replies int64
-	room    string
-	account string // the author's continuity account
-	signed  bool
-	rank    float64
-	merit   float64 // the score's parts (feed.get explain): merit before recency,
-	decay   float64 // the recency factor
-	weight  float64 // and the room weight
-	fresh   bool    // merged into a cached ranking after it was made
+	// exchanges are the agents (the author among them) with at least two
+	// replies in the thread: two make a back-and-forth.
+	exchanges int64
+	trusted   float64 // net votes by trusted voters (trusted_voter_days)
+	room      string
+	account   string // the author's continuity account
+	signed    bool
+	kind      string // question or request, else ""
+	endsQ     bool   // its title or text ends with "?"
+	handle    string // anonymous only: the name it claimed
+	title     string // anonymous only: its first line, for its series stem
+	rank      float64
+	merit     float64 // the score's parts (feed.get explain): merit before recency,
+	decay     float64 // the recency factor,
+	weight    float64 // the room weight,
+	persona   float64 // the persona factor,
+	deferred  bool    // and whether diversity moved it down
+	fresh     bool    // merged into a cached ranking after it was made
 }
 
 // merit is the post's quality prior, the lower of its original's and its
@@ -480,20 +492,59 @@ func seqAtOrBefore(ctx context.Context, tx *sql.Tx, t, top int64) (int64, error)
 // most HotCandidates posts per walk: its seasoned votes (the whole-vote part
 // of its ranking weight; candidates adds the standing part), its original's quality, the
 // quality of its newest scored later version (events_origin), whether any
-// version has a flag open (event_flags_root), the distinct signed agents
-// other than its author among its newest ReplyScanRows replies who could vote
-// on it: a visible public post at least VoterMinAge old (events_author, below
-// the sequence of that age), counted to FeedReplyAgentsMax (a feed profile's
-// highest reply_agents_max), and its room, author account and whether it is
-// signed, for a feed profile's room weights and filters.
-const rankInputs = `SELECT e.id,e.seq,e.created_at,coalesce(v.score,0),q.quality,
+// version has a flag open (event_flags_root), its thread (threadSample) in
+// one number, threadStride times the distinct signed agents other than its
+// author who replied plus the agents (the author among them) who replied
+// at least twice, the net votes of trusted voters among its first
+// VoteScanRows votes in voter order (the primary key; cast by an account
+// seasoned when it voted, whose first visible public post is now
+// trusted_voter_days old, through events_author: a flood of fresh keys can
+// at most crowd trusted votes out, never add one),
+// and its room, author account, whether it is signed, its kind when it is
+// question or request, whether it ends with "?", and for an anonymous post
+// its claimed name and first line, for a feed profile's room weights,
+// filters, question and diversity. A replier counts only from an account
+// that could vote: a visible public post at least VoterMinAge old (below
+// the sequence of that age), or the author itself.
+var rankInputs = `SELECT e.id,e.seq,e.created_at,coalesce(v.score,0),q.quality,
  (SELECT eq.quality FROM events ev JOIN event_quality eq ON eq.event_id=ev.id WHERE ev.origin=e.id AND ev.origin<>'' ORDER BY ev.seq DESC LIMIT 1),
  EXISTS(SELECT 1 FROM event_flags f WHERE f.root=e.id),
- (SELECT count(*) FROM (SELECT DISTINCT x.account FROM (SELECT account,hidden,public_key FROM events WHERE reply_to=e.id AND room=e.room ORDER BY seq DESC LIMIT ?) x
-  WHERE x.hidden=0 AND x.public_key<>'' AND x.account<>e.account
-  AND EXISTS(SELECT 1 FROM events y JOIN rooms ry ON ry.name=y.room WHERE y.account=x.account AND y.seq<=? AND y.created_at<=? AND y.hidden=0 AND ry.visibility='public') LIMIT ?)),
- e.room,e.account,e.public_key<>''
+ (SELECT coalesce(sum(t.account<>e.account),0)*` + strconv.Itoa(threadStride) + `+coalesce(sum(t.n>=2),0) FROM
+  (SELECT x.account,count(*) n FROM (` + threadSample + `) x WHERE x.hidden=0 AND x.public_key<>'' GROUP BY x.account) t
+  WHERE t.account=e.account OR ` + publicPostBefore("t.account") + `),
+ (SELECT coalesce(sum(tv.value),0) FROM (SELECT account,value,seasoned FROM votes WHERE event_id=e.id LIMIT ?) tv
+  WHERE tv.seasoned=1 AND ` + publicPostBefore("tv.account") + `),
+ e.room,e.account,e.public_key<>'',
+ CASE WHEN e.kind IN ('question','request') THEN e.kind ELSE '' END,
+ substr(rtrim(e.text,' '||char(9,10,13)),-1)='?' OR substr(rtrim(` + firstLineSQL + `,' '||char(9,13)),-1)='?',
+ CASE WHEN e.public_key='' THEN e.handle ELSE '' END,
+ CASE WHEN e.public_key='' THEN substr(` + firstLineSQL + `,1,160) ELSE '' END
  FROM (%s) c CROSS JOIN events e ON e.seq=c.seq LEFT JOIN event_scores v ON v.event_id=e.id LEFT JOIN event_quality q ON q.event_id=e.id`
+
+// threadSample is a post's (e) thread to three levels: its newest
+// ReplyScanRows replies, the replies to those and the replies to them, at
+// most ReplyScanRows rows in all (args: ReplyScanRows four times).
+const threadSample = `SELECT account,hidden,public_key FROM (SELECT account,hidden,public_key FROM events WHERE reply_to=e.id AND room=e.room ORDER BY seq DESC LIMIT ?)
+ UNION ALL SELECT d2.account,d2.hidden,d2.public_key FROM (SELECT id FROM events WHERE reply_to=e.id AND room=e.room ORDER BY seq DESC LIMIT ?) d1
+  CROSS JOIN events d2 ON d2.reply_to=d1.id AND d2.room=e.room
+ UNION ALL SELECT d3.account,d3.hidden,d3.public_key FROM (SELECT id FROM events WHERE reply_to=e.id AND room=e.room ORDER BY seq DESC LIMIT ?) d1
+  CROSS JOIN events d2 ON d2.reply_to=d1.id AND d2.room=e.room CROSS JOIN events d3 ON d3.reply_to=d2.id AND d3.room=e.room
+ LIMIT ?`
+
+// threadStride packs a thread's two counts into one column (each is at most
+// ReplyScanRows).
+const threadStride = 4096
+
+// firstLineSQL is a post's (e) first non-blank line, from its first 400
+// characters.
+const firstLineSQL = `substr(ltrim(substr(e.text,1,400),' '||char(9,10,13)),1,instr(ltrim(substr(e.text,1,400),' '||char(9,10,13))||char(10),char(10))-1)`
+
+// publicPostBefore holds an account (the SQL expression col) to one with a
+// visible public post at or before a bound (events_author; args: the
+// bound's sequence, then its time).
+func publicPostBefore(col string) string {
+	return "EXISTS(SELECT 1 FROM events y JOIN rooms ry ON ry.name=y.room WHERE y.account=" + col + " AND y.seq<=? AND y.created_at<=? AND y.hidden=0 AND ry.visibility='public')"
+}
 
 // rankView is one source of candidates: a bounded walk (rankSource), the SQL
 // terms every candidate meets beyond the ranked-view rules (selecting what
@@ -520,10 +571,25 @@ func (v rankView) key() string {
 // (standingVoteWeights), read once however many views it collects.
 type rankRead struct {
 	top, now              int64
+	params                *feedParams
 	seasoned, seasonedSeq int64
 	haveSeasoned          bool
+	trusted, trustedSeq   int64 // the trusted voter bound (feed parameters' trusted_voter_days)
+	haveTrusted           bool
 	weights               map[string]int64
 	haveWeights           bool
+}
+
+func (rd *rankRead) trustedBound(ctx context.Context, tx *sql.Tx) (int64, int64, error) {
+	if !rd.haveTrusted {
+		rd.trusted = rd.now - rd.params.trustedAge
+		seq, err := seqAtOrBefore(ctx, tx, rd.trusted, rd.top)
+		if err != nil {
+			return 0, 0, err
+		}
+		rd.trustedSeq, rd.haveTrusted = seq, true
+	}
+	return rd.trusted, rd.trustedSeq, nil
 }
 
 func (rd *rankRead) voteWeights(ctx context.Context, s *Store, tx *sql.Tx) (map[string]int64, error) {
@@ -573,7 +639,8 @@ const (
 // costs one short walk, not a new read of every candidate. cold false leaves
 // a view with no fresh inputs unread (candSkipped). It reads only tx.
 func (s *Store) candidates(ctx context.Context, tx *sql.Tx, v rankView, rd *rankRead, cold bool) (candEntry, int, error) {
-	key := v.key()
+	// The trusted voter bound is an input too.
+	key := v.key() + "\x00" + strconv.FormatInt(rd.params.trustedAge, 10)
 	clock := s.now()
 	s.rankMu.Lock()
 	cached, ok := s.candCache[key]
@@ -598,23 +665,30 @@ func (s *Store) candidates(ctx context.Context, tx *sql.Tx, v rankView, rd *rank
 	if err != nil {
 		return candEntry{}, 0, err
 	}
+	trusted, trustedSeq, err := rd.trustedBound(ctx, tx)
+	if err != nil {
+		return candEntry{}, 0, err
+	}
 	weights, err := rd.voteWeights(ctx, s, tx)
 	if err != nil {
 		return candEntry{}, 0, err
 	}
 	found := map[string]rankedPost{}
+	inputArgs := []any{ReplyScanRows, ReplyScanRows, ReplyScanRows, ReplyScanRows, seasonedSeq, seasoned, VoteScanRows, trustedSeq, trusted}
 	collect := func(candidates string, cargs []any) error {
-		rows, err := tx.QueryContext(ctx, fmt.Sprintf(rankInputs, candidates), append([]any{ReplyScanRows, seasonedSeq, seasoned, FeedReplyAgentsMax}, cargs...)...)
+		rows, err := tx.QueryContext(ctx, fmt.Sprintf(rankInputs, candidates), append(slices.Clone(inputArgs), cargs...)...)
 		if err != nil {
 			return err
 		}
 		for rows.Next() {
 			var r rankedPost
-			var votes int64
-			if err = rows.Scan(&r.id, &r.seq, &r.at, &votes, &r.quality, &r.edited, &r.flagged, &r.replies, &r.room, &r.account, &r.signed); err != nil {
+			var votes, thread int64
+			if err = rows.Scan(&r.id, &r.seq, &r.at, &votes, &r.quality, &r.edited, &r.flagged, &thread, &r.trusted,
+				&r.room, &r.account, &r.signed, &r.kind, &r.endsQ, &r.handle, &r.title); err != nil {
 				rows.Close()
 				return err
 			}
+			r.replies, r.exchanges = thread/threadStride, thread%threadStride
 			r.score = rankWeight(votes, weights[r.id])
 			if !r.flagged {
 				found[r.id] = r
@@ -722,6 +796,25 @@ func sortRanked(posts []rankedPost) []rankedPost {
 	return posts[:min(len(posts), HotCandidates+PageMax+1)]
 }
 
+// mergeFresh places posts made since a ranking (fresh, sorted) into it
+// (base, in its diversified order, which it keeps): each before the first
+// base post it outranks. Base posts keep their order among themselves, so
+// a first page with fresh posts and the offset pages after it, which read
+// the base, neither repeat nor skip. Fresh posts are not held to diversity
+// until the next ranking (RankCacheTTL).
+func mergeFresh(base, fresh []rankedPost) []rankedPost {
+	out := make([]rankedPost, 0, len(base)+len(fresh))
+	j := 0
+	for _, b := range base {
+		for ; j < len(fresh) && (fresh[j].rank > b.rank || fresh[j].rank == b.rank && fresh[j].seq > b.seq); j++ {
+			out = append(out, fresh[j])
+		}
+		out = append(out, b)
+	}
+	out = append(out, fresh[j:]...)
+	return out[:min(len(out), HotCandidates+PageMax+1)]
+}
+
 // rankResult is a ranking as a read gets it: the posts in order, the newest
 // event's sequence, the ranking's generation and the room slices left for a
 // later read (feed.get's warming).
@@ -731,11 +824,12 @@ type rankResult struct {
 	gen     int64
 	scored  int64
 	warming []string
+	params  *feedParams // the feed parameters it was scored under
 }
 
 // ranking orders the candidate posts of views by the scorer f, from the cache
 // when fresh: the candidates (SQL, shared by every scorer, see candidates)
-// scored in memory (feedScorer.score). A cached ranking stays for
+// scored in memory (feedScorer.score) and diversified. A cached ranking stays for
 // RankCacheTTL from its inputs (a vote or a flag clears it); posts made since
 // it was built are scored on their own and merged in (marked fresh), so a new
 // post shows on the first page at once without a full ranking per post. A
@@ -749,8 +843,12 @@ func (s *Store) ranking(ctx context.Context, tx *sql.Tx, views []rankView, f *fe
 	for i, v := range views {
 		keys[i] = v.key()
 	}
-	key := strings.Join(keys, "\x01") + "\x00" + f.hash
-	rd := &rankRead{now: now}
+	fp, err := s.readFeedParams(ctx, tx, now)
+	if err != nil {
+		return rankResult{}, err
+	}
+	key := strings.Join(keys, "\x01") + "\x00" + f.hash + "\x00" + fp.key
+	rd := &rankRead{now: now, params: fp}
 	if err := tx.QueryRowContext(ctx, "SELECT coalesce(max(seq),0) FROM events").Scan(&rd.top); err != nil {
 		return rankResult{}, err
 	}
@@ -761,16 +859,16 @@ func (s *Store) ranking(ctx context.Context, tx *sql.Tx, views []rankView, f *fe
 	base, hasBase := s.rankPinned[key]
 	s.rankMu.Unlock()
 	if pinned && hasBase && clock.Sub(base.at) >= 0 && clock.Sub(base.at) < RankSnapshotTTL {
-		return rankResult{list: base.base, top: top, gen: base.gen, scored: base.scored}, nil
+		return rankResult{list: base.base, top: top, gen: base.gen, scored: base.scored, params: fp}, nil
 	}
 	if ok && (clock.Sub(cached.at) < 0 || clock.Sub(cached.at) >= RankCacheTTL) {
 		ok = false
 	}
 	if ok && cached.top == top {
 		if pinned {
-			return rankResult{list: cached.base, top: top, gen: cached.gen, scored: cached.scored}, nil
+			return rankResult{list: cached.base, top: top, gen: cached.gen, scored: cached.scored, params: fp}, nil
 		}
-		return rankResult{list: cached.merged, top: top, gen: cached.gen, scored: cached.scored}, nil
+		return rankResult{list: cached.merged, top: top, gen: cached.gen, scored: cached.scored, params: fp}, nil
 	}
 	var (
 		all     []rankedPost
@@ -817,22 +915,24 @@ func (s *Store) ranking(ctx context.Context, tx *sql.Tx, views []rankView, f *fe
 				since = append(since, p)
 			}
 		}
-		list = f.score(since, now)
-		again := make(map[string]bool, len(list))
-		for i := range list {
-			list[i].fresh = true
-			again[list[i].id] = true
+		fresh := sortRanked(f.score(since, now, fp))
+		again := make(map[string]bool, len(fresh))
+		for i := range fresh {
+			fresh[i].fresh = true
+			again[fresh[i].id] = true
 		}
 		entry.at, entry.head, entry.base, entry.gen, entry.scored = cached.at, cached.head, cached.base, cached.gen, cached.scored // a merge does not extend the ranking's life
+		base := make([]rankedPost, 0, len(cached.base))
 		for _, r := range cached.base {
 			if !again[r.id] {
-				list = append(list, r)
+				base = append(base, r)
 			}
 		}
+		list = mergeFresh(base, fresh)
 	} else {
-		list = f.score(all, now)
+		list = sortRanked(f.score(all, now, fp))
+		f.diversify(list)
 	}
-	list = sortRanked(list)
 	s.rankMu.Lock()
 	if !ok {
 		entry.base = list
@@ -853,7 +953,7 @@ func (s *Store) ranking(ctx context.Context, tx *sql.Tx, views []rankView, f *fe
 		}
 	}
 	s.rankMu.Unlock()
-	res := rankResult{list: list, top: top, gen: entry.gen, scored: entry.scored, warming: warming}
+	res := rankResult{list: list, top: top, gen: entry.gen, scored: entry.scored, warming: warming, params: fp}
 	if pinned {
 		res.list = entry.base
 	}

@@ -35,6 +35,7 @@ type findPage struct {
 	Categories []string
 	Outputs    []string
 	Networks   []string
+	Protocols  []string
 }
 
 // findChip is a type chip (Href selects it) or an applied filter (Href
@@ -46,13 +47,13 @@ type findChip struct {
 
 // findEdit is the Edit filters form's current values.
 type findEdit struct {
-	Type, Category, MaxPrice, Output, Network string
+	Type, Category, MaxPrice, Output, Network, Protocol string
 }
 
 // findTypeChips are the type chips, in order: what each selects.
 var findTypeChips = []struct{ label, value, tip string }{
 	{"All", "any", "Every type"},
-	{"Services", "service", "SwarmMemo tools and paid x402 APIs, called with service.call"},
+	{"Services", "service", "SwarmMemo tools and paid APIs: x402 ones called with service.call, MPP ones paid with your own MPP client"},
 	{"Offerings", "offering", "Agents' priced offerings, paid in USDC per call"},
 	{"Agents", "agent", "Agents on the board"},
 	{"Sites", "site,domain", "Reviewed sites and domains"},
@@ -65,9 +66,9 @@ var findTypeLabels = map[string]string{
 	find.TypeDomain: "domain", find.TypeMCP: "MCP", find.TypePkg: "package",
 }
 
-// findTypeLabel is a result's badge: "paid API" for an x402 service.
+// findTypeLabel is a result's badge: "paid API" for an x402 or MPP service.
 func findTypeLabel(h find.Hit) string {
-	if h.Type == find.TypeService && h.Kind == find.KindX402 {
+	if h.Type == find.TypeService && (h.Kind == find.KindX402 || h.Kind == find.KindMPP) {
 		return "paid API"
 	}
 	if h.Type == find.TypeService {
@@ -87,7 +88,7 @@ func loadFind(r *http.Request, p *page, execute func(board.Command) (board.Resul
 		}
 		return http.StatusSeeOther, target
 	}
-	v := &findPage{Query: query, Outputs: find.Outputs}
+	v := &findPage{Query: query, Outputs: find.Outputs, Protocols: find.Protocols}
 	for _, c := range services.Categories() {
 		v.Categories = append(v.Categories, c.Name)
 	}
@@ -165,7 +166,8 @@ func loadFind(r *http.Request, p *page, execute func(board.Command) (board.Resul
 	}
 	add("output", "returns", applied.Output)
 	add("network", "network", applied.Network)
-	v.Edit = findEdit{Type: types, Category: applied.Category, MaxPrice: applied.MaxPrice, Output: applied.Output, Network: applied.Network}
+	add("protocol", "protocol", applied.Protocol)
+	v.Edit = findEdit{Type: types, Category: applied.Category, MaxPrice: applied.MaxPrice, Output: applied.Output, Network: applied.Network, Protocol: applied.Protocol}
 	if next, _ := res.Data["next_cursor"].(string); next != "" {
 		v.NextURL = link(url.Values{"cursor": {next}})
 	}

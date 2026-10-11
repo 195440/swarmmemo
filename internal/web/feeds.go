@@ -48,8 +48,12 @@ type tuneRoom struct {
 type tuneForm struct {
 	Front                             bool
 	Rooms                             []tuneRoom
-	Quality, Votes, ReplyAgents       float64
+	Quality, Votes, TrustedVotes      float64
+	ReplyAgents, BackAndForth         float64
+	Question                          float64
 	ReplyAgentsMax                    int64
+	PerAuthor, Window                 int64
+	Persona, PersonaOlder             float64
 	Decay                             string // "bias" (the power law) or "half_life"
 	Bias, AgeOffset, HalfLife         float64
 	SignedOnly, Simulations, Imported bool
@@ -68,19 +72,27 @@ type tuneDoc struct {
 	Weights   tuneWeights         `json:"weights"`
 	Freshness board.FeedFreshness `json:"freshness"`
 	Filters   board.FeedFilters   `json:"filters"`
+	Diversity board.FeedDiversity `json:"diversity"`
+	Personas  board.FeedPersonas  `json:"personas"`
 }
 
+// tuneWeights are the weights the form sets (author_trust is not one).
 type tuneWeights struct {
 	Quality        float64 `json:"quality"`
 	Votes          float64 `json:"votes"`
+	TrustedVotes   float64 `json:"trusted_votes"`
 	ReplyAgents    float64 `json:"reply_agents"`
 	ReplyAgentsMax int64   `json:"reply_agents_max"`
+	BackAndForth   float64 `json:"back_and_forth"`
+	Question       float64 `json:"question"`
 }
 
 func tuneFromProfile(p board.FeedProfile) tuneForm {
 	def := board.DefaultFeedProfile()
-	f := tuneForm{Front: p.Sources.Front, Quality: p.Weights.Quality, Votes: p.Weights.Votes, ReplyAgents: p.Weights.ReplyAgents,
-		ReplyAgentsMax: p.Weights.ReplyAgentsMax, Decay: "bias", Bias: *def.Freshness.Bias, AgeOffset: *def.Freshness.AgeOffsetHours,
+	f := tuneForm{Front: p.Sources.Front, Quality: p.Weights.Quality, Votes: p.Weights.Votes, TrustedVotes: p.Weights.TrustedVotes,
+		ReplyAgents: p.Weights.ReplyAgents, ReplyAgentsMax: p.Weights.ReplyAgentsMax, BackAndForth: p.Weights.BackAndForth, Question: p.Weights.Question,
+		PerAuthor: p.Diversity.PerAuthor, Window: p.Diversity.Window, Persona: p.Personas.Weight, PersonaOlder: p.Personas.Older,
+		Decay: "bias", Bias: *def.Freshness.Bias, AgeOffset: *def.Freshness.AgeOffsetHours,
 		HalfLife: tuneHalfLifeDefault, SignedOnly: p.Filters.SignedOnly, MinQuality: p.Filters.MinQuality,
 		Simulations: slices.Contains(p.Filters.IncludeKinds, "simulation"), Imported: slices.Contains(p.Filters.IncludeKinds, "imported"),
 		MutedRooms: strings.Join(p.Filters.MutedRooms, " "), MutedAuthors: strings.Join(p.Filters.MutedAuthors, "\n"), Name: p.Name, Visibility: "public"}
@@ -113,12 +125,22 @@ func tuneFromQuery(q url.Values) tuneForm {
 		}
 	}
 	f.Front = q.Has("front")
+	whole := func(key string, dst *int64) {
+		if n, err := strconv.ParseInt(strings.TrimSpace(q.Get(key)), 10, 64); err == nil {
+			*dst = n
+		}
+	}
 	num("quality", &f.Quality)
 	num("votes", &f.Votes)
+	num("trusted_votes", &f.TrustedVotes)
 	num("reply_agents", &f.ReplyAgents)
-	if n, err := strconv.ParseInt(strings.TrimSpace(q.Get("reply_agents_max")), 10, 64); err == nil {
-		f.ReplyAgentsMax = n
-	}
+	whole("reply_agents_max", &f.ReplyAgentsMax)
+	num("back_and_forth", &f.BackAndForth)
+	num("question", &f.Question)
+	whole("per_author", &f.PerAuthor)
+	whole("window", &f.Window)
+	num("persona_weight", &f.Persona)
+	num("persona_older", &f.PersonaOlder)
 	if q.Get("decay") == "half_life" {
 		f.Decay = "half_life"
 	}
@@ -164,9 +186,12 @@ func tuneList(s string, trim string) []string {
 // doc is the form as a profile document; named, it carries the name.
 func (f tuneForm) doc(named bool) tuneDoc {
 	d := tuneDoc{Schema: board.FeedSchema, Sources: board.FeedSources{Front: f.Front, Rooms: []board.FeedRoom{}},
-		Weights: tuneWeights{Quality: f.Quality, Votes: f.Votes, ReplyAgents: f.ReplyAgents, ReplyAgentsMax: f.ReplyAgentsMax},
+		Weights: tuneWeights{Quality: f.Quality, Votes: f.Votes, TrustedVotes: f.TrustedVotes, ReplyAgents: f.ReplyAgents, ReplyAgentsMax: f.ReplyAgentsMax,
+			BackAndForth: f.BackAndForth, Question: f.Question},
 		Filters: board.FeedFilters{SignedOnly: f.SignedOnly, IncludeKinds: []string{}, MinQuality: f.MinQuality,
-			MutedRooms: tuneList(f.MutedRooms, "#"), MutedAuthors: tuneList(f.MutedAuthors, "")}}
+			MutedRooms: tuneList(f.MutedRooms, "#"), MutedAuthors: tuneList(f.MutedAuthors, "")},
+		Diversity: board.FeedDiversity{PerAuthor: f.PerAuthor, Window: f.Window},
+		Personas:  board.FeedPersonas{Weight: f.Persona, Older: f.PersonaOlder}}
 	if named {
 		d.Name = f.Name
 	}
@@ -254,8 +279,9 @@ type tuneView struct {
 // tuneDefaults is the default form as {field: value}: what Reset puts back.
 func tuneDefaults() string {
 	f := tuneFromProfile(board.DefaultFeedProfile())
-	return compactJSON(map[string]any{"front": f.Front, "quality": f.Quality, "votes": f.Votes, "reply_agents": f.ReplyAgents,
-		"reply_agents_max": f.ReplyAgentsMax, "decay": f.Decay, "bias": f.Bias, "age_offset_hours": f.AgeOffset, "half_life_hours": f.HalfLife,
+	return compactJSON(map[string]any{"front": f.Front, "quality": f.Quality, "votes": f.Votes, "trusted_votes": f.TrustedVotes, "reply_agents": f.ReplyAgents,
+		"reply_agents_max": f.ReplyAgentsMax, "back_and_forth": f.BackAndForth, "question": f.Question,
+		"per_author": f.PerAuthor, "window": f.Window, "persona_weight": f.Persona, "persona_older": f.PersonaOlder, "decay": f.Decay, "bias": f.Bias, "age_offset_hours": f.AgeOffset, "half_life_hours": f.HalfLife,
 		"signed_only": f.SignedOnly, "include_simulation": f.Simulations, "include_imported": f.Imported, "min_quality": f.MinQuality,
 		"muted_rooms": "", "muted_authors": ""})
 }
@@ -360,7 +386,8 @@ func publicFeedProfile(execute func(board.Command) (board.Result, error), agent,
 // profileSummary is a profile in a few plain lines.
 func profileSummary(p board.FeedProfile) []string {
 	n := fmtFeedNum
-	out := []string{"Quality " + n(p.Weights.Quality) + " · votes " + n(p.Weights.Votes) + " · discussion " + n(p.Weights.ReplyAgents) + " (up to " + strconv.FormatInt(p.Weights.ReplyAgentsMax, 10) + " repliers)"}
+	out := []string{"Quality " + n(p.Weights.Quality) + " · votes " + n(p.Weights.Votes) + " (established +" + n(p.Weights.TrustedVotes) + ") · discussion " + n(p.Weights.ReplyAgents) +
+		" (up to " + strconv.FormatInt(p.Weights.ReplyAgentsMax, 10) + " repliers) · back-and-forth " + n(p.Weights.BackAndForth) + " · questions " + n(p.Weights.Question)}
 	if h := p.Freshness.HalfLifeHours; h != nil {
 		out = append(out, "Freshness: half-life "+n(*h)+" h")
 	} else if p.Freshness.Bias != nil && *p.Freshness.Bias == 0 {
@@ -395,7 +422,11 @@ func profileSummary(p board.FeedProfile) []string {
 	if len(filters) > 0 {
 		out = append(out, "Filters: "+strings.Join(filters, ", "))
 	}
-	return out
+	variety := "Variety: no limit per author"
+	if p.Diversity.PerAuthor > 0 {
+		variety = "Variety: at most " + strconv.FormatInt(p.Diversity.PerAuthor, 10) + " per author in the first " + strconv.FormatInt(p.Diversity.Window, 10)
+	}
+	return append(out, variety+" · persona posts "+n(p.Personas.Weight)+"×, older ones "+n(p.Personas.Older)+"× again")
 }
 
 func fmtFeedNum(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
@@ -545,19 +576,21 @@ func tuneSlider(name, label string, value any, min, max, step float64, hint stri
 	if name == "bias" {
 		v.List = "tune-bias-ticks"
 	}
-	// A cleared weight is left out of the profile, so it takes the default.
-	w := board.DefaultFeedProfile().Weights
-	switch name {
-	case "quality":
-		v.Placeholder = "default " + fmtFeedNum(w.Quality)
-	case "votes":
-		v.Placeholder = "default " + fmtFeedNum(w.Votes)
-	case "reply_agents":
-		v.Placeholder = "default " + fmtFeedNum(w.ReplyAgents)
-	case "reply_agents_max":
-		v.Placeholder = "default " + strconv.FormatInt(w.ReplyAgentsMax, 10)
+	// A cleared number is left out of the profile, so it takes the default.
+	if d, ok := tuneDefaultValues()[name]; ok {
+		v.Placeholder = "default " + d
 	}
 	return v
+}
+
+// tuneDefaultValues are, as text, the default profile's value of each
+// field a cleared number leaves to the default.
+func tuneDefaultValues() map[string]string {
+	p := board.DefaultFeedProfile()
+	w, n, i := p.Weights, fmtFeedNum, func(v int64) string { return strconv.FormatInt(v, 10) }
+	return map[string]string{"quality": n(w.Quality), "votes": n(w.Votes), "trusted_votes": n(w.TrustedVotes), "reply_agents": n(w.ReplyAgents),
+		"reply_agents_max": i(w.ReplyAgentsMax), "back_and_forth": n(w.BackAndForth), "question": n(w.Question),
+		"per_author": i(p.Diversity.PerAuthor), "window": i(p.Diversity.Window), "persona_weight": n(p.Personas.Weight), "persona_older": n(p.Personas.Older)}
 }
 
 // tuneRoomView is one room row on the tune page; I numbers its fields.

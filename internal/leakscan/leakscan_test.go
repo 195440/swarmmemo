@@ -176,9 +176,11 @@ func TestActions(t *testing.T) {
 }
 
 // hostileInputs are the shapes that make a backtracking engine blow up,
-// long enough to show it.
-func hostileInputs() map[string]string {
-	const n = 16 << 10
+// long enough to show it (16 KiB each).
+func hostileInputs() map[string]string { return hostileInputsN(16 << 10) }
+
+// hostileInputsN builds the hostile shapes at about n bytes each.
+func hostileInputsN(n int) map[string]string {
 	return map[string]string{
 		"letters":    rep("a", n),
 		"dashes":     rep("-", n),
@@ -201,18 +203,47 @@ func hostileInputs() map[string]string {
 	}
 }
 
-// Scan is linear and bounded on hostile input: each 16 KiB input in well
-// under a second (on a race build, under testrace.Slowdown seconds), and
-// never more than MaxFindings findings.
-func TestHostileInputsLinear(t *testing.T) {
-	for name, text := range hostileInputs() {
+// minScan is the fastest of three Scans of text: the least disturbed by
+// whatever else the machine is doing.
+func minScan(text string) time.Duration {
+	best := time.Duration(1<<63 - 1)
+	for range 3 {
 		start := time.Now()
-		f := Scan(text)
-		if d := time.Since(start); d > testrace.Slowdown*time.Second {
-			t.Errorf("%s: %v", name, d)
+		Scan(text)
+		if d := time.Since(start); d < best {
+			best = d
 		}
-		if len(f) > MaxFindings {
+	}
+	return best
+}
+
+// Scan is linear and bounded on hostile input. Linear: quadrupling an input
+// at most about quadruples its scan time (the bound is 8x plus 20 ms of
+// timer noise; a quadratic engine shows 16x, a backtracking one far more).
+// Comparing two sizes on the same machine keeps the guarantee on a loaded
+// runner, where a wall-clock bound alone flakes; a timing miss is retried
+// twice, since a quadratic shape misses every time. Bounded: each 16 KiB
+// input still scans in under 5 s (x testrace.Slowdown on a race build), as
+// a guard against a pathological pattern, and never yields more than
+// MaxFindings findings.
+func TestHostileInputsLinear(t *testing.T) {
+	const n = 16 << 10
+	small, large := hostileInputsN(n/4), hostileInputsN(n)
+	for name, text := range large {
+		if f := Scan(text); len(f) > MaxFindings {
 			t.Errorf("%s: %d findings", name, len(f))
+		}
+		var ts, tl time.Duration
+		ok := false
+		for attempt := 0; attempt < 3 && !ok; attempt++ {
+			ts, tl = minScan(small[name]), minScan(text)
+			ok = tl <= 8*ts+20*time.Millisecond
+		}
+		if !ok {
+			t.Errorf("%s: not linear: %d bytes in %v, %d bytes in %v", name, len(small[name]), ts, len(text), tl)
+		}
+		if tl > 5*testrace.Slowdown*time.Second {
+			t.Errorf("%s: %d bytes in %v", name, len(text), tl)
 		}
 	}
 }

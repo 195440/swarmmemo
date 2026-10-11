@@ -3,7 +3,8 @@ package board
 // Find (internal/find) on this board: the "find" read, the sources its
 // index is built from, the model it parses intent with and its
 // /capabilities object. Every source is read here from its one home: the
-// SwarmMemo tools and the x402 catalogue from the services, offerings,
+// SwarmMemo tools and the catalogue (x402 and the MPP directory, one entry
+// per endpoint) from the services, offerings,
 // agents and standing from their tables, subjects and their quality from
 // the reviews core (findQuality, a read helper over reviews.go's own
 // functions). The index is rebuilt from them; nothing is stored twice.
@@ -18,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"slices"
 	"strconv"
@@ -143,7 +145,7 @@ func FindRequest(c Command) (find.Request, error) {
 		var raw map[string]json.RawMessage
 		var d findData
 		if json.Unmarshal([]byte(c.Data), &raw) != nil || services.StrictObject([]byte(c.Data), &d) != nil || d.Schema != 1 {
-			return bad(`find data is {"schema":1} with any of "type" (a list or comma-separated: ` + strings.Join(find.Types, ", ") + `), "category", "max_price" (USD), "output", "network", each "any" to clear what the query implies, "parse" (auto, rules or off) and "explain".`)
+			return bad(`find data is {"schema":1} with any of "type" (a list or comma-separated: ` + strings.Join(find.Types, ", ") + `), "category", "max_price" (USD), "output", "network", "protocol" (` + strings.Join(find.Protocols, " or ") + `), each "any" to clear what the query implies, "parse" (auto, rules or off) and "explain".`)
 		}
 		if len(d.Type) > 0 && string(d.Type) != "null" {
 			var list []string
@@ -160,7 +162,7 @@ func FindRequest(c Command) (find.Request, error) {
 			}
 			types = set("type", one)
 		}
-		for key, value := range map[string]string{"category": d.Category, "max_price": d.MaxPrice, "output": d.Output, "network": d.Network} {
+		for key, value := range map[string]string{"category": d.Category, "max_price": d.MaxPrice, "output": d.Output, "network": d.Network, "protocol": d.Protocol} {
 			if _, ok := raw[key]; ok {
 				v := set(key, value)
 				switch key {
@@ -172,6 +174,8 @@ func FindRequest(c Command) (find.Request, error) {
 					req.Set.Output = v
 				case "network":
 					req.Set.Network = v
+				case "protocol":
+					req.Set.Protocol = v
 				}
 			}
 		}
@@ -194,7 +198,7 @@ func FindRequest(c Command) (find.Request, error) {
 
 // FindParams are the URL query names of find's data, on /api/find and
 // /find alike.
-var FindParams = []string{"type", "category", "max_price", "output", "network", "parse", "explain"}
+var FindParams = []string{"type", "category", "max_price", "output", "network", "protocol", "parse", "explain"}
 
 // FindQueryData moves find's URL query names (FindParams) from q into
 // find's data, as JSON; "" when q names none. Each may be given once.
@@ -295,7 +299,7 @@ func (s *Store) FindCapabilities() map[string]any {
 		cats = append(cats, c.Name)
 	}
 	model := s.services.engine != nil && s.config.Features.ServiceEnabled("inference")
-	sources := []string{"SwarmMemo tools", "the x402 catalogue (pinned and open)"}
+	sources := []string{"SwarmMemo tools", "the x402 catalogue (pinned and open)", "the MPP directory (mpp.dev, listed, never relayed; one entry per endpoint with x402)"}
 	if s.OfferingsEnabled() {
 		sources = append(sources, "agent offerings")
 	}
@@ -314,12 +318,13 @@ func (s *Store) FindCapabilities() map[string]any {
 		"read": "find", "http": "GET /api/find?q=TEXT", "mcp": "find", "page": "/find",
 		"params": map[string]string{
 			"q": "what you want, in words (at most 200 bytes)", "type": "comma-separated types", "category": "a category", "max_price": "USD per call",
-			"output": "what it returns", "network": "payment network", "parse": "auto (default), rules or off", "explain": "true adds each score's parts",
+			"output": "what it returns", "network": "payment network", "protocol": "payment protocol: " + strings.Join(find.Protocols, " or "), "parse": "auto (default), rules or off", "explain": "true adds each score's parts",
 			"limit": fmt.Sprintf("1 to %d", find.PageMax), "cursor": "next_cursor",
 		},
 		"clear": "a filter given as any is cleared, whatever the query implies",
-		"types": find.Types, "categories": cats, "outputs": find.Outputs, "networks": nets,
-		"filters": "always returned as data.filters (type, category, max_price, output, network); a filter keeps only entries that have that property and match it; adult listings show only when category is adult",
+		"types": find.Types, "categories": cats, "outputs": find.Outputs, "networks": nets, "protocols": find.Protocols,
+		"filters": "always returned as data.filters (type, category, max_price, output, network, protocol); a filter keeps only entries that have that property and match it; adult listings show only when category is adult",
+		"results": "each paid API lists its protocols (x402, mpp/METHOD); one endpoint is one result whatever protocols list it, and also_reviewed_as shows its sibling subject's reviews (x402: and mpp: name the same endpoint)",
 		"parse": map[string]any{"model": model, "alias": findModelAlias, "timeout_ms": find.ModelTimeout.Milliseconds(), "cache": map[string]any{"queries": find.IntentCacheSize, "hours": int(find.IntentCacheTTL.Hours())},
 			"budget_per_minute": find.ModelPerMinute, "pause_after_failure_seconds": int(find.ModelPause.Seconds()), "when": "auto mode, three or more words",
 			"fallback": "the rules (price, type, output and network words), always; data.parsed_by and data.parse_note say which ran", "billed": "to the operator, within the upstream's daily cap"},
@@ -329,7 +334,8 @@ func (s *Store) FindCapabilities() map[string]any {
 		"index":      map[string]any{"rebuilt_minutes": int(findIndexTTL.Minutes()), "sources": sources},
 		"call": map[string]string{
 			"service tool": "service.call with the tool's service and method (tools_call with the id)", "service x402": `service.call x402 {"resource": ID} (tools_call)`,
-			"offering": "POST url (the offering's page) with its input", "agent": "a message or a public DM", "subject": "read its reviews at url",
+			"service mpp": `listed, not relayed: pay it with your own MPP client; the resources read (service.read x402 resources, protocol mpp) gives its url`,
+			"offering":    "POST url (the offering's page) with its input", "agent": "a message or a public DM", "subject": "read its reviews at url",
 		},
 		"limits": map[string]int{"query_bytes": find.QueryMaxBytes, "page_max": find.PageMax, "offset_max": find.OffsetMax},
 	}
@@ -363,19 +369,33 @@ func (s *Store) findDocs(ctx context.Context) ([]find.Doc, error) {
 			docs = append(docs, d)
 		}
 		for _, l := range e.Registry().X402Listings() {
+			d := findX402Doc(l, quality[l.Subject])
+			if sub, err := reviews.Canonical(listingType(l), l.Method+" "+l.URL, reviews.Options{}); err == nil {
+				d.Also = findAlso(sub, quality, seen)
+			}
 			seen[l.Subject] = true
-			docs = append(docs, findX402Doc(l, quality[l.Subject]))
+			docs = append(docs, d)
 		}
 	}
-	// Reviewed x402 APIs outside the catalogue are found too, not callable.
-	for id, q := range quality {
-		if q.sub.Type == reviews.TypeX402 && q.listed && !seen[id] {
-			if _, _, offering := reviews.OfferingPath(q.sub, s.subjectOptions()); offering {
-				continue // an agent offering is found as itself (findOfferings)
-			}
-			docs = append(docs, find.Doc{Type: find.TypeService, Kind: find.KindX402, ID: q.sub.URI(), Name: q.sub.Key, Category: subjectCategory(v, q.sub.Key),
-				URL: "/s/" + id, Terms: services.URLWords(q.sub.Key), Price: find.Unpriced, SubjectID: id, Review: "/s/" + id, Quality: q.withNote("not in SwarmMemo's catalogue")})
+	// Reviewed paid APIs outside the catalogue are found too, not callable:
+	// one result per endpoint, its sibling subject's reviews beside it.
+	for _, id := range slices.Sorted(maps.Keys(quality)) { // the same docs every build
+		q := quality[id]
+		if !reviews.Endpoint(q.sub.Type) || !q.listed || seen[id] {
+			continue
 		}
+		if _, _, offering := reviews.OfferingPath(q.sub, s.subjectOptions()); offering {
+			continue // an agent offering is found as itself (findOfferings)
+		}
+		kind := find.KindX402
+		if q.sub.Type == reviews.TypeMPP {
+			kind = find.KindMPP
+		}
+		d := find.Doc{Type: find.TypeService, Kind: kind, ID: q.sub.URI(), Name: q.sub.Key, Category: subjectCategory(v, q.sub.Key),
+			URL: "/s/" + id, Terms: services.URLWords(q.sub.Key), Price: find.Unpriced, SubjectID: id, Review: "/s/" + id, Quality: q.withNote("not in SwarmMemo's catalogue")}
+		d.Also = findAlso(q.sub, quality, seen)
+		seen[id] = true
+		docs = append(docs, d)
 	}
 	offerings, err := s.findOfferings(ctx, v, standing, quality)
 	if err != nil {
@@ -423,14 +443,57 @@ func subjectCategory(v find.Vocab, key string) string {
 	return ""
 }
 
-// findX402Doc is one catalogue resource as a doc: its id names it, its
-// served summary describes it, its URL's words match it.
+// listingType is the subject type of a catalogue listing: mpp for an MPP
+// entry, else x402.
+func listingType(l services.X402Listing) string {
+	if l.Kind == services.KindMPP {
+		return reviews.TypeMPP
+	}
+	return reviews.TypeX402
+}
+
+// findAlso is sub's sibling subjects that have reviews, as a result shows
+// them beside its own; each is marked seen, so the endpoint is one result.
+func findAlso(sub reviews.Subject, quality map[string]subjectQuality, seen map[string]bool) []find.Also {
+	var out []find.Also
+	for _, sib := range sub.Siblings() {
+		seen[sib.ID] = true
+		q, ok := quality[sib.ID]
+		if !ok {
+			continue
+		}
+		a := find.Also{Type: sib.Type, SubjectID: sib.ID, ReviewURL: "/s/" + sib.ID}
+		if q.LabVerdict != "" {
+			a.Lab = &find.LabMark{Verdict: q.LabVerdict, Grade: q.LabGrade}
+			if q.LabLower >= 0 {
+				lower := q.LabLower
+				a.Lab.Lower = &lower
+			}
+		}
+		if q.Reviews > 0 {
+			a.Reviews = &find.Reviews{Count: q.Reviews, Mean: q.ReviewMean, Word: find.ReviewWord(q.ReviewMean, q.ReviewWeight)}
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
+// findX402Doc is one catalogue entry as a doc: its id names it, its
+// served summary describes it, its URL's words and protocols match it. An
+// MPP entry (kind mpp) is listed, not callable, and its page is its
+// subject's.
 func findX402Doc(l services.X402Listing, q subjectQuality) find.Doc {
 	d := find.Doc{Type: find.TypeService, Kind: find.KindX402, ID: l.ID, Name: x402Name(l.ID), Description: l.Summary, Category: l.Category,
-		URL: "/tools/paid-apis", Terms: services.URLWords(l.URL), Price: usdMicro(l.MaxPrice, l.Decimals), Network: find.NetworkName(l.Network), Output: "json",
-		SubjectID: l.Subject, Untrusted: !l.Pinned, Quality: find.Quality{LabLower: -1}}
+		URL: "/tools/paid-apis", Terms: services.URLWords(l.URL) + " " + strings.ReplaceAll(strings.Join(l.Protocols, " "), "/", " "), Price: find.Unpriced,
+		Network: find.NetworkName(l.Network), Output: "json", Protocols: l.Protocols, SubjectID: l.Subject, Untrusted: !l.Pinned, Quality: find.Quality{LabLower: -1}}
+	if l.MaxPrice >= 0 {
+		d.Price = usdMicro(l.MaxPrice, l.Decimals)
+	}
 	if l.Subject != "" {
-		d.Review = "/s?q=" + url.QueryEscape(l.Method+" "+l.URL)
+		d.Review = "/s?q=" + url.QueryEscape(listingType(l)+":"+l.Method+" "+l.URL)
+	}
+	if l.Kind == services.KindMPP {
+		d.Kind, d.URL = find.KindMPP, d.Review
 	}
 	if q.exists {
 		d.URL, d.Quality, d.Review = "/s/"+l.Subject, q.Quality, "/s/"+l.Subject
@@ -446,7 +509,10 @@ func findX402Doc(l services.X402Listing, q subjectQuality) find.Doc {
 	default:
 		d.Quality.State = "unknown"
 	}
-	if !l.Callable && d.Quality.State != "down" {
+	switch {
+	case l.Kind == services.KindMPP:
+		d.Quality.StateNote = "listed, not relayed: pay it with an MPP client"
+	case !l.Callable && d.Quality.State != "down":
 		d.Quality.StateNote = "listed, not callable until vetted"
 	}
 	return d
@@ -489,6 +555,11 @@ func (s *Store) findOfferings(ctx context.Context, v find.Vocab, standing map[st
 	if cfg := s.config.Offerings; cfg != nil {
 		network = find.NetworkName(cfg.Network)
 	}
+	// An offering's 402 carries x402, and MPP's evm charge while MPP is on.
+	protocols := []string{services.ProtocolX402}
+	if s.mpp.offerings != nil {
+		protocols = append(protocols, services.ProtocolMPPPrefix+"evm")
+	}
 	var docs []find.Doc
 	for rows.Next() {
 		var account, name, raw, handle string
@@ -502,11 +573,11 @@ func (s *Store) findOfferings(ctx context.Context, v find.Vocab, standing map[st
 		}
 		path := offeringPath(account, handle, name)
 		d := find.Doc{Type: find.TypeOffering, ID: strings.TrimPrefix(path, "/@"), Name: l.Title, Description: l.Description,
-			Category: v.Categorize(l.Title + " " + l.Description), URL: path, Terms: name + " " + handle, Price: price, Network: network, Output: "text",
+			Category: v.Categorize(l.Title + " " + l.Description), URL: path, Terms: name + " " + handle, Price: price, Network: network, Output: "text", Protocols: protocols,
 			Untrusted: true, Quality: find.Quality{LabLower: -1}}
 		if s.ReviewsEnabled() {
 			if sub, err := s.offeringSubject(account, handle, name); err == nil {
-				d.SubjectID, d.Review = sub.ID, SubjectReviewURL(sub, false)
+				d.SubjectID, d.Review, d.Also = sub.ID, SubjectReviewURL(sub, false), findAlso(sub, quality, map[string]bool{})
 				if q, ok := quality[sub.ID]; ok {
 					d.Quality, d.Review = q.Quality, SubjectReviewURL(sub, true)
 				}

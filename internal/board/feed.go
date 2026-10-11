@@ -10,12 +10,20 @@ package board
 // the profile (feedScorer.score). So an override costs an in-memory sort
 // over at most a few thousand rows, not a new walk of the board.
 //
-//	merit = w.quality*quality + w.votes*votes + w.reply_agents*min(reply_agents, reply_agents_max)
-//	score = room_weight * merit / (age_hours + age_offset_hours)^bias      (power law)
-//	score = room_weight * merit * 2^(-age_hours / half_life_hours)         (half-life)
+//	merit = w.quality*quality + w.votes*votes + w.trusted_votes*trusted_votes
+//	      + w.reply_agents*min(reply_agents, reply_agents_max)
+//	      + w.back_and_forth*[two agents each replied twice] + w.question*[it asks]
+//	score = room_weight * persona * merit / (age_hours + age_offset_hours)^bias  (power law)
+//	score = room_weight * persona * merit * 2^(-age_hours / half_life_hours)     (half-life)
 //
-// Saved profiles and room subscriptions are feedprofile.go. The trust inputs (trusted_votes,
-// author_trust) are a later step; their weights are accepted only at 0.
+// persona is personas.weight for a post by an operator persona (the feed
+// parameters, feedparams.go), times personas.older on all but each persona's
+// newest post, else 1. Then diversity: in the first diversity.window places
+// no author group has more than diversity.per_author posts; the rest move
+// down to just after the window, in order (feedScorer.diversify).
+//
+// Saved profiles and room subscriptions are feedprofile.go. author_trust is
+// a later step; its weight is accepted only at 0.
 
 import (
 	"bytes"
@@ -33,6 +41,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
+	"unicode/utf8"
 
 	"swarmmemo/internal/services"
 	"swarmmemo/internal/trust"
@@ -41,12 +51,15 @@ import (
 // The feed profile's format, the formula's version and its bounds.
 const (
 	FeedSchema         = 1
-	FeedRankingVersion = 1
+	FeedRankingVersion = 2
 	FeedStep           = 0.25 // weights, room weights, bias and hours snap to quarter steps
 	FeedWeightMax      = 10.0
+	FeedFactorStep     = 0.05 // personas.weight and personas.older, 0 to 1, snap to twentieths
+	FeedPerAuthorMax   = 25   // diversity.per_author: 0 (off) to this
+	FeedWindowMax      = 100  // diversity.window: 1 to this
 	FeedRoomWeightMin  = 0.25
 	FeedRoomWeightMax  = 3.0
-	FeedReplyAgentsMax = 16 // the highest reply_agents_max; candidates count replies to it
+	FeedReplyAgentsMax = 16 // the highest reply_agents_max
 	FeedAgeOffsetMin   = 0.25
 	FeedAgeOffsetMax   = 48.0
 	FeedHalfLifeMin    = 1.0
@@ -69,6 +82,8 @@ type FeedProfile struct {
 	Weights   FeedWeights   `json:"weights"`
 	Freshness FeedFreshness `json:"freshness"`
 	Filters   FeedFilters   `json:"filters"`
+	Diversity FeedDiversity `json:"diversity"`
+	Personas  FeedPersonas  `json:"personas"`
 	// ForkedFrom is the public profile a saved one was copied from
 	// (feed.profile.fork); it stays as the copy is tuned.
 	ForkedFrom *FeedFork `json:"forked_from,omitempty"`
@@ -93,15 +108,32 @@ type FeedRoom struct {
 	Weight float64 `json:"weight"`
 }
 
-// FeedWeights are merit's weights. trusted_votes and author_trust wait for
-// the trust inputs and are 0.
+// FeedWeights are merit's weights. author_trust waits for its trust input
+// and is 0.
 type FeedWeights struct {
 	Quality        float64 `json:"quality"`
 	Votes          float64 `json:"votes"`
 	TrustedVotes   float64 `json:"trusted_votes"`
 	ReplyAgents    float64 `json:"reply_agents"`
 	ReplyAgentsMax int64   `json:"reply_agents_max"`
+	BackAndForth   float64 `json:"back_and_forth"`
+	Question       float64 `json:"question"`
 	AuthorTrust    float64 `json:"author_trust"`
+}
+
+// FeedDiversity caps each author group in the first places of a ranking:
+// at most PerAuthor posts in the first Window; PerAuthor 0 is off.
+type FeedDiversity struct {
+	PerAuthor int64 `json:"per_author"`
+	Window    int64 `json:"window"`
+}
+
+// FeedPersonas is the prior on the operator's persona accounts (the feed
+// parameters): Weight multiplies each of their posts' scores, Older again
+// all but each persona's newest. 1 and 1 rank them as anyone.
+type FeedPersonas struct {
+	Weight float64 `json:"weight"`
+	Older  float64 `json:"older"`
 }
 
 // FeedFreshness is the decay: the power law (bias, age_offset_hours; bias 0
@@ -132,13 +164,16 @@ func DefaultFeedProfile() FeedProfile {
 }
 
 func defaultFeedProfile(bias float64) FeedProfile {
-	offset := Ranking.AgeOffsetHours
+	offset := Ranking.HotAgeOffsetHours
 	return FeedProfile{
-		Schema:    FeedSchema,
-		Sources:   FeedSources{Front: true, Rooms: []FeedRoom{}},
-		Weights:   FeedWeights{Quality: Ranking.QualityWeight, Votes: 1, ReplyAgents: Ranking.ReplyWeight, ReplyAgentsMax: Ranking.ReplyAgentsMax},
+		Schema:  FeedSchema,
+		Sources: FeedSources{Front: true, Rooms: []FeedRoom{}},
+		Weights: FeedWeights{Quality: Ranking.QualityWeight, Votes: 1, TrustedVotes: Ranking.TrustedVoteWeight, ReplyAgents: Ranking.ReplyWeight,
+			ReplyAgentsMax: Ranking.ReplyAgentsMax, BackAndForth: Ranking.BackAndForthWeight, Question: Ranking.QuestionWeight},
 		Freshness: FeedFreshness{Bias: &bias, AgeOffsetHours: &offset},
 		Filters:   FeedFilters{IncludeKinds: []string{}, MutedRooms: []string{}, MutedAuthors: []string{}},
+		Diversity: FeedDiversity{PerAuthor: Ranking.PerAuthor, Window: Ranking.DiversityWindow},
+		Personas:  FeedPersonas{Weight: Ranking.PersonaWeight, Older: Ranking.PersonaOlder},
 	}
 }
 
@@ -155,26 +190,24 @@ func FeedProfileHash(p FeedProfile) string {
 
 // feedScorer is a profile compiled for scoring: pure, in memory.
 type feedScorer struct {
-	hash          string
-	quality       float64
-	votes         float64
-	replies       float64
-	repliesMax    int64
-	bias, offset  float64
-	halfLife      float64 // > 0: the half-life decay
-	rooms         map[string]float64
-	mutedRooms    map[string]bool
-	mutedAccounts map[string]bool
-	signedOnly    bool
-	minQuality    float64
+	hash                  string
+	w                     FeedWeights
+	bias, offset          float64
+	halfLife              float64 // > 0: the half-life decay
+	rooms                 map[string]float64
+	mutedRooms            map[string]bool
+	mutedAccounts         map[string]bool
+	signedOnly            bool
+	minQuality            float64
+	diversity             FeedDiversity
+	persona, personaOlder float64
 }
 
 // newFeedScorer compiles p; mutedAccounts are its muted authors' continuity
 // accounts (resolveMutedAuthors).
 func newFeedScorer(p FeedProfile, mutedAccounts map[string]bool) *feedScorer {
-	f := &feedScorer{hash: FeedProfileHash(p), quality: p.Weights.Quality, votes: p.Weights.Votes, replies: p.Weights.ReplyAgents,
-		repliesMax: p.Weights.ReplyAgentsMax, rooms: map[string]float64{}, mutedRooms: map[string]bool{}, mutedAccounts: mutedAccounts,
-		signedOnly: p.Filters.SignedOnly, minQuality: p.Filters.MinQuality}
+	f := &feedScorer{hash: FeedProfileHash(p), w: p.Weights, rooms: map[string]float64{}, mutedRooms: map[string]bool{}, mutedAccounts: mutedAccounts,
+		signedOnly: p.Filters.SignedOnly, minQuality: p.Filters.MinQuality, diversity: p.Diversity, persona: p.Personas.Weight, personaOlder: p.Personas.Older}
 	if p.Freshness.HalfLifeHours != nil {
 		f.halfLife = *p.Freshness.HalfLifeHours
 	} else {
@@ -203,38 +236,156 @@ func defaultFeedScorer(bias float64) *feedScorer {
 	return f
 }
 
-// score filters posts and scores the rest at now, in place on a copy; the
-// result is unsorted. At the default profile it is exactly Ranking.Rank.
-func (f *feedScorer) score(posts []rankedPost, now int64) []rankedPost {
+// parts are a scored post's merit terms, each weighted (feed.get explain).
+func (f *feedScorer) parts(r rankedPost, fp *feedParams) FeedExplainParts {
+	p := FeedExplainParts{Quality: f.w.Quality * Ranking.quality(r.effectiveQuality()), Votes: f.w.Votes * r.score,
+		TrustedVotes: f.w.TrustedVotes * r.trusted, Replies: f.w.ReplyAgents * float64(min(max(r.replies, 0), f.w.ReplyAgentsMax)),
+		RoomWeight: r.weight, Persona: r.persona, Decay: r.decay, Deferred: r.deferred}
+	if r.exchanges >= 2 {
+		p.BackAndForth = f.w.BackAndForth
+	}
+	if r.asks(fp) {
+		p.Question = f.w.Question
+	}
+	return p
+}
+
+// score filters posts and scores the rest at now under the feed
+// parameters fp, in place on a copy; the result is unsorted.
+func (f *feedScorer) score(posts []rankedPost, now int64, fp *feedParams) []rankedPost {
+	// A persona's newest post here counts personas.weight; its others
+	// personas.older on top.
+	newest := map[string]rankedPost{}
+	for _, r := range posts {
+		if n, seen := newest[r.account]; fp.personas[r.account] && (!seen || r.at > n.at || r.at == n.at && r.seq > n.seq) {
+			newest[r.account] = r
+		}
+	}
 	out := make([]rankedPost, 0, len(posts))
 	for _, r := range posts {
 		if f.signedOnly && !r.signed || f.mutedRooms[r.room] || f.mutedAccounts[r.account] {
 			continue
 		}
-		q := Ranking.quality(r.effectiveQuality())
-		if q < f.minQuality {
+		if Ranking.quality(r.effectiveQuality()) < f.minQuality {
 			continue
 		}
-		r.merit = f.quality*q + f.votes*r.score + f.replies*float64(min(max(r.replies, 0), f.repliesMax))
+		r.weight, r.persona, r.deferred = 1, 1, false
+		if w, ok := f.rooms[r.room]; ok {
+			r.weight = w
+		}
+		if fp.personas[r.account] {
+			r.persona = f.persona
+			if r.id != newest[r.account].id {
+				r.persona *= f.personaOlder
+			}
+		}
+		pt := f.parts(r, fp)
+		r.merit = pt.Quality + pt.Votes + pt.TrustedVotes + pt.Replies + pt.BackAndForth + pt.Question
 		hours := math.Max(float64(now-r.at), 0) / 3600
 		switch {
 		case f.halfLife > 0:
 			r.decay = math.Exp2(-hours / f.halfLife)
-			r.rank = r.merit * r.decay
 		case f.bias > 0:
-			d := math.Pow(hours+f.offset, f.bias)
-			r.decay, r.rank = 1/d, r.merit/d
+			r.decay = 1 / math.Pow(hours+f.offset, f.bias)
 		default:
-			r.decay, r.rank = 1, r.merit
+			r.decay = 1
 		}
-		r.weight = 1
-		if w, ok := f.rooms[r.room]; ok && w != 1 {
-			r.weight = w
-			r.rank *= w
-		}
+		r.rank = r.weight * r.persona * r.merit * r.decay
 		out = append(out, r)
 	}
 	return out
+}
+
+// diversify reorders a sorted ranking in place so that, in its first
+// diversity.window places, no author group has more than
+// diversity.per_author posts: a post past its group's cap moves down to just
+// after the window, its order among the moved kept, and is marked deferred.
+// Nothing is dropped, and the order is a function of the sorted list alone,
+// so a ranking re-sorted and diversified again comes out the same.
+func (f *feedScorer) diversify(list []rankedPost) {
+	for i := range list {
+		list[i].deferred = false
+	}
+	if f.diversity.PerAuthor <= 0 || f.diversity.Window <= 0 {
+		return
+	}
+	window := int(f.diversity.Window)
+	counts := map[string]int64{}
+	kept := make([]rankedPost, 0, min(window, len(list)))
+	var deferred []rankedPost
+	i := 0
+	for ; i < len(list) && len(kept) < window; i++ {
+		r := list[i]
+		groups := r.groups()
+		over := false
+		for _, g := range groups {
+			over = over || counts[g] >= f.diversity.PerAuthor
+		}
+		if over {
+			r.deferred = true
+			deferred = append(deferred, r)
+			continue
+		}
+		for _, g := range groups {
+			counts[g]++
+		}
+		kept = append(kept, r)
+	}
+	n := copy(list, kept)
+	copy(list[n:i], deferred)
+}
+
+// groups are the author groups a post counts against in the diversity
+// window. A signed post is its continuity account. An anonymous post is its
+// pseudonym (one network's /64 or /24 for a UTC day, anonkey.go), and, so an
+// anonymous series cannot fill the page across days, also the name it
+// claimed and its title's series stem. Every key is something the post
+// itself shows; the operator-only write signals are never read here.
+func (r rankedPost) groups() []string {
+	keys := []string{"a:" + r.account}
+	if r.signed {
+		return keys
+	}
+	if h := strings.ToLower(strings.TrimSpace(r.handle)); h != "" {
+		keys = append(keys, "h:"+h)
+	}
+	if s := seriesStem(r.title); s != "" {
+		keys = append(keys, "s:"+s)
+	}
+	return keys
+}
+
+// seriesStem is what the titles of one series share: the title lowercased,
+// cut at its first separator (":", "|", "(", a dash between spaces), its
+// digits and markup dropped. "Essay 4: On memory" and "Essay 5: On identity"
+// are both "essay"; a title with no separator is its own stem, so only
+// numbered or repeated titles meet. "" for under three letters.
+func seriesStem(title string) string {
+	t := strings.ToLower(strings.TrimLeft(title, "#>*_ \t"))
+	if i := strings.IndexAny(t, ":|(—–"); i >= 0 {
+		t = t[:i]
+	}
+	if i := strings.Index(t, " - "); i >= 0 {
+		t = t[:i]
+	}
+	t = strings.Map(func(c rune) rune {
+		if unicode.IsDigit(c) || c == '#' || c == '*' || c == '_' {
+			return -1
+		}
+		return c
+	}, t)
+	t = strings.Trim(strings.Join(strings.Fields(t), " "), " .,;!?-\"'")
+	if utf8.RuneCountInString(t) < 3 {
+		return ""
+	}
+	return t
+}
+
+// asks is whether a post asks a question: its title or text ends with "?",
+// or it is of kind question or request in one of the feed parameters'
+// question rooms.
+func (r rankedPost) asks(fp *feedParams) bool {
+	return r.endsQ || r.kind != "" && fp.questionRooms[r.room]
 }
 
 // windowed is whether the profile reads only the last HotWindowSeconds: every
@@ -446,6 +597,25 @@ func feedNumber(m map[string]json.RawMessage, key, path string, lo, hi, step flo
 	return math.Round(v/step) * step, true, nil
 }
 
+// feedWhole reads m[key], when given, into dst as a whole number from lo to
+// hi.
+func feedWhole(m map[string]json.RawMessage, key, path string, lo, hi int64, dst *int64) error {
+	raw, ok := m[key]
+	if !ok {
+		return nil
+	}
+	name := joinPath(path, key)
+	if isJSONNull(raw) {
+		return feedError("`%s` must be a number; omit it for the default.", name)
+	}
+	var n int64
+	if json.Unmarshal(raw, &n) != nil || n < lo || n > hi {
+		return feedError("`%s` must be a whole number from %d to %d.", name, lo, hi)
+	}
+	*dst = n
+	return nil
+}
+
 // isJSONNull reports raw is JSON null, which json.Unmarshal would leave
 // as the zero value; a profile field is given a value or omitted.
 func isJSONNull(raw json.RawMessage) bool { return bytes.Equal(bytes.TrimSpace(raw), []byte("null")) }
@@ -496,7 +666,7 @@ func mergeFeedProfile(p FeedProfile, raw json.RawMessage, root string, extra ...
 	if duplicateKey(raw) {
 		return p, feedError("`%s` repeats a field; give each once.", root)
 	}
-	m, err := feedObject(raw, root, append([]string{"schema", "sources", "weights", "freshness", "filters"}, extra...)...)
+	m, err := feedObject(raw, root, append([]string{"schema", "sources", "weights", "freshness", "filters", "diversity", "personas"}, extra...)...)
 	if err != nil {
 		return p, err
 	}
@@ -552,36 +722,56 @@ func mergeFeedProfile(p FeedProfile, raw json.RawMessage, root string, extra ...
 		}
 	}
 	if v, ok := m["weights"]; ok {
-		w, err := feedObject(v, root+".weights", "quality", "votes", "trusted_votes", "reply_agents", "reply_agents_max", "author_trust")
+		w, err := feedObject(v, root+".weights", "quality", "votes", "trusted_votes", "reply_agents", "reply_agents_max", "back_and_forth", "question", "author_trust")
 		if err != nil {
 			return p, err
 		}
 		for _, field := range []struct {
 			key string
 			dst *float64
-		}{{"quality", &p.Weights.Quality}, {"votes", &p.Weights.Votes}, {"reply_agents", &p.Weights.ReplyAgents}} {
+		}{{"quality", &p.Weights.Quality}, {"votes", &p.Weights.Votes}, {"trusted_votes", &p.Weights.TrustedVotes}, {"reply_agents", &p.Weights.ReplyAgents},
+			{"back_and_forth", &p.Weights.BackAndForth}, {"question", &p.Weights.Question}} {
 			if n, ok, err := feedNumber(w, field.key, root+".weights", 0, FeedWeightMax, FeedStep); err != nil {
 				return p, err
 			} else if ok {
 				*field.dst = n
 			}
 		}
-		for _, key := range []string{"trusted_votes", "author_trust"} {
-			if n, ok, err := feedNumber(w, key, root+".weights", 0, FeedWeightMax, FeedStep); err != nil {
-				return p, err
-			} else if ok && n != 0 {
-				return p, feedError("`"+root+".weights.%s` must be 0 for now: its trust input is not in rankings yet.", key)
-			}
+		if n, ok, err := feedNumber(w, "author_trust", root+".weights", 0, FeedWeightMax, FeedStep); err != nil {
+			return p, err
+		} else if ok && n != 0 {
+			return p, feedError("`%s.weights.author_trust` must be 0 for now: its trust input is not in rankings yet.", root)
 		}
-		if raw, ok := w["reply_agents_max"]; ok {
-			var n int64
-			if isJSONNull(raw) {
-				return p, feedError("`%s.weights.reply_agents_max` must be a number; omit it for the default.", root)
+		if err := feedWhole(w, "reply_agents_max", root+".weights", 0, FeedReplyAgentsMax, &p.Weights.ReplyAgentsMax); err != nil {
+			return p, err
+		}
+	}
+	if v, ok := m["diversity"]; ok {
+		d, err := feedObject(v, root+".diversity", "per_author", "window")
+		if err != nil {
+			return p, err
+		}
+		if err := feedWhole(d, "per_author", root+".diversity", 0, FeedPerAuthorMax, &p.Diversity.PerAuthor); err != nil {
+			return p, err
+		}
+		if err := feedWhole(d, "window", root+".diversity", 1, FeedWindowMax, &p.Diversity.Window); err != nil {
+			return p, err
+		}
+	}
+	if v, ok := m["personas"]; ok {
+		o, err := feedObject(v, root+".personas", "weight", "older")
+		if err != nil {
+			return p, err
+		}
+		for _, field := range []struct {
+			key string
+			dst *float64
+		}{{"weight", &p.Personas.Weight}, {"older", &p.Personas.Older}} {
+			if n, ok, err := feedNumber(o, field.key, root+".personas", 0, 1, FeedFactorStep); err != nil {
+				return p, err
+			} else if ok {
+				*field.dst = math.Round(n*100) / 100
 			}
-			if json.Unmarshal(raw, &n) != nil || n < 0 || n > FeedReplyAgentsMax {
-				return p, feedError("`"+root+".weights.reply_agents_max` must be a whole number from 0 to %d.", FeedReplyAgentsMax)
-			}
-			p.Weights.ReplyAgentsMax = n
 		}
 	}
 	if v, ok := m["freshness"]; ok {
@@ -774,14 +964,21 @@ type FeedExplain struct {
 	Parts FeedExplainParts `json:"parts"`
 }
 
-// FeedExplainParts: merit's terms, the room weight and the decay factor;
-// score = room_weight * (quality + votes + replies) * decay.
+// FeedExplainParts: merit's terms, each weighted, the room weight, the
+// persona factor and the decay; score = room_weight * persona * (quality +
+// votes + trusted_votes + replies + back_and_forth + question) * decay.
+// Deferred marks a post diversity moved down past its author's cap.
 type FeedExplainParts struct {
-	Quality    float64 `json:"quality"`
-	Votes      float64 `json:"votes"`
-	Replies    float64 `json:"replies"`
-	RoomWeight float64 `json:"room_weight"`
-	Decay      float64 `json:"decay"`
+	Quality      float64 `json:"quality"`
+	Votes        float64 `json:"votes"`
+	TrustedVotes float64 `json:"trusted_votes"`
+	Replies      float64 `json:"replies"`
+	BackAndForth float64 `json:"back_and_forth"`
+	Question     float64 `json:"question"`
+	RoomWeight   float64 `json:"room_weight"`
+	Persona      float64 `json:"persona"`
+	Decay        float64 `json:"decay"`
+	Deferred     bool    `json:"deferred,omitempty"`
 }
 
 // readFeed is feed.get: a ranked page of the default profile, or of an
@@ -878,7 +1075,7 @@ func (s *Store) readFeed(ctx context.Context, tx *sql.Tx, c Command, a actor, no
 				// Rescored at the cursor's clock, the posts ranked above
 				// its mark are the ones its pages already gave.
 				offset = 0
-				for _, r := range f.score(rr.list, cur.Scored) {
+				for _, r := range f.score(rr.list, cur.Scored, rr.params) {
 					if r.rank > cur.Score || r.rank == cur.Score && r.seq >= cur.Seq {
 						offset++
 					}
@@ -923,10 +1120,7 @@ func (s *Store) readFeed(ctx context.Context, tx *sql.Tx, c Command, a actor, no
 			if !shown[r.id] {
 				continue
 			}
-			q := Ranking.quality(r.effectiveQuality())
-			explain = append(explain, FeedExplain{ID: r.id, Score: r.rank, Parts: FeedExplainParts{
-				Quality: f.quality * q, Votes: f.votes * r.score, Replies: f.replies * float64(min(max(r.replies, 0), f.repliesMax)),
-				RoomWeight: r.weight, Decay: r.decay}})
+			explain = append(explain, FeedExplain{ID: r.id, Score: r.rank, Parts: f.parts(r, rr.params)})
 		}
 		data["explain"] = explain
 	}

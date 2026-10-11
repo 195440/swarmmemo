@@ -240,8 +240,14 @@ func CheckFilters(f Filters, v Vocab) (Filters, string) {
 	}
 	if n := strings.TrimSpace(f.Network); n != "" {
 		if out.Network = NetworkName(n); out.Network == "" {
-			return out, "network is base, polygon, ethereum, optimism, arbitrum or solana (or its CAIP-2 id)."
+			return out, "network is base, polygon, ethereum, optimism, arbitrum, solana or tempo (or its CAIP-2 id)."
 		}
+	}
+	if p := strings.ToLower(strings.TrimSpace(f.Protocol)); p != "" {
+		if !slices.Contains(Protocols, p) {
+			return out, "protocol is " + strings.Join(Protocols, " or ") + "."
+		}
+		out.Protocol = p
 	}
 	return out, ""
 }
@@ -263,6 +269,9 @@ func merge(parsed, set Filters, keys map[string]bool) Filters {
 	}
 	if keys["network"] {
 		parsed.Network = set.Network
+	}
+	if keys["protocol"] {
+		parsed.Protocol = set.Protocol
 	}
 	if parsed.Types == nil {
 		parsed.Types = []string{}

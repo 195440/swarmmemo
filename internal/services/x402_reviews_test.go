@@ -59,10 +59,10 @@ func TestX402ResourcesNameSubjects(t *testing.T) {
 // board's own host is never a subject.
 func TestX402ResourceSubjectsUseBoardOptions(t *testing.T) {
 	x := &x402{reviews: &fakeReviews{opt: reviews.Options{OwnHosts: []string{"example.com"}}}}
-	ids, _, err := x.resourceSubjects(context.Background(), nil, []*X402Resource{
+	ids, _, _, err := x.resourceSubjects(context.Background(), nil, []*X402Resource{
 		{ID: "own", Method: "GET", URL: "https://example.com/agent/abc"},
 		{ID: "api", Method: "GET", URL: "https://example.com/paid"},
-	})
+	}, nil)
 	want, _ := reviews.Canonical(reviews.TypeX402, "GET https://example.com/paid", reviews.Options{})
 	if err != nil || ids["own"] != "" || ids["api"] != want.ID {
 		t.Fatalf("subjects %v (%v)", ids, err)

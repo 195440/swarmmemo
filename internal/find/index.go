@@ -51,7 +51,7 @@ func Build(ctx context.Context, docs []Doc, vocab Vocab, at time.Time) (*Index, 
 		return nil, err
 	}
 	if _, err = db.ExecContext(ctx, `CREATE VIRTUAL TABLE docs USING fts5(name, category, body, terms,
- type UNINDEXED, price UNINDEXED, output UNINDEXED, network UNINDEXED,
+ type UNINDEXED, price UNINDEXED, output UNINDEXED, network UNINDEXED, protocols UNINDEXED,
  tokenize='porter unicode61 remove_diacritics 2')`); err != nil {
 		return fail(err)
 	}
@@ -59,7 +59,7 @@ func Build(ctx context.Context, docs []Doc, vocab Vocab, at time.Time) (*Index, 
 	if err != nil {
 		return fail(err)
 	}
-	stmt, err := tx.PrepareContext(ctx, "INSERT INTO docs(rowid,name,category,body,terms,type,price,output,network) VALUES(?,?,?,?,?,?,?,?,?)")
+	stmt, err := tx.PrepareContext(ctx, "INSERT INTO docs(rowid,name,category,body,terms,type,price,output,network,protocols) VALUES(?,?,?,?,?,?,?,?,?,?)")
 	if err != nil {
 		tx.Rollback()
 		return fail(err)
@@ -70,7 +70,7 @@ func Build(ctx context.Context, docs []Doc, vocab Vocab, at time.Time) (*Index, 
 			continue
 		}
 		ix.docs = append(ix.docs, d)
-		if _, err = stmt.ExecContext(ctx, len(ix.docs), d.Name, d.Category, d.Description, d.Terms, d.Type, d.Price, d.Output, d.Network); err != nil {
+		if _, err = stmt.ExecContext(ctx, len(ix.docs), d.Name, d.Category, d.Description, d.Terms, d.Type, d.Price, d.Output, d.Network, protocolFamilies(d.Protocols)); err != nil {
 			stmt.Close()
 			tx.Rollback()
 			return fail(err)
@@ -148,6 +148,9 @@ func (ix *Index) search(ctx context.Context, words []string, f Filters) ([]match
 	}
 	if f.Network != "" {
 		where, args = append(where, "network = ?"), append(args, f.Network)
+	}
+	if f.Protocol != "" {
+		where, args = append(where, "instr(protocols, ?) > 0"), append(args, " "+f.Protocol+" ")
 	}
 	var expanded map[string][]string
 	q := "SELECT rowid, 0.0 FROM docs"

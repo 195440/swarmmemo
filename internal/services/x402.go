@@ -179,6 +179,13 @@ type X402Resource struct {
 // X402Bundler is the name of the x402 rail, the default bundler.
 const X402Bundler = "x402"
 
+// Kinds of catalogue entry, as the resources read and Find name them: an
+// x402 resource the relay may call, or an MPP directory entry it lists.
+const (
+	KindX402 = "x402"
+	KindMPP  = "mpp"
+)
+
 // x402 is the provider.
 type x402 struct {
 	cfg      *X402Config
@@ -248,7 +255,7 @@ CREATE TABLE IF NOT EXISTS x402_payments (
  allowlist_version INTEGER NOT NULL, created_at INTEGER NOT NULL, finished_at INTEGER NOT NULL DEFAULT 0,
  UNIQUE(account,request_key));
 CREATE INDEX IF NOT EXISTS x402_payments_day ON x402_payments(day,account);
-` + x402CatalogueSchema
+` + x402CatalogueSchema + mppCatalogueSchema
 }
 
 // X402VettingLine says which resources are callable, in the service's
@@ -298,10 +305,11 @@ func (x *x402) Describe() Descriptor {
 		Mode: Remote,
 		Methods: []Method{
 			call,
-			{Name: "resources", ArgsMax: 512, Line: "Search the catalogue: each resource with its query names, maximum price and cost, and whether it is vetted and callable (candidates are listed, not callable), best first; and today's budget.",
+			{Name: "resources", ArgsMax: 512, Line: "Search the catalogue: each resource with its protocols, query names, maximum price and cost, and whether it is vetted and callable (candidates are listed, not callable), best first; and today's budget.",
 				Args: []Arg{
 					{"query", "string", false, "up to 8 words that must all appear in the resource's id, category, summary or host"},
 					{"category", "string", false, "one of the categories the read lists, e.g. search, scraping, crypto"},
+					{"protocol", "string", false, "x402 or mpp (kind mpp entries are listed, never callable)"},
 					{"max_price", "string", false, `the most one call may cost, in USD, e.g. "0.01"`},
 					{"limit", "integer", false, "resources per page, 1 to 50 (default 20)"},
 					{"cursor", "string", false, "next_cursor from the previous page"},
@@ -838,23 +846,65 @@ func (x *x402) unanswered(c Call, p x402Plan, pay *payment, code string) Result 
 }
 
 // resourceSubjects names each resource's review subject (x402:METHOD URL,
-// RFC 0015 §4.2) and reads the summaries of those that have reviews; both
-// empty while REVIEWS is off.
-func (x *x402) resourceSubjects(ctx context.Context, q allowance.Querier, list []*X402Resource) (map[string]string, map[string]any, error) {
-	if x.reviews == nil || len(list) == 0 {
-		return nil, nil, nil
+// RFC 0015 §4.2) and each MPP entry's (mpp:METHOD URL), and reads the
+// summaries of those that have reviews; all empty while REVIEWS is off.
+func (x *x402) resourceSubjects(ctx context.Context, q allowance.Querier, list []*X402Resource, mpp []*MPPEntry) (map[string]string, map[string]string, map[string]any, error) {
+	if x.reviews == nil || len(list)+len(mpp) == 0 {
+		return nil, nil, nil, nil
 	}
-	ids := map[string]string{}
+	ids, mppIDs := map[string]string{}, map[string]string{}
 	var subjects []string
 	opt := x.reviews.SubjectOptions()
-	for _, r := range list {
-		if s, err := reviews.Canonical(reviews.TypeX402, r.Method+" "+r.URL, opt); err == nil {
-			ids[r.ID] = s.ID
+	name := func(typ, method, u string, into map[string]string, id string) {
+		if s, err := reviews.Canonical(typ, method+" "+u, opt); err == nil {
+			into[id] = s.ID
 			subjects = append(subjects, s.ID)
 		}
 	}
+	for _, r := range list {
+		name(reviews.TypeX402, r.Method, r.URL, ids, r.ID)
+	}
+	for _, e := range mpp {
+		name(reviews.TypeMPP, e.Method, e.URL, mppIDs, e.ID)
+	}
 	sums, err := x.reviews.ReviewSummaries(ctx, q, subjects)
-	return ids, sums, err
+	return ids, mppIDs, sums, err
+}
+
+// mppEntryJSON is an MPP entry as the resources read lists it: kind mpp,
+// its URL (public in the directory, and what an MPP client pays), never
+// callable here.
+func (x *x402) mppEntryJSON(e *MPPEntry, subject string, summaries map[string]any) map[string]any {
+	entry := map[string]any{
+		"id": e.ID, "kind": KindMPP, "protocols": e.Protocols, "url": e.URL, "method": e.Method, "category": e.Category, "summary": e.servedSummary(),
+		"summary_status": e.summaryStatus, "text_is_untrusted": true, "intent": e.Intent, "currency": e.Currency, "network": e.Network,
+		"pinned": false, "vetted": false, "callable": false, "reason": e.Reason(x.cfg.Network),
+	}
+	if e.Price >= 0 {
+		entry["price"] = formatUnits(e.Price, 6)
+	} else {
+		entry["price"] = nil // dynamic, or not in US dollars
+	}
+	if subject != "" {
+		entry["subject_id"] = subject
+		if sum, ok := summaries[subject]; ok {
+			entry["reviews"] = sum
+		}
+	}
+	return entry
+}
+
+// mppSummary is the resources read's catalogue.mpp: the directory, how
+// many MPP entries are listed on their own and how many x402 resources the
+// directory also lists.
+func (x *x402) mppSummary(s *x402Snapshot) map[string]any {
+	out := map[string]any{"enabled": x.cfg.Catalogue != nil && x.cfg.Catalogue.MPPDirectory != ""}
+	if out["enabled"] == true {
+		out["directory"] = x.cfg.Catalogue.MPPDirectory
+		out["listed"], out["also_x402"], out["imported_at"] = len(s.mpp.only), len(s.mpp.byKey)-len(s.mpp.only), s.mpp.importedAt
+		out["callable"] = "never through the relay: kind mpp entries are listed for agents that pay MPP themselves (reason says why)"
+	}
+	return out
 }
 
 // Read serves "resources": a page of the catalogue that matches the search,
@@ -878,7 +928,7 @@ func (x *x402) Read(ctx context.Context, q allowance.Querier, c Call) (json.RawM
 		return nil, err
 	}
 	page := x.search(s)
-	subjects, summaries, err := x.resourceSubjects(ctx, q, page.resources)
+	subjects, mppSubjects, summaries, err := x.resourceSubjects(ctx, q, page.resources, page.mpp)
 	if err != nil {
 		return nil, err
 	}
@@ -890,7 +940,8 @@ func (x *x402) Read(ctx context.Context, q allowance.Querier, c Call) (json.RawM
 			query = []string{}
 		}
 		entry := map[string]any{
-			"id": r.ID, "bundler": publicBundler(r.Bundler), "category": r.Category, "summary": r.servedSummary(), "method": r.Method, "query": query, "body": r.Body,
+			"id": r.ID, "kind": KindX402, "protocols": page.snap.protocolsOf(r), "bundler": publicBundler(r.Bundler), "category": r.Category, "summary": r.servedSummary(),
+			"method": r.Method, "query": query, "body": r.Body,
 			"max_price": formatUnits(m, x.cfg.Decimals), "max_cost": price.For(m), "max_response_bytes": r.MaxResponseBytes, "pinned": !r.Open,
 			"vetted": !r.Open || r.Vetted, "callable": x.callable(r),
 		}
@@ -908,13 +959,17 @@ func (x *x402) Read(ctx context.Context, q allowance.Querier, c Call) (json.RawM
 		}
 		resources = append(resources, entry)
 	}
+	for _, e := range page.mpp {
+		resources = append(resources, x.mppEntryJSON(e, mppSubjects[e.ID], summaries))
+	}
 	cu := func(n int64) string { return formatUnits(n, x.cfg.Decimals) }
 	today := map[string]any{"global_spent": cu(globalSpent), "global_remaining": cu(max(0, x.cfg.GlobalDaily-globalSpent))}
 	if c.Subject.Signed {
 		today["your_spent"], today["your_remaining"] = cu(yours), cu(max(0, x.cfg.AgentDaily-yours))
 	}
 	caps := map[string]any{"per_call": cu(x.cfg.PerCall), "agent_daily": cu(x.cfg.AgentDaily), "global_daily": cu(x.cfg.GlobalDaily)}
-	catalogue := map[string]any{"pinned": len(x.cfg.Resources), "open": page.open, "imported_at": page.importedAt, "enabled": x.cfg.Catalogue != nil}
+	catalogue := map[string]any{"pinned": len(x.cfg.Resources), "open": page.open, "imported_at": page.importedAt, "enabled": x.cfg.Catalogue != nil,
+		"mpp": x.mppSummary(page.snap)}
 	if cc := x.cfg.Catalogue; cc != nil {
 		caps["open_daily"], caps["recipient_daily"], caps["open_max_price"] = cu(cc.OpenDaily), cu(cc.RecipientDaily), cu(cc.MaxPrice)
 		if a := cc.AutoVet; a != nil {

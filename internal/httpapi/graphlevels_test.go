@@ -1,10 +1,12 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"swarmmemo/internal/graphmodel"
 )
@@ -135,6 +137,50 @@ func TestGraphLevelsServePublicHierarchy(t *testing.T) {
 		if w := graphGet(s, path, nil); w.Code != code {
 			t.Errorf("%s answered %d, want %d", path, w.Code, code)
 		}
+	}
+}
+
+// TestGraphGenerationKeptWhileInUse: a page that keeps reading its
+// generation keeps it across rebuilds; one nobody has read for two TTLs is
+// dropped and answers 409 cursor_reset.
+func TestGraphGenerationKeptWhileInUse(t *testing.T) {
+	f := newGraphFixtureT(t)
+	s := New(f.store, nil, Config{ServiceID: "swarmmemo.com"})
+	var u universeBody
+	if err := json.Unmarshal(graphGet(s, "/api/graph/universe", nil).Body.Bytes(), &u); err != nil {
+		t.Fatal(err)
+	}
+	children := fmt.Sprintf("/api/graph/children?gen=%s&ids=%d", u.Generation, u.Nodes.ID[0])
+	u0 := &s.graphUniverse
+	rebuild := func() { // the current generation is past its TTL; the next read rebuilds
+		t.Helper()
+		u0.mu.Lock()
+		u0.current.Generated = time.Now().Add(-2 * GraphUniverseTTL)
+		u0.mu.Unlock()
+		if _, err := s.buildUniverse(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range 2 {
+		rebuild()
+		if w := graphGet(s, children, nil); w.Code != 200 {
+			t.Fatalf("a generation in use after a rebuild: %d %s", w.Code, w.Body)
+		}
+	}
+	// Idle for two TTLs: the next rebuild drops it.
+	u0.mu.Lock()
+	for _, o := range u0.older {
+		if o.gen == u.Generation {
+			o.used.Store(time.Now().Add(-3 * GraphUniverseTTL).UnixNano())
+		}
+	}
+	u0.mu.Unlock()
+	rebuild()
+	if w := graphGet(s, children, nil); w.Code != 409 || !strings.Contains(w.Body.String(), "cursor_reset") {
+		t.Fatalf("an idle generation: %d %s", w.Code, w.Body)
+	}
+	if n := len(u0.older); n > graphOlderMax {
+		t.Fatalf("%d older generations kept", n)
 	}
 }
 

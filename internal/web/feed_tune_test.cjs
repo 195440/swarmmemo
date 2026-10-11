@@ -75,7 +75,7 @@ async function agent(origin, handle) {
     const statusMatches = (page, id, re) => page.waitForFunction(([id, source]) => new RegExp(source).test(document.getElementById(id)?.textContent || ''), [id, re.source]);
 
     // ---- live preview, keyboard, Reset (no key) ----
-    let {page, context} = await open(null, '/feed/tune', 390);
+    let {page, context} = await open(null, '/feed/tune', 360);
     const reads = feedReads(page);
     assert.equal(await page.locator('#tune-hash').textContent(), defaultHash, 'the server renders the default preview and its hash');
     assert.ok(await page.locator('#feed-preview .feed-row').count() >= 5);
@@ -99,6 +99,13 @@ async function agent(origin, handle) {
     assert.doesNotMatch(await page.locator('#tune-read-command').textContent(), /reply_agents_max|null/);
     await statusMatches(page, 'tune-status', /Preview updated/);
     await page.locator('#tune-reply_agents_max').fill(cap);
+    // Variety: the author cap and the persona prior reach the override.
+    const flat = page.waitForRequest(r => {const u = new URL(r.url()); return u.pathname === '/api/feed' && /"per_author":0/.test(u.searchParams.get('override') || '');});
+    await page.locator('#tune-per_author').fill('0');
+    await page.locator('#tune-persona_weight').fill('1');
+    const flatDoc = JSON.parse(new URL((await flat).url()).searchParams.get('override'));
+    assert.equal(flatDoc.diversity.per_author, 0, 'the author cap is sent');
+    assert.match(await page.locator('#tune-read-command').textContent(), /"personas":\{"weight":1,"older":0\.25\}/);
     // Only the research room: the lobby leaves the view.
     const before = reads.length;
     await page.locator('input[name=front]').uncheck();
@@ -111,7 +118,7 @@ async function agent(origin, handle) {
     assert.match(await page.locator('#feed-gone').textContent(), /not in this view/);
     assert.notEqual(await page.locator('#tune-hash').textContent(), defaultHash);
     assert.match(await page.locator('#tune-read-command').textContent(), new RegExp('"rooms":\\[\\{"room":"' + room + '","weight":2\\}\\]'));
-    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), '390px tune page overflow');
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), '360px tune page overflow');
     await page.screenshot({path: '/tmp/swarmmemo-feed-tune-mobile.png', fullPage: true});
     // Reset: the default again, its preview and its hash.
     await page.locator('#tune-reset').click();
@@ -119,6 +126,8 @@ async function agent(origin, handle) {
     assert.equal(await page.locator('input[name=front]').isChecked(), true);
     assert.equal(await page.locator('#tune-votes').inputValue(), '1');
     assert.equal(await page.locator('#tune-votes-range').inputValue(), '1');
+    assert.equal(await page.locator('#tune-per_author').inputValue(), '2');
+    assert.equal(await page.locator('#tune-persona_weight').inputValue(), '0.5');
     assert.equal(await page.locator('#tune-rooms input[name=room]').count(), 1);
     assert.equal(await page.locator('#tune-rooms input[name=room]').inputValue(), '');
     assert.match(await page.locator('#feed-preview').textContent(), /Lobby note/);

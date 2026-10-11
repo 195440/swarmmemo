@@ -2,6 +2,7 @@ package board
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"testing"
@@ -19,9 +20,29 @@ var (
 
 func q(v float64) *float64 { return &v }
 
+// rankAt is one post's default score, through the feed scorer: votes,
+// quality, distinct repliers, age in seconds and bias.
+type rankAt struct{}
+
+func (rankAt) Rank(votes float64, quality *float64, replies, age int64, bias float64) float64 {
+	return defaultFeedScorer(bias).score([]rankedPost{rankInput(votes, quality, replies, testTime-age)}, testTime, defaultParams)[0].rank
+}
+
+func (rankAt) Merit(votes float64, quality *float64, replies int64) float64 {
+	return defaultFeedScorer(0).score([]rankedPost{rankInput(votes, quality, replies, testTime)}, testTime, defaultParams)[0].merit
+}
+
+func rankInput(votes float64, quality *float64, replies, at int64) rankedPost {
+	p := rankedPost{id: "p", seq: 1, at: at, score: votes, replies: replies, room: "lobby", account: "x", signed: true}
+	if quality != nil {
+		p.quality = sql.NullFloat64{Float64: *quality, Valid: true}
+	}
+	return p
+}
+
 // The one ranking function, case by case.
 func TestRankingFunction(t *testing.T) {
-	r := Ranking
+	r := rankAt{}
 	hour := int64(3600)
 	for _, c := range []struct {
 		name      string
@@ -35,7 +56,7 @@ func TestRankingFunction(t *testing.T) {
 		{"two do not", r.Rank(0, q(0.9), 0, hour, 1.5), r.Rank(2, q(0.1), 0, hour, 1.5), true},
 		{"a vote counts one point", r.Merit(1, q(0.5), 0) - r.Merit(0, q(0.5), 0), 1, false},
 		{"replies from distinct agents count", r.Rank(0, nil, 3, hour, 1.5), r.Rank(0, nil, 0, hour, 1.5), true},
-		{"replies are capped", r.Merit(0, nil, 1000), r.Merit(0, nil, r.ReplyAgentsMax), false},
+		{"replies are capped", r.Merit(0, nil, 1000), r.Merit(0, nil, Ranking.ReplyAgentsMax), false},
 		{"negative reply counts are zero", r.Merit(0, nil, -5), r.Merit(0, nil, 0), false},
 		{"recency wins at the default bias", r.Rank(0, nil, 0, 0, BiasDefault), r.Rank(3, q(0.9), 0, 100*hour, BiasDefault), true},
 		{"downvoted below unscored", r.Rank(0, nil, 0, hour, 1.5), r.Rank(-3, q(0.9), 0, hour, 1.5), true},
@@ -45,7 +66,7 @@ func TestRankingFunction(t *testing.T) {
 			t.Errorf("%s: %v vs %v", c.name, c.high, c.low)
 		}
 	}
-	if got := r.Merit(0, nil, 0); got != r.QualityWeight*r.QualityNeutral {
+	if got := r.Merit(0, nil, 0); got != Ranking.QualityWeight*Ranking.QualityNeutral {
 		t.Errorf("an unscored post's merit is the neutral prior: %v", got)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"swarmmemo/internal/board"
@@ -19,8 +20,10 @@ import (
 // so it never runs per request: requests read the latest model, and a model
 // older than GraphUniverseTTL is rebuilt in the background while the old one
 // is served. Node IDs belong to a generation; the client names the one it
-// holds, and the previous generation is kept so a rebuild never breaks a
-// session mid-zoom.
+// holds. A rebuild keeps the generation before it, and any older one a
+// client read within the last two TTLs (at most graphOlderMax), so an open
+// page keeps working across rebuilds; a generation nobody reads for that
+// long is dropped and answers 409 cursor_reset.
 // GraphUniverseTTL is how old the universe may get before a rebuild:
 // GraphUniverseTTLDefault, or GRAPH_UNIVERSE_TTL on the host (test fixtures
 // set it short so agents they just created become searchable).
@@ -35,6 +38,8 @@ const (
 	GraphReplayItems  = 20_000
 	graphStatsIDsMax  = 500
 	graphBuildTimeout = 2 * time.Minute
+	// graphOlderMax bounds the generations kept besides the current one.
+	graphOlderMax = 3
 )
 
 type graphDatasetStore interface {
@@ -44,7 +49,7 @@ type graphDatasetStore interface {
 type graphUniverse struct {
 	mu       sync.Mutex
 	current  *graphModel
-	previous *graphModel
+	older    []*graphModel // newest first
 	building bool
 	gate     chan struct{}
 	extra    []*graphmodel.Dataset
@@ -55,7 +60,13 @@ type graphUniverse struct {
 
 type graphModel struct {
 	*graphmodel.Model
-	gen string
+	gen  string
+	used atomic.Int64 // when a client last named it, unix nanoseconds
+}
+
+// inUse reports whether a client named the generation within the last two TTLs.
+func (m *graphModel) inUse(now time.Time) bool {
+	return now.Sub(time.Unix(0, m.used.Load())) <= 2*GraphUniverseTTL
 }
 
 func (s *Server) universe(ctx context.Context) (*graphModel, error) {
@@ -124,28 +135,45 @@ func (s *Server) buildUniverse(ctx context.Context) (*graphModel, error) {
 	datasets = append(datasets, u.extra...)
 	model := graphmodel.Build(datasets, u.bridges, graphmodel.Options{})
 	m := &graphModel{Model: model, gen: strconv.FormatInt(model.Generated.UnixNano(), 36)}
+	m.used.Store(time.Now().UnixNano())
 	u.mu.Lock()
-	u.previous, u.current, u.building = u.current, m, false
+	older := make([]*graphModel, 0, graphOlderMax)
+	if u.current != nil {
+		older = append(older, u.current)
+	}
+	now := time.Now()
+	for _, o := range u.older {
+		if len(older) < graphOlderMax && o.inUse(now) {
+			older = append(older, o)
+		}
+	}
+	u.older, u.current, u.building = older, m, false
 	u.mu.Unlock()
 	return m, nil
 }
 
 // generation returns the model a client's gen names: the current one, or
-// the one before it. An empty gen means the current one.
+// one still kept (the one before it, or an older one still in use). An
+// empty gen means the current one.
 func (s *Server) generation(ctx context.Context, gen string) (*graphModel, *board.Error) {
 	m, err := s.universe(ctx)
 	if err != nil {
 		return nil, &board.Error{Status: 503, Code: "storage_unavailable", Message: "The graph is being built. Retry shortly."}
 	}
 	if gen == "" || gen == m.gen {
+		if gen != "" {
+			m.used.Store(time.Now().UnixNano())
+		}
 		return m, nil
 	}
 	u := &s.graphUniverse
 	u.mu.Lock()
-	prev := u.previous
-	u.mu.Unlock()
-	if prev != nil && prev.gen == gen {
-		return prev, nil
+	defer u.mu.Unlock()
+	for _, o := range u.older {
+		if o.gen == gen {
+			o.used.Store(time.Now().UnixNano())
+			return o, nil
+		}
 	}
 	return nil, &board.Error{Status: 409, Code: "cursor_reset", Message: "The graph was rebuilt; reload /api/graph/universe and use its generation."}
 }

@@ -19,9 +19,14 @@ import (
 	"swarmmemo/internal/trust"
 )
 
-// The subject types RFC 0019 §2 allows now. place stays deferred.
+// The subject types RFC 0019 §2 allows now. place stays deferred. x402
+// and mpp are endpoint types: one key, METHOD https://host/path, for an
+// HTTP endpoint paid with that protocol (C202c). One endpoint that speaks
+// both is two subjects, siblings, because conformance and settlement are
+// judged per protocol.
 const (
 	TypeX402   = "x402"
+	TypeMPP    = "mpp"
 	TypeDomain = "domain"
 	TypeSite   = "site"
 	TypeMCP    = "mcp"
@@ -30,7 +35,7 @@ const (
 )
 
 // Types are the subject types, in documented order.
-var Types = []string{TypeX402, TypeDomain, TypeSite, TypeMCP, TypeAgent, TypePkg}
+var Types = []string{TypeX402, TypeMPP, TypeDomain, TypeSite, TypeMCP, TypeAgent, TypePkg}
 
 // Bounds on what a subject may be written as.
 const (
@@ -42,8 +47,15 @@ const (
 	IDLength = 26
 )
 
-// X402Methods are the HTTP methods an x402 subject key may name.
+// X402Methods are the HTTP methods an endpoint subject key (x402, mpp)
+// may name.
 var X402Methods = []string{"GET", "POST", "PUT", "PATCH", "DELETE"}
+
+// endpointTypes are the subject types keyed METHOD https://host/path.
+var endpointTypes = []string{TypeX402, TypeMPP}
+
+// Endpoint reports whether a subject type is an endpoint type (x402, mpp).
+func Endpoint(typ string) bool { return slices.Contains(endpointTypes, typ) }
 
 // Subject is one canonical subject: its type, its canonical key and its id.
 type Subject struct {
@@ -104,7 +116,7 @@ type Options struct {
 func Resolve(raw string, opt Options) (Subject, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || len(raw) > URIMaxBytes || !printableASCIIOrSpace(raw) {
-		return Subject{}, invalid("A subject is TYPE:KEY (x402:GET https://host/path, domain:example.com, site:https://example.com/, mcp:https://host/path, agent:FINGERPRINT, pkg:npm/name), at most 2048 printable ASCII characters; write a non-ASCII host name in its xn-- form.")
+		return Subject{}, invalid("A subject is TYPE:KEY (x402:GET https://host/path, mpp:GET https://host/path, domain:example.com, site:https://example.com/, mcp:https://host/path, agent:FINGERPRINT, pkg:npm/name), at most 2048 printable ASCII characters; write a non-ASCII host name in its xn-- form.")
 	}
 	lower := strings.ToLower(raw)
 	switch {
@@ -139,8 +151,8 @@ func Canonical(typ, key string, opt Options) (Subject, error) {
 	var canon string
 	var err error
 	switch typ {
-	case TypeX402:
-		canon, err = x402Key(key, opt)
+	case TypeX402, TypeMPP:
+		canon, err = endpointKey(typ, key, opt)
 	case TypeDomain:
 		canon, err = domainKey(key)
 	case TypeSite:
@@ -169,15 +181,12 @@ func Canonical(typ, key string, opt Options) (Subject, error) {
 }
 
 // Parent is the subject a subject's page groups under, for display only:
-// an x402, site or mcp URL's registrable domain. ok is false for the rest.
+// an endpoint (x402, mpp), site or mcp URL's registrable domain. ok is false
+// for the rest.
 func (s Subject) Parent() (Subject, bool) {
-	var host string
-	switch s.Type {
-	case TypeX402:
-		_, rest, _ := strings.Cut(s.Key, " ")
-		host = urlHost(rest)
-	case TypeSite, TypeMCP:
-		host = urlHost(s.Key)
+	host := ""
+	if s.Type != TypeDomain {
+		host = s.Host()
 	}
 	if host == "" {
 		return Subject{}, false
@@ -189,11 +198,29 @@ func (s Subject) Parent() (Subject, bool) {
 	return Subject{Type: TypeDomain, Key: d, ID: SubjectID(TypeDomain, d)}, true
 }
 
-// Host is the host name of an x402, site or mcp URL subject, without its
-// port; "" for the rest. A domain subject's host is its key.
+// Siblings are the subjects that name the same endpoint under the other
+// endpoint types: an x402 subject's mpp subject and the reverse, the same
+// key. Each keeps its own reviews; pages and Find show them together. nil
+// for every other type.
+func (s Subject) Siblings() []Subject {
+	if !Endpoint(s.Type) {
+		return nil
+	}
+	var out []Subject
+	for _, t := range endpointTypes {
+		if t != s.Type {
+			out = append(out, Subject{Type: t, Key: s.Key, ID: SubjectID(t, s.Key)})
+		}
+	}
+	return out
+}
+
+// Host is the host name of an endpoint (x402, mpp), site or mcp URL
+// subject, without its port; "" for the rest. A domain subject's host is
+// its key.
 func (s Subject) Host() string {
 	switch s.Type {
-	case TypeX402:
+	case TypeX402, TypeMPP:
 		_, rest, _ := strings.Cut(s.Key, " ")
 		return urlHost(rest)
 	case TypeSite, TypeMCP:
@@ -384,10 +411,12 @@ func everyPath(string, int) bool { return true }
 
 func codeHostPath(first string, n int) bool { return n == 1 || first == "sponsors" || first == "orgs" }
 
-func x402Key(raw string, opt Options) (string, error) {
+// endpointKey is an endpoint subject's key, METHOD https://host/path, one
+// rule for every endpoint type (x402, mpp): siblings share a key.
+func endpointKey(typ, raw string, opt Options) (string, error) {
 	method, rest, ok := strings.Cut(strings.TrimSpace(raw), " ")
 	if !ok || !slices.Contains(X402Methods, strings.ToUpper(method)) {
-		return "", invalid("An x402 subject is METHOD https://host/path, METHOD one of " + strings.Join(X402Methods, ", ") + ".")
+		return "", invalid("An " + typ + " subject is METHOD https://host/path, METHOD one of " + strings.Join(X402Methods, ", ") + ".")
 	}
 	origin, p, err := webURL(strings.TrimSpace(rest))
 	if err != nil {
@@ -403,7 +432,7 @@ func x402Key(raw string, opt Options) (string, error) {
 	}
 	if personPath(origin, p, opt) {
 		if isOwnHost(origin, opt) && strings.HasPrefix(p, "/@") {
-			return "", refused("This URL is shaped like a person's profile page; people are never subjects (RFC 0015 §4.2). An agent offering is x402:POST https://" + strings.TrimPrefix(origin, "https://") + "/@HANDLE/NAME; an agent is agent:FINGERPRINT.")
+			return "", refused("This URL is shaped like a person's profile page; people are never subjects (RFC 0015 §4.2). An agent offering is " + typ + ":POST https://" + strings.TrimPrefix(origin, "https://") + "/@HANDLE/NAME; an agent is agent:FINGERPRINT.")
 		}
 		return "", refused("This URL is shaped like a person's profile page; people are never subjects (RFC 0015 §4.2).")
 	}
@@ -431,11 +460,12 @@ func ownOffering(origin, p string, opt Options) bool {
 }
 
 // OfferingPath is the alias (a handle or fingerprint) and name of the agent
-// offering an x402 subject names on one of the board's own hosts; ok is
-// false for every other subject. The board checks the offering exists.
+// offering an endpoint subject (x402 or mpp) names on one of the board's
+// own hosts; ok is false for every other subject. The board checks the
+// offering exists.
 func OfferingPath(s Subject, opt Options) (alias, name string, ok bool) {
 	method, rest, found := strings.Cut(s.Key, " ")
-	if s.Type != TypeX402 || !found || method != "POST" {
+	if !Endpoint(s.Type) || !found || method != "POST" {
 		return "", "", false
 	}
 	u, err := url.Parse(rest)

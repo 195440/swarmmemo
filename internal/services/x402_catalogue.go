@@ -52,12 +52,12 @@ package services
 // before any filtering, so the one connection is never held for CPU work.
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"net/http"
 	"net/url"
@@ -148,6 +148,9 @@ type X402CatalogueConfig struct {
 	MinPayers        int64
 	OpenDaily        int64
 	RecipientDaily   int64
+	// MPPDirectory is the MPP directory imported beside the discovery
+	// URLs (mpp_catalogue.go); "" when the config turned it off.
+	MPPDirectory string
 	// AutoVet is the optional vetting rule (nil: only the operator vets).
 	AutoVet *X402AutoVet
 	// trusted is the one discovery URL whose popularity figures ranking
@@ -167,6 +170,7 @@ type x402CatalogueFile struct {
 	MinPayers        json.Number      `json:"min_payers_30d"`
 	OpenDaily        string           `json:"open_daily"`
 	RecipientDaily   string           `json:"recipient_daily"`
+	MPPDirectory     string           `json:"mpp_directory_url"`
 	AutoVet          *x402AutoVetFile `json:"auto_vet"`
 }
 
@@ -237,6 +241,16 @@ func (c *X402Config) parseCatalogue(f *x402CatalogueFile) error {
 		}
 	}
 	cc.DiscoveryURLs = slices.Clone(urls)
+	switch cc.MPPDirectory = f.MPPDirectory; cc.MPPDirectory {
+	case "":
+		cc.MPPDirectory = MPPDirectoryDefault
+	case "off":
+		cc.MPPDirectory = ""
+	default:
+		if err := checkX402URL(cc.MPPDirectory); err != nil {
+			return bad("mpp_directory_url (" + err.Error() + `, or "off")`)
+		}
+	}
 	ints := []struct {
 		n           json.Number
 		name        string
@@ -550,10 +564,17 @@ func (c *X402Config) denyIndex(auto *x402Denied) *x402DenyIndex {
 
 // blocks reports whether the denylist refuses r (indexed).
 func (d *x402DenyIndex) blocks(r *X402Resource) bool {
-	if r.canon == "" || d.payTo[r.PayTo] || d.categories[r.Category] || d.auto.has(r) {
+	return d.payTo[r.PayTo] || d.auto.has(r) || d.blocksURL(r.canon, r.host, r.Category)
+}
+
+// blocksURL reports whether the denylist refuses an endpoint by its
+// canonical URL, host and category alone: what every catalogue entry has,
+// whatever pays it.
+func (d *x402DenyIndex) blocksURL(canon, host, category string) bool {
+	if canon == "" || d.categories[category] || d.auto != nil && d.auto.url[canon] {
 		return true
 	}
-	for host := r.host; host != ""; {
+	for host := host; host != ""; {
 		if d.domains[host] {
 			return true
 		}
@@ -563,8 +584,8 @@ func (d *x402DenyIndex) blocks(r *X402Resource) bool {
 		}
 		host = rest
 	}
-	for _, prefix := range d.prefixes[r.host] {
-		if strings.HasPrefix(r.canon, prefix) {
+	for _, prefix := range d.prefixes[host] {
+		if strings.HasPrefix(canon, prefix) {
 			return true
 		}
 	}
@@ -655,6 +676,7 @@ type x402Snapshot struct {
 	categories map[string]int       // the open resources, by category
 	importedAt int64
 	loadedAt   int64
+	mpp        mppSnapshot // the MPP directory's entries (mpp_catalogue.go)
 }
 
 // x402Denied is the automatic denylist (x402_denied): recipients and
@@ -735,6 +757,9 @@ func (x *x402) Work(ctx context.Context, _ *sql.DB, now int64) (int, error) {
 		defer x.cat.importing.Store(false)
 		ctx, cancel := context.WithTimeout(context.Background(), x402ImportDeadline)
 		_, _ = x.importCatalogue(ctx, now) // the store's clock, as every load
+		cancel()
+		ctx, cancel = context.WithTimeout(context.Background(), x402ImportDeadline)
+		_, _ = x.importMPP(ctx, now)
 		cancel()
 		ctx, cancel = context.WithTimeout(context.Background(), x402ScreenDeadline)
 		defer cancel()
@@ -1114,23 +1139,7 @@ func (x *x402) discoveryPage(ctx context.Context, base string, offset, limit int
 	q.Set("limit", strconv.Itoa(limit))
 	q.Set("offset", strconv.Itoa(offset))
 	u.RawQuery = q.Encode()
-	ctx, cancel := context.WithTimeout(ctx, x402PageTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return nil, 0, err
-	}
-	req.Header.Set("User-Agent", "SwarmMemo-x402/1 (+https://swarmmemo.com/protocol.md)")
-	req.Header.Set("Accept", "application/json")
-	resp, err := x.client.Do(req)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, 0, fmt.Errorf("x402: discovery answered %d", resp.StatusCode)
-	}
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, bazaarPageBytesMax+1))
+	raw, err := x.fetchDiscovery(ctx, u.String(), bazaarPageBytesMax)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1178,6 +1187,7 @@ func (x *x402) loadCatalogue(ctx context.Context, now int64) error {
 	}
 	s.paid = hist.paid
 	var rows []catalogueRow
+	var mppRows []mppRow
 	var verdicts map[string]string // summary hash → screen verdict
 	if cc := x.cfg.Catalogue; cc != nil {
 		stale := now - 3*int64(cc.Refresh/time.Second)
@@ -1201,14 +1211,24 @@ FROM x402_catalogue WHERE last_seen>=? AND id>? ORDER BY id LIMIT ?`, stale, aft
 			}
 			after = page[len(page)-1].r.ID
 		}
+		if mppRows, err = x.readMPP(ctx, stale, 3*cc.MaxResources); err != nil {
+			return err
+		}
 		var hashes []string
 		seen := map[string]bool{}
-		for i := range rows {
-			c := &rows[i]
-			if c.hash = sha256Of([]byte(c.r.Summary)); !seen[c.hash] {
-				seen[c.hash] = true
-				hashes = append(hashes, c.hash)
+		hashOf := func(summary string) string {
+			h := sha256Of([]byte(summary))
+			if !seen[h] {
+				seen[h] = true
+				hashes = append(hashes, h)
 			}
+			return h
+		}
+		for i := range rows {
+			rows[i].hash = hashOf(rows[i].r.Summary)
+		}
+		for i := range mppRows {
+			mppRows[i].hash = hashOf(mppRows[i].e.Summary)
 		}
 		if verdicts, err = x.readScreens(ctx, hashes); err != nil {
 			return err
@@ -1240,9 +1260,18 @@ FROM x402_catalogue WHERE last_seen>=? AND id>? ORDER BY id LIMIT ?`, stale, aft
 		}
 		sort.SliceStable(s.open, func(i, j int) bool { return keys[s.open[i]].before(keys[s.open[j]]) })
 		s.open = capOpen(s.open, cc.MaxResources)
+		listed := map[string]bool{}
+		for i := range x.cfg.Resources {
+			listed[x.cfg.Resources[i].Method+" "+x.cfg.Resources[i].canon] = true
+		}
 		for _, r := range s.open {
 			s.byID[r.ID] = r
 			s.categories[r.Category]++
+			listed[r.Method+" "+r.canon] = true
+		}
+		s.mpp = buildMPP(mppRows, idx, verdicts, listed, cc.MaxResources)
+		for _, e := range s.mpp.only {
+			s.categories[e.Category]++
 		}
 	}
 	x.cat.snap.Store(s)
@@ -1297,10 +1326,16 @@ const (
 // summaryStatusOf is r's summary_status, given its summary's screen verdict
 // ("" when not screened). An empty summary has nothing to withhold.
 func summaryStatusOf(r *X402Resource, verdict string) string {
+	return summaryStatusFor(r.Vetted && !r.autoVetted, r.Summary, verdict)
+}
+
+// summaryStatusFor is the summary_status of any catalogue entry: vetted
+// when the operator vetted it, else as its screen verdict says.
+func summaryStatusFor(operatorVetted bool, summary, verdict string) string {
 	switch {
-	case r.Vetted && !r.autoVetted:
+	case operatorVetted:
 		return summaryVetted
-	case verdict == "pass" || r.Summary == "":
+	case verdict == "pass" || summary == "":
 		return summaryScreened
 	case verdict == "flag":
 		return summaryWithheld
@@ -1360,19 +1395,28 @@ func (x *x402) screenSummaries(ctx context.Context, now int64) (int, error) {
 	}
 	verdicts := map[string]string{}
 	var err error
+	// The x402 candidates first, best ranked first, then the MPP entries.
+	var pending []string
 	for _, r := range s.open {
+		if r.summaryStatus == summaryPending {
+			pending = append(pending, r.Summary)
+		}
+	}
+	for _, e := range s.mpp.all {
+		if e.summaryStatus == summaryPending {
+			pending = append(pending, e.Summary)
+		}
+	}
+	for _, summary := range pending {
 		if len(verdicts) >= x402ScreenPerRefresh {
 			break
 		}
-		if r.summaryStatus != summaryPending {
-			continue
-		}
-		hash := sha256Of([]byte(r.Summary))
+		hash := sha256Of([]byte(summary))
 		if _, done := verdicts[hash]; done {
 			continue
 		}
 		var res TextScreen
-		if res, err = x.screener.ScreenText(ctx, r.Summary, "tool", x402ScreenIntent); err != nil {
+		if res, err = x.screener.ScreenText(ctx, summary, "tool", x402ScreenIntent); err != nil {
 			break
 		}
 		categories, ok := res.categories()
@@ -1506,7 +1550,8 @@ ON CONFLICT(kind,value) DO UPDATE SET reason=excluded.reason, denied_at=excluded
 type x402Search struct {
 	words    []string
 	category string
-	maxPrice int64 // 0: any
+	protocol string // "", x402 or mpp (HasProtocol)
+	maxPrice int64  // 0: any
 	limit    int
 	offset   int
 }
@@ -1515,6 +1560,7 @@ type x402Search struct {
 type x402SearchArgs struct {
 	Query    string      `json:"query"`
 	Category string      `json:"category"`
+	Protocol string      `json:"protocol"`
 	MaxPrice string      `json:"max_price"`
 	Limit    json.Number `json:"limit"`
 	Cursor   string      `json:"cursor"`
@@ -1533,6 +1579,9 @@ func parseX402Search(raw json.RawMessage, decimals int) (x402Search, error) {
 		return x402Search{}, tooLarge("invalid_service_data", len(a.Query), x402SearchBytes)
 	}
 	if a.Category != "" && !x402CategoryRE.MatchString(a.Category) {
+		return x402Search{}, refusal("invalid_service_data")
+	}
+	if s.protocol = a.Protocol; s.protocol != "" && !slices.Contains(Protocols, s.protocol) {
 		return x402Search{}, refusal("invalid_service_data")
 	}
 	for _, w := range strings.Fields(strings.ToLower(a.Query)) {
@@ -1559,7 +1608,7 @@ func parseX402Search(raw json.RawMessage, decimals int) (x402Search, error) {
 	}
 	if a.Cursor != "" {
 		n, err := strconv.Atoi(a.Cursor)
-		if err != nil || n < 0 || n > x402CatalogueCeiling+X402ResourcesMax {
+		if err != nil || n < 0 || n > 2*x402CatalogueCeiling+X402ResourcesMax {
 			return x402Search{}, refusal("invalid_service_data")
 		}
 		s.offset = n
@@ -1569,6 +1618,8 @@ func parseX402Search(raw json.RawMessage, decimals int) (x402Search, error) {
 
 type x402SearchPage struct {
 	resources  []*X402Resource
+	mpp        []*MPPEntry // after resources: the page's MPP entries
+	snap       *x402Snapshot
 	stats      map[string]callStats
 	matched    int
 	next       string
@@ -1578,37 +1629,39 @@ type x402SearchPage struct {
 }
 
 // search is one page of the listed resources that match s: pinned ones
-// first, in the allowlist's order, then open ones, best first. It reads
-// only the snapshot's precomputed fields: no parsing, no allocation per
-// resource.
+// first, in the allowlist's order, then open ones, best first, then the
+// MPP directory's entries no x402 resource lists. It reads only the
+// snapshot's precomputed fields: no parsing, no allocation per resource.
 func (x *x402) search(s x402Search) x402SearchPage {
 	snap := x.cat.snap.Load()
 	if snap == nil {
 		snap = &x402Snapshot{} // not loaded yet: the allowlist alone
 	}
-	out := x402SearchPage{stats: snap.stats, open: len(snap.open), importedAt: snap.importedAt, categories: make(map[string]int, len(snap.categories)+4)}
+	out := x402SearchPage{snap: snap, stats: snap.stats, open: len(snap.open), importedAt: snap.importedAt, categories: make(map[string]int, len(snap.categories)+4)}
 	for k, n := range snap.categories {
 		out.categories[k] = n
 	}
-	match := func(r *X402Resource) bool {
-		if (s.category != "" && r.Category != s.category) || (s.maxPrice > 0 && min(r.MaxAmount, x.cfg.PerCall) > s.maxPrice) {
-			return false
-		}
+	words := func(text string) bool {
 		for _, w := range s.words {
-			if !strings.Contains(r.text, w) {
+			if !strings.Contains(text, w) {
 				return false
 			}
 		}
 		return true
 	}
+	take := func() bool {
+		in := out.matched >= s.offset && len(out.resources)+len(out.mpp) < s.limit
+		out.matched++
+		return in
+	}
 	add := func(r *X402Resource) {
-		if !match(r) {
+		if (s.category != "" && r.Category != s.category) || (s.maxPrice > 0 && min(r.MaxAmount, x.cfg.PerCall) > s.maxPrice) ||
+			(s.protocol != "" && !HasProtocol(snap.protocolsOf(r), s.protocol)) || !words(r.text) {
 			return
 		}
-		if out.matched >= s.offset && len(out.resources) < s.limit {
+		if take() {
 			out.resources = append(out.resources, r)
 		}
-		out.matched++
 	}
 	for i := range x.cfg.Resources {
 		r := &x.cfg.Resources[i]
@@ -1624,10 +1677,34 @@ func (x *x402) search(s x402Search) x402SearchPage {
 			add(r)
 		}
 	}
-	if s.offset+len(out.resources) < out.matched {
-		out.next = strconv.Itoa(s.offset + len(out.resources))
+	// MPP entries: their price is micro-USD (Price -1: none, so a price
+	// filter leaves them out), compared with max_price in the same units.
+	maxMicro := usdMicroOf(s.maxPrice, x.cfg.Decimals)
+	for _, e := range snap.mpp.only {
+		if (s.category != "" && e.Category != s.category) || (s.maxPrice > 0 && (e.Price < 0 || e.Price > maxMicro)) ||
+			!HasProtocol(e.Protocols, cmp.Or(s.protocol, "mpp")) || !words(e.text) {
+			continue
+		}
+		if take() {
+			out.mpp = append(out.mpp, e)
+		}
+	}
+	if n := s.offset + len(out.resources) + len(out.mpp); n < out.matched {
+		out.next = strconv.Itoa(n)
 	}
 	return out
+}
+
+// usdMicroOf is amount atomic units of a USD stablecoin with decimals as
+// micro-USD.
+func usdMicroOf(amount int64, decimals int) int64 {
+	for ; decimals > 6; decimals-- {
+		amount /= 10
+	}
+	for ; decimals < 6; decimals++ {
+		amount *= 10
+	}
+	return amount
 }
 
 // Statistics.

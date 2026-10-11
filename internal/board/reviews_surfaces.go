@@ -51,8 +51,15 @@ func offeringOwner(ctx context.Context, q interface {
 // board's first own host, under its provider's handle (else fingerprint),
 // the address its 402 names.
 func (s *Store) offeringSubject(account, handle, name string) (reviews.Subject, error) {
+	return s.offeringSubjectAs(reviews.TypeX402, account, handle, name)
+}
+
+// offeringSubjectAs is an offering's subject under an endpoint type: its
+// 402 speaks x402, and MPP while MPP is on, so it is a subject under both,
+// siblings at one address.
+func (s *Store) offeringSubjectAs(typ, account, handle, name string) (reviews.Subject, error) {
 	opt := s.subjectOptions()
-	return reviews.Canonical(reviews.TypeX402, "POST https://"+opt.OwnHosts[0]+offeringPath(account, handle, name), opt)
+	return reviews.Canonical(typ, "POST https://"+opt.OwnHosts[0]+offeringPath(account, handle, name), opt)
 }
 
 // boardSubject is sub as this board names it: an offering written with a
@@ -63,7 +70,7 @@ func (s *Store) boardSubject(ctx context.Context, tx *sql.Tx, sub reviews.Subjec
 	if err != nil || !ok {
 		return sub, err
 	}
-	return s.offeringSubject(account, handle, name)
+	return s.offeringSubjectAs(sub.Type, account, handle, name)
 }
 
 // checkOfferingSubject refuses a review of an offering path that holds no
@@ -77,9 +84,9 @@ func (s *Store) checkOfferingSubject(ctx context.Context, tx *sql.Tx, sub review
 		return err
 	}
 	if !ok {
-		return problem(404, "subject_not_found", "No agent offering is at this path; an offering's subject is x402:POST at its page, /@HANDLE/NAME (offering.get shows it).")
+		return problem(404, "subject_not_found", "No agent offering is at this path; an offering's subject is x402:POST (or mpp:POST) at its page, /@HANDLE/NAME (offering.get shows it).")
 	}
-	canon, err := s.offeringSubject(account, handle, name)
+	canon, err := s.offeringSubjectAs(sub.Type, account, handle, name)
 	if err != nil {
 		return err
 	}

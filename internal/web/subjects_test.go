@@ -107,6 +107,8 @@ func TestSubjectPage(t *testing.T) {
 		"GET https://api.example.com/v1/search", `href="/s/` + reviews.SubjectID("domain", "example.com") + `"`, "2 reviews from 2 accounts", "1 good · 1 mixed",
 		"Answered &lt;b&gt;every&lt;/b&gt; call.", `<meter min="0" max="100" value="92"`, "stamp:" + strings.Repeat("a", 64), ">failed<",
 		`href="/e/` + first + `">1 reply →</a>`, "Comment →", "SwarmMemo relays some x402 APIs", "write_review", "Community reviews",
+		// Its sibling subject: the same endpoint under mpp (C202c), not reviewed yet.
+		"The same endpoint as mpp", `href="/s/` + reviews.SubjectID("mpp", "GET https://api.example.com/v1/search") + `"`, "no reviews yet",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("subject page lacks %q", want)
@@ -184,6 +186,17 @@ func TestRubricPages(t *testing.T) {
 	for _, want := range []string{"x402 endpoint", rb.SHA256, "Output correct", "charged_without_delivery", "swarmmemo rubric score", "As described"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("rubric page lacks %q", want)
+		}
+	}
+	// The MPP rubric (C202c) is served the same way, beside it.
+	mpp := reviews.LookupRubric("mpp-endpoint", "")
+	if w := f.get("/rubrics/mpp-endpoint.json"); w.Code != 200 || w.Header().Get("X-Rubric-SHA256") != mpp.SHA256 {
+		t.Fatalf("/rubrics/mpp-endpoint.json: %d", w.Code)
+	}
+	page = f.get("/rubrics/mpp-endpoint").Body.String()
+	for _, want := range []string{"MPP endpoint", mpp.SHA256, "Challenge parses", "Payment-Receipt", "Problem details on a bad credential"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("mpp rubric page lacks %q", want)
 		}
 	}
 }

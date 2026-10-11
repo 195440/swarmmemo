@@ -87,7 +87,7 @@ func TestFeedDefaultMatchesHot(t *testing.T) {
 	if len(want) < 6 {
 		t.Fatalf("seeded hot view too short: %v", want)
 	}
-	for _, data := range []string{"", `{}`, `{"profile":"default"}`, feedOverride(`{}`), feedOverride(`{"weights":{"votes":1,"quality":3}}`), feedOverride(`{"freshness":{"bias":1.5,"age_offset_hours":2}}`)} {
+	for _, data := range []string{"", `{}`, `{"profile":"default"}`, feedOverride(`{}`), feedOverride(`{"weights":{"votes":1,"quality":3}}`), feedOverride(`{"freshness":{"bias":1.5,"age_offset_hours":12}}`)} {
 		s.dropRankings()
 		res := feedRead(t, s, data, 50, "")
 		if got := feedOrder(res); strings.Join(got, ",") != strings.Join(want, ",") {
@@ -123,8 +123,8 @@ func TestFeedDefaultMatchesHot(t *testing.T) {
 		if e.Parts.RoomWeight != 1 || e.Score <= 0 && e.Parts.Votes >= 0 {
 			t.Fatalf("explain %+v", e)
 		}
-		merit := e.Parts.Quality + e.Parts.Votes + e.Parts.Replies
-		if math.Abs(merit*e.Parts.Decay-e.Score) > 1e-12 {
+		merit := e.Parts.Quality + e.Parts.Votes + e.Parts.TrustedVotes + e.Parts.Replies + e.Parts.BackAndForth + e.Parts.Question
+		if math.Abs(e.Parts.Persona*merit*e.Parts.Decay-e.Score) > 1e-12 {
 			t.Fatalf("parts do not make the score: %+v", e)
 		}
 	}
@@ -141,9 +141,10 @@ func TestFeedScoreIsPure(t *testing.T) {
 		{id: "c", seq: 3, at: now, score: -1, quality: scored(0.2), edited: scored(0.1), room: "lobby", account: "z", signed: true},
 	}
 	def := defaultFeedScorer(BiasDefault)
-	for _, r := range def.score(posts, now) {
-		if want := Ranking.Rank(r.score, r.effectiveQuality(), r.replies, now-r.at, BiasDefault); r.rank != want {
-			t.Fatalf("%s: default score %v, Ranking.Rank %v", r.id, r.rank, want)
+	for _, r := range def.score(posts, now, defaultParams) {
+		merit := Ranking.QualityWeight*Ranking.quality(r.effectiveQuality()) + r.score + Ranking.ReplyWeight*float64(min(r.replies, Ranking.ReplyAgentsMax))
+		if want := merit / math.Pow(float64(max(now-r.at, 0))/3600+Ranking.HotAgeOffsetHours, BiasDefault); math.Abs(r.rank-want) > 1e-12 {
+			t.Fatalf("%s: default score %v, the ranking's %v", r.id, r.rank, want)
 		}
 	}
 	half := 12.0
@@ -152,7 +153,7 @@ func TestFeedScoreIsPure(t *testing.T) {
 	p.Freshness = FeedFreshness{HalfLifeHours: &half}
 	p.Sources.Rooms = []FeedRoom{{Room: "research", Weight: 2}}
 	got := map[string]float64{}
-	for _, r := range newFeedScorer(p, nil).score(posts, now) {
+	for _, r := range newFeedScorer(p, nil).score(posts, now, defaultParams) {
 		got[r.id] = r.rank
 	}
 	want := map[string]float64{
@@ -167,7 +168,7 @@ func TestFeedScoreIsPure(t *testing.T) {
 	}
 	// Filters drop before scoring.
 	p.Filters = FeedFilters{SignedOnly: true, MinQuality: 0.15, MutedRooms: []string{"research"}}
-	if out := newFeedScorer(p, map[string]bool{"z": true}).score(posts, now); len(out) != 1 || out[0].id != "a" {
+	if out := newFeedScorer(p, map[string]bool{"z": true}).score(posts, now, defaultParams); len(out) != 1 || out[0].id != "a" {
 		t.Fatalf("filters kept %v", out)
 	}
 }
@@ -259,7 +260,13 @@ func TestFeedValidation(t *testing.T) {
 		{feedOverride(`{"weights":{"author_trust":null}}`), "invalid_feed_profile", "`override.weights.author_trust` must be a number; omit it for the default"},
 		{feedOverride(`{"sources":{"front":null}}`), "invalid_feed_profile", "`override.sources.front` must be true or false"},
 		{feedOverride(`{"filters":{"signed_only":null}}`), "invalid_feed_profile", "`override.filters.signed_only` must be true or false"},
-		{feedOverride(`{"weights":{"trusted_votes":1}}`), "invalid_feed_profile", "must be 0 for now"},
+		{feedOverride(`{"weights":{"author_trust":1}}`), "invalid_feed_profile", "must be 0 for now"},
+		{feedOverride(`{"diversity":{"per_author":26}}`), "invalid_feed_profile", "`override.diversity.per_author` must be a whole number from 0 to 25"},
+		{feedOverride(`{"diversity":{"window":0}}`), "invalid_feed_profile", "override.diversity.window"},
+		{feedOverride(`{"diversity":{"cap":2}}`), "invalid_feed_profile", "override.diversity.cap is not an argument"},
+		{feedOverride(`{"personas":{"weight":1.5}}`), "invalid_feed_profile", "`override.personas.weight` must be 0 to 1 in steps of 0.05"},
+		{feedOverride(`{"personas":{"older":null}}`), "invalid_feed_profile", "omit it for the default"},
+		{feedOverride(`{"weights":{"question":11}}`), "invalid_feed_profile", "override.weights.question"},
 		{feedOverride(`{"weights":{"reply_agents_max":17}}`), "invalid_feed_profile", "reply_agents_max"},
 		{feedOverride(`{"freshness":{"bias":5}}`), "invalid_feed_profile", "override.freshness.bias"},
 		{feedOverride(`{"freshness":{"age_offset_hours":0}}`), "invalid_feed_profile", "age_offset_hours"},

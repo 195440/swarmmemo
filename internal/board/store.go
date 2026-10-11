@@ -81,6 +81,7 @@ type Store struct {
 	rankCache          map[string]rankEntry   // see ranking
 	rankPinned         map[string]rankEntry   // the base rankings offset pages read
 	feedStats          feedStatsCache         // FeedStats (feedprofile.go)
+	feedParams         feedParamsCache        // the parsed feed parameters (feedparams.go)
 	inboxStats         inboxStatsCache        // InboxStats (inbox_dispose.go)
 	candCache          map[string]candEntry   // the shared candidate inputs rankings score, see candidates
 	rankGen            int64                  // the newest ranking's generation (feed cursors name it)
@@ -285,7 +286,11 @@ CREATE TABLE IF NOT EXISTS leases (
 // came over (x402, the default every earlier row was, or mpp), and
 // payment_ref, an MPP payment's challenge id for its receipt (mpp.go,
 // C202b). Additive, but a schema-31 binary would read an MPP row as x402.
-const SchemaVersion = 32
+//
+// 33: mpp_catalogue, the MPP directory's endpoints the x402 catalogue lists
+// beside its own (services/mpp_catalogue.go, C202c). Additive: a schema-32
+// binary would leave the table alone, but it is a new table, so a new version.
+const SchemaVersion = 33
 
 // connPragmas are the per-connection PRAGMAs, in modernc.org/sqlite's DSN
 // syntax. journal_mode=WAL is stored in the database file and set at Open.

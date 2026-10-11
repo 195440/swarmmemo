@@ -22,7 +22,12 @@ const os = require('node:os');
   const api = await (await fetch(origin + '/api/find?q=' + marker)).json();
   assert.equal(api.ok, true, JSON.stringify(api));
   assert.equal(api.data.results[0].url, '/@' + handle, 'the API finds the fixture first');
-  assert.deepEqual(api.data.filters, {type: [], category: '', max_price: '', output: '', network: ''}, 'every filter is on the wire');
+  assert.deepEqual(api.data.filters, {type: [], category: '', max_price: '', output: '', network: '', protocol: ''}, 'every filter is on the wire');
+  // The protocol filter (C202c): an agent takes no payment protocol, so it drops out.
+  const byProtocol = await (await fetch(origin + '/api/find?q=' + marker + '&protocol=mpp')).json();
+  assert.equal(byProtocol.ok, true, JSON.stringify(byProtocol));
+  assert.equal(byProtocol.data.filters.protocol, 'mpp', 'the protocol filter is on the wire');
+  assert.ok(!byProtocol.data.results.some(r => r.url === '/@' + handle), 'agents leave a protocol filter');
   const browser = await chromium.launch({headless: true, ...(process.env.CHROMIUM_PATH ? {executablePath: process.env.CHROMIUM_PATH} : {}), args: process.env.PLAYWRIGHT_NO_SANDBOX === 'true' ? ['--no-sandbox'] : []});
   try {
     for (const width of [360, 1280]) {

@@ -406,7 +406,11 @@ func TestSubjectReads(t *testing.T) {
 		t.Fatalf("second page %+v", p)
 	}
 	caps := s.ReviewsCapabilities()
-	if caps["rubrics"].([]map[string]any)[0]["id"] != "x402-endpoint" || s.SubjectsCapabilities()["types"] == nil {
+	var rubricIDs []string
+	for _, r := range caps["rubrics"].([]map[string]any) {
+		rubricIDs = append(rubricIDs, r["id"].(string))
+	}
+	if strings.Join(rubricIDs, ",") != "mpp-endpoint,x402-endpoint" || s.SubjectsCapabilities()["types"] == nil {
 		t.Fatalf("capabilities %+v", caps)
 	}
 }

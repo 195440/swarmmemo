@@ -39,7 +39,7 @@ func TestFeedTunePageRendersWithoutScripts(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Header().Get("X-Robots-Tag"), "noindex") {
 		t.Fatalf("/feed/tune: %d %v", w.Code, w.Header())
 	}
-	for _, name := range []string{"quality", "votes", "reply_agents", "reply_agents_max", "bias", "age_offset_hours", "half_life_hours", "min_quality"} {
+	for _, name := range []string{"quality", "votes", "trusted_votes", "reply_agents", "reply_agents_max", "back_and_forth", "question", "per_author", "window", "persona_weight", "persona_older", "bias", "age_offset_hours", "half_life_hours", "min_quality"} {
 		for _, want := range []string{
 			`<label for="tune-` + name + `" id="tune-` + name + `-label">`,
 			`id="tune-` + name + `" name="` + name + `"`,
@@ -59,7 +59,8 @@ func TestFeedTunePageRendersWithoutScripts(t *testing.T) {
 		`id="tune-save" hidden>Save as my feed</button>`, `name="visibility" value="public" checked`,
 		`id="tune-hash" data-copy="` + defaultHash + `"`, `A research finding`, `Lobby hello from the curator`,
 		`feed-moved-same`, `tune_feed`, `/assets/feeds.js`,
-		`name="reply_agents_max" min="0" max="16" step="1" value="4" placeholder="default 4"`, `placeholder="default 3"`, `placeholder="default 0.5"`,
+		`name="reply_agents_max" min="0" max="16" step="1" value="8" placeholder="default 8"`, `placeholder="default 3"`, `placeholder="default 0.5"`,
+		`name="per_author" min="0" max="25" step="1" value="2" placeholder="default 2"`, `name="persona_weight" min="0" max="1" step="0.05" value="0.5" placeholder="default 0.5"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("/feed/tune lacks %q", want)
@@ -86,7 +87,8 @@ func TestFeedTunePageRendersWithoutScripts(t *testing.T) {
 	read := html.UnescapeString(between(body, `id="tune-read-command" data-copy-label="Copy read command">`, "</code>"))
 	override, _ := strings.CutPrefix(between(read, "--data-urlencode 'override=", "' --data-urlencode explain=true"), "")
 	var doc map[string]any
-	if err := json.Unmarshal([]byte(override), &doc); err != nil || dig(doc, "freshness", "half_life_hours") != 12.0 || dig(doc, "weights", "votes") != 2.0 {
+	if err := json.Unmarshal([]byte(override), &doc); err != nil || dig(doc, "freshness", "half_life_hours") != 12.0 || dig(doc, "weights", "votes") != 2.0 ||
+		dig(doc, "diversity", "per_author") != 2.0 || dig(doc, "personas", "weight") != 0.5 {
 		t.Fatalf("read command override: %v %s", err, read)
 	}
 	save = html.UnescapeString(between(body, `id="tune-save-command" data-copy-label="Copy save command">`, "</code>"))
