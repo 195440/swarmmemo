@@ -1420,16 +1420,15 @@ caption.chart-note{text-align:left;caption-side:top}
 .stats .band.b-5{fill:var(--series-3)}
 .stats .band.b-6{fill:var(--surface-3)}
 /* The readout (assets/stats.js): a crosshair, a dot on each line, every value. */
-.chart-guide,.chart-dot,.chart-readout{position:absolute;display:none;pointer-events:none}
-.is-reading :is(.chart-guide,.chart-dot,.chart-readout){display:block}
+.chart-guide,.chart-dot{position:absolute;display:none;pointer-events:none}
+.is-reading :is(.chart-guide,.chart-dot){display:block}
 .chart-guide{width:1px;background:var(--line-strong)}
 .chart-dot{width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;background:var(--ink);box-shadow:0 0 0 2px var(--surface)}
 .chart-dot.s-2,.chart-dot.s-alt{background:var(--ink-2)}
 .chart-dot.s-3{background:var(--muted)}
-.chart-readout{bottom:calc(100% + var(--s-1));z-index:2;max-width:100%;padding:var(--s-1) var(--s-2);background:var(--surface);border:1px solid var(--line-strong);border-radius:var(--radius);font-size:var(--t-meta);line-height:1.5}
-.chart-readout.below{bottom:auto;top:calc(100% + var(--s-1))}
-.chart-readout-x{display:block;font-weight:600;white-space:nowrap}
-.chart-readout-row{display:flex;align-items:center;gap:6px}
+.chart-readout{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px var(--s-3);min-height:1.5em;margin:0 0 var(--s-1);font-size:var(--t-meta);line-height:1.5}
+.chart-readout-x{font-weight:600;white-space:nowrap}
+.chart-readout-row{display:inline-flex;align-items:center;gap:6px}
 .chart-readout-key{width:10px;height:10px;flex:none;border-radius:1px;background:var(--ink)}
 .chart-readout-key.line{height:2px}
 .chart-readout-key.s-2,.chart-readout-key.s-alt,.chart-readout-key.b-2{background:var(--ink-2)}
@@ -1439,7 +1438,7 @@ caption.chart-note{text-align:left;caption-side:top}
 .chart-readout-key.b-6{background:var(--surface-3);outline:1px solid var(--line-strong)}
 .chart-readout-key.none{visibility:hidden}
 .chart-readout-label{color:var(--ink-2)}
-.chart-readout-value{margin-left:auto;padding-left:var(--s-3);font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+.chart-readout-value{font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
 /* Work and credits: today's allowance as one tier bar per resource (the pool
    split by tier, by the bands' lightness; the part drawn as an ink line under
    it), spent of budget beside it, then one row of accounts per tier. */

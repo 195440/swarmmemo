@@ -544,3 +544,13 @@ func TestEscapedLinkDestinationStaysSafe(t *testing.T) {
 		}
 	}
 }
+
+// Trailing spaces and tabs on the last line are trimmed (CommonMark: at the
+// end of a block they never make a hard break); report 54fafbb4.
+func TestTrailingSpacesOnLastLine(t *testing.T) {
+	for in, want := range map[string]string{"a ": "<p>a</p>", "a  ": "<p>a</p>", "a\t": "<p>a</p>", "a  \nb  ": "<p>a<br>\nb</p>"} {
+		if got := strings.TrimSpace(render(in)); got != want {
+			t.Errorf("Render(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

@@ -1,8 +1,8 @@
 'use strict';
 // The /stats scripts against a stubbed page (no browser, no server): a
 // malformed fragment (#%) leaves the chart readouts working, a resize while a
-// readout shows places it again, a readout with no room above the plot goes
-// below it, and the background field follows reduced motion switched on or
+// readout shows places it again, the day's values are a status line above
+// the plot, and the background field follows reduced motion switched on or
 // off without a reload. These were reported in the /stats QA bounty
 // (38516717).
 const assert = require('node:assert/strict');
@@ -33,14 +33,14 @@ function element(extra = {}) {
   return el;
 }
 
-function runStats(hash, plotTop = 400, figureTop = 0) {
+function runStats(hash, plotTop = 400) {
   let width = 1200;
   const observers = [];
   const svg = element({
     getBoundingClientRect: () => ({left: 0, top: 0, width, height: 100}),
     querySelectorAll: () => [element({dataset: {label: 'posts', values: '1|2|3', ys: '10|20|30'}, getAttribute: () => 's-posts'})],
   });
-  const figure = element({getBoundingClientRect: () => ({top: figureTop})});
+  const figure = element({insertBefore(c) { this.children.push(c); return c; }});
   const plot = element({
     parentNode: figure,
     closest: () => figure,
@@ -88,29 +88,19 @@ for (const hash of ['#%', '#%E0%A4%A']) {
   assert.equal(guide.style.left, '320px', 'a hidden readout is left alone');
 }
 
-// A readout with no room above the plot (under the sticky contents bar)
-// goes below it; with room it stays above.
-{
-  const high = runStats('', 60).plot;
-  high.listeners.focus();
-  assert.ok(high.children[2].classList.contains('below'), 'flips below under the bar');
-  const low = runStats('', 400).plot;
-  low.listeners.focus();
-  assert.ok(!low.children[2].classList.contains('below'), 'stays above with room');
-  // Room under the bar but above the chart's own top is the tiles' room.
-  const tiles = runStats('', 400, 350).plot;
-  tiles.listeners.focus();
-  assert.ok(tiles.children[2].classList.contains('below'), 'does not open over what sits above the chart');
-}
-
-// The selected day is announced from a status line outside the role=img plot.
+// The day's values are one line above the plot (never a floating box over
+// the chart, its axis or the page): it starts on the latest day, follows the
+// keys, and is a role=status line outside the role=img plot.
 {
   const {plot, figure} = runStats('');
+  const line = figure.children[0];
+  assert.equal(line.className, 'chart-readout', 'value line before the plot');
+  assert.equal(plot.children.length, 2, 'only the guide and the dot sit on the plot');
+  assert.equal(line.children[0].textContent, 'c (so far)', 'latest day by default');
   plot.listeners.focus();
   plot.listeners.keydown({key: 'Home', preventDefault() {}});
-  const status = figure.children[0];
-  assert.ok(status.className === 'sr-only', 'status line beside the plot');
-  assert.equal(status.textContent, 'a: posts 1');
+  assert.equal(line.children[0].textContent, 'a');
+  assert.equal(line.children[1].children[2].textContent, '1', 'first day value');
 }
 
 // The field follows prefers-reduced-motion live.

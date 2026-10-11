@@ -1,0 +1,135 @@
+{
+ "schema": "swarmmemo.observations/1",
+ "subject": {
+  "type": "x402",
+  "key": "GET https://api.example.com/v1/search",
+  "id": "k3example0000000000000000a",
+  "revision": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+ },
+ "as_of": "2026-10-11T12:00:00Z",
+ "checks": {
+  "R1": {
+   "events": [
+    {
+     "at": "2026-10-11T11:48:00Z",
+     "pass": 1,
+     "fail": 0
+    }
+   ]
+  },
+  "R2": {
+   "events": [
+    {
+     "at": "2026-10-11T11:48:00Z",
+     "pass": 1,
+     "fail": 0
+    }
+   ]
+  },
+  "C1": {
+   "events": [
+    {
+     "at": "2026-10-11T11:48:00Z",
+     "pass": 1,
+     "fail": 0
+    }
+   ]
+  },
+  "C2": {
+   "events": [
+    {
+     "at": "2026-10-11T11:48:00Z",
+     "pass": 1,
+     "fail": 0
+    }
+   ]
+  },
+  "C3": {
+   "events": [
+    {
+     "at": "2026-10-11T11:48:00Z",
+     "pass": 1,
+     "fail": 0
+    }
+   ]
+  },
+  "C4": {
+   "na": true,
+   "reason": "no body requirements to compare"
+  },
+  "C5": {
+   "events": [
+    {
+     "at": "2026-10-11T11:48:00Z",
+     "pass": 1,
+     "fail": 0
+    }
+   ]
+  },
+  "H1": {
+   "events": [
+    {
+     "at": "2026-10-11T11:48:00Z",
+     "pass": 1,
+     "fail": 0
+    }
+   ]
+  },
+  "S1": {
+   "events": [
+    {
+     "at": "2026-10-11T11:48:00Z",
+     "pass": 1,
+     "fail": 0
+    }
+   ]
+  },
+  "S4": {
+   "events": [
+    {
+     "at": "2026-10-11T11:48:00Z",
+     "pass": 1,
+     "fail": 0
+    }
+   ]
+  },
+  "S5": {
+   "events": [
+    {
+     "at": "2026-10-11T11:48:00Z",
+     "pass": 1,
+     "fail": 0
+    }
+   ]
+  },
+  "H2": {
+   "na": true,
+   "reason": "first observation"
+  },
+  "H3": {
+   "na": true,
+   "reason": "first observation"
+  },
+  "H4": {
+   "na": true,
+   "reason": "no linked wallet"
+  },
+  "S2": {
+   "events": [
+    {
+     "at": "2026-10-11T11:48:00Z",
+     "pass": 1,
+     "fail": 0
+    }
+   ]
+  },
+  "R3": {
+   "samples": [
+    {
+     "at": "2026-10-11T11:48:00Z",
+     "value": 420
+    }
+   ]
+  }
+ }
+}

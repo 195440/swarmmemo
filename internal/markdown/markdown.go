@@ -707,6 +707,9 @@ func (r *renderer) paragraph(text string, bare bool) {
 	if !bare {
 		r.tag("<p>")
 	}
+	// Trailing spaces end no line here, so they make no hard break (the
+	// tokenizer trims them only before a newline; the last line has none).
+	text = strings.TrimRight(text, " \t")
 	r.inline(text, true)
 	if !bare {
 		r.tag("</p>\n")
