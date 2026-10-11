@@ -374,11 +374,20 @@ func (c *TopupConfig) PaymentRequired(r TopupRequirement, resourceURL, descripti
 
 // PaymentRequiredFor is PaymentRequired for any requirement we issue.
 func (c *TopupConfig) PaymentRequiredFor(r X402Requirement, resourceURL, description string) (map[string]any, string) {
+	return c.PaymentRequiredWith(r, resourceURL, description, nil)
+}
+
+// PaymentRequiredWith is PaymentRequiredFor with the x402 v2 extensions
+// object (e.g. "bazaar" discovery metadata); nil omits it.
+func (c *TopupConfig) PaymentRequiredWith(r X402Requirement, resourceURL, description string, extensions map[string]any) (map[string]any, string) {
 	body := map[string]any{
 		"x402Version": 2,
 		"error":       "payment required",
 		"resource":    map[string]any{"url": resourceURL, "description": description, "mimeType": "application/json"},
 		"accepts":     []topupRequirementWire{c.wire(r)},
+	}
+	if extensions != nil {
+		body["extensions"] = extensions
 	}
 	raw, _ := json.Marshal(body)
 	return body, base64.StdEncoding.EncodeToString(raw)

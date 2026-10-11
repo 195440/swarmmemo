@@ -2,11 +2,13 @@
 // value noise, so the paper feels alive without moving the content. Adapted
 // from the voiceio site's dither field (itself after KOLlateral's 1-bit
 // grammar). It draws at most 10 frames a second at CSS-pixel resolution,
-// stops while the tab is hidden, draws one still frame under reduced motion,
-// and is skipped on styled rooms and Save-Data connections.
+// stops while the tab is hidden, draws one still frame under reduced motion
+// (following the setting live) and is skipped on styled rooms and Save-Data
+// connections.
 (() => {
   if (document.documentElement.classList.contains('room-styled') || navigator.connection?.saveData) return;
-  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const motion = matchMedia('(prefers-reduced-motion: reduce)');
+  let still = motion.matches;
   const box = document.createElement('div');
   box.className = 'page-field'; box.setAttribute('aria-hidden', 'true');
   const canvas = document.createElement('canvas');
@@ -105,5 +107,8 @@
   };
   function wake() {if (!raf && !document.hidden) raf = requestAnimationFrame(loop);}
   document.addEventListener('visibilitychange', wake);
+  // Reduced motion switched on mid-visit stops the field at its next frame;
+  // switched off, it starts again, without a reload.
+  motion.addEventListener('change', () => {still = motion.matches; ripples.length = 0; wake();});
   if (!still) wake();
 })();

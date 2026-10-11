@@ -284,7 +284,7 @@ func TestToolsSearchPaidHitExampleRuns(t *testing.T) {
 	}
 	ex := hit["example"].(map[string]any)
 	maxCost := hit["price"].(map[string]any)["max_cost"].(float64)
-	if ex["id"] != "tool:"+toolOK || ex["max_cost"].(float64) != maxCost || fmt.Sprint(ex["args"]) != "map[city:CITY]" {
+	if ex["id"] != "tool:"+toolOK || ex["max_cost"].(float64) != maxCost || fmt.Sprint(ex["args"]) != "map[city:London]" {
 		t.Fatalf("example: %+v", ex)
 	}
 	if fmt.Sprint(hit["args"]) != "[map[name:city required:false type:string]]" {
@@ -295,7 +295,7 @@ func TestToolsSearchPaidHitExampleRuns(t *testing.T) {
 	if _, err := h.toolsCall(string(args), int64(ex["max_cost"].(float64))); err != nil {
 		t.Fatalf("the example: %v", err)
 	}
-	if fmt.Sprint(api.lastInvoke["calls"].([]any)[0].(map[string]any)["args"]) != "map[city:CITY]" {
+	if fmt.Sprint(api.lastInvoke["calls"].([]any)[0].(map[string]any)["args"]) != "map[city:London]" {
 		t.Fatalf("the tool's args: %v", api.lastInvoke)
 	}
 	// Without max_cost: the refusal names the field and the value.
@@ -312,8 +312,15 @@ func TestSchemaArgs(t *testing.T) {
 		{`{"type":"http","method":"GET","queryParams":{"q":{"type":"string","required":true},"limit":{"type":"number"}}}`,
 			`[{q string true} {limit number false}]`, `map[q:Q]`},
 		{`{"type":"http","body":{"type":"object","properties":{"coin-id":{"type":"string"}}}}`, `[{coin-id string false}]`, `map[coin-id:COIN_ID]`},
-		{`{"type":"http","body":{"n":3,"ok":true,"tags":["a"]}}`, `[{n integer false} {ok boolean false} {tags array false}]`, `map[n:1 ok:true tags:[]]`},
-		{`{"type":"http","body":{"bad name\u0000":"x","fine":"y"}}`, `[{fine string false}]`, `map[fine:FINE]`},
+		{`{"type":"http","body":{"n":3,"ok":true,"tags":["a"]}}`, `[{n integer false} {ok boolean false} {tags array false}]`, `map[n:3 ok:true tags:[]]`},
+		{`{"type":"http","body":{"bad name\u0000":"x","fine":"y"}}`, `[{fine string false}]`, `map[fine:y]`},
+		// pathParams (newbotlabor): required, with the schema's example values,
+		// alone or beside queryParams.
+		{`{"type":"http","method":"GET","pathParams":{"coinId":{"type":"string","example":"bitcoin"},"days":{"type":"integer","examples":[7]}}}`,
+			`[{coinId string true} {days integer true}]`, `map[coinId:bitcoin days:7]`},
+		{`{"type":"http","method":"GET","pathParams":{"type":"object","properties":{"symbol":{"type":"string"}}}}`, `[{symbol string true}]`, `map[symbol:SYMBOL]`},
+		{`{"type":"http","method":"GET","pathParams":{"chain":"base"},"queryParams":{"limit":{"type":"number"}}}`, `[{chain string true} {limit number false}]`, `map[chain:base]`},
+		{`{"type":"http","pathParams":{"q":{"type":"string","example":"two words"}}}`, `[{q string true}]`, `map[q:Q]`},
 		{`[1,2]`, `[]`, `map[]`},
 		{``, `[]`, `map[]`},
 	} {

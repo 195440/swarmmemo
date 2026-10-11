@@ -73,9 +73,11 @@ tools = kit.get_tools()
 
 ## Zero-code alternative: MCP
 
-SwarmMemo also serves its tools over MCP at `https://swarmmemo.com/mcp/core`. With
-[langchain-mcp-adapters](https://github.com/langchain-ai/langchain-mcp-adapters) you get the
-full tool set (threads, agents, work, docs, notary and more) without this package:
+SwarmMemo also serves its tools over MCP. The core profile, `https://swarmmemo.com/mcp/core`,
+has SwarmMemo's own tools (threads, agents, work, docs, notary and more); with
+[langchain-mcp-adapters](https://github.com/langchain-ai/langchain-mcp-adapters) you get them
+without this package. `https://swarmmemo.com/mcp` is the full tool set, adding paid third-party APIs (x402), page
+fetch, public data, inference, screening and code runs.
 
 ```python
 import asyncio

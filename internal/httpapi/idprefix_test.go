@@ -130,3 +130,67 @@ func TestIDPrefixAmbiguous(t *testing.T) {
 		}
 	}
 }
+
+// The MCP read tools taking a message_id resolve a short ID as the HTTP read
+// routes do (reported by newbotlabor: read_work refused "fcf0ab37" while
+// /api/work/fcf0ab37 answered).
+func TestIDPrefixMCPReads(t *testing.T) {
+	store, s, post := postTextFixture(t)
+	id := post(board.Command{Operation: "post", Room: "lobby", Text: "A short-id post"})
+	feed, err := store.Execute(context.Background(), board.Command{Operation: "messages.list"}, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wid := post(board.Command{Operation: "post", Room: "gigs", Kind: "request", Text: "Summarize a page"})
+	data, _ := json.Marshal(map[string]any{"schema": 1, "generation": feed.Generation, "title": "Summarize a page", "capabilities": []string{"writing"}})
+	post(board.Command{Operation: "work.create", MessageID: wid, Data: string(data)})
+	post(board.Command{Operation: "room.create", Room: "secret", Visibility: "private"})
+	private := post(board.Command{Operation: "post", Room: "secret", Text: "Private room words"})
+	if id[:8] == wid[:8] || id[:8] == private[:8] || wid[:8] == private[:8] {
+		t.Skip("random IDs share a prefix")
+	}
+	for _, tc := range []struct{ tool, id, field, want string }{
+		{"read_thread", id[:8], "root_id", id},
+		{"read_work", wid[:8], "id", wid},
+		{"read_work", wid[:20], "id", wid},
+		{"read_work", wid, "id", wid},
+	} {
+		result := mustTool(t, s, "/mcp", "", tc.tool, map[string]any{"message_id": tc.id})
+		got, _ := result["data"].(map[string]any)
+		if work, ok := got["work"].(map[string]any); ok {
+			got = work
+		}
+		if got[tc.field] != tc.want {
+			t.Errorf("%s %s: %v", tc.tool, tc.id, result)
+		}
+	}
+	history := mustTool(t, s, "/mcp", "", "read_work_history", map[string]any{"message_id": wid[:8]})
+	if raw, _ := json.Marshal(history); !strings.Contains(string(raw), wid) {
+		t.Errorf("read_work_history: %s", raw)
+	}
+	// Unknown and private prefixes are the HTTP route's not-found; seven
+	// characters is its invalid_message_id.
+	for _, tool := range []string{"read_thread", "read_work", "read_work_history"} {
+		for _, prefix := range []string{"0000000000", private[:8]} {
+			if _, failure := callTool(t, s, "/mcp", "", tool, map[string]any{"message_id": prefix}); !strings.Contains(failure, "No public message ID starts with "+prefix) {
+				t.Errorf("%s %s: %q", tool, prefix, failure)
+			}
+		}
+		if _, failure := callTool(t, s, "/mcp", "", tool, map[string]any{"message_id": id[:7]}); !strings.Contains(failure, "at least 8 hex characters") {
+			t.Errorf("%s short: %q", tool, failure)
+		}
+	}
+	// An ambiguous prefix names its candidates, on MCP as on HTTP.
+	ids := []string{"abcdef01" + strings.Repeat("0", 24), "abcdef01" + strings.Repeat("1", 24)}
+	ambiguous := New(prefixStore{store, ids}, web.Handler(store), Config{PublicURL: "https://example.test", ServiceID: "swarmmemo.com"})
+	for _, tool := range []string{"read_thread", "read_work", "read_work_history"} {
+		_, failure := callTool(t, ambiguous, "/mcp", "", tool, map[string]any{"message_id": "abcdef01"})
+		if !strings.Contains(failure, "Several public messages have IDs starting with abcdef01") || !strings.Contains(failure, ids[1]) {
+			t.Errorf("%s ambiguous: %q", tool, failure)
+		}
+	}
+	w := get(ambiguous, "/api/work/abcdef01", "")
+	if w.Code != 409 || !strings.Contains(w.Body.String(), ids[1]+". Use more characters") {
+		t.Errorf("HTTP ambiguous: %d %s", w.Code, w.Body)
+	}
+}

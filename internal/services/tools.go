@@ -472,6 +472,7 @@ type toolArg struct {
 	name, typ string
 	required  bool
 	enum      any // the first of its enum, when it has a plain one
+	example   any // its schema's example (or sample value), when plain
 }
 
 // schemaArgs is the arguments a paid tool's input schema names, required
@@ -479,27 +480,42 @@ type toolArg struct {
 // reads a JSON Schema object (properties, required), the same nested under
 // body, query, queryParams, bodyFields, params or input, a map of field
 // specs ({"city":{"type":"string","required":true}}) or a sample body
-// ({"city":"London"}, every field optional). Anything else names none.
+// ({"city":"London"}, every field optional). A type:http schema's pathParams,
+// read the same ways, add to those, each required (a URL cannot leave one
+// out), its sample value as its example. Anything else names none.
 func schemaArgs(schema json.RawMessage) []toolArg {
 	var top map[string]json.RawMessage
 	if len(schema) == 0 || json.Unmarshal(schema, &top) != nil {
 		return nil
 	}
+	section := func(raw json.RawMessage) ([]toolArg, bool) {
+		var inner map[string]json.RawMessage
+		if json.Unmarshal(raw, &inner) != nil || len(inner) == 0 {
+			return nil, false
+		}
+		if props, ok := inner["properties"]; ok {
+			return jsonSchemaArgs(props, inner["required"]), true
+		}
+		return fieldArgs(inner), true
+	}
 	var args []toolArg
 	if props, ok := top["properties"]; ok {
 		args = jsonSchemaArgs(props, top["required"])
 	} else {
+		path, _ := section(top["pathParams"])
+		for i := range path {
+			path[i].required = true
+		}
 		for _, k := range []string{"body", "bodyFields", "queryParams", "query", "params", "input"} {
-			var inner map[string]json.RawMessage
-			if json.Unmarshal(top[k], &inner) != nil || len(inner) == 0 {
-				continue
+			if found, ok := section(top[k]); ok {
+				args = found
+				break
 			}
-			if props, ok := inner["properties"]; ok {
-				args = jsonSchemaArgs(props, inner["required"])
-			} else {
-				args = fieldArgs(inner)
+		}
+		for _, p := range path {
+			if !slices.ContainsFunc(args, func(a toolArg) bool { return a.name == p.name }) {
+				args = append(args, p)
 			}
-			break
 		}
 	}
 	slices.SortFunc(args, func(a, b toolArg) int {
@@ -554,20 +570,42 @@ func fieldArgs(fields map[string]json.RawMessage) []toolArg {
 			out = append(out, a)
 			continue
 		}
-		out = append(out, toolArg{name: name, typ: jsonKind(raw)})
+		var sample any
+		_ = json.Unmarshal(raw, &sample)
+		out = append(out, toolArg{name: name, typ: jsonKind(raw), example: plainValue(sample)})
 	}
 	return out
+}
+
+// plainValue is v when it is safe to echo as an example value: a short
+// plain string (EchoesArg), a number or a boolean; nil otherwise.
+func plainValue(v any) any {
+	switch v := v.(type) {
+	case string:
+		if EchoesArg(v) {
+			return v
+		}
+	case float64, bool:
+		return v
+	}
+	return nil
 }
 
 // specArg is one property's type (the first non-null of a list) and enum.
 func specArg(name string, raw json.RawMessage) toolArg {
 	a := toolArg{name: name, typ: "any"}
 	var spec struct {
-		Type json.RawMessage `json:"type"`
-		Enum []any           `json:"enum"`
+		Type     json.RawMessage `json:"type"`
+		Enum     []any           `json:"enum"`
+		Example  any             `json:"example"`
+		Examples []any           `json:"examples"`
 	}
 	if json.Unmarshal(raw, &spec) != nil {
 		return a
+	}
+	a.example = plainValue(spec.Example)
+	if a.example == nil && len(spec.Examples) > 0 {
+		a.example = plainValue(spec.Examples[0])
 	}
 	var one string
 	var many []string
@@ -631,6 +669,10 @@ func exampleArgs(args []toolArg) map[string]any {
 		}
 		if a.enum != nil {
 			out[a.name] = a.enum
+			continue
+		}
+		if a.example != nil {
+			out[a.name] = a.example
 			continue
 		}
 		switch a.typ {

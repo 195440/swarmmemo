@@ -414,8 +414,15 @@ func (s *Store) offeringBuy(ctx context.Context, tx *sql.Tx, c Command, a actor,
 		return Result{}, problem(410, "offering_retired", "This offering is retired: it takes no new calls.")
 	}
 	input, inputSHA, payment, err := parseBuy(c.Data, o)
+	// A discovery probe: no input at all and no payment, from the keyless
+	// route. Its 402 cannot be paid (offeringDiscoveryQuote); any payment
+	// still meets parseBuy's refusal or checkOfferingQuote's.
+	probe := false
 	if err != nil {
-		return Result{}, err
+		if !discoveryProbe(ctx) || paymentFrom(ctx) != "" || !isInvalidInput(err) || !probeBuy(c.Data) {
+			return Result{}, err
+		}
+		probe = true
 	}
 	if header := paymentFrom(ctx); header != "" {
 		if payment != "" && payment != header {
@@ -440,17 +447,24 @@ func (s *Store) offeringBuy(ctx context.Context, tx *sql.Tx, c Command, a actor,
 		if !s.quoteAllowed(a.account, account+"/"+name, s.now()) {
 			return Result{}, &Error{Status: 429, Code: "offering_quote_rate", Message: fmt.Sprintf("At most %d offering quotes a minute per caller, and %d per offering; wait a few seconds.", OfferingQuotesPerMinute, OfferingQuotesPerOfferingMinute), RetryAfter: 10}
 		}
-		b := make([]byte, 9)
-		_, _ = rand.Read(b)
 		expires := now + services.TopupQuoteSeconds
-		quote := s.offeringQuote(o, window, inputSHA, caller, expires, base64.RawURLEncoding.EncodeToString(b))
+		quote := offeringDiscoveryQuote
+		if !probe {
+			b := make([]byte, 9)
+			_, _ = rand.Read(b)
+			quote = s.offeringQuote(o, window, inputSHA, caller, expires, base64.RawURLEncoding.EncodeToString(b))
+		}
 		req := s.offeringRequirement(o, quote, expires)
 		_, handle, err := providerOf(ctx, tx, account)
 		if err != nil {
 			return Result{}, err
 		}
 		path := offeringPath(account, handle, name)
-		body, header := cfg.PaymentRequiredFor(req, "https://"+s.config.ServiceID+path, fmt.Sprintf("%s (%s USDC, %s)", o.Listing.Title, o.Listing.Price, path))
+		body, header := cfg.PaymentRequiredWith(req, "https://"+s.config.ServiceID+path, fmt.Sprintf("%s (%s USDC, %s)", o.Listing.Title, o.Listing.Price, path), map[string]any{"bazaar": offeringBazaar(o)})
+		if probe {
+			return Result{}, &Error{Status: 402, Code: "payment_required", Message: fmt.Sprintf("This offering costs %s USDC a call. This answer describes it for discovery and cannot be paid: POST the call's input (extensions.bazaar shows an example; offering.get its schema) for a requirement to sign.", o.Listing.Price),
+				Details: map[string]any{"x402": body, "payment_required": header, "offering": map[string]any{"path": path, "rev": o.Rev, "price": o.Listing.Price, "claim_window": window, "sla": o.SLA, "discovery": true}}}
+		}
 		return Result{}, &Error{Status: 402, Code: "payment_required", Message: fmt.Sprintf("Pay %s USDC on %s to %s, the provider's wallet: sign the requirement in details.x402.accepts (x402 v2, exact, EIP-3009) within %d seconds and send the same request again with the payment in the PAYMENT-SIGNATURE header (or data.payment). The payment is only verified now; it settles when the provider claims the call, and nothing is charged if it is declined or not claimed within %d seconds.", o.Listing.Price, cfg.Network, o.Listing.PayTo, services.TopupQuoteSeconds, window),
 			Details: map[string]any{"x402": body, "payment_required": header, "offering": map[string]any{"path": path, "rev": o.Rev, "price": o.Listing.Price, "claim_window": window, "sla": o.SLA, "input_sha256": inputSHA}}}
 	}

@@ -8,6 +8,8 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -33,8 +35,13 @@ func realServer(t *testing.T) *Server {
 }
 
 func get(s *Server, path, accept string) *httptest.ResponseRecorder {
+	return getFrom(s, path, accept, "198.51.100.8:12345")
+}
+
+// getFrom is get from a chosen client address.
+func getFrom(s *Server, path, accept, addr string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest("GET", path, nil)
-	r.RemoteAddr = "198.51.100.8:12345"
+	r.RemoteAddr = addr
 	if accept != "" {
 		r.Header.Set("Accept", accept)
 	}
@@ -82,6 +89,12 @@ func TestServedLinksResolve(t *testing.T) {
 			return 200, body
 		}
 		w := get(s, path, "text/html")
+		// Every page fetched from one address trips the per-client read
+		// limit as the surfaces grow; a 429 is the limiter, not a broken
+		// link, so ask again from another documentation address.
+		for i := 1; w.Code == http.StatusTooManyRequests && i < 250; i++ {
+			w = getFrom(s, path, "text/html", fmt.Sprintf("198.51.100.%d:12345", i))
+		}
 		if w.Code < 400 {
 			bodies[path] = w.Body.String()
 		}

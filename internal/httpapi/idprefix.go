@@ -18,7 +18,8 @@ import (
 // answers for its root. A prefix that several public messages share is 409
 // ambiguous_id naming up to ten of them; one no public message has is
 // not_found. Private rooms and removed posts never match. Signed commands
-// keep requiring full IDs.
+// keep requiring full IDs. The MCP read tools taking a message_id
+// (read_thread, read_work, read_work_history) resolve one the same way.
 
 // idPrefixRoutes are the read routes whose first path segment after the
 // prefix is a message ID.
@@ -65,29 +66,19 @@ func (s *Server) idPrefixRoute(w http.ResponseWriter, r *http.Request) bool {
 		writeError(w, &board.Error{Status: 400, Code: "invalid_message_id", Message: idTooShort})
 		return true
 	}
-	ids, err := resolver.PublicIDsWithPrefix(r.Context(), prefix, board.IDPrefixCandidates+1)
-	if err != nil {
-		writeError(w, &board.Error{Status: 503, Code: "busy", Message: "The ID lookup is busy. Retry shortly.", RetryAfter: 2})
-		return true
-	}
-	switch {
-	case len(ids) == 0:
-		if page {
-			return false
-		}
-		writeError(w, &board.Error{Status: 404, Code: "not_found", Message: "No public message ID starts with " + prefix + "."})
-		return true
-	case len(ids) > 1:
-		shown := ids[:min(len(ids), board.IDPrefixCandidates)]
-		message := "Several public messages have IDs starting with " + prefix + "; use more characters or the full 32-character ID."
-		if page {
+	full, shown, failure := resolveIDPrefix(r.Context(), resolver, prefix)
+	if failure != nil {
+		switch {
+		case page && failure.Code == "not_found":
+			return false // the page's own not-found
+		case page && failure.Code == "ambiguous_id":
 			idAmbiguousPage(w, r, base, rest, prefix, shown)
-			return true
+		default:
+			writeError(w, failure)
 		}
-		writeError(w, &board.Error{Status: 409, Code: "ambiguous_id", Message: message,
-			Details: map[string]any{"prefix": prefix, "candidates": shown, "more": len(ids) > board.IDPrefixCandidates}})
 		return true
 	}
+	ids := []string{full}
 	// The escaped path keeps any escapes after the ID, which is plain hex.
 	_, escapedRest, _ := strings.Cut(strings.TrimPrefix(r.URL.EscapedPath(), base), "/")
 	target := base + ids[0]
@@ -107,6 +98,54 @@ func (s *Server) idPrefixRoute(w http.ResponseWriter, r *http.Request) bool {
 		r.URL.RawPath = target
 	}
 	return false
+}
+
+// resolveIDPrefix names the one public message whose ID starts with prefix
+// (8 to 31 lowercase hex characters). It is the one resolver behind the read
+// routes and the MCP read tools: no match is 404 not_found, several are 409
+// ambiguous_id naming up to ten (also returned), and a failed lookup is 503
+// busy.
+func resolveIDPrefix(ctx context.Context, resolver idPrefixResolver, prefix string) (string, []string, *board.Error) {
+	ids, err := resolver.PublicIDsWithPrefix(ctx, prefix, board.IDPrefixCandidates+1)
+	if err != nil {
+		return "", nil, &board.Error{Status: 503, Code: "busy", Message: "The ID lookup is busy. Retry shortly.", RetryAfter: 2}
+	}
+	switch {
+	case len(ids) == 0:
+		return "", nil, &board.Error{Status: 404, Code: "not_found", Message: "No public message ID starts with " + prefix + "."}
+	case len(ids) > 1:
+		shown := ids[:min(len(ids), board.IDPrefixCandidates)]
+		more := len(ids) > board.IDPrefixCandidates
+		message := "Several public messages have IDs starting with " + prefix + ": " + strings.Join(shown, ", ")
+		if more {
+			message += " and more"
+		}
+		message += ". Use more characters or the full 32-character ID."
+		return "", shown, &board.Error{Status: 409, Code: "ambiguous_id", Message: message,
+			Details: map[string]any{"prefix": prefix, "candidates": shown, "more": more}}
+	}
+	return ids[0], nil, nil
+}
+
+// mcpMessageID is an MCP read tool's message_id with a short ID resolved
+// exactly as the HTTP read routes resolve one. A full ID, or anything that is
+// no hex prefix, is returned unchanged for the command to accept or refuse.
+func (s *Server) mcpMessageID(ctx context.Context, id string) (string, error) {
+	if !board.IDPrefixRE.MatchString(id) {
+		return id, nil
+	}
+	if len(id) < board.IDPrefixMin {
+		return "", &board.Error{Status: 400, Code: "invalid_message_id", Message: idTooShort}
+	}
+	resolver, ok := s.service.(idPrefixResolver)
+	if !ok {
+		return id, nil
+	}
+	full, _, failure := resolveIDPrefix(ctx, resolver, id)
+	if failure != nil {
+		return "", failure
+	}
+	return full, nil
 }
 
 // idAmbiguousPage lists an ambiguous prefix's candidates as links.

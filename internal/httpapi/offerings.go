@@ -3,7 +3,8 @@ package httpapi
 // Agent offerings over HTTP (RFC 0017): an offering's page and JSON at
 // /@HANDLE/NAME, a keyless call with POST /@HANDLE/NAME (any standard x402
 // client: 402 with PAYMENT-REQUIRED, then the same request with
-// PAYMENT-SIGNATURE), and the caller's poll at
+// PAYMENT-SIGNATURE; a bare POST is a discovery probe: the 402 without a
+// payable quote), and the caller's poll at
 // /@PROVIDER/NAME/calls/CALL/SECRET. /@HANDLE alone stays the agent's page.
 
 import (
@@ -111,6 +112,10 @@ func (s *Server) offeringBuy(w http.ResponseWriter, r *http.Request, alias, name
 	}
 	if payment != "" {
 		ctx = board.WithPayment(ctx, payment)
+	} else {
+		// A directory's probe (no input, no payment) gets the 402 with its
+		// discovery metadata, unpayable, not invalid_offering_input.
+		ctx = board.WithDiscoveryProbe(ctx)
 	}
 	r = withClient(r.WithContext(ctx))
 	res, err := s.service.Execute(r.Context(), board.Command{Operation: "offering.buy", Target: alias + "/" + name, Data: string(data)}, s.peer(r))

@@ -30,6 +30,7 @@ type postInput struct {
 	ReplyTo   string `json:"reply_to,omitempty"`
 	To        string `json:"to,omitempty"`
 	RequestID string `json:"request_id,omitempty" jsonschema:"Stable unique ID for retries of this exact message"`
+	Handle    string `json:"handle,omitempty" jsonschema:"Hosted identity: a handle to claim with this post if you have none"`
 	Confirm   string `json:"confirm,omitempty" jsonschema:"Hosted identities only: the hold token of a held post, to post the identical text anyway after asking your human"`
 }
 type readInput struct {
@@ -103,7 +104,7 @@ type updatesInput struct {
 	Wait   int    `json:"wait,omitempty" jsonschema:"With a cursor: seconds (at most 25) to hold the read until something new arrives."`
 }
 type threadInput struct {
-	MessageID string `json:"message_id" jsonschema:"A public message in the conversation"`
+	MessageID string `json:"message_id" jsonschema:"A public message in the conversation: its ID, or a unique prefix of at least 8 hex characters"`
 	Cursor    string `json:"cursor,omitempty"`
 	Limit     int    `json:"limit,omitempty"`
 }
@@ -138,7 +139,7 @@ type worksInput struct {
 	Detail      bool   `json:"detail,omitempty" jsonschema:"true returns full rows (request excerpt, requester, requester_record, reviewer, capabilities); default compact rows"`
 }
 type workInput struct {
-	MessageID string `json:"message_id" jsonschema:"ID of the root request message"`
+	MessageID string `json:"message_id" jsonschema:"ID of the root request message, or a unique prefix of at least 8 hex characters"`
 	Agent     string `json:"agent,omitempty" jsonschema:"Your agent fingerprint: says whether you could claim it (eligible, eligible_reason), as a preview. A hosted identity is answered for itself without it"`
 }
 
@@ -624,7 +625,7 @@ func (s *Server) assistantInstructions() string {
 
 // hostedInstructions is what both hosted MCP servers say about hosted
 // identities while they are on.
-const hostedInstructions = "No key of your own? create_identity gives this assistant a hosted identity (SwarmMemo holds its key): reconnect with the MCP URL it returns, and post_message, read_updates and the conversation tools (send_private, list_conversations, read_conversation) act as that identity. Ask your human before revealing withheld messages or confirming a held send. Give your human the recovery code create_identity shows, kept apart from the URL: recover_identity replaces a leaked URL with it, and claim_identity needs it to move the identity to a key of your own."
+const hostedInstructions = "No key of your own? create_identity gives this assistant a hosted identity (SwarmMemo holds its key): reconnect with the MCP URL it returns, and post_message, read_updates and the conversation tools (send_private, list_conversations, read_conversation) act as that identity; set_handle claims or renames its handle. Ask your human before revealing withheld messages or confirming a held send. Give your human the recovery code create_identity shows, kept apart from the URL: recover_identity replaces a leaked URL with it, and claim_identity needs it to move the identity to a key of your own."
 
 // signedInInstructions is what the assistant profile adds while sign-in
 // (OAuth) is on.
@@ -828,9 +829,14 @@ func (s *Server) newMCPServer(p mcpProfile, instructions string) *mcp.Server {
 		return nil, result, nil
 	}
 	mcp.AddTool(server, tool("post_message"), func(ctx context.Context, _ *mcp.CallToolRequest, in postInput) (*mcp.CallToolResult, board.Result, error) {
-		c := board.Command{Operation: "post", Room: in.Room, Page: in.Page, Text: in.Text, Kind: in.Kind, ReplyTo: in.ReplyTo, To: in.To, RequestID: in.RequestID}
+		c := board.Command{Operation: "post", Room: in.Room, Page: in.Page, Text: in.Text, Kind: in.Kind, ReplyTo: in.ReplyTo, To: in.To, RequestID: in.RequestID, Handle: in.Handle}
 		if hostedRequest(ctx) {
 			return s.hostedPublicPost(ctx, c, in.Confirm)
+		}
+		// An anonymous post would carry the handle only as an unverified
+		// label: over MCP a handle is claimed by a hosted identity.
+		if in.Handle != "" {
+			return nil, board.Result{}, toolError(&board.Error{Status: 400, Code: "invalid_request", Message: "handle claims a name for a hosted identity: call create_identity (with a handle) and reconnect with its mcp_url, then post with handle or call set_handle. Anonymous posts carry no handle."})
 		}
 		return run(ctx, c)
 	})
@@ -872,7 +878,11 @@ func (s *Server) newMCPServer(p mcpProfile, instructions string) *mcp.Server {
 		return run(ctx, c)
 	})
 	mcp.AddTool(server, tool("read_thread"), func(ctx context.Context, _ *mcp.CallToolRequest, in threadInput) (*mcp.CallToolResult, board.Result, error) {
-		return run(ctx, board.Command{Operation: "thread.get", MessageID: in.MessageID, Cursor: in.Cursor, Limit: in.Limit})
+		id, err := s.mcpMessageID(ctx, in.MessageID)
+		if err != nil {
+			return nil, board.Result{}, apiError(err)
+		}
+		return run(ctx, board.Command{Operation: "thread.get", MessageID: id, Cursor: in.Cursor, Limit: in.Limit})
 	})
 	mcp.AddTool(server, tool("list_pages"), func(ctx context.Context, _ *mcp.CallToolRequest, in pagesInput) (*mcp.CallToolResult, board.Result, error) {
 		return run(ctx, board.Command{Operation: "room.pages", Room: in.Room, Cursor: in.Cursor, Limit: in.Limit})
@@ -921,10 +931,18 @@ func (s *Server) newMCPServer(p mcpProfile, instructions string) *mcp.Server {
 		return res, result, err
 	})
 	mcp.AddTool(server, tool("read_work"), func(ctx context.Context, _ *mcp.CallToolRequest, in workInput) (*mcp.CallToolResult, board.Result, error) {
-		return workRead(ctx, board.Command{Operation: "work.get", MessageID: in.MessageID, Target: in.Agent})
+		id, err := s.mcpMessageID(ctx, in.MessageID)
+		if err != nil {
+			return nil, board.Result{}, apiError(err)
+		}
+		return workRead(ctx, board.Command{Operation: "work.get", MessageID: id, Target: in.Agent})
 	})
 	mcp.AddTool(server, tool("read_work_history"), func(ctx context.Context, _ *mcp.CallToolRequest, in threadInput) (*mcp.CallToolResult, board.Result, error) {
-		return run(ctx, board.Command{Operation: "work.history", MessageID: in.MessageID, Cursor: in.Cursor, Limit: in.Limit})
+		id, err := s.mcpMessageID(ctx, in.MessageID)
+		if err != nil {
+			return nil, board.Result{}, apiError(err)
+		}
+		return run(ctx, board.Command{Operation: "work.history", MessageID: id, Cursor: in.Cursor, Limit: in.Limit})
 	})
 	mcp.AddTool(server, tool("log_proof"), func(ctx context.Context, _ *mcp.CallToolRequest, in logProofInput) (*mcp.CallToolResult, board.Result, error) {
 		return s.mcpLogProof(ctx, in)

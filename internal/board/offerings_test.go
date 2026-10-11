@@ -705,3 +705,33 @@ func TestOfferingCallWakesTheProvider(t *testing.T) {
 		t.Fatalf("the claim left the entry waiting (%d closed)", n)
 	}
 }
+
+// The bazaar example input follows every bound of the schema subset, and
+// the extension stays small enough for a payment payload to echo it.
+func TestOfferingBazaarExample(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object","properties":{"kind":{"type":"string","enum":["quick","deep"]},"q":{"type":"string","minLength":20,"maxLength":30},
+"n":{"type":"integer","minimum":2.5,"maximum":9},"neg":{"type":"number","maximum":-3},"flag":{"type":"boolean"},"tiny":{"type":"string","maxLength":3}},"required":["q","n"],"additionalProperties":false}`)
+	sc, err := parseInputSchema(schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex := exampleInput(sc)
+	raw := map[string]json.RawMessage{}
+	for k, v := range ex {
+		raw[k], _ = json.Marshal(v)
+	}
+	if err := sc.check(raw); err != nil || len(ex) != 6 || ex["kind"] != "quick" || ex["n"] != 3.0 || ex["neg"] != -3.0 || ex["tiny"] != "exa" {
+		t.Fatalf("example %v: %v", ex, err)
+	}
+	o := offeringRow{Account: "abc", Name: "oracle", Rev: 1, PayTo: "0x3333333333333333333333333333333333333333", Listing: offeringListing{Price: "5", Input: schema}}
+	if body := offeringBazaar(o)["info"].(map[string]any)["input"].(map[string]any)["body"].(map[string]any); body["q"] != ex["q"] {
+		t.Fatalf("bazaar body %v", body)
+	}
+	// A schema whose example cannot fit falls back to an object body.
+	o.Listing.Input = json.RawMessage(`{"type":"object","properties":{"long":{"type":"string","minLength":5000}},"required":["long"]}`)
+	ext := offeringBazaar(o)
+	b, _ := json.Marshal(ext)
+	if len(b) > offeringBazaarBytes || len(ext["info"].(map[string]any)["input"].(map[string]any)["body"].(map[string]any)) != 0 {
+		t.Fatalf("oversized bazaar extension %d bytes", len(b))
+	}
+}

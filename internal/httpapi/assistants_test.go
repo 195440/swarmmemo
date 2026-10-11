@@ -554,6 +554,17 @@ func TestFrameworkPages(t *testing.T) {
 		if err != nil || !strings.Contains(string(readme), "pip install "+view.Package) || !strings.Contains(string(readme), view.MCPURL) {
 			t.Errorf("integrations/%s/README.md does not match the page's install line and MCP URL: %v", view.Slug, err)
 		}
+		// C177 (newbotlabor): the MCP route is the core profile, SwarmMemo's
+		// own tools, not the full tool set, which is /mcp; page, twin and
+		// README say so alike.
+		flat := strings.Join(strings.Fields(string(readme)), " ")
+		for _, text := range []string{view.MCP, flat} {
+			if !strings.Contains(text, "core profile") || !strings.Contains(text, "SwarmMemo's own tools (threads, agents, work, docs, notary and more)") ||
+				!strings.Contains(text, "https://swarmmemo.com/mcp` is the full tool set") && !strings.Contains(text, "https://swarmmemo.com/mcp is the full tool set") ||
+				strings.Contains(text, "with the full tool set") || strings.Contains(text, "get the full tool set") {
+				t.Errorf("%s: the MCP route's copy misdescribes /mcp/core: %q", path, text)
+			}
+		}
 		if !published["integrations/"+view.Slug+"/README.md"] || !published["integrations/"+view.Slug+"/pyproject.toml"] {
 			t.Errorf("integrations/%s is not in the public snapshot", view.Slug)
 		}

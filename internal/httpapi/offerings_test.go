@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/google/jsonschema-go/jsonschema"
 
 	"swarmmemo/internal/board"
 	"swarmmemo/internal/services"
@@ -244,5 +247,99 @@ func TestOfferingsOverMCP(t *testing.T) {
 		if core[name] {
 			t.Errorf("the core profile lists %s", name)
 		}
+	}
+}
+
+// A discovery probe (POST with no input, no payment) answers 402 with the
+// x402 bazaar extension, its info valid against its schema and its example
+// body an input the offering accepts; the probe's requirement cannot be
+// paid, with no input or with input, and nothing reaches the facilitator.
+// Wrong input is still 400; a payable 402 carries the same extension, and a
+// payment echoing it (as x402 clients do) is taken.
+func TestOfferingDiscoveryProbe(t *testing.T) {
+	s, verified, _, _ := offeringServer(t)
+	type paymentRequired struct {
+		Version    int              `json:"x402Version"`
+		Resource   map[string]any   `json:"resource"`
+		Accepts    []map[string]any `json:"accepts"`
+		Extensions struct {
+			Bazaar struct {
+				Info   map[string]any  `json:"info"`
+				Schema json.RawMessage `json:"schema"`
+			} `json:"bazaar"`
+		} `json:"extensions"`
+		SwarmMemo map[string]any `json:"swarmmemo"`
+	}
+	read402 := func(w *httptest.ResponseRecorder) paymentRequired {
+		t.Helper()
+		var pr, fromHeader paymentRequired
+		if w.Code != 402 || json.Unmarshal(w.Body.Bytes(), &pr) != nil || pr.Version != 2 || len(pr.Accepts) != 1 {
+			t.Fatalf("402: %d %s", w.Code, w.Body.String())
+		}
+		raw, err := base64.StdEncoding.DecodeString(w.Header().Get("PAYMENT-REQUIRED"))
+		if err != nil || json.Unmarshal(raw, &fromHeader) != nil || fromHeader.Extensions.Bazaar.Info == nil {
+			t.Fatalf("PAYMENT-REQUIRED header without the bazaar extension: %s", raw)
+		}
+		var schema jsonschema.Schema
+		if err := json.Unmarshal(pr.Extensions.Bazaar.Schema, &schema); err != nil {
+			t.Fatalf("bazaar schema: %v %s", err, pr.Extensions.Bazaar.Schema)
+		}
+		resolved, err := schema.Resolve(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := resolved.Validate(pr.Extensions.Bazaar.Info); err != nil {
+			t.Fatalf("bazaar info does not follow its schema: %v %s", err, w.Body.String())
+		}
+		return pr
+	}
+	var example []byte
+	for _, body := range []string{"", "{}", " null "} {
+		pr := read402(offeringPost(s, "/@pythia/oracle", body, ""))
+		in, _ := pr.Extensions.Bazaar.Info["input"].(map[string]any)
+		if in["type"] != "http" || in["method"] != "POST" || in["bodyType"] != "json" || dig(in, "body", "question") != "example" ||
+			pr.Accepts[0]["extra"].(map[string]any)["quote"] != "discovery-only" || dig(pr.SwarmMemo, "offering", "discovery") != true ||
+			pr.Resource["url"] != "https://swarmmemo.com/@pythia/oracle" || dig(pr.Extensions.Bazaar.Info, "output", "type") != "json" {
+			t.Fatalf("probe %q: %+v", body, pr)
+		}
+		example, _ = json.Marshal(in["body"])
+	}
+	// Wrong input is no probe.
+	for _, body := range []string{`{"question":5}`, `{"other":"x"}`, `[]`, `nonsense`} {
+		if w := offeringPost(s, "/@pythia/oracle", body, ""); w.Code != 400 || !strings.Contains(w.Body.String(), "invalid_offering_input") {
+			t.Fatalf("input %s: %d %s", body, w.Code, w.Body.String())
+		}
+	}
+	// The probe's requirement is not payable: no input is still refused, and
+	// with input the quote is not this server's.
+	probe := read402(offeringPost(s, "/@pythia/oracle", "", ""))
+	if w := offeringPost(s, "/@pythia/oracle", "", topupPayment(t, probe.Accepts[0], 41)); w.Code != 400 || !strings.Contains(w.Body.String(), "invalid_offering_input") {
+		t.Fatalf("paid probe without input: %d %s", w.Code, w.Body.String())
+	}
+	if w := offeringPost(s, "/@pythia/oracle", string(example), topupPayment(t, probe.Accepts[0], 42)); w.Code != 400 || !strings.Contains(w.Body.String(), "payment_mismatch") {
+		t.Fatalf("paid probe with input: %d %s", w.Code, w.Body.String())
+	}
+	if verified.Load() != 0 {
+		t.Fatalf("a probe's payment reached the facilitator (%d verifies)", verified.Load())
+	}
+	// The example body is an input the offering takes: a payable 402 with
+	// the same extension, and a payment echoing it is accepted.
+	w := offeringPost(s, "/@pythia/oracle", string(example), "")
+	pr := read402(w)
+	if q := pr.Accepts[0]["extra"].(map[string]any)["quote"]; q == "discovery-only" || dig(pr.SwarmMemo, "offering", "input_sha256") == nil {
+		t.Fatalf("payable 402 %+v", pr)
+	}
+	var full, envelope map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &full)
+	raw, _ := base64.StdEncoding.DecodeString(topupPayment(t, pr.Accepts[0], 43))
+	_ = json.Unmarshal(raw, &envelope)
+	envelope["resource"], envelope["extensions"] = full["resource"], full["extensions"]
+	raw, _ = json.Marshal(envelope)
+	if w := offeringPost(s, "/@pythia/oracle", string(example), base64.StdEncoding.EncodeToString(raw)); w.Code != 202 || verified.Load() != 1 {
+		t.Fatalf("paid with the echoed extension: %d %s", w.Code, w.Body.String())
+	}
+	// The offering's JSON is unchanged for a GET asking for JSON.
+	if w := makeRequestWithAccept(s, "https://swarmmemo.com/@pythia/oracle", "application/json"); w.Code != 200 || dig(decodeResult(t, w.Body.Bytes()), "data", "offering", "price") != "5" {
+		t.Fatalf("GET json: %d %s", w.Code, w.Body.String())
 	}
 }

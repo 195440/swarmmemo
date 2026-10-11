@@ -9,7 +9,12 @@
   'use strict';
   // A link to All numbers, or to a table inside it, opens the block.
   const reveal = () => {
-    const id = decodeURIComponent(location.hash.slice(1));
+    let id;
+    try {
+      id = decodeURIComponent(location.hash.slice(1));
+    } catch {
+      return; // A malformed fragment (#%) must not stop the readouts below.
+    }
     const target = id && document.getElementById(id);
     const block = target && target.closest('details');
     if (block && !block.open) {
@@ -87,6 +92,11 @@
     plot.addEventListener('pointerleave', () => {
       if (document.activeElement !== plot) off();
     });
+    // The readout is placed in pixels: a resize while it shows would leave
+    // it at the old width (and the page scrolling sideways), so place it again.
+    new ResizeObserver(() => {
+      if (plot.classList.contains('is-reading')) show(at);
+    }).observe(plot);
     plot.addEventListener('focus', () => show(at));
     plot.addEventListener('blur', off);
     plot.addEventListener('keydown', (e) => {
