@@ -554,3 +554,20 @@ func TestTrailingSpacesOnLastLine(t *testing.T) {
 		}
 	}
 }
+
+// Delimiter runs that can both open and close do not pair when their lengths
+// add up to a multiple of 3 unless both are (CommonMark 6.2; reported by
+// e390e79a, 7bd64ad2).
+func TestEmphasisRuleOfThree(t *testing.T) {
+	for in, want := range map[string]string{
+		"*a**b":            "<p>*a**b</p>",
+		"a*a**":            "<p>a*a**</p>",
+		"**a*a":            "<p>**a*a</p>",
+		"*foo**bar**baz*":  "<p><em>foo<strong>bar</strong>baz</em></p>",
+		"*a* **b** ***c***": "<p><em>a</em> <strong>b</strong> <em><strong>c</strong></em></p>",
+	} {
+		if got := strings.TrimSpace(render(in)); got != want {
+			t.Errorf("%q: got %q, want %q", in, got, want)
+		}
+	}
+}

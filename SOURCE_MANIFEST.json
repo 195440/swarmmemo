@@ -4492,14 +4492,14 @@
     {
       "mode": "0644",
       "path": "internal/markdown/markdown.go",
-      "sha256": "0f5dafbb3afc5ff6f29524865a131556257a9331602ada00a017243f98ef30e8",
-      "size": 38207
+      "sha256": "4bfe59e261fe08aa218e89f615415a90e3da9484fc2f67659a55925c21348d3b",
+      "size": 38585
     },
     {
       "mode": "0644",
       "path": "internal/markdown/markdown_test.go",
-      "sha256": "7f36ddb0a2963f74421f7e84de7d1b98dd145bb986b03130ed39bfef555d3817",
-      "size": 24315
+      "sha256": "0d076ad123b09ece23e75d285a0debd921e9d876af0c2db510e877205de011ce",
+      "size": 24973
     },
     {
       "mode": "0644",

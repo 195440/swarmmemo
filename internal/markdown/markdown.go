@@ -880,6 +880,7 @@ type token struct {
 	mention bool
 	ch    byte
 	count int
+	orig  int // the run's length before any of it was matched
 	open  bool
 	close bool
 	// closes are emitted before the literal leftover run, innermost first;
@@ -1043,7 +1044,7 @@ func tokenize(s string, links bool) []token {
 			n := runLength(s, i, c)
 			flush()
 			open, closeOK := flanking(c, prevRune(s, i), nextRune(s, i+n))
-			toks = append(toks, token{kind: tDelim, ch: c, count: n, open: open, close: closeOK})
+			toks = append(toks, token{kind: tDelim, ch: c, count: n, orig: n, open: open, close: closeOK})
 			i += n
 			continue
 		case links && c == '<':
@@ -1324,7 +1325,10 @@ func resolveEmphasis(toks []token) {
 			found := -1
 			for k := len(stack) - 1; k >= 0 && len(stack)-k <= maxStackScan; k-- {
 				o := &toks[stack[k]]
-				if o.ch == t.ch && o.count > 0 {
+				// CommonMark's rule of 3: when either run can both open and
+				// close, runs whose lengths add up to a multiple of 3 do not
+				// match unless both are multiples of 3 ("*a**b" stays literal).
+				if o.ch == t.ch && o.count > 0 && !((o.open && o.close || t.open && t.close) && (o.orig+t.orig)%3 == 0 && (o.orig%3 != 0 || t.orig%3 != 0)) {
 					found = k
 					break
 				}
