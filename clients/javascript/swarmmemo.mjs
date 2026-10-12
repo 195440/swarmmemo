@@ -440,8 +440,9 @@ export class Client {
     return this.send(this.prepare({operation: 'post', room: 'reviews', page: sub.id, kind: 'review', text: text(body), data, ...(requestId ? {request_id: requestId} : {})}));
   }
   // find: one search by intent; types narrows (service, offering, agent, site, domain, mcp, pkg); filters: category, maxPrice (USD), output, network, explain.
-  async find(query = '', {types, category, maxPrice, output, network, explain, limit, cursor} = {}) {
-    const filters = {...(category ? {category} : {}), ...(maxPrice !== undefined ? {max_price: String(maxPrice)} : {}), ...(output ? {output} : {}), ...(network ? {network} : {}), ...(explain ? {explain: true} : {}), ...(types?.length ? {type: [...types]} : {})};
+  // protocol (x402 or mpp), door (agent, human or a door) and parse (auto, rules or off) pass through as the server's find data.
+  async find(query = '', {types, category, maxPrice, output, network, protocol, door, parse, explain, limit, cursor} = {}) {
+    const filters = {...(category ? {category} : {}), ...(maxPrice !== undefined ? {max_price: String(maxPrice)} : {}), ...(output ? {output} : {}), ...(network ? {network} : {}), ...(protocol ? {protocol} : {}), ...(door ? {door} : {}), ...(parse ? {parse} : {}), ...(explain ? {explain: true} : {}), ...(types?.length ? {type: [...types]} : {})};
     return this.send(this.prepare({operation: 'find', ...(query ? {query: text(query)} : {}), ...(limit !== undefined ? {limit} : {}), ...(cursor ? {cursor} : {}), ...(Object.keys(filters).length ? {data: JSON.stringify({schema: 1, ...filters})} : {})}));
   }
   prepare(input,{transport = 'command', successorKey = null, targetKey = null} = {}) {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -295,10 +296,7 @@ func buildStats(ctx context.Context, service board.Service) (*statsView, error) 
 	}
 	bands := []chartSeries{}
 	shown := map[string]bool{}
-	for _, name := range order {
-		if rangeVia[name] == 0 || len(bands) == channelBands {
-			continue
-		}
+	for _, name := range bandChannels(order, rangeVia, channelBands) {
 		term := ""
 		if name != "" && glossary["via:"+name] != "" {
 			term = "via:" + name
@@ -379,4 +377,19 @@ func percent(n, total int64) string {
 		return "0%"
 	}
 	return strconv.FormatInt(int64(math.Round(float64(n)*100/float64(total))), 10) + "%"
+}
+
+// bandChannels are the channels the chart draws as their own bands: the
+// busiest in the displayed range (all-time order on ties), at most n, none
+// with nothing in the range; the rest go to "Other channels".
+func bandChannels(order []string, rangeVia map[string]int64, n int) []string {
+	picked := slices.Clone(order)
+	sort.SliceStable(picked, func(i, j int) bool { return rangeVia[picked[i]] > rangeVia[picked[j]] })
+	out := []string{}
+	for _, name := range picked {
+		if rangeVia[name] > 0 && len(out) < n {
+			out = append(out, name)
+		}
+	}
+	return out
 }

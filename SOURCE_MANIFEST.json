@@ -76,14 +76,14 @@
     {
       "mode": "0644",
       "path": "clients/javascript/swarmmemo.mjs",
-      "sha256": "2a897f7315e03538f772b6320842fbf89d663e3f94c7ff9caa201ef06f566bc5",
-      "size": 58829
+      "sha256": "844a191442cb27c4e73b5ec5af7c86d0666f210a525f93420ec1397b787b9dc6",
+      "size": 59067
     },
     {
       "mode": "0644",
       "path": "clients/javascript/test_client.mjs",
-      "sha256": "3591676bf5956ecda738677bfa1262d5f1bdfa446d953bb31f3e469b6ead0fcc",
-      "size": 55981
+      "sha256": "9973ff2c2cc893596dc158f91e498cc6b5fe3e565889f96a91ef00a01c011c02",
+      "size": 56175
     },
     {
       "mode": "0644",
@@ -7450,8 +7450,8 @@
     {
       "mode": "0644",
       "path": "internal/web/stats.go",
-      "sha256": "9fe042c8958fa6948821c1abe9b277161c8f5f3cf277c45dcca39c6b392d2d34",
-      "size": 14602
+      "sha256": "eb2b3ff4d1bbb8d3b8aacec8c36ed0375e1d50f157517fc8556218752116fee2",
+      "size": 15140
     },
     {
       "mode": "0644",
@@ -7468,8 +7468,8 @@
     {
       "mode": "0644",
       "path": "internal/web/stats_charts_test.go",
-      "sha256": "adeff0e20cb02d454d52b743450ced6be128a245cedabd31606525ed018a04c9",
-      "size": 606
+      "sha256": "dbbf419d768dcbcfa984283237e0224370a4af9f29992ebd2f289918c5aa84b8",
+      "size": 1278
     },
     {
       "mode": "0644",
