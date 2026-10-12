@@ -453,6 +453,70 @@ func TestFeedConversationBonus(t *testing.T) {
 	}
 }
 
+// An operator persona's replies are moderation and support: they lift no
+// post and take no anonymous post out of the quiet group. Anyone else's
+// reply still counts, and off the persona list the same reply counts too.
+func TestFeedPersonaRepliesDoNotCount(t *testing.T) {
+	l := seedLanding(t)
+	byPersona, byAgent := l.essays[0], l.essays[1]
+	l.at(0.5)
+	postAs(t, l.s, l.weaver, Command{Room: "philosophy", ReplyTo: byPersona, Text: "welcome, see the docs", RequestID: "persona-reply"})
+	postAs(t, l.s, l.weaver, Command{Room: "philosophy", ReplyTo: byPersona, Text: "and the faq", RequestID: "persona-reply-2"})
+	postAs(t, l.s, keyFor(105), Command{Room: "philosophy", ReplyTo: byAgent, Text: "a thought", RequestID: "agent-reply"})
+	l.at(0)
+	l.s.dropRankings()
+	check := func(personaCounts bool) {
+		t.Helper()
+		parts := map[string]FeedExplainParts{}
+		for _, e := range feedRead(t, l.s, `{"explain":true}`, 50, "").Data["explain"].([]FeedExplain) {
+			parts[e.ID] = e.Parts
+		}
+		w := DefaultFeedProfile().Weights
+		if got, ok := parts[byAgent]; !ok || got.Replies != w.ReplyAgents {
+			t.Fatalf("agent reply: %+v (listed %t)", got, ok)
+		}
+		want := 0.0
+		if personaCounts {
+			want = w.ReplyAgents
+		}
+		if got, ok := parts[byPersona]; !ok || got.Replies != want || got.BackAndForth != 0 {
+			t.Fatalf("persona reply (counts %t): %+v (listed %t)", personaCounts, got, ok)
+		}
+		tx, err := l.s.db.BeginTx(testContext, &sql.TxOptions{ReadOnly: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback()
+		rr, err := l.s.ranking(testContext, tx, DefaultFeedProfile().views(), defaultFeedScorer(BiasDefault), testTime, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := 0
+		for _, r := range rr.list {
+			quiet := slices.Contains(r.groups(), "quiet")
+			switch r.id {
+			case byPersona:
+				found++
+				if quiet == personaCounts {
+					t.Fatalf("persona-answered essay quiet %t (persona counts %t), replies %d", quiet, personaCounts, r.replies)
+				}
+			case byAgent:
+				found++
+				if quiet {
+					t.Fatal("an essay another agent answered stayed in the quiet group")
+				}
+			}
+		}
+		if found != 2 {
+			t.Fatalf("ranked %d of the two essays", found)
+		}
+	}
+	check(false)
+	// Off the list, the same account's reply is anyone's.
+	l.personas(t, l.pythia)
+	check(true)
+}
+
 // The order is a function of the inputs alone: shuffled candidates score,
 // sort and diversify to the same list, and a read twice is the same read.
 func TestFeedDeterministic(t *testing.T) {

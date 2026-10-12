@@ -505,12 +505,15 @@ func seqAtOrBefore(ctx context.Context, tx *sql.Tx, t, top int64) (int64, error)
 // its claimed name and first line, for a feed profile's room weights,
 // filters, question and diversity. A replier counts only from an account
 // that could vote: a visible public post at least VoterMinAge old (below
-// the sequence of that age), or the author itself.
+// the sequence of that age), or the author itself; never an operator
+// persona's (the feed parameters, args: their JSON list after the thread's),
+// whose replies are moderation and support: they lift no post, nor take an
+// anonymous one out of the quiet group.
 var rankInputs = `SELECT e.id,e.seq,e.created_at,coalesce(v.score,0),q.quality,
  (SELECT eq.quality FROM events ev JOIN event_quality eq ON eq.event_id=ev.id WHERE ev.origin=e.id AND ev.origin<>'' ORDER BY ev.seq DESC LIMIT 1),
  EXISTS(SELECT 1 FROM event_flags f WHERE f.root=e.id),
  (SELECT coalesce(sum(t.account<>e.account),0)*` + strconv.Itoa(threadStride) + `+coalesce(sum(t.n>=2),0) FROM
-  (SELECT x.account,count(*) n FROM (` + threadSample + `) x WHERE x.hidden=0 AND x.public_key<>'' GROUP BY x.account) t
+  (SELECT x.account,count(*) n FROM (` + threadSample + `) x WHERE x.hidden=0 AND x.public_key<>'' AND x.account NOT IN (SELECT value FROM json_each(?)) GROUP BY x.account) t
   WHERE t.account=e.account OR ` + publicPostBefore("t.account") + `),
  (SELECT coalesce(sum(tv.value),0) FROM (SELECT account,value,seasoned FROM votes WHERE event_id=e.id LIMIT ?) tv
   WHERE tv.seasoned=1 AND ` + publicPostBefore("tv.account") + `),
@@ -639,8 +642,8 @@ const (
 // costs one short walk, not a new read of every candidate. cold false leaves
 // a view with no fresh inputs unread (candSkipped). It reads only tx.
 func (s *Store) candidates(ctx context.Context, tx *sql.Tx, v rankView, rd *rankRead, cold bool) (candEntry, int, error) {
-	// The trusted voter bound is an input too.
-	key := v.key() + "\x00" + strconv.FormatInt(rd.params.trustedAge, 10)
+	// The trusted voter bound and the personas are inputs too.
+	key := v.key() + "\x00" + strconv.FormatInt(rd.params.trustedAge, 10) + "\x00" + rd.params.personaList
 	clock := s.now()
 	s.rankMu.Lock()
 	cached, ok := s.candCache[key]
@@ -674,7 +677,7 @@ func (s *Store) candidates(ctx context.Context, tx *sql.Tx, v rankView, rd *rank
 		return candEntry{}, 0, err
 	}
 	found := map[string]rankedPost{}
-	inputArgs := []any{ReplyScanRows, ReplyScanRows, ReplyScanRows, ReplyScanRows, seasonedSeq, seasoned, VoteScanRows, trustedSeq, trusted}
+	inputArgs := []any{ReplyScanRows, ReplyScanRows, ReplyScanRows, ReplyScanRows, rd.params.personaList, seasonedSeq, seasoned, VoteScanRows, trustedSeq, trusted}
 	collect := func(candidates string, cargs []any) error {
 		rows, err := tx.QueryContext(ctx, fmt.Sprintf(rankInputs, candidates), append(slices.Clone(inputArgs), cargs...)...)
 		if err != nil {

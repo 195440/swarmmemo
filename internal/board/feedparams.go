@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"unicode/utf8"
 
@@ -103,8 +104,11 @@ func ParseFeedParams(body []byte) (FeedParams, error) {
 
 // feedParams are the parameters compiled for scoring.
 type feedParams struct {
-	key           string // the body's SHA-256: rankings scored under other parameters are other rankings
-	personas      map[string]bool
+	key      string // the body's SHA-256: rankings scored under other parameters are other rankings
+	personas map[string]bool
+	// personaList is personas as a sorted JSON array, the SQL argument that
+	// leaves their replies out of a thread's counts (rankInputs).
+	personaList   string
 	questionRooms map[string]bool
 	trustedAge    int64 // seconds: trusted_voter_days
 }
@@ -116,9 +120,19 @@ func compileFeedParams(body []byte) (*feedParams, error) {
 	}
 	sum := sha256.Sum256(body)
 	fp := &feedParams{key: hex.EncodeToString(sum[:]), personas: map[string]bool{}, questionRooms: map[string]bool{}, trustedAge: p.TrustedVoterDays * 86400}
+	accounts := make([]string, 0, len(p.Personas))
 	for _, persona := range p.Personas {
+		if !fp.personas[persona.Account] {
+			accounts = append(accounts, persona.Account)
+		}
 		fp.personas[persona.Account] = true
 	}
+	sort.Strings(accounts)
+	list, err := json.Marshal(accounts)
+	if err != nil {
+		return nil, err
+	}
+	fp.personaList = string(list)
 	for _, room := range p.QuestionRooms {
 		fp.questionRooms[room] = true
 	}
