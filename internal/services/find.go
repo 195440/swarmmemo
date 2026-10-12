@@ -94,6 +94,9 @@ type X402Listing struct {
 	Failed    int64  // our failed calls, last 30 days
 	Demoted   bool   // most of our recent calls failed
 	Subject   string
+	// An MPP entry's name, line and non-USD price as Find shows them
+	// (MPPEntry.DisplayName, Line, PriceText); "" for an x402 resource.
+	Name, Line, PriceText string
 }
 
 // X402Listings are the resources the resources read would list: the
@@ -142,7 +145,8 @@ func (r *Registry) X402Listings() []X402Listing {
 	}
 	for _, e := range snap.mpp.only {
 		l := X402Listing{ID: e.ID, Kind: KindMPP, Protocols: e.Protocols, Method: e.Method, URL: e.URL, Summary: e.servedSummary(), Category: e.Category,
-			Network: e.Network, MaxPrice: e.Price, Decimals: 6, Reason: e.Reason(x.cfg.Network)}
+			Network: e.Network, MaxPrice: e.Price, Decimals: 6, Reason: e.Reason(x.cfg.Network),
+			Name: e.DisplayName(), Line: e.Line(), PriceText: e.PriceText()}
 		if s, err := reviews.Canonical(reviews.TypeMPP, e.Method+" "+e.URL, reviews.Options{}); err == nil {
 			l.Subject = s.ID
 		}

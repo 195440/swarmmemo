@@ -107,6 +107,28 @@ func TestFindOnTheBoard(t *testing.T) {
 	if hits := run(t, s, Command{Operation: "find", Query: "zephyrine"}).Data["results"].([]find.Hit); len(hits) != 1 || hits[0].Name != "zephyrine" {
 		t.Fatalf("fresh agent: %+v", hits)
 	}
+	// A site only an operator importer rated is listed (C215) and found.
+	importer := keyFor(97)
+	register(t, s, importer)
+	allowAccounts(t, s, ImportersParamsNamespace, importer)
+	stamp := strings.Repeat("ef", 32)
+	if _, err := s.db.Exec("INSERT INTO notary_receipts(hash,time,account) VALUES(?,?,?)", stamp, testTime, keyID(importer)); err != nil {
+		t.Fatal(err)
+	}
+	siteURI := "site:https://quillfeather.example.com/"
+	run(t, s, reviewPost(t, importer, siteURI, map[string]any{"relationship": "outside_source", "evidence": []string{"stamp:" + stamp},
+		"source": map[string]any{"name": "Index", "url": "https://index.example/r/2", "terms": "CC BY", "grade": "OPEN"}}, ""))
+	var listedAt int64
+	if err := s.db.QueryRow("SELECT listed_at FROM subjects WHERE id=?", reviewSubjectOf(t, siteURI).ID).Scan(&listedAt); err != nil || listedAt == 0 {
+		t.Fatalf("imported site not listed: %v %d", err, listedAt)
+	}
+	// Rebuilds after a change are spaced (the agent above just took one).
+	if err := s.find.engine.Load().Rebuild(testContext); err != nil {
+		t.Fatal(err)
+	}
+	if hits := run(t, s, Command{Operation: "find", Query: "quillfeather"}).Data["results"].([]find.Hit); len(hits) != 1 || hits[0].Type != find.TypeSite {
+		t.Fatalf("imported site: %+v", hits)
+	}
 }
 
 // keyAccount is a key's account fingerprint.

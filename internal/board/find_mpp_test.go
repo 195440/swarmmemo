@@ -5,6 +5,7 @@ import (
 
 	"swarmmemo/internal/find"
 	"swarmmemo/internal/reviews"
+	"swarmmemo/internal/services"
 )
 
 // mpp: and x402: name one endpoint: each subject keeps its reviews, the
@@ -64,5 +65,25 @@ func TestMPPSubjectSiblings(t *testing.T) {
 	fails(t, s, Command{Operation: "find", Data: `{"schema":1,"protocol":"tempo"}`}, "invalid_find")
 	if c := s.FindCapabilities(); len(c["protocols"].([]string)) != 2 {
 		t.Fatalf("capabilities protocols: %v", c["protocols"])
+	}
+}
+
+// An MPP listing as a Find doc (C219): its service-and-path name, its line
+// while no summary is served, the served summary once there is one, and
+// its price text; the id stays the listing's.
+func TestFindMPPDoc(t *testing.T) {
+	l := services.X402Listing{ID: "api-openfunnel-dev-bulk-0123456789abcdef", Kind: services.KindMPP, Method: "POST", URL: "https://api.openfunnel.dev/v1/bulk",
+		MaxPrice: -1, Decimals: 6, Name: "openfunnel · POST /v1/bulk", Line: "MPP charge endpoint of openfunnel, paid in EURC", PriceText: "0.5 EURC a call"}
+	d := findX402Doc(l, subjectQuality{})
+	if d.ID != l.ID || d.Name != l.Name || d.Description != l.Line || d.PriceText != l.PriceText || d.Price != find.Unpriced {
+		t.Fatalf("doc %+v", d)
+	}
+	l.Summary = "Bulk company lookup"
+	if d = findX402Doc(l, subjectQuality{}); d.Description != "Bulk company lookup" {
+		t.Fatalf("summary first: %q", d.Description)
+	}
+	x := services.X402Listing{ID: "exa-search", Kind: services.KindX402, MaxPrice: -1, Name: "ignored", Line: "ignored"}
+	if d = findX402Doc(x, subjectQuality{}); d.Name != "exa search" || d.Description != "" || d.PriceText != "" {
+		t.Fatalf("x402 doc changed: %+v", d)
 	}
 }

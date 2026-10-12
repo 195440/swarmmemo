@@ -493,7 +493,12 @@ func findX402Doc(l services.X402Listing, q subjectQuality) find.Doc {
 		d.Review = "/s?q=" + url.QueryEscape(listingType(l)+":"+l.Method+" "+l.URL)
 	}
 	if l.Kind == services.KindMPP {
-		d.Kind, d.URL = find.KindMPP, d.Review
+		// Named by service and path, never a slug; a line from checked
+		// tokens while no screened summary is served (C219).
+		d.Kind, d.URL, d.Name, d.PriceText = find.KindMPP, d.Review, l.Name, l.PriceText
+		if d.Description == "" {
+			d.Description = l.Line
+		}
 	}
 	if q.exists {
 		d.URL, d.Quality, d.Review = "/s/"+l.Subject, q.Quality, "/s/"+l.Subject
@@ -733,7 +738,10 @@ func (s *Store) findQuality(ctx context.Context, now int64) (map[string]subjectQ
 		if agg.Reviews > 0 {
 			q.Reviews, q.ReviewMean, q.ReviewWeight = agg.Reviews, agg.VerdictMean, agg.WeightTotal
 		}
-		if q.LabVerdict != "" || q.Reviews > 0 {
+		// A listed subject is found even when only an outside source rated
+		// it (an importer's review lists it, reviews.go); its page shows
+		// that rating apart.
+		if q.LabVerdict != "" || q.Reviews > 0 || q.listed {
 			out[id] = q
 		}
 	}

@@ -144,8 +144,9 @@ func scaleTop(peak int64, bytes bool) int64 {
 
 func num(v float64) string { return strconv.FormatFloat(v, 'f', 1, 64) }
 
-// axisFor labels the x positions where label returns text; on a long range
-// every other label is minor, so a phone shows half of them.
+// axisFor labels the x positions where label returns text; on a long range,
+// or with more than axisLabelsNarrow labels, every other label is minor, so a
+// phone shows half of them (six date labels overlap at 320px).
 func axisFor(n int, label func(int) string) []axisLabel {
 	var out []axisLabel
 	for i := range n {
@@ -154,11 +155,19 @@ func axisFor(n int, label func(int) string) []axisLabel {
 			if n > 1 {
 				left = float64(i) * 100 / float64(n-1)
 			}
-			out = append(out, axisLabel{Left: left, Text: text, Minor: len(out)%2 == 1 && n > 60})
+			out = append(out, axisLabel{Left: left, Text: text})
+		}
+	}
+	if n > 60 || len(out) > axisLabelsNarrow {
+		for i := 1; i < len(out); i += 2 {
+			out[i].Minor = true
 		}
 	}
 	return out
 }
+
+// axisLabelsNarrow is how many x labels a phone shows in full.
+const axisLabelsNarrow = 5
 
 func joinFormatted(values []int64, format func(int64) string) string {
 	out := make([]string, len(values))

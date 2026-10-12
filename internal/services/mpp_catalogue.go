@@ -23,7 +23,8 @@ package services
 // of a discovery page. The directory's text is untrusted data: descriptions
 // are cleaned, cut, and served only once screen's classifier passed them
 // (the summaries the x402 candidates share, x402_summary_screens); names
-// shown are built from the URL, never from the directory's text. Storage
+// shown are built from the URL and the service's id (a checked token),
+// never from the directory's free text. Storage
 // never deletes: an entry not seen for three refresh intervals is stale and
 // unlisted until it is seen again.
 
@@ -561,4 +562,108 @@ func (x *x402) fetchDiscovery(ctx context.Context, u string, limit int) ([]byte,
 		return nil, errors.New("x402: discovery response too large")
 	}
 	return raw, nil
+}
+
+// How an MPP entry reads in Find (C219): its name, a line when it has no
+// served summary, and its price when the directory gives one not in USD.
+const (
+	mppNamePathMax = 40 // a shown path's runes before its leading segments go
+	mppNameLastMax = 60 // the last segment's, which always stays
+)
+
+// DisplayName is the entry as Find names it: "<service> · METHOD /path",
+// the service the directory's id (a checked token, never its free text),
+// else the host; a long path loses its leading segments, never its last,
+// so two endpoints of one service read apart.
+func (e *MPPEntry) DisplayName() string {
+	path := "/"
+	if u, err := url.Parse(e.URL); err == nil && u.EscapedPath() != "" {
+		path = u.EscapedPath()
+	}
+	return e.who() + " · " + e.Method + " " + mppShortPath(path)
+}
+
+// who is the entry's service id, else its host.
+func (e *MPPEntry) who() string {
+	if e.Service != "" {
+		return e.Service
+	}
+	return e.host
+}
+
+// mppShortPath keeps a path's last segment (cut at mppNameLastMax runes)
+// and as many segments before it as fit in mppNamePathMax, "…" for the rest.
+func mppShortPath(path string) string {
+	if utf8.RuneCountInString(path) <= mppNamePathMax {
+		return path
+	}
+	segs := strings.Split(strings.Trim(path, "/"), "/")
+	last := segs[len(segs)-1]
+	if r := []rune(last); len(r) > mppNameLastMax {
+		last = string(r[:mppNameLastMax]) + "…"
+	}
+	out := "/" + last
+	for i := len(segs) - 2; i >= 0; i-- {
+		next := "/" + segs[i] + out
+		if utf8.RuneCountInString("/…"+next) > mppNamePathMax {
+			break
+		}
+		out = next
+	}
+	return "/…" + out
+}
+
+// Line is what Find says of an entry without a served summary, built from
+// checked tokens only: "MPP charge endpoint of openrouter, paid in USDC.e".
+func (e *MPPEntry) Line() string {
+	s := "MPP endpoint of " + e.who()
+	if e.Intent != "" {
+		s = "MPP " + e.Intent + " endpoint of " + e.who()
+	}
+	if e.Currency != "" {
+		s += ", paid in " + mppCurrencyName(e.Currency)
+	}
+	return s
+}
+
+// PriceText is a fixed price the directory gives in a currency that is not
+// a US dollar, in words ("0.5 EURC a call"); "" when dynamic, or in USD
+// (Price says it then).
+func (e *MPPEntry) PriceText() string {
+	if e.Amount == "" || e.Currency == "" || usdCurrency(e.Currency) {
+		return ""
+	}
+	return mppUnits(e.Amount, e.Decimals) + " " + mppCurrencyName(e.Currency) + " a call"
+}
+
+// mppCurrencyName is a directory currency as shown: the dollars by name, a
+// short code upper-cased, a token contract shortened (0x20c0…0000).
+func mppCurrencyName(c string) string {
+	lc := strings.ToLower(c)
+	switch {
+	case lc == "usd":
+		return "USD"
+	case lc == baseUSDC:
+		return "USDC"
+	case usdCurrency(lc):
+		return "USDC.e"
+	case strings.HasPrefix(lc, "0x") && len(lc) > 12:
+		return lc[:6] + "…" + lc[len(lc)-4:]
+	case len(c) <= 12:
+		return strings.ToUpper(c)
+	}
+	return c[:12] + "…"
+}
+
+// mppUnits is atomic units (decimal digits) at decimals as a decimal.
+func mppUnits(amount string, decimals int) string {
+	s := strings.TrimLeft(amount, "0")
+	if len(s) <= decimals {
+		s = strings.Repeat("0", decimals-len(s)+1) + s
+	}
+	whole, frac := s[:len(s)-decimals], strings.TrimRight(s[len(s)-decimals:], "0")
+	if frac == "" {
+		return whole
+	}
+	return whole + "." + frac
 }

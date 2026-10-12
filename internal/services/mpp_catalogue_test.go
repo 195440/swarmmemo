@@ -296,3 +296,70 @@ func TestMicroUSD(t *testing.T) {
 		t.Fatal("usdCurrency")
 	}
 }
+
+// How an MPP entry reads in Find (C219): service and path, never a slug;
+// two endpoints of one service apart however long their paths; a line
+// when no summary is served; a price in words from amount and decimals.
+func TestMPPEntryReading(t *testing.T) {
+	mk := func(service, method, u, intent, currency, amount string, decimals int) *MPPEntry {
+		e := &MPPEntry{Service: service, Method: method, URL: u, Intent: intent, Currency: currency, Amount: amount, Decimals: decimals, Protocols: []string{"mpp/tempo"}}
+		e.index()
+		return e
+	}
+	const tempo = "0x20C000000000000000000000b9537d11c60E8b50"
+	a := mk("openfunnel", "POST", "https://api.openfunnel.dev/api/v1/enrichment/companies/lookup-by-domain/bulk", "charge", tempo, "20000", 6)
+	b := mk("openfunnel", "POST", "https://api.openfunnel.dev/api/v1/enrichment/companies/lookup-by-domain/single", "charge", tempo, "20000", 6)
+	if a.DisplayName() == b.DisplayName() || a.DisplayName() != "openfunnel · POST /…/companies/lookup-by-domain/bulk" || b.DisplayName() != "openfunnel · POST /…/companies/lookup-by-domain/single" {
+		t.Fatalf("siblings: %q %q", a.DisplayName(), b.DisplayName())
+	}
+	if n := mk("", "GET", "https://weather.example.com/v1/now", "", "", "", 0).DisplayName(); n != "weather.example.com · GET /v1/now" {
+		t.Fatalf("host fallback: %q", n)
+	}
+	long := mk("x", "GET", "https://x.example.com/a/"+strings.Repeat("z", 80), "", "", "", 0).DisplayName()
+	if !strings.HasPrefix(long, "x · GET /…/zzz") || !strings.HasSuffix(long, "…") {
+		t.Fatalf("long last segment: %q", long)
+	}
+	if l := a.Line(); l != "MPP charge endpoint of openfunnel, paid in USDC.e" {
+		t.Fatalf("line: %q", l)
+	}
+	if l := mk("cards", "GET", "https://c.example.com/x", "", "usd", "1", 2).Line(); l != "MPP endpoint of cards, paid in USD" {
+		t.Fatalf("line without intent: %q", l)
+	}
+	// USD: Price says it (micro-USD); other currencies: amount and symbol.
+	if a.PriceText() != "" || mk("s", "GET", "https://s.example.com/x", "charge", "eurc", "500000", 6).PriceText() != "0.5 EURC a call" ||
+		mk("s", "GET", "https://s.example.com/x", "charge", "0x20c0000000000000000000000000000000000001", "1500", 6).PriceText() != "0.0015 0x20c0…0001 a call" ||
+		mk("s", "GET", "https://s.example.com/x", "session", "eurc", "", 6).PriceText() != "" {
+		t.Fatal("price text")
+	}
+	for _, c := range []struct {
+		amount   string
+		decimals int
+		want     string
+	}{{"1000", 6, "0.001"}, {"5000000", 6, "5"}, {"0", 0, "0"}, {"12", 0, "12"}, {"7", 2, "0.07"}} {
+		if got := mppUnits(c.amount, c.decimals); got != c.want {
+			t.Errorf("mppUnits(%s, %d) = %s, want %s", c.amount, c.decimals, got, c.want)
+		}
+	}
+}
+
+// Find's MPP listings carry the name, line and price text (fixture); the
+// x402 ones carry none.
+func TestMPPListingsRead(t *testing.T) {
+	h, _ := mppHarness(t)
+	names := map[string]bool{}
+	for _, l := range h.engine.Registry().X402Listings() {
+		if l.Kind != KindMPP {
+			if l.Name != "" || l.Line != "" || l.PriceText != "" {
+				t.Fatalf("x402 listing changed: %+v", l)
+			}
+			continue
+		}
+		if l.Name == "" || l.Line == "" || names[l.Name] {
+			t.Fatalf("mpp listing name %q line %q", l.Name, l.Line)
+		}
+		names[l.Name] = true
+		if l.ID == openIDFor("/mpp/only", "GET") && (l.Name != "example · GET /mpp/only" || l.Summary != "" || l.Line != "MPP charge endpoint of example, paid in USDC.e") {
+			t.Fatalf("/mpp/only: %+v", l)
+		}
+	}
+}
