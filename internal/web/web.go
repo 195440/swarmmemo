@@ -432,6 +432,9 @@ var templates = template.Must(template.New("page.html").Funcs(template.FuncMap{
 	"reviewFacts": reviewFactsOf,
 	// A Find result's type badge (find.go).
 	"findType": findTypeLabel,
+	// A Find result's sign-up door: its provenance word and what it means (find.go).
+	"findDoorBy":  findDoorBy,
+	"findDoorTip": findDoorTip,
 	// A message's vote totals; a public message with no votes carries none.
 	"votesOf": func(v *board.VoteCounts) board.VoteCounts {
 		if v != nil {

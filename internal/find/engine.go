@@ -209,9 +209,9 @@ func (e *Engine) Find(ctx context.Context, req Request) (Answer, error) {
 		// a package, "agent" in an offering's name as the agent type. Search
 		// the whole query without them too, and answer with that when the
 		// filtered search matched nothing or matched clearly worse. A price,
-		// network or protocol the query states is a limit, kept, as is every
-		// filter the caller set.
-		set := merge(Filters{MaxPrice: parsed.MaxPrice, Network: parsed.Network, Protocol: parsed.Protocol}, req.Set, req.SetKeys)
+		// network, protocol or sign-up door the query states is a limit,
+		// kept, as is every filter the caller set.
+		set := merge(Filters{MaxPrice: parsed.MaxPrice, Network: parsed.Network, Protocol: parsed.Protocol, Door: parsed.Door}, req.Set, req.SetKeys)
 		all := MatchWords(q)
 		wide, wideExpanded, err := ix.search(ctx, all, set)
 		if err != nil {
@@ -239,7 +239,7 @@ func (e *Engine) Find(ctx context.Context, req Request) (Answer, error) {
 			ans.Expanded[w] = cats
 		}
 	}
-	ranked := ix.rank(cands, words)
+	ranked := ix.rank(cands, words, ans.Filters.Door != "")
 	ans.Matched = len(ranked)
 	ans.Index = IndexInfo{BuiltAt: ix.BuiltAt.Unix(), Docs: ix.Counts, Match: "sqlite fts5 bm25, porter stemming, category synonyms"}
 	limit := req.Limit

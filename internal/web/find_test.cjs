@@ -18,11 +18,16 @@ const os = require('node:os');
   const marker = 'zq' + Date.now().toString(36);
   const handle = 'find-' + marker;
   await send({operation: 'agent.register', handle});
-  await send({operation: 'agent.profile.publish', data: JSON.stringify({schema: 1, description: 'Disposable browser fixture: forecasts ' + marker + ' weather. <img src=x onerror=alert(1)>', capabilities: ['forecast'], availability: 'available'})});
+  await send({operation: 'agent.profile.publish', data: JSON.stringify({schema: 1, description: 'Disposable browser fixture: forecasts ' + marker + ' weather. <img src=x onerror=alert(1)>', capabilities: ['forecast', 'signup-key'], availability: 'available'})});
   const api = await (await fetch(origin + '/api/find?q=' + marker)).json();
   assert.equal(api.ok, true, JSON.stringify(api));
   assert.equal(api.data.results[0].url, '/@' + handle, 'the API finds the fixture first');
-  assert.deepEqual(api.data.filters, {type: [], category: '', max_price: '', output: '', network: '', protocol: ''}, 'every filter is on the wire');
+  assert.deepEqual(api.data.filters, {type: [], category: '', max_price: '', output: '', network: '', protocol: '', door: ''}, 'every filter is on the wire');
+  // The door filter (C228): the fixture declares signup-key, a self-reported key door.
+  assert.deepEqual(api.data.results[0].door && [api.data.results[0].door.value, api.data.results[0].door.by], ['key', 'self'], 'the self-declared door is on the hit');
+  const byDoor = await (await fetch(origin + '/api/find?q=' + marker + '&door=human')).json();
+  assert.equal(byDoor.data.filters.door, 'human', 'the door filter is on the wire');
+  assert.ok(!byDoor.data.results.some(r => r.url === '/@' + handle), 'a key door leaves door=human');
   // The protocol filter (C202c): an agent takes no payment protocol, so it drops out.
   const byProtocol = await (await fetch(origin + '/api/find?q=' + marker + '&protocol=mpp')).json();
   assert.equal(byProtocol.ok, true, JSON.stringify(byProtocol));
@@ -58,6 +63,19 @@ const os = require('node:os');
       assert.match(await result.locator('.find-why').textContent(), /Matches “zq/);
       assert.equal(await page.locator('.find-result img, .find-result script').count(), 0, 'descriptions are inert');
       assert.equal(await page.locator('.find-types a').count(), 6, 'type chips');
+      // The door badge names its source; the quick chip keeps doors an agent can use alone, and clears.
+      assert.equal((await result.locator('.find-door-badge').textContent()).trim(), 'Door: key · self-reported');
+      const doorChip = page.locator('.find-quick a', {hasText: 'Agent can sign up'});
+      assert.equal(await doorChip.getAttribute('aria-pressed'), 'false');
+      await doorChip.click();
+      await page.waitForURL(/door=agent/);
+      assert.equal(await page.locator('.find-quick a').getAttribute('aria-pressed'), 'true');
+      assert.equal(await page.locator('.find-result a[href="/@' + handle + '"]').count(), 1, 'a key door is an agent door');
+      assert.equal(await page.locator('.find-filters a', {hasText: 'agent'}).count(), 1, 'the door filter chip');
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), width + 'px door overflow');
+      await page.locator('.find-quick a').click();
+      await page.waitForURL(/door=any/);
+      await page.goto(origin + '/find?q=' + marker);
       assert.equal(await page.locator('.find-types a[aria-current]').textContent(), 'All');
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), width + 'px find overflow');
       for (const row of await page.locator('.find-result').all()) {
@@ -106,6 +124,6 @@ const os = require('node:os');
     assert.equal(new URL(plainPage.url()).pathname, '/');
     assert.equal(await plainPage.locator('#search').inputValue(), marker);
     await plain.close();
-    console.log('PASS: /find at 360px and 1280px (Find in the header, one row of links, result with badge and why, inert text, type chips, a filter chip that clears, Edit filters, no overflow, no writes), home search scope to Find, no-JS redirects both ways, same first result as /api/find.');
+    console.log('PASS: /find at 360px and 1280px (Find in the header, one row of links, result with badge and why, door badge and the Agent can sign up chip, inert text, type chips, a filter chip that clears, Edit filters, no overflow, no writes), home search scope to Find, no-JS redirects both ways, same first result as /api/find.');
   } finally {await browser.close();}
 })().catch(error => {console.error(error); process.exitCode = 1;});

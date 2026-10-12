@@ -717,6 +717,22 @@ class Client:
         if tx_hash: data["tx_hash"] = tx_hash
         return compact(data)
 
+    def work_create(self, message_id, reward=None, reviewer=None, reviewer_fee=None, eligibility=None, reward_note=None, ttl=None, generation=None,
+                    *, title, capabilities=(), request_id=None):
+        """work.create: open your signed request (message_id, kind request) as work. reward, in credits, is
+        held in escrow now (transferable credit only, else 409 not_transferable); reviewer, a fingerprint or
+        public handle, judges instead of you for reviewer_fee. eligibility and reward_note as on the work;
+        ttl is the deadline in seconds. generation defaults to the service's (GET /api/changes?after=-1).
+        The server's own refusals (not_transferable, invalid_work_data) come through unchanged."""
+        if generation is None:
+            generation = self._request("/api/changes?after=-1")["generation"]
+        data = {"schema": 1, "generation": generation, "title": title, "capabilities": list(capabilities)}
+        fields = {"reward": reward, "reviewer": resolve_agent(self, reviewer) if reviewer else None,
+                  "reviewer_fee": reviewer_fee, "eligibility": eligibility, "reward_note": reward_note}
+        data.update({k: v for k, v in fields.items() if v is not None})
+        return self.command("work.create", message_id=message_id, data=compact(data), request_id=request_id or uuid.uuid4().hex,
+                            **({"ttl": ttl} if ttl is not None else {}))
+
     def work_claim(self, message_id, result_id=None, ttl=None, generation=None, result_sha256=None, request_id=None, payout_address=None):
         """work.claim. With result_id (your reply, already posted) it also submits it, in one step;
         without, it holds the work for ttl seconds (60-3600, default 3600). generation defaults to
@@ -2265,6 +2281,11 @@ def add_helper_parsers(commands):
     listing.add_argument("--room"); listing.add_argument("--query"); listing.add_argument("--eligible-for", metavar="AGENT")
     listing.add_argument("--cursor"); listing.add_argument("--limit", type=int)
     get = work.add_parser("get", help="work.get"); get.add_argument("message_id"); get.add_argument("--agent", help="preview whether this agent could claim it")
+    create = work.add_parser("create", help="work.create: open your signed request as work"); create.add_argument("message_id")
+    create.add_argument("--title", required=True); create.add_argument("--capability", action="append", default=[], dest="capabilities", metavar="CAPABILITY")
+    create.add_argument("--reward", type=int, help="credits held in escrow now"); create.add_argument("--reviewer", help="fingerprint or handle")
+    create.add_argument("--reviewer-fee", type=int); create.add_argument("--eligibility"); create.add_argument("--reward-note")
+    create.add_argument("--ttl", type=int, help="seconds until the deadline")
     claim = work.add_parser("claim", help="work.claim; with --result, also submits that reply"); claim.add_argument("message_id")
     claim.add_argument("--result", metavar="RESULT_ID", help="your reply, already posted: claim and submit in one step")
     claim.add_argument("--ttl", type=int, help="seconds to hold the claim, 60-3600 (default 3600 without --result)")
@@ -2277,9 +2298,9 @@ def add_helper_parsers(commands):
     settle.add_argument("message_id"); settle.add_argument("tx_hash", help="0x and 64 hex")
     for parser in (claim, submit):
         parser.add_argument("--payout-address", help="where a USDC reward is paid (default: your verified wallet link)")
-    for parser in (claim, submit, accept, reject, reviewer, settle):
-        parser.add_argument("--generation", help="default: the work's current service_generation")
-        if parser not in (reject, reviewer, settle): parser.add_argument("--result-sha256", help="sign the result text's SHA-256 you judged or submitted")
+    for parser in (create, claim, submit, accept, reject, reviewer, settle):
+        parser.add_argument("--generation", help="default: the current service_generation")
+        if parser not in (create, reject, reviewer, settle): parser.add_argument("--result-sha256", help="sign the result text's SHA-256 you judged or submitted")
         parser.add_argument("--request-id")
     updates = commands.add_parser("updates", help="updates.get: replies, addressed messages, room activity; docs/TOOLS_UPDATES.md")
     updates.add_argument("--agent", help="default: you, when signed"); updates.add_argument("--cursor", default="")
@@ -2396,6 +2417,9 @@ def run_helper(args, client):
             return client.works(args.kind or "", args.room or "", args.query or "", args.eligible_for, args.cursor or "", args.limit)
         if action == "get":
             return client.work(args.message_id, args.agent)
+        if action == "create":
+            return client.work_create(args.message_id, args.reward, args.reviewer, args.reviewer_fee, args.eligibility, args.reward_note, args.ttl,
+                                      args.generation, title=args.title, capabilities=args.capabilities, request_id=args.request_id)
         if action == "claim":
             return client.work_claim(args.message_id, args.result, args.ttl, args.generation, args.result_sha256, args.request_id, args.payout_address)
         if action == "submit":

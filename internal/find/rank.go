@@ -12,13 +12,17 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 )
 
 // standingValue is an agent's tier, as quality.
 var standingValue = map[string]float64{"trusted": 1, "proven": 0.6, "signed": 0.2}
 
-// quality is d's q with its parts.
-func quality(d *Doc) (float64, map[string]any) {
+// quality is d's q with its parts. Under a door filter (door), the door's
+// provenance adds a bounded term (doorTerm): measured +1, outside +0.5,
+// inferred 0, self -0.5, stale -0.5 more; without one the door never moves
+// rank.
+func quality(d *Doc, door bool, now time.Time) (float64, map[string]any) {
 	qd := d.Quality
 	parts := map[string]any{}
 	var sum float64
@@ -65,10 +69,15 @@ func quality(d *Doc) (float64, map[string]any) {
 		parts["sinks"] = sink
 		return -1, parts
 	}
-	if n == 0 {
-		return 0, parts
+	q := 0.0
+	if n > 0 {
+		q = sum / float64(n)
 	}
-	return sum / float64(n), parts
+	if v, ok := doorTerm(d, now); ok && door {
+		parts["door_source"] = round4(v)
+		q = math.Max(-1, math.Min(1, q+v))
+	}
+	return q, parts
 }
 
 // scored is one ranked candidate.
@@ -81,11 +90,13 @@ type scored struct {
 	parts   map[string]any
 	matched []string
 	fields  []string
+	now     time.Time
 }
 
 // rank orders the candidates. words are the query's words (for the why and
-// the explain); with none, relevance is 1 for every candidate.
-func (ix *Index) rank(cands []match, words []string) []scored {
+// the explain); with none, relevance is 1 for every candidate. door says a
+// door filter applies.
+func (ix *Index) rank(cands []match, words []string, door bool) []scored {
 	best := 0.0
 	for _, m := range cands {
 		best = math.Max(best, -m.bm25)
@@ -93,11 +104,11 @@ func (ix *Index) rank(cands []match, words []string) []scored {
 	out := make([]scored, 0, len(cands))
 	for _, m := range cands {
 		d := &ix.docs[m.doc]
-		s := scored{doc: d, bm25: m.bm25, rel: 1}
+		s := scored{doc: d, bm25: m.bm25, rel: 1, now: ix.BuiltAt}
 		if best > 0 {
 			s.rel = -m.bm25 / best
 		}
-		s.q, s.parts = quality(d)
+		s.q, s.parts = quality(d, door, ix.BuiltAt)
 		s.score = s.rel + QualityShift*s.q
 		s.matched, s.fields = matchedWords(d, words, ix.vocab)
 		out = append(out, s)
@@ -179,6 +190,7 @@ func (s scored) hit(explain bool) Hit {
 	if q := d.Quality; q.Reviews > 0 {
 		h.Reviews = &Reviews{Count: q.Reviews, Mean: round4(q.ReviewMean), Word: reviewWord(q)}
 	}
+	h.Door = doorMark(d, s.now)
 	h.Why = s.why()
 	if explain {
 		h.Explain = &Explain{BM25: s.bm25, Relevance: round4(s.rel), Matched: s.matched, Fields: s.fields, Quality: s.parts,
@@ -246,6 +258,9 @@ func (s scored) why() string {
 	}
 	if q.Standing != "" {
 		parts = append(parts, q.Standing+" standing")
+	}
+	if w := doorWhy(d, s.now); w != "" {
+		parts = append(parts, w)
 	}
 	switch {
 	case q.State == "down" && q.StateNote != "":

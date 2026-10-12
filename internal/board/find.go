@@ -145,7 +145,7 @@ func FindRequest(c Command) (find.Request, error) {
 		var raw map[string]json.RawMessage
 		var d findData
 		if json.Unmarshal([]byte(c.Data), &raw) != nil || services.StrictObject([]byte(c.Data), &d) != nil || d.Schema != 1 {
-			return bad(`find data is {"schema":1} with any of "type" (a list or comma-separated: ` + strings.Join(find.Types, ", ") + `), "category", "max_price" (USD), "output", "network", "protocol" (` + strings.Join(find.Protocols, " or ") + `), each "any" to clear what the query implies, "parse" (auto, rules or off) and "explain".`)
+			return bad(`find data is {"schema":1} with any of "type" (a list or comma-separated: ` + strings.Join(find.Types, ", ") + `), "category", "max_price" (USD), "output", "network", "protocol" (` + strings.Join(find.Protocols, " or ") + `), "door" (agent, human or one of ` + strings.Join(find.Doors, ", ") + `), each "any" to clear what the query implies, "parse" (auto, rules or off) and "explain".`)
 		}
 		if len(d.Type) > 0 && string(d.Type) != "null" {
 			var list []string
@@ -162,7 +162,7 @@ func FindRequest(c Command) (find.Request, error) {
 			}
 			types = set("type", one)
 		}
-		for key, value := range map[string]string{"category": d.Category, "max_price": d.MaxPrice, "output": d.Output, "network": d.Network, "protocol": d.Protocol} {
+		for key, value := range map[string]string{"category": d.Category, "max_price": d.MaxPrice, "output": d.Output, "network": d.Network, "protocol": d.Protocol, "door": d.Door} {
 			if _, ok := raw[key]; ok {
 				v := set(key, value)
 				switch key {
@@ -176,6 +176,8 @@ func FindRequest(c Command) (find.Request, error) {
 					req.Set.Network = v
 				case "protocol":
 					req.Set.Protocol = v
+				case "door":
+					req.Set.Door = v
 				}
 			}
 		}
@@ -198,7 +200,7 @@ func FindRequest(c Command) (find.Request, error) {
 
 // FindParams are the URL query names of find's data, on /api/find and
 // /find alike.
-var FindParams = []string{"type", "category", "max_price", "output", "network", "protocol", "parse", "explain"}
+var FindParams = []string{"type", "category", "max_price", "output", "network", "protocol", "door", "parse", "explain"}
 
 // FindQueryData moves find's URL query names (FindParams) from q into
 // find's data, as JSON; "" when q names none. Each may be given once.
@@ -318,12 +320,12 @@ func (s *Store) FindCapabilities() map[string]any {
 		"read": "find", "http": "GET /api/find?q=TEXT", "mcp": "find", "page": "/find",
 		"params": map[string]string{
 			"q": "what you want, in words (at most 200 bytes)", "type": "comma-separated types", "category": "a category", "max_price": "USD per call",
-			"output": "what it returns", "network": "payment network", "protocol": "payment protocol: " + strings.Join(find.Protocols, " or "), "parse": "auto (default), rules or off", "explain": "true adds each score's parts",
+			"output": "what it returns", "network": "payment network", "protocol": "payment protocol: " + strings.Join(find.Protocols, " or "), "door": "who can sign up: agent (no human step), human, or a door", "parse": "auto (default), rules or off", "explain": "true adds each score's parts",
 			"limit": fmt.Sprintf("1 to %d", find.PageMax), "cursor": "next_cursor",
 		},
 		"clear": "a filter given as any is cleared, whatever the query implies",
 		"types": find.Types, "categories": cats, "outputs": find.Outputs, "networks": nets, "protocols": find.Protocols,
-		"filters": "always returned as data.filters (type, category, max_price, output, network, protocol); a filter keeps only entries that have that property and match it; adult listings show only when category is adult",
+		"filters": "always returned as data.filters (type, category, max_price, output, network, protocol, door); a filter keeps only entries that have that property and match it; adult listings show only when category is adult",
 		"results": "each paid API lists its protocols (x402, mpp/METHOD); one endpoint is one result whatever protocols list it, and also_reviewed_as shows its sibling subject's reviews (x402: and mpp: name the same endpoint)",
 		"parse": map[string]any{"model": model, "alias": findModelAlias, "timeout_ms": find.ModelTimeout.Milliseconds(), "cache": map[string]any{"queries": find.IntentCacheSize, "hours": int(find.IntentCacheTTL.Hours())},
 			"budget_per_minute": find.ModelPerMinute, "pause_after_failure_seconds": int(find.ModelPause.Seconds()), "when": "auto mode, three or more words",
@@ -338,6 +340,7 @@ func (s *Store) FindCapabilities() map[string]any {
 			"offering":    "POST url (the offering's page) with its input", "agent": "a message or a public DM", "subject": "read its reviews at url",
 		},
 		"limits": map[string]int{"query_bytes": find.QueryMaxBytes, "page_max": find.PageMax, "offset_max": find.OffsetMax},
+		"doors":  findDoorsCapabilities(),
 	}
 }
 
@@ -366,6 +369,7 @@ func (s *Store) findDocs(ctx context.Context) ([]find.Doc, error) {
 			if !t.Available {
 				d.Quality.State, d.Quality.StateNote = "down", "not available here now"
 			}
+			setToolDoor(&d, t.Anonymous)
 			docs = append(docs, d)
 		}
 		for _, l := range e.Registry().X402Listings() {
@@ -431,6 +435,7 @@ func (s *Store) findDocs(ctx context.Context) ([]find.Doc, error) {
 		docs = append(docs, find.Doc{Type: typ, ID: q.sub.URI(), Name: name, Category: subjectCategory(v, q.sub.Key), URL: "/s/" + id,
 			Terms: services.URLWords(q.sub.Key), Price: find.Unpriced, SubjectID: id, Review: "/s/" + id, Quality: q.Quality})
 	}
+	applyOutsideDoors(docs, quality)
 	return docs, nil
 }
 
@@ -512,6 +517,7 @@ func findX402Doc(l services.X402Listing, q subjectQuality) find.Doc {
 	if l.Category == "media" {
 		d.Output = ""
 	}
+	setInferredDoor(&d, l)
 	switch {
 	case l.Demoted:
 		d.Quality.State, d.Quality.StateNote = "down", fmt.Sprintf("%d of our last %d calls failed", l.Failed, l.Calls+l.Failed)
@@ -642,6 +648,7 @@ func (s *Store) findAgents(ctx context.Context, v find.Vocab, now int64, standin
 			}
 		}
 		d.Quality.Standing = standing[account]
+		setSelfDoor(&d, capabilities)
 		if availability == "available" && expires > now {
 			d.Quality.State = "up"
 		}
@@ -676,6 +683,7 @@ type subjectQuality struct {
 	sub    reviews.Subject
 	listed bool
 	exists bool
+	door   *outsideDoor // an outside rater's sign-up door (find_doors.go)
 }
 
 func (q subjectQuality) withNote(note string) find.Quality {
@@ -719,12 +727,19 @@ func (s *Store) findQuality(ctx context.Context, now int64) (map[string]subjectQ
 	if err = closeRows(rows); err != nil {
 		return nil, err
 	}
+	doors, err := findOutsideDoors(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	// The newest lab assessment whose record recomputed (as /s/ID and the
 	// x402 summaries show it), then the community aggregate from the reviews
 	// core's own statement (communityReviews with no page), so Find shows
 	// exactly what /s/ID shows.
 	for id, sub := range subjects {
 		q := subjectQuality{sub: sub, listed: listed[id], exists: true, Quality: find.Quality{LabLower: -1}}
+		if d, ok := doors[id]; ok {
+			q.door = &d
+		}
 		var verdict, grade string
 		var lo int
 		err = tx.QueryRowContext(ctx, "SELECT r.verdict,r.grade,r.band_lo FROM reviews r JOIN events e ON e.id=r.event_id WHERE r.subject=? AND r.current=1 AND e.hidden=0 AND r.relationship='lab' AND "+labVerified+" ORDER BY r.created_at DESC, r.event_id DESC LIMIT 1", id).Scan(&verdict, &grade, &lo)

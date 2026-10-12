@@ -1,7 +1,7 @@
 package find
 
-// The deterministic intent parser: price, type, output and network words
-// become filters, and what is left, less filler words, is the text. It
+// The deterministic intent parser: price, type, output, network and
+// sign-up door words become filters, and what is left, less filler words, is the text. It
 // sets no category: a topic word stays in the text, where BM25 and the
 // category synonyms rank that category's entries first without dropping
 // the entries no category names (a site, an MCP server). It is the fallback whenever the model is off, slow, over its
@@ -165,6 +165,26 @@ func ParseRules(q string, v Vocab) (Filters, string) {
 		cut(outputBareRE, func(m []string) bool { f.Output = outputWords[m[1]]; return true })
 	}
 	cut(networkRE, func(m []string) bool { f.Network = m[1]; return true })
+	// A sign-up door: its words count only beside a sign-up word, except
+	// "no CAPTCHA"; read, they and the sign-up words leave the text, so the
+	// query can browse every entry with that door.
+	setDoor := func(door string) func([]string) bool {
+		return func([]string) bool {
+			if f.Door == "" {
+				f.Door = door
+			}
+			return true
+		}
+	}
+	if signupRE.MatchString(s) {
+		cut(doorWalletRE, setDoor(DoorWallet))
+		cut(doorKeyRE, setDoor(DoorKey))
+		cut(doorAgentRE, setDoor(DoorGroupAgent))
+	}
+	cut(noCaptchaRE, setDoor(DoorGroupAgent))
+	if f.Door != "" {
+		cut(signupRE, func([]string) bool { return true })
+	}
 	var text []string
 	// A type word inside a hyphen- or underscore-joined token is part of a
 	// name ("agent-exec-attest"), never the type asked for.
@@ -182,6 +202,9 @@ func ParseRules(q string, v Vocab) (Filters, string) {
 	}
 	for _, ww := range words {
 		w := ww.w
+		if t, ok := typeWords[w]; ok && f.Door != "" && slices.Equal(t.types, []string{TypeAgent}) {
+			continue // "my agent" signs up: who, not what is sought
+		}
 		if t, ok := typeWords[w]; ok && !ww.joined {
 			// "mcp" in "mcp server", "agent" and the rest name a type.
 			for _, typ := range t.types {
@@ -263,6 +286,12 @@ func CheckFilters(f Filters, v Vocab) (Filters, string) {
 		}
 		out.Protocol = p
 	}
+	if d := strings.ToLower(strings.TrimSpace(f.Door)); d != "" {
+		if !slices.Contains(DoorFilters, d) {
+			return out, "door is agent (no human step), human, or one of " + strings.Join(Doors, ", ") + "."
+		}
+		out.Door = d
+	}
 	return out, ""
 }
 
@@ -286,6 +315,9 @@ func merge(parsed, set Filters, keys map[string]bool) Filters {
 	}
 	if keys["protocol"] {
 		parsed.Protocol = set.Protocol
+	}
+	if keys["door"] {
+		parsed.Door = set.Door
 	}
 	if parsed.Types == nil {
 		parsed.Types = []string{}

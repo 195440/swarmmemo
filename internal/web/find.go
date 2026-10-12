@@ -36,7 +36,14 @@ type findPage struct {
 	Outputs    []string
 	Networks   []string
 	Protocols  []string
+	Doors      []findOption
+	// AgentDoor is the quick chip "Agent can sign up" (door=agent): Href
+	// sets it, or clears it when Current.
+	AgentDoor findChip
 }
+
+// findOption is one choice of a select: its value and label.
+type findOption struct{ Value, Label string }
 
 // findChip is a type chip (Href selects it) or an applied filter (Href
 // clears it).
@@ -47,7 +54,42 @@ type findChip struct {
 
 // findEdit is the Edit filters form's current values.
 type findEdit struct {
-	Type, Category, MaxPrice, Output, Network, Protocol string
+	Type, Category, MaxPrice, Output, Network, Protocol, Door string
+}
+
+// findDoorOptions are the Sign-up door select's choices: the two groups,
+// then each door.
+func findDoorOptions() []findOption {
+	out := []findOption{{find.DoorGroupAgent, "agent can sign up alone"}, {find.DoorGroupHuman, "needs a human, or shut"}}
+	for _, d := range find.Doors {
+		if d != find.DoorHuman {
+			out = append(out, findOption{d, d})
+		}
+	}
+	return out
+}
+
+// findDoorBy is a door's provenance on its badge.
+func findDoorBy(by string) string {
+	if by == find.DoorSelf {
+		return "self-reported"
+	}
+	return by
+}
+
+// findDoorTip says what a door lets an agent do, without overclaiming: an
+// agent alone only for a measured or outside open, key or wallet door; a
+// form needs the agent's own inbox.
+func findDoorTip(m find.DoorMark) string {
+	switch {
+	case m.Value == find.DoorForm:
+		return "A plain form, no CAPTCHA: your agent needs its own inbox"
+	case find.DoorAgent(m.Value) && (m.By == find.DoorMeasured || m.By == find.DoorOutside):
+		return "An agent can sign up here without a human step"
+	case find.DoorAgent(m.Value):
+		return "Likely an agent can sign up here alone (" + findDoorBy(m.By) + ", not measured)"
+	}
+	return "Signing up needs a human, or the door is shut"
 }
 
 // findTypeChips are the type chips, in order: what each selects.
@@ -88,7 +130,7 @@ func loadFind(r *http.Request, p *page, execute func(board.Command) (board.Resul
 		}
 		return http.StatusSeeOther, target
 	}
-	v := &findPage{Query: query, Outputs: find.Outputs, Protocols: find.Protocols}
+	v := &findPage{Query: query, Outputs: find.Outputs, Protocols: find.Protocols, Doors: findDoorOptions()}
 	for _, c := range services.Categories() {
 		v.Categories = append(v.Categories, c.Name)
 	}
@@ -167,7 +209,13 @@ func loadFind(r *http.Request, p *page, execute func(board.Command) (board.Resul
 	add("output", "returns", applied.Output)
 	add("network", "network", applied.Network)
 	add("protocol", "protocol", applied.Protocol)
-	v.Edit = findEdit{Type: types, Category: applied.Category, MaxPrice: applied.MaxPrice, Output: applied.Output, Network: applied.Network, Protocol: applied.Protocol}
+	add("door", "sign-up door", applied.Door)
+	v.AgentDoor = findChip{Label: "Agent can sign up", Value: find.DoorGroupAgent, Href: link(url.Values{"door": {find.DoorGroupAgent}}),
+		Tip: "Only places an agent can sign up at with no human step; each result says who said so", Current: applied.Door == find.DoorGroupAgent}
+	if v.AgentDoor.Current {
+		v.AgentDoor.Href = link(url.Values{"door": {"any"}})
+	}
+	v.Edit = findEdit{Type: types, Category: applied.Category, MaxPrice: applied.MaxPrice, Output: applied.Output, Network: applied.Network, Protocol: applied.Protocol, Door: applied.Door}
 	if next, _ := res.Data["next_cursor"].(string); next != "" {
 		v.NextURL = link(url.Values{"cursor": {next}})
 	}

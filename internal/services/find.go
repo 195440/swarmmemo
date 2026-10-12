@@ -45,6 +45,9 @@ type ToolListing struct {
 	PriceText string
 	Docs      string
 	Available bool
+	// Anonymous is the method's catalogue flag (MethodEntry.Anonymous):
+	// callable without a key.
+	Anonymous bool
 }
 
 // ToolListings are the SwarmMemo tools tools_search lists (each write
@@ -69,7 +72,7 @@ func (e *Engine) ToolListings(ctx context.Context, q allowance.Querier, now int6
 				continue
 			}
 			out = append(out, ToolListing{ID: ToolID(entry.ID, m.Name), Title: entry.Title + ": " + m.Name, Line: m.Line,
-				Keywords: slices.Clone(m.keywords), PriceText: m.PriceText(), Docs: entry.Docs, Available: available})
+				Keywords: slices.Clone(m.keywords), PriceText: m.PriceText(), Docs: entry.Docs, Available: available, Anonymous: m.Anonymous})
 		}
 	}
 	return out, nil

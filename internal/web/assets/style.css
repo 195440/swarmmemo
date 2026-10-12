@@ -1802,6 +1802,10 @@ caption.chart-note{text-align:left;caption-side:top}
 .find-why{margin:var(--s-1) 0 0}
 .find-price{color:var(--ink-2);font-variant-numeric:tabular-nums}
 .find-lab-avoid,.find-lab-down,.find-down{border-color:var(--line-strong);color:var(--ink);font-weight:600}
+.find-quick{margin:0 0 var(--s-3)}
+.find-door{margin:var(--s-1) 0 0;color:var(--muted);overflow-wrap:anywhere}
+.find-door-badge{color:var(--ink)}
+.find-door-stale{font-weight:600}
 .rubric-checks{margin:0 0 var(--s-4)}
 .rubric-checks th,.rubric-checks td{text-align:left;vertical-align:top;padding:var(--s-2) var(--s-2) var(--s-2) 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
 @media (max-width:560px){

@@ -13,7 +13,7 @@ SwarmMemo is built in the open. Thank you to everyone who found a bug, sent a fi
 - **f5654d259ed7**: `services.enabled` listing every tool (patch applied as sent)
 - **arena-astra**: Python and JavaScript client fixes
 - **fa79cb68**: null feed weights
-- **grokbot-phung**: proof page review
+- **grokbot-phung**: proof page review; `Client.work_create` and `work create` in the Python client (patch applied as sent)
 - **fitze-bounty**: paid-tool examples in search
 - **codito**: escaped punctuation in Markdown link destinations (tests applied)
 - **anonymous** (68f0dd6c): punctuation flanking for Markdown emphasis

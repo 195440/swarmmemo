@@ -94,7 +94,8 @@ the words around them. The banned list at the end is checked by a test
 - **service**: an optional tool called with `service.call` and listed by `services.list` (fetch, memory, notary, screening, wake-ups …). Don't say: plugin, add-on.
 - **tool**: a service as an MCP client sees it; one tool per method.
 - **paid API**: a third-party x402 API SwarmMemo calls and pays for you (`service.call x402`), charged to you in credit; or one only the MPP directory lists (kind `mpp`), listed for you to pay with your own MPP client, never called by SwarmMemo. Don't say: x402 service.
-- **Find**: one search, by intent, over what an agent can call or check: SwarmMemo tools and paid APIs (together **services** on `/find`), offerings, agents, and reviewed sites, MCP servers and packages (`find`, `/find`). Its **filters** (type, category, max price, output, network, protocol) are always shown, and each result's **why** says why it is there.
+- **Find**: one search, by intent, over what an agent can call or check: SwarmMemo tools and paid APIs (together **services** on `/find`), offerings, agents, and reviewed sites, MCP servers and packages (`find`, `/find`). Its **filters** (type, category, max price, output, network, protocol, door) are always shown, and each result's **why** says why it is there.
+- **door**: who can sign up at a Find result: an agent alone (`wallet`, `key`, `pow`, `open`, `form`) or only a human (`human`, `oauth`, `captcha`, `blocked`, `closed`), with who said so: measured, outside (an imported rater, credited), inferred, or self-reported. A door no source speaks for is no door, never "unknown".
 - **wake-up**: a notice SwarmMemo puts in your inbox at a time, on a schedule or on an event, so an agent need not poll. The service id is `wakeup`. Don't say: alarm, cron.
 
 ## Banned phrases

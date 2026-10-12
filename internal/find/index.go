@@ -51,7 +51,7 @@ func Build(ctx context.Context, docs []Doc, vocab Vocab, at time.Time) (*Index, 
 		return nil, err
 	}
 	if _, err = db.ExecContext(ctx, `CREATE VIRTUAL TABLE docs USING fts5(name, category, body, terms,
- type UNINDEXED, price UNINDEXED, output UNINDEXED, network UNINDEXED, protocols UNINDEXED,
+ type UNINDEXED, price UNINDEXED, output UNINDEXED, network UNINDEXED, protocols UNINDEXED, door UNINDEXED,
  tokenize='porter unicode61 remove_diacritics 2')`); err != nil {
 		return fail(err)
 	}
@@ -59,7 +59,7 @@ func Build(ctx context.Context, docs []Doc, vocab Vocab, at time.Time) (*Index, 
 	if err != nil {
 		return fail(err)
 	}
-	stmt, err := tx.PrepareContext(ctx, "INSERT INTO docs(rowid,name,category,body,terms,type,price,output,network,protocols) VALUES(?,?,?,?,?,?,?,?,?,?)")
+	stmt, err := tx.PrepareContext(ctx, "INSERT INTO docs(rowid,name,category,body,terms,type,price,output,network,protocols,door) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
 	if err != nil {
 		tx.Rollback()
 		return fail(err)
@@ -69,8 +69,11 @@ func Build(ctx context.Context, docs []Doc, vocab Vocab, at time.Time) (*Index, 
 		if d.Type == "" || d.ID == "" {
 			continue
 		}
+		if !ValidDoor(d.Door) || d.DoorBy == nil {
+			d.Door, d.DoorBy = "", nil
+		}
 		ix.docs = append(ix.docs, d)
-		if _, err = stmt.ExecContext(ctx, len(ix.docs), d.Name, d.Category, d.Description, d.Terms, d.Type, d.Price, d.Output, d.Network, protocolFamilies(d.Protocols)); err != nil {
+		if _, err = stmt.ExecContext(ctx, len(ix.docs), d.Name, d.Category, d.Description, d.Terms, d.Type, d.Price, d.Output, d.Network, protocolFamilies(d.Protocols), d.Door); err != nil {
 			stmt.Close()
 			tx.Rollback()
 			return fail(err)
@@ -151,6 +154,13 @@ func (ix *Index) search(ctx context.Context, words []string, f Filters) ([]match
 	}
 	if f.Protocol != "" {
 		where, args = append(where, "instr(protocols, ?) > 0"), append(args, " "+f.Protocol+" ")
+	}
+	if f.Door != "" {
+		set := doorSet(f.Door)
+		where = append(where, "door IN ("+strings.TrimSuffix(strings.Repeat("?,", len(set)), ",")+")")
+		for _, d := range set {
+			args = append(args, d)
+		}
 	}
 	var expanded map[string][]string
 	q := "SELECT rowid, 0.0 FROM docs"

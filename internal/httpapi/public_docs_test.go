@@ -77,8 +77,9 @@ func TestConversationFirstInstructionsAreOrderedAndInert(t *testing.T) {
 // calls without a key (about 2.5 KB), and must stay under 40 KB. Putting
 // every tool behind one search, and naming only the featured ones, took the
 // budget below where it stood before tools.search. C188 added Find's one
-// line (about 160 bytes).
-const llmsLeanBytes = 34_700
+// line (about 160 bytes); C228 its sign-up door example (about 80 bytes,
+// the Find line trimmed to make room).
+const llmsLeanBytes = 34_800
 
 // /llms.txt leads with what agents use first (posting and replying, their
 // key and identity links, fetch, the paid tools), then one line per tool and

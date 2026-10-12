@@ -137,6 +137,10 @@ type Doc struct {
 	Also      []Also
 	Untrusted bool // Description is text from outside SwarmMemo (an upstream or an agent)
 	Quality   Quality
+	// Door is who can sign up here (one of Doors, "" when no source says),
+	// and DoorBy who said so (door.go; set it with SetDoor).
+	Door   string
+	DoorBy *DoorSource
 }
 
 // Also is one sibling subject a result shows beside its own: its type, id,
@@ -182,6 +186,7 @@ type Filters struct {
 	Output   string   `json:"output"`
 	Network  string   `json:"network"`
 	Protocol string   `json:"protocol"` // x402 or mpp
+	Door     string   `json:"door"`     // a door or a group of them (DoorFilters)
 }
 
 // maxMicro is MaxPrice in micro-USD; -1 when none.
@@ -198,7 +203,7 @@ func (f Filters) maxMicro() int64 {
 
 // Empty reports whether no filter applies.
 func (f Filters) Empty() bool {
-	return len(f.Types) == 0 && f.Category == "" && f.MaxPrice == "" && f.Output == "" && f.Network == "" && f.Protocol == ""
+	return len(f.Types) == 0 && f.Category == "" && f.MaxPrice == "" && f.Output == "" && f.Network == "" && f.Protocol == "" && f.Door == ""
 }
 
 // Request is one search.
@@ -227,29 +232,30 @@ const (
 
 // Hit is one result.
 type Hit struct {
-	Type        string   `json:"type"`
-	Kind        string   `json:"kind,omitempty"`
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Category    string   `json:"category,omitempty"`
-	URL         string   `json:"url"`
-	Price       string   `json:"price,omitempty"` // USD per call, a decimal string
-	PriceText   string   `json:"price_text,omitempty"`
-	Network     string   `json:"network,omitempty"`
-	Output      string   `json:"output,omitempty"`
-	Protocols   []string `json:"protocols,omitempty"`
-	SubjectID   string   `json:"subject_id,omitempty"`
-	ReviewURL   string   `json:"review_url,omitempty"`
-	Also        []Also   `json:"also_reviewed_as,omitempty"`
-	State       string   `json:"state,omitempty"`
-	Lab         *LabMark `json:"lab,omitempty"`
-	Reviews     *Reviews `json:"reviews,omitempty"`
-	Standing    string   `json:"standing,omitempty"`
-	Why         string   `json:"why"`
-	Score       float64  `json:"score"`
-	Untrusted   bool     `json:"description_is_untrusted,omitempty"`
-	Explain     *Explain `json:"explain,omitempty"`
+	Type        string    `json:"type"`
+	Kind        string    `json:"kind,omitempty"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Category    string    `json:"category,omitempty"`
+	URL         string    `json:"url"`
+	Price       string    `json:"price,omitempty"` // USD per call, a decimal string
+	PriceText   string    `json:"price_text,omitempty"`
+	Network     string    `json:"network,omitempty"`
+	Output      string    `json:"output,omitempty"`
+	Protocols   []string  `json:"protocols,omitempty"`
+	SubjectID   string    `json:"subject_id,omitempty"`
+	ReviewURL   string    `json:"review_url,omitempty"`
+	Also        []Also    `json:"also_reviewed_as,omitempty"`
+	State       string    `json:"state,omitempty"`
+	Lab         *LabMark  `json:"lab,omitempty"`
+	Reviews     *Reviews  `json:"reviews,omitempty"`
+	Standing    string    `json:"standing,omitempty"`
+	Door        *DoorMark `json:"door,omitempty"`
+	Why         string    `json:"why"`
+	Score       float64   `json:"score"`
+	Untrusted   bool      `json:"description_is_untrusted,omitempty"`
+	Explain     *Explain  `json:"explain,omitempty"`
 	// ReviewReward is the board's standing offer for reviewing this
 	// subject while it has slots left; set by the board after the search.
 	ReviewReward any `json:"review_reward,omitempty"`
@@ -309,10 +315,10 @@ type IndexInfo struct {
 // RelaxedNote is the parse note when the type, category or output read from
 // a query matched nothing, or matched clearly worse than the whole query
 // searched without them, and that answer was given instead.
-const RelaxedNote = "the type, category or output read from the query matched nothing or clearly worse than the whole query without them, so these results are the whole query's; a price, network or protocol it states still applies"
+const RelaxedNote = "the type, category or output read from the query matched nothing or clearly worse than the whole query without them, so these results are the whole query's; a price, network, protocol or sign-up door it states still applies"
 
 // OrderNote is the ranking rule in one sentence, on every answer.
-const OrderNote = "relevance first (BM25 over names, categories, descriptions and URLs); quality (lab band's lower edge, the community reviews' verdict mean, an agent's standing, up or down) moves a result by at most 0.1 of the best match's relevance, so it reorders only close matches; down or avoid sinks, never hides; SwarmMemo's margin and relay volume are never inputs"
+const OrderNote = "relevance first (BM25 over names, categories, descriptions and URLs); quality (lab band's lower edge, the community reviews' verdict mean, an agent's standing, up or down) moves a result by at most 0.1 of the best match's relevance, so it reorders only close matches; down or avoid sinks, never hides; SwarmMemo's margin and relay volume are never inputs; under a door filter, the door's source counts too (measured, then outside, inferred, self-reported; stale lower)"
 
 // Embedder is the hook for semantic matching: a vector per text, cached by
 // the caller. None ships: a local model needs cgo or a runtime the static,
