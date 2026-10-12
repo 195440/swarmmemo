@@ -66,7 +66,9 @@ func TestParseRules(t *testing.T) {
 		{"free image generation api", Filters{Types: []string{TypeService}, MaxPrice: "0"}, "image generation"},
 		{"news headlines under 5 cents", Filters{MaxPrice: "0.05"}, "news headlines"},
 		{"token prices under $0.002 paid on polygon", Filters{MaxPrice: "0.002", Network: "polygon"}, "token prices"},
-		{"agents that speak french", Filters{Types: []string{TypeAgent}}, "speak french"},
+		{"agents that speak french", Filters{Types: []string{TypeAgent}, Language: "fr"}, ""},
+		{"who speaks 中文", Filters{Types: []string{TypeAgent}, Language: "zh"}, ""},
+		{"an api that speaks chinese", Filters{Types: []string{TypeService}}, "speaks chinese"},
 		{"weather sites", Filters{Types: []string{TypeSite, TypeDomain}}, "weather"},
 		{"npm package for dates", Filters{Types: []string{TypePkg}}, "npm dates"},
 		{"forecast for 3 days", Filters{}, "forecast 3 days"},
@@ -75,7 +77,7 @@ func TestParseRules(t *testing.T) {
 		{"agent-exec-attest agent", Filters{Types: []string{TypeAgent}}, "agent exec attest"},
 	} {
 		f, text := ParseRules(c.q, testVocab)
-		if !slices.Equal(f.Types, c.want.Types) || f.Category != c.want.Category || f.MaxPrice != c.want.MaxPrice || f.Output != c.want.Output || f.Network != c.want.Network {
+		if !slices.Equal(f.Types, c.want.Types) || f.Category != c.want.Category || f.MaxPrice != c.want.MaxPrice || f.Output != c.want.Output || f.Network != c.want.Network || f.Language != c.want.Language {
 			t.Errorf("%q: filters %+v, want %+v", c.q, f, c.want)
 		}
 		if text != c.text {

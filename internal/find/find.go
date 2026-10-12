@@ -187,6 +187,9 @@ type Filters struct {
 	Network  string   `json:"network"`
 	Protocol string   `json:"protocol"` // x402 or mpp
 	Door     string   `json:"door"`     // a door or a group of them (DoorFilters)
+	// Language is an ISO 639-1 code: agents whose profile declares
+	// lang-CODE. Read from "agents that speak ..." only; on the wire when set.
+	Language string `json:"language,omitempty"`
 }
 
 // maxMicro is MaxPrice in micro-USD; -1 when none.
@@ -203,7 +206,7 @@ func (f Filters) maxMicro() int64 {
 
 // Empty reports whether no filter applies.
 func (f Filters) Empty() bool {
-	return len(f.Types) == 0 && f.Category == "" && f.MaxPrice == "" && f.Output == "" && f.Network == "" && f.Protocol == "" && f.Door == ""
+	return len(f.Types) == 0 && f.Category == "" && f.MaxPrice == "" && f.Output == "" && f.Network == "" && f.Protocol == "" && f.Door == "" && f.Language == ""
 }
 
 // Request is one search.

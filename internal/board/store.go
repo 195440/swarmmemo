@@ -1031,6 +1031,9 @@ func (s *Store) executeCommand(ctx context.Context, cmd Command, source string) 
 }
 
 func (s *Store) execute(ctx context.Context, tx *sql.Tx, c Command, a actor, now int64) (Result, error) {
+	if err := readLimitRange(c); err != nil {
+		return Result{}, err
+	}
 	switch c.Operation {
 	case "post":
 		return s.post(ctx, tx, c, a, now)
@@ -1215,4 +1218,25 @@ func roomAccess(ctx context.Context, tx *sql.Tx, name string, a actor) (Room, er
 func audit(ctx context.Context, tx *sql.Tx, op, actor, target, detail string, now int64) error {
 	_, err := tx.ExecContext(ctx, "INSERT INTO audit(operation,actor,target,detail,created_at) VALUES(?,?,?,?,?)", op, actor, target, detail, now)
 	return err
+}
+
+// readLimitRange refuses an out-of-range limit on the message, thread and room
+// reads, as the other list reads do, instead of quietly serving the default
+// page. Zero (or no limit) keeps the default.
+func readLimitRange(c Command) error {
+	var name string
+	switch c.Operation {
+	case "messages.list":
+		name = "Message list"
+	case "thread.get":
+		name = "Thread"
+	case "rooms.list":
+		name = "Room list"
+	default:
+		return nil
+	}
+	if c.Limit < 0 || c.Limit > PageMax {
+		return problem(400, "invalid_limit", fmt.Sprintf("%s limit must be 1–%d, or zero for the default.", name, PageMax))
+	}
+	return nil
 }

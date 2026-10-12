@@ -247,6 +247,7 @@ func (in *Intent) read(raw, q string) (Filters, string, string) {
 			text = append(text, w)
 		}
 	}
+	text = applyLanguage(&f, text, q)
 	return f, strings.Join(text, " "), ""
 }
 

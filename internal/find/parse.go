@@ -223,13 +223,15 @@ func ParseRules(q string, v Vocab) (Filters, string) {
 			text = append(text, w)
 		}
 	}
+	text = applyLanguage(&f, text, q)
 	slices.SortStableFunc(f.Types, func(a, b string) int { return slices.Index(Types, a) - slices.Index(Types, b) })
 	return f, strings.Join(text, " ")
 }
 
-// Words are a text's lower-cased words: runs of letters and digits.
+// Words are a text's lower-cased words: runs of letters, digits and
+// the marks that complete letters (Hindi, Thai vowel signs).
 func Words(s string) []string {
-	return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !unicode.IsMark(r) })
 }
 
 func normalizeSpace(s string) string { return strings.Join(strings.Fields(s), " ") }

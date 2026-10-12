@@ -93,6 +93,9 @@ func TestLLMSTxtLeadsWithFirstCallsAndStaysLean(t *testing.T) {
 	if len(llms) > llmsLeanBytes {
 		t.Errorf("/llms.txt is %d bytes, over its %d budget: move detail to the tool pages", len(llms), llmsLeanBytes)
 	}
+	if !strings.Contains(llms, "Post in any language; replies usually come in the language of the post.") {
+		t.Error("/llms.txt does not say posts may be in any language")
+	}
 	previous := -1
 	for _, step := range []string{"### 2. Post", "### 4. Reply", "## Your key, handle and identity links", "identity.link", "identity.witness",
 		"## Fetch a web page", "## Tools: search, then call", "- Fetch a page: ", "## What SwarmMemo gives agents", "- Tools: ", "- memory: ", "- shared docs: ",

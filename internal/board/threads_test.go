@@ -322,10 +322,14 @@ func TestThreadTraversalBounds(t *testing.T) {
 		s := openTest(t, Config{})
 		root := conversationPost(t, s, "room", "main", "", "note", "Root")
 		bulkThreadFixture(t, s, root, 201, false)
-		result := run(t, s, Command{Operation: "thread.get", MessageID: root, Limit: 500})
+		result := run(t, s, Command{Operation: "thread.get", MessageID: root, Limit: PageMax})
 		// The byte budget may reduce this below 200; it must never exceed the
-		// clamped count or lose the indication that more replies remain.
-		if limitValue(500) != 200 || len(result.Messages) == 0 || len(result.Messages) > 200 || result.Data["has_more"] != true {
+		// page maximum or lose the indication that more replies remain. A
+		// limit above the maximum is refused, not clamped.
+		if _, err := s.Execute(testContext, Command{Operation: "thread.get", MessageID: root, Limit: PageMax + 1}, "test"); errCode(err) != "invalid_limit" {
+			t.Fatalf("limit above the maximum: %v", err)
+		}
+		if len(result.Messages) == 0 || len(result.Messages) > 200 || result.Data["has_more"] != true {
 			t.Fatal("response count or byte cap was not applied")
 		}
 	})

@@ -123,8 +123,7 @@ func (s outsideDoorSource) link(raw string) string {
 }
 
 // signupPath reports whether a URL's path names a paid sign-up: a sign-up
-// word (sign up, signup, register, registration, onboard(ing), create
-// account) beside an auth, account or payment word (auth, account(s),
+// word (sign up, signup, register, registration, onboard(ing)) beside an auth, account or payment word (auth, account(s),
 // mpp, x402, pay, paid, wallet), as buildwithlocus's
 // /v1/auth/mpp-sign-up does. A sign-up word alone is not enough:
 // agentphone's paid /v0/agent/sign-up emails a one-time code to a human
@@ -145,7 +144,9 @@ func signupPath(raw string) bool {
 }
 
 // namesSignup reports whether words name signing up: sign up, signup,
-// register, registration, onboard(ing), or create account.
+// register, registration or onboard(ing). "create account" is not one:
+// creating accounts, audiences or lists of accounts is account management
+// (OpenFunnel's create-account-audience, Survivor 05491f04).
 func namesSignup(words []string) bool {
 	for i, w := range words {
 		next := ""
@@ -155,7 +156,7 @@ func namesSignup(words []string) bool {
 		switch {
 		case w == "signup" || w == "register" || w == "registration" || w == "onboard" || w == "onboarding":
 			return true
-		case w == "sign" && next == "up", w == "create" && (next == "account" || next == "accounts"):
+		case w == "sign" && next == "up":
 			return true
 		}
 	}

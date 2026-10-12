@@ -247,7 +247,7 @@ func TestFeedByteBoundsDoNotSkip(t *testing.T) {
 	cursor := "start"
 	seen := map[string]bool{}
 	for page := 0; page < 20; page++ {
-		r := run(t, s, Command{Operation: "messages.list", Cursor: cursor, Limit: 999999})
+		r := run(t, s, Command{Operation: "messages.list", Cursor: cursor, Limit: PageMax})
 		if len(r.Messages) == 0 {
 			break
 		}

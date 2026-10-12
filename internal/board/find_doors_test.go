@@ -102,7 +102,7 @@ func TestFindInferredAndOwnDoors(t *testing.T) {
 	if d = findX402Doc(phoneSignup, subjectQuality{}); d.Door != "" {
 		t.Fatalf("agentphone sign-up %q %+v", d.Door, d.DoorBy)
 	}
-	for path, want := range map[string]bool{"/v1/auth/mpp-sign-up": true, "/v1/auth/register": true, "/accounts/create-account": true, "/v1/account/signup": true, "/x402/register": true,
+	for path, want := range map[string]bool{"/v1/auth/mpp-sign-up": true, "/v1/auth/register": true, "/accounts/create-account": false, "/openfunnel/api/v1/audience/create-account-audience": false, "/v1/account/signup": true, "/x402/register": true,
 		"/agentphone/v0/agent/sign-up": false, "/v1/signup": false, "/api/register": false, "/onboarding/start": false, "/agentphone/v1/agents": false,
 		"/v1/sign/in": false, "/registry/list": false, "/agents": false, "/v1/upsign": false, "/v1/auth/login": false} {
 		if signupPath("https://x.example.com"+path) != want {
