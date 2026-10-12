@@ -137,16 +137,22 @@ func TestOfferingPublish(t *testing.T) {
 		extra map[string]any
 		code  string
 	}{
-		"price too low":       {map[string]any{"price": "0.001"}, "offering_price"},
-		"price over the cap":  {map[string]any{"price": "100.01"}, "offering_price"},
-		"bad name":            {map[string]any{"name": "Oracle!"}, "invalid_offering"},
-		"window too long":     {map[string]any{"claim_window": 7200}, "invalid_offering"},
-		"sla too short":       {map[string]any{"sla": 5}, "invalid_offering"},
-		"unknown refund":      {map[string]any{"refund": "maybe"}, "invalid_offering"},
-		"unknown field":       {map[string]any{"callback": "https://x"}, "invalid_offering"},
-		"schema keyword":      {map[string]any{"input": map[string]any{"type": "object", "patternProperties": map[string]any{}}}, "invalid_input_schema"},
-		"nested property":     {map[string]any{"input": map[string]any{"type": "object", "properties": map[string]any{"q": map[string]any{"type": "object"}}}}, "invalid_input_schema"},
-		"required not a prop": {map[string]any{"input": map[string]any{"type": "object", "required": []string{"q"}}}, "invalid_input_schema"},
+		"price too low":        {map[string]any{"price": "0.001"}, "offering_price"},
+		"price over the cap":   {map[string]any{"price": "100.01"}, "offering_price"},
+		"bad name":             {map[string]any{"name": "Oracle!"}, "invalid_offering"},
+		"window too long":      {map[string]any{"claim_window": 7200}, "invalid_offering"},
+		"sla too short":        {map[string]any{"sla": 5}, "invalid_offering"},
+		"unknown refund":       {map[string]any{"refund": "maybe"}, "invalid_offering"},
+		"unknown field":        {map[string]any{"callback": "https://x"}, "invalid_offering"},
+		"schema keyword":       {map[string]any{"input": map[string]any{"type": "object", "patternProperties": map[string]any{}}}, "invalid_input_schema"},
+		"nested property":      {map[string]any{"input": map[string]any{"type": "object", "properties": map[string]any{"q": map[string]any{"type": "object"}}}}, "invalid_input_schema"},
+		"required not a prop":  {map[string]any{"input": map[string]any{"type": "object", "required": []string{"q"}}}, "invalid_input_schema"},
+		"example too short":    {map[string]any{"input": map[string]any{"type": "object", "properties": map[string]any{"mint": map[string]any{"type": "string", "minLength": 32, "examples": []string{"short"}}}}}, "invalid_input_schema"},
+		"default off enum":     {map[string]any{"input": map[string]any{"type": "object", "properties": map[string]any{"k": map[string]any{"type": "string", "enum": []string{"a"}, "default": "b"}}}}, "invalid_input_schema"},
+		"default wrong type":   {map[string]any{"input": map[string]any{"type": "object", "properties": map[string]any{"n": map[string]any{"type": "integer", "default": "1"}}}}, "invalid_input_schema"},
+		"example out of range": {map[string]any{"input": map[string]any{"type": "object", "properties": map[string]any{"n": map[string]any{"type": "number", "maximum": 3, "examples": []any{1, 4}}}}}, "invalid_input_schema"},
+		"examples empty":       {map[string]any{"input": map[string]any{"type": "object", "properties": map[string]any{"q": map[string]any{"type": "string", "examples": []string{}}}}}, "invalid_input_schema"},
+		"too many examples":    {map[string]any{"input": map[string]any{"type": "object", "properties": map[string]any{"q": map[string]any{"type": "string", "examples": []string{"a", "b", "c", "d", "e", "f"}}}}}, "invalid_input_schema"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			fails(t, s, signed(key, Command{Operation: "offering.publish", Data: listing("oracle", c.extra)}), c.code)
@@ -175,6 +181,15 @@ func TestOfferingPublish(t *testing.T) {
 	}
 	if n := len(run(t, s, Command{Operation: "offering.list", Query: "nothing-like-it"}).Data["offerings"].([]map[string]any)); n != 0 {
 		t.Fatalf("query matched %d", n)
+	}
+	// A schema's default and examples round-trip in offering.get.
+	mint := "So11111111111111111111111111111111111111112"
+	publish(t, s, key, listing("oracle", map[string]any{"input": map[string]any{"type": "object", "properties": map[string]any{
+		"mint": map[string]any{"type": "string", "minLength": 32, "maxLength": 44, "examples": []string{mint}},
+		"n":    map[string]any{"type": "integer", "minimum": 1, "maximum": 9, "default": 3}}, "required": []string{"mint"}}}))
+	got = run(t, s, Command{Operation: "offering.get", Target: "@pythia/oracle"}).Data["offering"].(map[string]any)
+	if in, _ := json.Marshal(got["input"]); !strings.Contains(string(in), `"examples":["`+mint+`"]`) || !strings.Contains(string(in), `"default":3`) {
+		t.Fatalf("input %s", in)
 	}
 	// At most OfferingsPerAccount offerings.
 	for i := 2; i <= OfferingsPerAccount; i++ {
@@ -725,9 +740,46 @@ func TestOfferingBazaarExample(t *testing.T) {
 	for k, v := range ex {
 		raw[k], _ = json.Marshal(v)
 	}
-	if err := sc.check(raw); err != nil || len(ex) != 6 || ex["kind"] != "quick" || ex["n"] != 3.0 || ex["neg"] != -3.0 || ex["tiny"] != "exa" {
-		t.Fatalf("example %v: %v", ex, err)
+	// The required q takes 20 to 30 characters and gives no hint: "example"
+	// would need padding into a made-up value, so there is no example.
+	if len(ex) != 0 {
+		t.Fatalf("example %v", ex)
 	}
+	// Short strings still get "example" (cut to maxLength), as before.
+	short, err := parseInputSchema(json.RawMessage(`{"type":"object","properties":{"kind":{"type":"string","enum":["quick","deep"]},"q":{"type":"string","minLength":3},
+"n":{"type":"integer","minimum":2.5,"maximum":9},"neg":{"type":"number","maximum":-3},"flag":{"type":"boolean"},"tiny":{"type":"string","maxLength":3}},"required":["q","n"],"additionalProperties":false}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex = exampleInput(short)
+	if len(ex) != 6 || ex["kind"] != "quick" || ex["q"] != "example" || ex["n"] != 3.0 || ex["neg"] != -3.0 || ex["tiny"] != "exa" || ex["flag"] != true {
+		t.Fatalf("example %v", ex)
+	}
+	// A default wins over examples and enum; examples[0] over enum; a long
+	// string without hints is left out, not padded.
+	hinted, err := parseInputSchema(json.RawMessage(`{"type":"object","properties":{
+"kind":{"type":"string","enum":["quick","deep"],"examples":["deep"],"default":"quick"},
+"mint":{"type":"string","minLength":32,"maxLength":44,"examples":["So11111111111111111111111111111111111111112","EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"]},
+"note":{"type":"string","minLength":32},
+"n":{"type":"integer","minimum":1,"maximum":9,"default":4}},"required":["mint"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex = exampleInput(hinted)
+	if _, padded := ex["note"]; padded || len(ex) != 3 || ex["kind"] != "quick" || ex["mint"] != "So11111111111111111111111111111111111111112" || ex["n"] != 4.0 {
+		t.Fatalf("hinted example %v", ex)
+	}
+	if v, ok := exampleValue(inputProp{typ: "string", enum: []json.RawMessage{json.RawMessage(`"a"`), json.RawMessage(`"b"`)}, examples: []json.RawMessage{json.RawMessage(`"b"`)}}); !ok || v != "b" {
+		t.Fatalf("examples[0] over enum: %v", v)
+	}
+	if v, ok := exampleValue(inputProp{typ: "string", minLength: 32}); ok {
+		t.Fatalf("padded %q", v)
+	}
+	o0 := offeringRow{Account: "abc", Name: "oracle", Rev: 1, PayTo: "0x3333333333333333333333333333333333333333", Listing: offeringListing{Price: "5", Input: json.RawMessage(`{"type":"object","properties":{"mint":{"type":"string","minLength":32,"examples":["So11111111111111111111111111111111111111112"]}},"required":["mint"]}`)}}
+	if body := offeringBazaar(o0)["info"].(map[string]any)["input"].(map[string]any)["body"].(map[string]any); body["mint"] != "So11111111111111111111111111111111111111112" {
+		t.Fatalf("bazaar body %v", body)
+	}
+	ex = exampleInput(sc)
 	o := offeringRow{Account: "abc", Name: "oracle", Rev: 1, PayTo: "0x3333333333333333333333333333333333333333", Listing: offeringListing{Price: "5", Input: schema}}
 	if body := offeringBazaar(o)["info"].(map[string]any)["input"].(map[string]any)["body"].(map[string]any); body["q"] != ex["q"] {
 		t.Fatalf("bazaar body %v", body)
@@ -738,5 +790,90 @@ func TestOfferingBazaarExample(t *testing.T) {
 	b, _ := json.Marshal(ext)
 	if len(b) > offeringBazaarBytes || len(ext["info"].(map[string]any)["input"].(map[string]any)["body"].(map[string]any)) != 0 {
 		t.Fatalf("oversized bazaar extension %d bytes", len(b))
+	}
+}
+
+// An enum matches by JSON value, not by bytes: the stored schema went
+// through encoding/json (HTML-escaped: & reads backslash-u0026), and a
+// buyer may send it raw or escaped, Zürich with an escaped ü, or 1.0 for 1. null is no type's value and does not
+// satisfy required (Survivor 5fd2747d, 729ee908).
+func TestOfferingInputEnumByValueAndNull(t *testing.T) {
+	s := offeringStore(t, &fakeFacilitator{})
+	key := keyFor(166)
+	provider(t, s, key, "registry")
+	// esc writes the backslash-u spelling that encoding/json (HTML-safe) and
+	// Python's default json.dumps send.
+	bs := `\`
+	esc := strings.NewReplacer("&", bs+"u0026", "<", bs+"u003c", ">", bs+"u003e", "ü", bs+"u00fc", "è", bs+"u00e8").Replace
+	input := map[string]any{"type": "object", "properties": map[string]any{
+		"dept": map[string]any{"type": "string", "enum": []string{"R&D", "Ops"}, "default": "R&D", "examples": []string{"R&D"}},
+		"city": map[string]any{"type": "string", "enum": []string{"Zürich", "<Genève>"}, "examples": []string{"Zürich", "<Genève>"}},
+		"n":    map[string]any{"type": "integer", "enum": []int{1, 2}, "default": 1.0},
+		"x":    map[string]any{"type": "number"},
+		"ok":   map[string]any{"type": "boolean"},
+		"note": map[string]any{"type": "string"}},
+		"required": []string{"dept"}, "additionalProperties": false}
+	publish(t, s, key, listing("lookup", map[string]any{"input": input}))
+	// Defaults and examples in another escaping or number spelling than
+	// their enum are accepted at publish too.
+	other := `{"schema":1,"name":"lookup2","title":"Look it up","description":"One lookup.","price":"5.00","pay_to":"` + offeringWallet + `","claim_window":900,"sla":3600,"refund":"full_if_unanswered",
+"input":{"type":"object","properties":{"dept":{"type":"string","enum":["R&D"],"default":"` + esc("R&D") + `","examples":["` + esc("R&D") + `"]},"city":{"type":"string","enum":["` + esc("Zürich") + `"],"default":"Zürich"},"n":{"type":"integer","enum":[1.0,2],"examples":[1,2e0]}}}}`
+	publish(t, s, key, other)
+	// Each quote a minute apart, under the quote rate.
+	clock := int64(testTime)
+	quoteAt := func(target, in string) {
+		t.Helper()
+		clock += 61
+		s.now = func() time.Time { return time.Unix(clock, 0) }
+		offeringQuoteFor(t, s, buyCmd(target, in, ""))
+	}
+	target := "registry/lookup"
+	for _, in := range []string{
+		`{"dept":"R&D"}`, esc(`{"dept":"R&D"}`), `{"dept":"Ops"}`,
+		`{"dept":"R&D","city":"Zürich"}`, esc(`{"dept":"R&D","city":"Zürich"}`), `{"dept":"R&D","city":"<Genève>"}`, esc(`{"dept":"R&D","city":"<Genève>"}`),
+		`{"dept":"R&D","n":1}`, `{"dept":"R&D","n":1.0}`, `{"dept":"R&D","n":2}`, `{"dept":"R&D","n":2e0}`, `{"dept":"R&D","n":10E-1}`,
+	} {
+		quoteAt(target, in)
+	}
+	for _, in := range []string{`{"dept":"R&D","city":"Zürich","n":1}`, esc(`{"dept":"R&D","city":"Zürich","n":2.0}`)} {
+		quoteAt("registry/lookup2", in)
+	}
+	for _, c := range []struct{ input, detail string }{
+		{`{"dept":"R&D2"}`, `"dept" is not one of its enum.`},
+		{`{"dept":"r&d"}`, `"dept" is not one of its enum.`},
+		{`{"dept":"R&D","city":"Zurich"}`, `"city" is not one of its enum.`},
+		{`{"dept":"R&D","n":3}`, `"n" is not one of its enum.`},
+		{`{"dept":"R&D","n":"1"}`, `"n" is not one of its enum.`},
+		{`{"dept":"R&D","n":1.5}`, `"n" is not one of its enum.`},
+		{`{"dept":null}`, `"dept" is required.`},
+		{`{"dept":"R&D","city":null}`, `"city" is a string.`},
+		{`{"dept":"R&D","note":null}`, `"note" is a string.`},
+		{`{"dept":"R&D","n":null}`, `"n" is a integer.`},
+		{`{"dept":"R&D","x":null}`, `"x" is a number.`},
+		{`{"dept":"R&D","ok":null}`, `"ok" is true or false.`},
+	} {
+		_, e := topupExec(s, testContext, buyCmd(target, c.input, ""))
+		if e == nil || e.Code != "invalid_offering_input" || !strings.Contains(e.Message, c.detail) {
+			t.Errorf("%s: want invalid_offering_input %q, got %+v", c.input, c.detail, e)
+		}
+	}
+	// A default or example of null is refused at publish.
+	s.now = func() time.Time { return time.Unix(testTime, 0) }
+	for _, prop := range []string{`{"type":"string","default":null}`, `{"type":"integer","examples":[1,null]}`, `{"type":"boolean","default":null}`} {
+		var in map[string]any
+		if err := json.Unmarshal([]byte(`{"type":"object","properties":{"p":`+prop+`}}`), &in); err != nil {
+			t.Fatal(err)
+		}
+		fails(t, s, signed(key, Command{Operation: "offering.publish", Data: listing("nulls", map[string]any{"input": in})}), "invalid_input_schema")
+	}
+	for _, p := range [][2]string{{"1", "1.0"}, {"100", "1e2"}, {"0.5", "5e-1"}, {"-0", "0"}, {"0.0", "0"}, {"-1.50", "-15E-1"}, {"12300", "1.23e4"}, {"1", "1E+0"}} {
+		if canonicalNumber(p[0]) != canonicalNumber(p[1]) {
+			t.Errorf("%s != %s: %s %s", p[0], p[1], canonicalNumber(p[0]), canonicalNumber(p[1]))
+		}
+	}
+	for _, p := range [][2]string{{"1", "-1"}, {"1", "10"}, {"0.1", "0.01"}, {"9007199254740993", "9007199254740992"}, {"1e999999999999", "1e999999999998"}} {
+		if canonicalNumber(p[0]) == canonicalNumber(p[1]) {
+			t.Errorf("%s == %s", p[0], p[1])
+		}
 	}
 }

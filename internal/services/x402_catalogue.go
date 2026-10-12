@@ -1378,7 +1378,7 @@ func (x *x402) readScreens(ctx context.Context, hashes []string) (map[string]str
 }
 
 // screenSummaries screens the pending summaries of the snapshot's open
-// resources with screen's classifier, best ranked first, at most
+// resources and MPP entries with screen's classifier, taking turns, at most
 // x402ScreenPerRefresh distinct texts, and records each verdict (at
 // ScreenThreshold) in x402_summary_screens by the text's SHA-256: an
 // identical text is screened once, a changed one again. It does nothing when
@@ -1395,18 +1395,38 @@ func (x *x402) screenSummaries(ctx context.Context, now int64) (int, error) {
 	}
 	verdicts := map[string]string{}
 	var err error
-	// The x402 candidates first, best ranked first, then the MPP entries.
-	var pending []string
+	// The x402 candidates (best ranked first) and the MPP entries Find lists
+	// take turns, so neither queue starves the other under the per-refresh
+	// cap (C227: with the x402 candidates first, a steady stream of new ones
+	// left every MPP entry pending and Find on its generated line). The MPP
+	// entries an x402 resource also lists come last: Find shows the x402
+	// resource's summary for them.
+	var x402Pending, mppPending, mppListed []string
 	for _, r := range s.open {
 		if r.summaryStatus == summaryPending {
-			pending = append(pending, r.Summary)
+			x402Pending = append(x402Pending, r.Summary)
 		}
 	}
 	for _, e := range s.mpp.all {
-		if e.summaryStatus == summaryPending {
-			pending = append(pending, e.Summary)
+		if e.summaryStatus != summaryPending {
+			continue
+		}
+		if s.mpp.byID[e.ID] == e {
+			mppPending = append(mppPending, e.Summary)
+		} else {
+			mppListed = append(mppListed, e.Summary)
 		}
 	}
+	pending := make([]string, 0, len(x402Pending)+len(mppPending)+len(mppListed))
+	for i := 0; i < max(len(x402Pending), len(mppPending)); i++ {
+		if i < len(x402Pending) {
+			pending = append(pending, x402Pending[i])
+		}
+		if i < len(mppPending) {
+			pending = append(pending, mppPending[i])
+		}
+	}
+	pending = append(pending, mppListed...)
 	for _, summary := range pending {
 		if len(verdicts) >= x402ScreenPerRefresh {
 			break

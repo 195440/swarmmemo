@@ -67,10 +67,17 @@ type inputProp struct {
 	enum                 []json.RawMessage
 	minLength, maxLength int64
 	minimum, maximum     *float64
+	// def and examples are the seller's sample values (JSON Schema
+	// "default" and "examples"), each held to the property's own rules.
+	def      json.RawMessage
+	examples []json.RawMessage
 }
 
+// OfferingSchemaExamples bounds a property's "examples".
+const OfferingSchemaExamples = 5
+
 func invalidInputSchema(detail string) error {
-	return problem(400, "invalid_input_schema", `input is a JSON Schema subset: {"type":"object","properties":{NAME:{"type":"string"|"number"|"integer"|"boolean", optional "description","enum","minLength","maxLength","minimum","maximum"}},"required":[NAMES],"additionalProperties":true|false}, at most `+strconv.Itoa(OfferingSchemaProperties)+" properties. "+detail)
+	return problem(400, "invalid_input_schema", `input is a JSON Schema subset: {"type":"object","properties":{NAME:{"type":"string"|"number"|"integer"|"boolean", optional "description","enum","minLength","maxLength","minimum","maximum","default","examples" (1 to `+strconv.Itoa(OfferingSchemaExamples)+` values, each following the property's rules)}},"required":[NAMES],"additionalProperties":true|false}, at most `+strconv.Itoa(OfferingSchemaProperties)+" properties. "+detail)
 }
 
 func parseInputSchema(raw json.RawMessage) (inputSchema, error) {
@@ -159,6 +166,13 @@ func parseInputProp(name string, raw json.RawMessage) (inputProp, error) {
 			err = json.Unmarshal(v, &p.minimum)
 		case "maximum":
 			err = json.Unmarshal(v, &p.maximum)
+		case "default":
+			p.def = v
+		case "examples":
+			err = json.Unmarshal(v, &p.examples)
+			if err == nil && (len(p.examples) == 0 || len(p.examples) > OfferingSchemaExamples) {
+				err = errors.New("examples")
+			}
 		default:
 			err = errors.New("keyword")
 		}
@@ -172,6 +186,18 @@ func parseInputProp(name string, raw json.RawMessage) (inputProp, error) {
 	if p.minLength < 0 || p.maxLength < 0 || (p.maxLength > 0 && p.minLength > p.maxLength) {
 		return p, invalidInputSchema(fmt.Sprintf("Property %q: minLength and maxLength are 0 or more, min at most max.", name))
 	}
+	samples := p.examples
+	if p.def != nil {
+		samples = append([]json.RawMessage{p.def}, samples...)
+	}
+	for _, v := range samples {
+		if len(v) > OfferingInputBytes {
+			return p, invalidInputSchema(fmt.Sprintf("Property %q: a default or example is at most %d bytes.", name, OfferingInputBytes))
+		}
+		if detail := p.checkValue(name, v); detail != "" {
+			return p, invalidInputSchema(fmt.Sprintf("Property %q: its default and examples follow its own rules (type, enum, length, range): %s", name, detail))
+		}
+	}
 	return p, nil
 }
 
@@ -182,7 +208,7 @@ func invalidInput(detail string) error {
 // check holds an input object to the schema.
 func (sc inputSchema) check(input map[string]json.RawMessage) error {
 	for _, r := range sc.required {
-		if _, ok := input[r]; !ok {
+		if v, ok := input[r]; !ok || isJSONNull(v) {
 			return invalidInput(fmt.Sprintf("%q is required.", r))
 		}
 	}
@@ -194,43 +220,155 @@ func (sc inputSchema) check(input map[string]json.RawMessage) error {
 			}
 			continue
 		}
-		if len(p.enum) > 0 {
-			found := false
-			for _, e := range p.enum {
-				if string(e) == string(raw) {
-					found = true
-				}
-			}
-			if !found {
-				return invalidInput(fmt.Sprintf("%q is not one of its enum.", name))
-			}
-		}
-		switch p.typ {
-		case "string":
-			var v string
-			if json.Unmarshal(raw, &v) != nil {
-				return invalidInput(fmt.Sprintf("%q is a string.", name))
-			}
-			n := int64(len([]rune(v)))
-			if n < p.minLength || (p.maxLength > 0 && n > p.maxLength) {
-				return invalidInput(fmt.Sprintf("%q has %d characters; it takes %d to %d.", name, n, p.minLength, p.maxLength))
-			}
-		case "number", "integer":
-			var v float64
-			if json.Unmarshal(raw, &v) != nil || (p.typ == "integer" && v != math.Trunc(v)) {
-				return invalidInput(fmt.Sprintf("%q is a %s.", name, p.typ))
-			}
-			if (p.minimum != nil && v < *p.minimum) || (p.maximum != nil && v > *p.maximum) {
-				return invalidInput(fmt.Sprintf("%q is out of its range.", name))
-			}
-		case "boolean":
-			var v bool
-			if json.Unmarshal(raw, &v) != nil {
-				return invalidInput(fmt.Sprintf("%q is true or false.", name))
-			}
+		if detail := p.checkValue(name, raw); detail != "" {
+			return invalidInput(detail)
 		}
 	}
 	return nil
+}
+
+// checkValue is "" when raw follows p's rules, else what is wrong. Values
+// compare as JSON values, never as bytes: an enum stored through
+// encoding/json reads "R\u0026D" where a buyer sends "R&D", and 1.0 is
+// the integer 1. null is a value of none of the subset's types.
+func (p inputProp) checkValue(name string, raw json.RawMessage) string {
+	var typeErr string
+	switch p.typ {
+	case "string":
+		typeErr = fmt.Sprintf("%q is a string.", name)
+	case "number", "integer":
+		typeErr = fmt.Sprintf("%q is a %s.", name, p.typ)
+	case "boolean":
+		typeErr = fmt.Sprintf("%q is true or false.", name)
+	}
+	if isJSONNull(raw) {
+		return typeErr
+	}
+	if len(p.enum) > 0 {
+		found := false
+		for _, e := range p.enum {
+			if jsonValueEqual(e, raw) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Sprintf("%q is not one of its enum.", name)
+		}
+	}
+	switch p.typ {
+	case "string":
+		var v string
+		if json.Unmarshal(raw, &v) != nil {
+			return typeErr
+		}
+		n := int64(len([]rune(v)))
+		if n < p.minLength || (p.maxLength > 0 && n > p.maxLength) {
+			return fmt.Sprintf("%q has %d characters; it takes %d to %d.", name, n, p.minLength, p.maxLength)
+		}
+	case "number", "integer":
+		var v float64
+		if json.Unmarshal(raw, &v) != nil || (p.typ == "integer" && v != math.Trunc(v)) {
+			return typeErr
+		}
+		if (p.minimum != nil && v < *p.minimum) || (p.maximum != nil && v > *p.maximum) {
+			return fmt.Sprintf("%q is out of its range.", name)
+		}
+	case "boolean":
+		var v bool
+		if json.Unmarshal(raw, &v) != nil {
+			return typeErr
+		}
+	}
+	return ""
+}
+
+// jsonValueEqual compares two JSON texts as values (JSON Schema equality):
+// strings by their decoded text, numbers by exact value (1 == 1.0 == 1e0),
+// arrays and objects member by member.
+func jsonValueEqual(a, b json.RawMessage) bool {
+	va, ok := decodeJSONValue(a)
+	if !ok {
+		return false
+	}
+	vb, ok := decodeJSONValue(b)
+	return ok && jsonEqual(va, vb)
+}
+
+func decodeJSONValue(raw json.RawMessage) (any, bool) {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.UseNumber()
+	var v any
+	if d.Decode(&v) != nil {
+		return nil, false
+	}
+	return v, true
+}
+
+// canonicalNumber writes a JSON number exactly as sign, significant digits
+// and exponent (0.DIGITSeEXP), so equal values read the same; no big
+// arithmetic, so a huge exponent costs nothing.
+func canonicalNumber(n string) string {
+	neg := strings.HasPrefix(n, "-")
+	n = strings.TrimPrefix(n, "-")
+	var exp int64
+	if i := strings.IndexAny(n, "eE"); i >= 0 {
+		e, err := strconv.ParseInt(strings.TrimPrefix(n[i+1:], "+"), 10, 64)
+		if err != nil || e > 1<<40 || e < -(1<<40) {
+			return n // out of any sane range: equal only to itself
+		}
+		exp, n = e, n[:i]
+	}
+	intPart, frac, _ := strings.Cut(n, ".")
+	digits := intPart + frac
+	exp += int64(len(intPart))
+	trimmed := strings.TrimLeft(digits, "0")
+	exp -= int64(len(digits) - len(trimmed))
+	trimmed = strings.TrimRight(trimmed, "0")
+	if trimmed == "" {
+		return "0"
+	}
+	sign := ""
+	if neg {
+		sign = "-"
+	}
+	return sign + "0." + trimmed + "e" + strconv.FormatInt(exp, 10)
+}
+
+func jsonEqual(a, b any) bool {
+	switch x := a.(type) {
+	case json.Number:
+		y, ok := b.(json.Number)
+		if !ok {
+			return false
+		}
+		return canonicalNumber(x.String()) == canonicalNumber(y.String())
+	case []any:
+		y, ok := b.([]any)
+		if !ok || len(x) != len(y) {
+			return false
+		}
+		for i := range x {
+			if !jsonEqual(x[i], y[i]) {
+				return false
+			}
+		}
+		return true
+	case map[string]any:
+		y, ok := b.(map[string]any)
+		if !ok || len(x) != len(y) {
+			return false
+		}
+		for k, v := range x {
+			w, ok := y[k]
+			if !ok || !jsonEqual(v, w) {
+				return false
+			}
+		}
+		return true
+	default:
+		return a == b
+	}
 }
 
 // ---- buy -----------------------------------------------------------------

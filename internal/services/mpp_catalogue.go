@@ -24,7 +24,8 @@ package services
 // are cleaned, cut, and served only once screen's classifier passed them
 // (the summaries the x402 candidates share, x402_summary_screens); names
 // shown are built from the URL and the service's id (a checked token),
-// never from the directory's free text. Storage
+// never from the directory's free text, which may only split the id into
+// words (mppServiceName). Storage
 // never deletes: an entry not seen for three refresh intervals is stale and
 // unlisted until it is seen again.
 
@@ -98,7 +99,7 @@ type MPPEntry struct {
 	Price    int64
 	Category string
 	Summary  string // upstream text, untrusted: servedSummary
-	Service  string // the directory's service id, a token
+	Service  string // the service's name token: mppServiceName of the directory's id
 
 	summaryStatus     string
 	canon, host, text string
@@ -139,7 +140,7 @@ func (e *MPPEntry) index() {
 	if u, err := url.Parse(e.URL); err == nil {
 		e.host = strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
 	}
-	e.text = strings.ToLower(e.ID + " " + e.Category + " " + e.host + " " + strings.Join(e.Protocols, " ") + " " + e.Summary)
+	e.text = strings.ToLower(e.ID + " " + e.Service + " " + e.Category + " " + e.host + " " + strings.Join(e.Protocols, " ") + " " + e.Summary)
 }
 
 // admit applies the guardrails to an indexed entry; false refuses it.
@@ -164,6 +165,7 @@ var (
 type mppService struct {
 	ID          string                     `json:"id"`
 	URL         string                     `json:"url"`
+	Name        string                     `json:"name"` // free text: only checked against the id (mppServiceName)
 	ServiceURL  string                     `json:"serviceUrl"`
 	Description string                     `json:"description"`
 	Categories  json.RawMessage            `json:"categories"`
@@ -238,7 +240,7 @@ func parseMPPDirectory(raw []byte, d *x402DenyIndex) ([]*MPPEntry, mppDirectoryS
 		_ = json.Unmarshal(s.Categories, &categories) // anything but strings names none
 		service := ""
 		if mppServiceRE.MatchString(s.ID) {
-			service = s.ID
+			service = mppServiceName(s.ID, base, s.Name)
 		}
 		// The service's methods, in the directory's words: the ones it
 		// takes besides each endpoint's own, and an evm chain.
@@ -571,24 +573,105 @@ const (
 	mppNameLastMax = 60 // the last segment's, which always stays
 )
 
-// DisplayName is the entry as Find names it: "<service> · METHOD /path",
-// the service the directory's id (a checked token, never its free text),
-// else the host; a long path loses its leading segments, never its last,
-// so two endpoints of one service read apart.
+// DisplayName is the entry as Find names it: "<who> · METHOD /path" (who
+// below); a long path loses its leading segments, never its last, so two
+// endpoints of one service read apart. A leading segment that only repeats
+// the service's name ("/agentphone/v1/agents" of agentphone) is left out.
 func (e *MPPEntry) DisplayName() string {
 	path := "/"
 	if u, err := url.Parse(e.URL); err == nil && u.EscapedPath() != "" {
 		path = u.EscapedPath()
 	}
+	if name := e.serviceName(); name != "" && mppPathNames(name, e.URL) {
+		if _, rest, ok := strings.Cut(strings.TrimPrefix(path, "/"), "/"); ok {
+			path = "/" + rest
+		}
+	}
 	return e.who() + " · " + e.Method + " " + mppShortPath(path)
 }
 
-// who is the entry's service id, else its host.
+// who names the entry's service from checked tokens only (C227): its name
+// token, else its host. A service an aggregator serves under a path of its
+// own host, the host not naming it ("https://mpp.orthogonal.com/agentphone/…"),
+// reads "agentphone via orthogonal", the aggregator the host's registrable
+// name, so one API listed by two providers reads apart.
 func (e *MPPEntry) who() string {
-	if e.Service != "" {
-		return e.Service
+	name := e.serviceName()
+	if name == "" {
+		return e.host
 	}
-	return e.host
+	if mppPathNames(name, e.URL) && !strings.Contains(mppLetters(e.host), mppLetters(name)) {
+		if reg := reviews.RegistrableDomain(e.host); reg != "" {
+			label, _, _ := strings.Cut(reg, ".")
+			return name + " via " + label
+		}
+	}
+	return name
+}
+
+// serviceName is the entry's name token, an aggregator's prefix cut also
+// from a row stored before C227.
+func (e *MPPEntry) serviceName() string {
+	return mppStripAggregator(e.Service, e.URL)
+}
+
+// mppServiceName is the name token a directory service is shown by, built
+// from its id (a checked token), never from its free text:
+//
+//   - an aggregator's prefix goes: an id "<prefix>-<name>" of a service
+//     that lives under the path /<name> of its URL ("orth-agentphone" at
+//     https://mpp.orthogonal.com/agentphone) is "agentphone";
+//   - the directory's name may only split the id into words: when its
+//     letters and digits, lower-cased, are exactly the id's ("Build With
+//     Locus" and "buildwithlocus"), the token is those words joined by "-"
+//     ("build-with-locus"), so Find matches each word ("locus"); any other
+//     name changes nothing.
+func mppServiceName(id, serviceURL, name string) string {
+	id = mppStripAggregator(id, serviceURL)
+	words := strings.FieldsFunc(strings.ToLower(name), func(r rune) bool { return (r < 'a' || r > 'z') && (r < '0' || r > '9') })
+	if len(words) > 1 && strings.Join(words, "") == mppLetters(id) {
+		if joined := strings.Join(words, "-"); mppServiceRE.MatchString(joined) {
+			return joined
+		}
+	}
+	return id
+}
+
+// mppStripAggregator is id without an aggregator's prefix: "<prefix>-<name>"
+// is "<name>" when u's first path segment is exactly <name>; else id.
+func mppStripAggregator(id, u string) string {
+	if _, name, ok := strings.Cut(id, "-"); ok && name != "" && strings.EqualFold(mppFirstSegment(u), name) {
+		return name
+	}
+	return id
+}
+
+// mppPathNames reports whether u's first path segment spells name (the same
+// letters and digits).
+func mppPathNames(name, u string) bool {
+	seg := mppLetters(mppFirstSegment(u))
+	return seg != "" && seg == mppLetters(name)
+}
+
+// mppFirstSegment is u's first path segment, "" when it has none.
+func mppFirstSegment(u string) string {
+	p, err := url.Parse(u)
+	if err != nil {
+		return ""
+	}
+	seg, _, _ := strings.Cut(strings.TrimPrefix(p.Path, "/"), "/")
+	return seg
+}
+
+// mppLetters is s's ASCII letters and digits, lower-cased.
+func mppLetters(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // mppShortPath keeps a path's last segment (cut at mppNameLastMax runes)

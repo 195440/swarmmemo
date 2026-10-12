@@ -1,6 +1,7 @@
 package board
 
 import (
+	"context"
 	"testing"
 
 	"swarmmemo/internal/find"
@@ -82,8 +83,40 @@ func TestFindMPPDoc(t *testing.T) {
 	if d = findX402Doc(l, subjectQuality{}); d.Description != "Bulk company lookup" {
 		t.Fatalf("summary first: %q", d.Description)
 	}
+	l.Summary = ""
+	if d = findX402Doc(l, subjectQuality{}); d.Description != l.Line {
+		t.Fatalf("an unscreened summary is never shown: %q", d.Description)
+	}
 	x := services.X402Listing{ID: "exa-search", Kind: services.KindX402, MaxPrice: -1, Name: "ignored", Line: "ignored"}
 	if d = findX402Doc(x, subjectQuality{}); d.Name != "exa search" || d.Description != "" || d.PriceText != "" {
 		t.Fatalf("x402 doc changed: %+v", d)
+	}
+}
+
+// A query by the provider's name finds its MPP entries (C227): the name
+// token splits "buildwithlocus" into its words, so "locus" matches and
+// "build with locus" puts Locus first among builders.
+func TestFindMPPByProviderName(t *testing.T) {
+	mpp := func(id, u, name string) services.X402Listing {
+		return services.X402Listing{ID: id, Kind: services.KindMPP, Method: "POST", URL: u, MaxPrice: 0, Decimals: 6, Protocols: []string{"mpp/tempo"},
+			Name: name, Line: "MPP charge endpoint"}
+	}
+	listings := []services.X402Listing{
+		mpp("mpp-buildwithlocus-com-v1-auth-mpp-sign-up-0123456789abcdef", "https://mpp.buildwithlocus.com/v1/auth/mpp-sign-up", "build-with-locus · POST /v1/auth/mpp-sign-up"),
+		mpp("mpp-orthogonal-com-agentphone-v1-agents-0123456789abcdef", "https://mpp.orthogonal.com/agentphone/v1/agents", "agentphone via orthogonal · POST /v1/agents"),
+		{ID: "build-pub-0123456789abcdef", Kind: services.KindX402, URL: "https://build.example.com/pub", MaxPrice: 1000, Decimals: 6, Summary: "Build a package"},
+		{ID: "builder-0123456789abcdef", Kind: services.KindX402, URL: "https://builder.example.net/build", MaxPrice: 1000, Decimals: 6, Summary: "Build tools to build things"},
+	}
+	var docs []find.Doc
+	for _, l := range listings {
+		docs = append(docs, findX402Doc(l, subjectQuality{}))
+	}
+	e := find.NewEngine(find.Config{Source: func(context.Context) ([]find.Doc, error) { return docs, nil }})
+	t.Cleanup(e.Close)
+	for q, want := range map[string]string{"build with locus": listings[0].ID, "locus": listings[0].ID, "agentphone": listings[1].ID, "orthogonal": listings[1].ID} {
+		a, err := e.Find(context.Background(), find.Request{Query: q, Parse: find.ModeRules})
+		if err != nil || len(a.Results) == 0 || a.Results[0].ID != want {
+			t.Fatalf("%q: %+v (%v)", q, a.Results, err)
+		}
 	}
 }

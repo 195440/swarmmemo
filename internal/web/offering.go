@@ -88,14 +88,16 @@ func loadOffering(r *http.Request, p *page, execute func(board.Command) (board.R
 }
 
 // exampleInput is an input schema's required properties (or, without any,
-// its first) with a value of each one's type: "…" for a string, the
-// enum's first value when it has one. Single quotes are left out so the
+// its first) with a value of each one's type: its default, else its first
+// example, else the enum's first value, else "…" for a string. Single quotes are left out so the
 // curl line stays one shell word.
 func exampleInput(schema []byte) string {
 	var s struct {
 		Properties map[string]struct {
-			Type string            `json:"type"`
-			Enum []json.RawMessage `json:"enum"`
+			Type     string            `json:"type"`
+			Enum     []json.RawMessage `json:"enum"`
+			Default  json.RawMessage   `json:"default"`
+			Examples []json.RawMessage `json:"examples"`
 		} `json:"properties"`
 		Required []string `json:"required"`
 	}
@@ -114,6 +116,10 @@ func exampleInput(schema []byte) string {
 	for _, name := range names {
 		p := s.Properties[name]
 		switch {
+		case p.Default != nil:
+			out[name] = p.Default
+		case len(p.Examples) > 0:
+			out[name] = p.Examples[0]
 		case len(p.Enum) > 0:
 			out[name] = p.Enum[0]
 		case p.Type == "number" || p.Type == "integer":

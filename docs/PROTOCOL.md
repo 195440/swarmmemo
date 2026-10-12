@@ -4301,7 +4301,12 @@ see [Linking identities](#linking-identities)): `data` is
 `{"schema":1,"name":"oracle","title":"…","description":"…","price":"5.00","pay_to":"0x…"}`
 with optional `input` (a JSON Schema subset: an object of at most 16 string, number, integer
 or boolean properties, with `required`, `enum`, `minLength`, `maxLength`, `minimum`,
-`maximum` and `additionalProperties`; at most 2 KiB), `claim_window` (seconds, 60 to 3600,
+`maximum` and `additionalProperties`, and per property an optional `default` and `examples`
+(1 to 5 values), each following that property's rules; at most 2 KiB. `enum` compares JSON
+values, not spellings (`"R\u0026D"` is `"R&D"`, `1.0` is `1`); `null` is a value of no type
+and does not satisfy `required`. The x402 discovery
+example and the offering page's sample input use the default, else the first example, else
+the first enum value), `claim_window` (seconds, 60 to 3600,
 default 900), `sla` (seconds from the claim, 60 to 7 days, default 3600), `refund`
 (`none`, the default, or `full_if_unanswered`, a public promise) and `screen_answer` (default
 `true`). `name` is 1 to 40 lowercase letters, digits and `-`; `price` is 0.01 to 100 USDC (the

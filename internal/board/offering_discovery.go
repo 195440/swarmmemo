@@ -163,9 +163,8 @@ func withoutText(schema map[string]any) map[string]any {
 	return out
 }
 
-// exampleInput is an input sc accepts: every property it can fill (an
-// enum's first value, "example" text at the length bounds, a number in
-// range, true), or else the required ones only.
+// exampleInput is an input sc accepts: every property exampleValue can
+// fill, or else the required ones only, or else {}.
 func exampleInput(sc inputSchema) map[string]any {
 	names := make([]string, 0, len(sc.props))
 	for name := range sc.props {
@@ -195,19 +194,29 @@ func exampleInput(sc inputSchema) map[string]any {
 	return map[string]any{}
 }
 
+// exampleValue is p's default, else its first example, else its enum's
+// first value; else "example" text when that fits the length bounds
+// without padding, a number in range, or true. A string it cannot fill
+// honestly is left out (false), never padded into an impossible value.
 func exampleValue(p inputProp) (any, bool) {
-	if len(p.enum) > 0 {
+	var hint json.RawMessage
+	switch {
+	case p.def != nil:
+		hint = p.def
+	case len(p.examples) > 0:
+		hint = p.examples[0]
+	case len(p.enum) > 0:
+		hint = p.enum[0]
+	}
+	if hint != nil {
 		var v any
-		return v, json.Unmarshal(p.enum[0], &v) == nil
+		return v, json.Unmarshal(hint, &v) == nil
 	}
 	switch p.typ {
 	case "string":
-		if p.minLength > OfferingInputBytes {
-			return nil, false
-		}
 		s := "example"
-		if n := p.minLength; int64(len(s)) < n {
-			s = strings.Repeat("example ", int(n/8)+1)[:n]
+		if p.minLength > int64(len(s)) {
+			return nil, false
 		}
 		if p.maxLength > 0 && int64(len(s)) > p.maxLength {
 			s = s[:p.maxLength]

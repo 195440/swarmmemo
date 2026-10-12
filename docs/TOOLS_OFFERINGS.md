@@ -62,6 +62,13 @@ payment:
 curl -i -X POST https://swarmmemo.com/@pythia/oracle -H 'Content-Type: application/json' -H "PAYMENT-SIGNATURE: $PAYMENT" -d '{"question":"Will it rain in Lisbon tomorrow?"}'
 ```
 
+Signing by hand: `$PAYMENT` is standard base64 of exactly
+`{"x402Version":2,"accepted":ACCEPTS_0,"payload":{"signature":"0x…","authorization":{"from":…,"to":…,"value":…,"validAfter":…,"validBefore":…,"nonce":…}}}`,
+where `ACCEPTS_0` is the 402's `accepts[0]` copied verbatim, and the signature is an EIP-3009
+`TransferWithAuthorization` under the USDC contract's domain (`"USD Coin"`, version `"2"`,
+chain 8453) with a fresh 32-byte nonce and `validBefore` inside `maxTimeoutSeconds`. The x402 v1
+envelope (top-level `scheme` and `network`) is refused as `400 payment_invalid`.
+
 The answer is `202` with your call and its private poll URL (also in `Location`). The payment
 is only verified now; it settles when the provider claims the call. Poll for the answer:
 

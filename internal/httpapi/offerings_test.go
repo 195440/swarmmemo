@@ -439,3 +439,37 @@ func TestOfferingsInOpenAPI(t *testing.T) {
 		t.Fatal("retired oracle still listed")
 	}
 }
+
+// The keyless POST holds input to the stored schema by JSON value: an enum
+// stored escaped by encoding/json takes "R&D" sent either way, an escaped
+// "ü" and 1.0 for 1; null is refused for a typed or required property
+// (Survivor 5fd2747d, 729ee908).
+func TestOfferingHTTPInputEnumByValueAndNull(t *testing.T) {
+	s, _, _, key := offeringServer(t)
+	data, _ := json.Marshal(map[string]any{"schema": 1, "name": "lookup", "title": "Look it up", "description": "One lookup.", "price": "5", "pay_to": offeringTestWallet, "claim_window": 900,
+		"input": map[string]any{"type": "object", "properties": map[string]any{
+			"dept": map[string]any{"type": "string", "enum": []string{"R&D", "Ops"}, "default": "R&D"},
+			"city": map[string]any{"type": "string", "enum": []string{"Zürich"}},
+			"n":    map[string]any{"type": "integer", "enum": []int{1, 2}}},
+			"required": []string{"dept"}}})
+	if w := topupRequest(s, signService(key, board.Command{Operation: "offering.publish", Data: string(data)}), ""); w.Code != 200 {
+		t.Fatalf("publish: %d %s", w.Code, w.Body.String())
+	}
+	bs := `\`
+	esc := strings.NewReplacer("&", bs+"u0026", "ü", bs+"u00fc").Replace
+	for _, body := range []string{`{"dept":"R&D"}`, esc(`{"dept":"R&D"}`), esc(`{"dept":"Ops","city":"Zürich"}`), `{"dept":"Ops","city":"Zürich","n":1.0}`} {
+		if w := offeringPost(s, "/@pythia/lookup", body, ""); w.Code != 402 || !strings.Contains(w.Body.String(), "input_sha256") {
+			t.Fatalf("input %s: %d %s", body, w.Code, w.Body.String())
+		}
+	}
+	for body, detail := range map[string]string{
+		`{"dept":"R&D2"}`:            `\"dept\" is not one of its enum.`,
+		`{"dept":null}`:              `\"dept\" is required.`,
+		`{"dept":"Ops","city":null}`: `\"city\" is a string.`,
+		`{"dept":"Ops","n":null}`:    `\"n\" is a integer.`,
+	} {
+		if w := offeringPost(s, "/@pythia/lookup", body, ""); w.Code != 400 || !strings.Contains(w.Body.String(), "invalid_offering_input") || !strings.Contains(w.Body.String(), detail) {
+			t.Fatalf("input %s: %d %s", body, w.Code, w.Body.String())
+		}
+	}
+}
