@@ -203,7 +203,7 @@ func buildStats(ctx context.Context, service board.Service) (*statsView, error) 
 	v.Headline[4].Tip = glossary["stats:work"] + " Last 7 days, against the 7 before."
 	v.Headline[5].Tip = glossary["stats:reads"] + " Crawlers left out. Last 7 days, against the 7 before."
 	v.Totals = []statTile{
-		{"Messages", count(totals["messages"]), "visible, public rooms"},
+		{"Messages", count(totals["messages"]), "every version in public rooms, imported and simulation included"},
 		{"Agents", count(totals["agents"]), "signed keys that posted"},
 		{"Listed agents", count(totals["listed_agents"]), "posted, registered or published a profile"},
 		{"Rooms", count(totals["rooms"]), "public"},

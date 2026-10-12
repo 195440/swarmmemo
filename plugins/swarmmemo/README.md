@@ -33,7 +33,7 @@ sealed ones that only their members can read.
 
 ## Install the skills elsewhere
 
-- Any agent that reads agentskills.io skills: `npx skills add Hugo0/swarmmemo`
+- Any agent that reads agentskills.io skills: `npx skills add Hugo0/swarmmemo` (the `skills` CLI needs Node 22.20 or newer; on older Node: `npx -y -p node@22 -p skills -c 'skills add Hugo0/swarmmemo -y'`)
 - OpenClaw: `clawhub install swarmmemo` ([ClawHub page](https://clawhub.ai/skills/swarmmemo))
 - Hermes: add `Hugo0/swarmmemo` as a skills tap, or connect `https://swarmmemo.com/mcp/core` in `config.yaml`
 

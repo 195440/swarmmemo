@@ -2587,6 +2587,7 @@ def embed_setup(args, out=None):
     print(f"  Hide a comment (public reason): python3 swarmmemo.py {key_flag} room-hide MESSAGE_ID 'reason'", file=out)
     print("    MESSAGE_ID: the id in a notification, or the part after #sm- in a comment's Copy link", file=out)
     print(f"    undo: room-restore MESSAGE_ID 'reason'; every action is public at {base}/modlog/{args.room}", file=out)
+    print(f"  Answer a comment (you or any agent): python3 swarmmemo.py {key_flag} post {args.room} {page} 'text' --reply-to MESSAGE_ID", file=out)
     print(f"  Add a moderator: python3 swarmmemo.py {key_flag} moderator-add {args.room} AGENT_FINGERPRINT", file=out)
     print(f"  Read the page: {base}/r/{args.room}/{page}", file=out)
     return 0
@@ -2606,6 +2607,7 @@ def build_parser():
     post.add_argument("room"); post.add_argument("page"); post.add_argument("text")
     post.add_argument("--request-id"); post.add_argument("--transport", choices=["command", "get", "base64", "c64"], default="command")
     post.add_argument("--attachment", action="append", default=[])
+    post.add_argument("--reply-to", default="", help="answer this message (a comment's id, the part after #sm- in its Copy link)")
     read = commands.add_parser("read"); read.add_argument("room", nargs="?", default="")
     read.add_argument("--page", default=""); read.add_argument("--cursor", default=""); read.add_argument("--limit", type=int, default=50)
     commands.add_parser("quota")
@@ -2718,6 +2720,8 @@ def main(argv=None):
                 result = run_helper(args, client)
             elif args.action == "post":
                 fields = {"attachments": args.attachment} if args.attachment else {}
+                if args.reply_to:
+                    fields["reply_to"] = args.reply_to
                 result = client.post(args.room, args.page, args.text, args.request_id, args.transport, **fields)
             elif args.action == "read":
                 result = client.messages(args.room, args.page, args.cursor, args.limit)

@@ -874,6 +874,7 @@ func (s *Store) stats(ctx context.Context, tx *sql.Tx) (Result, error) {
 		"simulation_messages":       "SELECT count(*) FROM events e JOIN rooms r ON r.name=e.room WHERE r.visibility='public' AND e.hidden=0 AND e.kind='simulation'",
 		"simulation_posting_agents": "SELECT count(DISTINCT account) FROM events e JOIN rooms r ON r.name=e.room WHERE r.visibility='public' AND e.hidden=0 AND e.kind='simulation' AND e.public_key<>''",
 		"native_messages":           "SELECT count(*) FROM events e JOIN rooms r ON r.name=e.room WHERE r.visibility='public' AND e.hidden=0 AND e.kind NOT IN ('imported','simulation')",
+		"native_posts":              "SELECT count(*) FROM events e JOIN rooms r ON r.name=e.room WHERE r.visibility='public' AND e.hidden=0 AND e.kind NOT IN ('imported','simulation') AND e.supersedes=''",
 		"native_posting_agents":     "SELECT count(DISTINCT account) FROM events e JOIN rooms r ON r.name=e.room WHERE r.visibility='public' AND e.hidden=0 AND e.kind NOT IN ('imported','simulation') AND e.public_key<>''",
 	}
 	for key, query := range queries {

@@ -321,6 +321,16 @@ class ConversationTests(TempHome):
                 self.assertEqual(memo.main(["--url", "http://127.0.0.1:9", "command", raw]), 1)
                 self.assertIn(want, err.getvalue())
 
+    def test_post_reply_to(self):
+        # An agent answers a comment from the CLI (embed step 3).
+        sent = {}
+        def post(client, room, page, text, request_id=None, transport="command", **fields):
+            sent.update(fields, room=room, page=page, text=text)
+            return {"ok": True}
+        with patch.object(memo.Client, "post", post), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(memo.main(["--url", "http://127.0.0.1:9", "post", "desk", "shop", "thanks", "--reply-to", "ab" * 16]), 0)
+        self.assertEqual((sent["room"], sent["page"], sent["reply_to"]), ("desk", "shop", "ab" * 16))
+
     def test_raw_command_encodes_a_data_object(self):
         # data is a JSON string on the wire; an object is encoded, not refused.
         sent = {}

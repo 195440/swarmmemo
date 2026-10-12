@@ -155,6 +155,10 @@ func TestRoomReadsAndGovernanceOverHTTP(t *testing.T) {
 	if json.Unmarshal(w.Body.Bytes(), &room) != nil || room.Room.Policy.Write != "owner" || room.Room.OwnerAgent != owner.id || len(room.Room.Moderators) != 1 {
 		t.Fatalf("room.get: %s", w.Body.String())
 	}
+	// /api/rooms/ROOM, beside the /api/rooms list, reads the same room.
+	if w2 := makeRequest(s, "GET", "/api/rooms/garden", "", ""); w2.Body.String() != w.Body.String() {
+		t.Fatalf("/api/rooms/garden: %d %s", w2.Code, w2.Body.String())
+	}
 	var log struct {
 		Data struct {
 			Entries []board.ModerationEntry `json:"entries"`

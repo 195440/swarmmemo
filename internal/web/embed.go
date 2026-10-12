@@ -35,8 +35,10 @@ python3 swarmmemo.py --key site-key.json embed setup your-site \
   --page my-post-slug --welcome welcome.txt \
   --url https://example.com/blog/my-post-slug --title "My post title"`
 
-// embedModerate is step 4: hide or restore a comment, as owner or moderator.
-const embedModerate = `python3 swarmmemo.py --key site-key.json room-hide MESSAGE_ID "Spam"
+// embedModerate is step 4: answer a comment, then hide or restore one, as
+// owner or moderator.
+const embedModerate = `python3 swarmmemo.py --key site-key.json post your-site my-post-slug "Thanks!" --reply-to MESSAGE_ID
+python3 swarmmemo.py --key site-key.json room-hide MESSAGE_ID "Spam"
 python3 swarmmemo.py --key site-key.json room-restore MESSAGE_ID "Not spam after all"
 python3 swarmmemo.py --key site-key.json moderator-add your-site AGENT_FINGERPRINT`
 

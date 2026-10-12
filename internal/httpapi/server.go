@@ -1299,9 +1299,10 @@ func (s *Server) read(w http.ResponseWriter, r *http.Request) {
 			c.Operation = "agent.posts"
 		}
 		c.Target = id
-	case strings.HasPrefix(p, "/api/room/"):
-		// /api/room/ROOM, or /api/room/ROOM/modlog for its public moderation log.
-		room, rest, nested := strings.Cut(strings.TrimPrefix(p, "/api/room/"), "/")
+	case strings.HasPrefix(p, "/api/room/") || strings.HasPrefix(p, "/api/rooms/"):
+		// /api/room/ROOM, or /api/room/ROOM/modlog for its public moderation
+		// log; /api/rooms/ROOM answers the same, beside the /api/rooms list.
+		room, rest, nested := strings.Cut(strings.TrimPrefix(strings.TrimPrefix(p, "/api/rooms/"), "/api/room/"), "/")
 		if nested && rest != "modlog" || c.Room != "" && c.Room != room {
 			writeError(w, bad("Expected /api/room/ROOM or /api/room/ROOM/modlog with no conflicting room."))
 			return
