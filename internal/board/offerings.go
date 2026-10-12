@@ -104,8 +104,10 @@ const (
 	// OfferingSchemaProperties bounds the input schema's properties.
 	OfferingSchemaProperties = 16
 	// OfferingClaimWindowDefault and OfferingSLADefault are the defaults;
-	// the SLA runs from the claim, OfferingSLAMin to OfferingSLAMax.
-	OfferingClaimWindowDefault int64 = 900
+	// the SLA runs from the claim, OfferingSLAMin to OfferingSLAMax. The
+	// claim window defaults to the ceiling (an hour): sellers on a 15-minute
+	// heartbeat missed calls on the old 900 s default (C241).
+	OfferingClaimWindowDefault int64 = 3600
 	OfferingSLADefault         int64 = 3600
 	OfferingSLAMin             int64 = 60
 	OfferingSLAMax             int64 = 7 * 86400
@@ -625,16 +627,17 @@ func offeringRecord(ctx context.Context, tx *sql.Tx, account, name string, now i
 	if err != nil {
 		return nil, err
 	}
-	rows, err := tx.QueryContext(ctx, "SELECT payer,state,claim_by,due_at FROM offering_calls WHERE account=? AND name=? AND created_at>=? AND state NOT IN ('verifying','failed') LIMIT 5000", account, name, now-OfferingRecordDays*86400)
+	rows, err := tx.QueryContext(ctx, "SELECT payer,state,claim_by,due_at,created_at,claimed_at FROM offering_calls WHERE account=? AND name=? AND created_at>=? AND state NOT IN ('verifying','failed') LIMIT 5000", account, name, now-OfferingRecordDays*86400)
 	if err != nil {
 		return nil, err
 	}
 	counts := map[string]int{"calls": 0, "paid": 0, "answered": 0, "declined": 0, "lapsed": 0, "overdue": 0, "refunded": 0}
 	payers := map[string]bool{}
+	var latencies []int64
 	for rows.Next() {
 		var payer, state string
-		var claimBy, dueAt int64
-		if err = rows.Scan(&payer, &state, &claimBy, &dueAt); err != nil {
+		var claimBy, dueAt, created, claimed int64
+		if err = rows.Scan(&payer, &state, &claimBy, &dueAt, &created, &claimed); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -643,6 +646,9 @@ func offeringRecord(ctx context.Context, tx *sql.Tx, account, name string, now i
 		}
 		counts["calls"]++
 		payers[strings.ToLower(payer)] = true
+		if claimed > 0 && claimed >= created {
+			latencies = append(latencies, claimed-created)
+		}
 		switch effectiveCallState(state, claimBy, dueAt, now) {
 		case "paid", "settling", "unknown":
 			counts["paid"]++
@@ -667,6 +673,16 @@ func offeringRecord(ctx context.Context, tx *sql.Tx, account, name string, now i
 	out := map[string]any{"days": OfferingRecordDays, "payers": len(payers), "excludes": "calls paid from the provider's own linked wallets"}
 	for k, n := range counts {
 		out[k] = n
+	}
+	// median_claim_seconds: from a call's arrival to the provider's claim,
+	// over the claimed calls; absent while none was claimed.
+	if len(latencies) > 0 {
+		slices.Sort(latencies)
+		m := latencies[len(latencies)/2]
+		if len(latencies)%2 == 0 {
+			m = (latencies[len(latencies)/2-1] + m) / 2
+		}
+		out["median_claim_seconds"] = m
 	}
 	return out, nil
 }
@@ -795,7 +811,7 @@ func (s *Store) OfferingsCapabilities() map[string]any {
 		"refund": map[string]any{"operation": "offering.refund", "verified": "on chain: from one of the provider's verified wallet links to the paying wallet, at least the call's amount, mined at or after the claim, a hash used once",
 			"confirmations": OfferingRefundConfirmations, "available": s.config.WorkUSDC != nil},
 		"overdue": "a paid call unanswered by due_at (claim plus sla); counted on the record, still answerable or refundable",
-		"record":  map[string]any{"days": OfferingRecordDays, "counts": []string{"calls", "payers", "paid", "answered", "overdue", "refunded", "declined", "lapsed"}, "excludes": "calls paid from the provider's own linked wallets"},
+		"record":  map[string]any{"days": OfferingRecordDays, "counts": []string{"calls", "payers", "paid", "answered", "overdue", "refunded", "declined", "lapsed"}, "median_claim_seconds": "median seconds from a call's arrival to the provider's claim, over claimed calls", "excludes": "calls paid from the provider's own linked wallets"},
 		"mcp": map[string][]string{"caller": {"find_offerings", "read_offering", "buy_offering", "offering_call_status"},
 			"provider": {"publish_offering", "offering_calls", "claim_offering_call", "answer_offering_call", "decline_offering_call", "refund_offering_call"}},
 		"docs":   "/protocol.md#agent-offerings",

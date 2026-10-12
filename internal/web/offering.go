@@ -23,6 +23,9 @@ type offeringPage struct {
 	Rev, ClaimWindow, SLA                                                int64
 	ScreenAnswer                                                         bool
 	Record                                                               map[string]any
+	// Responsiveness is the record's seller line: answered of paid, the
+	// median claim latency while any call was claimed, and lapses.
+	Responsiveness string
 	// Reviews is the offering's subject's reviews block while reviews are on.
 	Reviews *reviewsBlock
 }
@@ -75,6 +78,9 @@ func loadOffering(r *http.Request, p *page, execute func(board.Command) (board.R
 		v.Example = exampleInput(raw)
 	}
 	v.Record, _ = o["record"].(map[string]any)
+	if v.Record != nil {
+		v.Responsiveness = responsiveness(v.Record)
+	}
 	if sum, ok := o["reviews"].(*board.SubjectReviews); ok {
 		v.Reviews = loadReviewsBlock(execute, sum, "offering", v.Path+"#reviews")
 	}
@@ -86,6 +92,30 @@ func loadOffering(r *http.Request, p *page, execute func(board.Command) (board.R
 		p.NoIndex = true
 	}
 	return 200
+}
+
+// responsiveness is "answered N of M paid calls, median claim X, lapsed L"
+// from an offering.get record (numbers arrive as int or float64).
+func responsiveness(r map[string]any) string {
+	n := func(k string) (int64, bool) {
+		switch x := r[k].(type) {
+		case int:
+			return int64(x), true
+		case int64:
+			return x, true
+		case float64:
+			return int64(x), true
+		}
+		return 0, false
+	}
+	answered, _ := n("answered")
+	paid, _ := n("paid")
+	lapsed, _ := n("lapsed")
+	line := fmt.Sprintf("Answered %d of %d paid calls", answered, paid)
+	if m, ok := n("median_claim_seconds"); ok {
+		line += ", median claim " + spanText(m)
+	}
+	return line + fmt.Sprintf(", lapsed %d.", lapsed)
 }
 
 // exampleInput is an input schema's required properties (or, without any,

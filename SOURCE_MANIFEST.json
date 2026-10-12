@@ -664,8 +664,8 @@
     {
       "mode": "0644",
       "path": "docs/PROTOCOL.md",
-      "sha256": "351981f1dbad2fd20beb3e7b8cbffd447b19ce8f3cfff2cbdbc8f2887530e77a",
-      "size": 449837
+      "sha256": "b1bf32b880fb52a96bcc29a4bae6157cd76aa19ee501a93984f92b0d9b272c1f",
+      "size": 449998
     },
     {
       "mode": "0644",
@@ -742,8 +742,8 @@
     {
       "mode": "0644",
       "path": "docs/TOOLS_OFFERINGS.md",
-      "sha256": "55ee6fdc2076aca983b0189d73333d05db64e5d28fd78c5e701890d35569805c",
-      "size": 6111
+      "sha256": "07c7681a081a2f1b4a8f0ad7e00c7751ec01fdc54d1e5b30c85dc014d1345161",
+      "size": 6809
     },
     {
       "mode": "0644",
@@ -1978,14 +1978,14 @@
     {
       "mode": "0644",
       "path": "internal/board/offerings.go",
-      "sha256": "770b032c506aa5ebc80cc2e0f700bf6df03b66fcb4c7d8f31295ecc61ce7bf91",
-      "size": 37087
+      "sha256": "77bc0887e320b4afc8d689d2ee02d51de33796ac276c956dfd24688a33b4ffd5",
+      "size": 37847
     },
     {
       "mode": "0644",
       "path": "internal/board/offerings_test.go",
-      "sha256": "1c041f82542db059479b11e9484784bf617bfa98ee54d27e09224442d3ebf92d",
-      "size": 46101
+      "sha256": "b6bddd2dc42379286f25305cdd51c655aa3dce21c73e96019792b9dc5e573569",
+      "size": 47652
     },
     {
       "mode": "0644",
@@ -3886,8 +3886,8 @@
     {
       "mode": "0644",
       "path": "internal/httpapi/offerings_test.go",
-      "sha256": "658b8591b8284246c050a8c55e313c52fe8c4982950eaa8e8928b5e715e20f38",
-      "size": 24168
+      "sha256": "9b3fcb7c5f3a5cc096794c8258be93e43bbd53f4ee1d10b0014f72fee4956137",
+      "size": 24250
     },
     {
       "mode": "0644",
@@ -7198,8 +7198,8 @@
     {
       "mode": "0644",
       "path": "internal/web/offering.go",
-      "sha256": "e586c3145fc4821a1a173e2a86921c2181990111f070eba0ab34bee0c18f9e73",
-      "size": 5109
+      "sha256": "630fed4d1619031c64bd0ba6b96f1056bd3fa7de8e876c2fd7861922fcfd6583",
+      "size": 6019
     },
     {
       "mode": "0644",
@@ -7594,8 +7594,8 @@
     {
       "mode": "0644",
       "path": "internal/web/templates/offering.html",
-      "sha256": "0ee4f31fd6014d51cee5cdd4972c46e914ca325fd1bd9c95b12535e435c6a78c",
-      "size": 2775
+      "sha256": "2d126b13479f3c5c09368778cb0d711cb09be98e9b4792b0002c3f21e343e6cb",
+      "size": 2833
     },
     {
       "mode": "0644",
@@ -7684,8 +7684,8 @@
     {
       "mode": "0644",
       "path": "internal/web/tools_test.go",
-      "sha256": "31ca78f0a8e5ca2aa47238c4f96b5d4cc30b553ae4d7b27db1d8cd31aaf0347c",
-      "size": 8544
+      "sha256": "0675c0209fb7a14d21d6aeab2155971861fd0e80622edb52f788d37a268e68b6",
+      "size": 9124
     },
     {
       "mode": "0644",

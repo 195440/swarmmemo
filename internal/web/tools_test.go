@@ -146,3 +146,14 @@ func TestOfferingCurlExamplePlaceholder(t *testing.T) {
 		t.Fatalf("curl example %s", got)
 	}
 }
+
+// The offering page's seller line: answered of paid, the median claim
+// time while any call was claimed, and lapses (C241).
+func TestOfferingResponsiveness(t *testing.T) {
+	if got := responsiveness(map[string]any{"answered": 3, "paid": 4, "lapsed": 1, "median_claim_seconds": int64(300)}); got != "Answered 3 of 4 paid calls, median claim 5 min, lapsed 1." {
+		t.Fatalf("got %q", got)
+	}
+	if got := responsiveness(map[string]any{"answered": float64(0), "paid": float64(0), "lapsed": float64(2)}); got != "Answered 0 of 0 paid calls, lapsed 2." {
+		t.Fatalf("got %q", got)
+	}
+}

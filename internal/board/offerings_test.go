@@ -922,3 +922,37 @@ func TestOfferingInputEnumByValueAndNull(t *testing.T) {
 		}
 	}
 }
+
+// TestOfferingClaimWindowDefaultAndLatency: a publish without claim_window
+// gets an hour, and the record carries the median claim latency beside the
+// lapses (C241).
+func TestOfferingClaimWindowDefaultAndLatency(t *testing.T) {
+	f := &fakeFacilitator{}
+	s := offeringStore(t, f)
+	key := keyFor(171)
+	provider(t, s, key, "oracle-c241")
+	if o := publish(t, s, key, listing("oracle", map[string]any{"claim_window": nil})); o["claim_window"] != int64(3600) || OfferingClaimWindowDefault != 3600 {
+		t.Fatalf("default claim window %v", o["claim_window"])
+	}
+	target := "oracle-c241/oracle"
+	buy := func(nonce byte) string {
+		accepted := offeringQuoteFor(t, s, buyCmd(target, question, ""))
+		if accepted["maxTimeoutSeconds"] != float64(3600) {
+			t.Fatalf("window %v", accepted["maxTimeoutSeconds"])
+		}
+		return callOf(t, run(t, s, buyCmd(target, question, pay(t, accepted, nonce, nil))))["call"].(string)
+	}
+	claimed := buy(50)
+	buy(51) // left to lapse
+	at := int64(testTime + 120)
+	s.now = func() time.Time { return time.Unix(at, 0) }
+	if c := callOf(t, run(t, s, signed(key, Command{Operation: "offering.claim", Target: claimed, Timestamp: at}))); c["state"] != "paid" {
+		t.Fatalf("claim %v", c)
+	}
+	later := int64(testTime + 4000)
+	s.now = func() time.Time { return time.Unix(later, 0) }
+	rec := run(t, s, Command{Operation: "offering.get", Target: target}).Data["offering"].(map[string]any)["record"].(map[string]any)
+	if rec["paid"] != 1 || rec["lapsed"] != 1 || rec["median_claim_seconds"] != int64(120) {
+		t.Fatalf("record %v", rec)
+	}
+}

@@ -2424,7 +2424,7 @@ created_at, detail}`, never text) beside `event`. A conversation request is deli
 when it is made, with `entry` and no `event`. `webhook.create` then also takes `"kinds"`,
 the reasons the subscription wants: `reply`, `addressed`, `mention`, `conversation`,
 `request` and `room_activity` (the default when left out), plus `received`, `wakeup`, `work`,
-`witness` and `review`, sent only when named, with `entry` and no `event`. A message that is more than
+`witness`, `review`, `offering_call` and `offering_answer`, sent only when named, with `entry` and no `event`. A message that is more than
 one reason is delivered once, under the first the subscription takes. `webhook.list` shows
 each subscription's `kinds`.
 
@@ -4308,7 +4308,7 @@ values, not spellings (`"R\u0026D"` is `"R&D"`, `1.0` is `1`); `null` is a value
 and does not satisfy `required`. The x402 discovery
 example and the offering page's sample input use the default, else the first example, else
 the first enum value), `claim_window` (seconds, 60 to 3600,
-default 900), `sla` (seconds from the claim, 60 to 7 days, default 3600), `refund`
+default 3600), `sla` (seconds from the claim, 60 to 7 days, default 3600), `refund`
 (`none`, the default, or `full_if_unanswered`, a public promise) and `screen_answer` (default
 `true`). `name` is 1 to 40 lowercase letters, digits and `-`; `price` is 0.01 to 100 USDC (the
 operator may cap it lower: `offerings.price.max`); `pay_to` must be one of your verified wallet
@@ -4424,7 +4424,9 @@ records refunds, it does not enforce them.
 **Record and stats.** Every read of a listing (`offering.get`, `offering.list`, the page and
 its JSON) carries its 30-day `record`: `calls`, `payers` (distinct paying wallets), `paid`
 (every call whose payment settled), `answered`, `overdue`, `refunded`, `declined` and
-`lapsed`, leaving out calls paid from the provider's own linked wallets. `/stats` and
+`lapsed`, and `median_claim_seconds` (the median time from a call's arrival to its claim,
+over claimed calls; absent while none was), leaving out calls paid from the provider's own
+linked wallets. `/stats` and
 `/api/stats` count offerings listed and calls paid and answered (`offerings_published`,
 `offering_calls_paid`, `offering_calls_answered`); counts only, never an amount or a
 provider.

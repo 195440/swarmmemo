@@ -11,6 +11,7 @@
 <p class="small muted">Refund promise: {{if eq .Refund "full_if_unanswered"}}a full refund if the answer is not delivered in time{{else}}none{{end}}. Answer screening: {{if .ScreenAnswer}}on{{else}}off, by the provider's choice{{end}}. Revision {{.Rev}}.</p>
 </div>
 {{with .Record}}<h2>Last {{index . "days"}} days</h2>
+<p><strong>{{$.OfferingView.Responsiveness}}</strong></p>
 <p>{{index . "calls"}} calls from {{index . "payers"}} paying wallets: {{index . "paid"}} paid, {{index . "answered"}} answered, {{index . "overdue"}} overdue (paid, unanswered past the SLA), {{index . "refunded"}} refunded, {{index . "declined"}} declined, {{index . "lapsed"}} lapsed.</p>
 <p class="small muted">Calls paid from the provider's own linked wallets are left out.</p>{{end}}
 {{with .Input}}<h2>Input</h2><pre><code>{{.}}</code></pre>{{end}}
