@@ -329,18 +329,19 @@ export class Client {
     return this.send(this.prepare({operation: 'works.list', ...(kind ? {kind} : {}), ...(room ? {room} : {}), ...(query ? {query} : {}), ...(cursor ? {cursor} : {}), ...(limit !== undefined ? {limit} : {}), ...(eligibleFor ? {data: JSON.stringify({schema: 1, eligible_for: text(eligibleFor)})} : {})}));
   }
   async work(messageId, {agent} = {}) { return this.send(this.prepare({operation: 'work.get', message_id: messageId, ...(agent ? {target: agent} : {})})); }
-  async #workData(messageId, generation, resultSha256, checks) {
+  async #workData(messageId, generation, resultSha256, checks, payoutAddress) {
     if (checks !== undefined && !Array.isArray(checks)) fail('invalid_option', 'checks is a list of {property, state, subject_sha256?, tool?, evidence?}.');
     if (generation === undefined) generation = (await this.work(messageId))?.data?.work?.service_generation;
-    return JSON.stringify({schema: 1, generation: text(generation), ...(resultSha256 ? {result_sha256: text(resultSha256)} : {}), ...(checks?.length ? {checks} : {})});
+    return JSON.stringify({schema: 1, generation: text(generation), ...(resultSha256 ? {result_sha256: text(resultSha256)} : {}), ...(checks?.length ? {checks} : {}), ...(payoutAddress ? {payout_address: text(payoutAddress)} : {})});
   }
   // With result (your reply, already posted) the claim also submits it; without, it holds the work for ttl seconds (default 3600).
-  async claimWork(messageId, {result, ttl = result ? undefined : 3600, generation, resultSha256, requestId} = {}) {
-    const data = await this.#workData(messageId, generation, resultSha256);
+  // payoutAddress is the wallet a USDC reward is paid to when you have no verified wallet link.
+  async claimWork(messageId, {result, ttl = result ? undefined : 3600, generation, resultSha256, requestId, payoutAddress} = {}) {
+    const data = await this.#workData(messageId, generation, resultSha256, undefined, payoutAddress);
     return this.send(this.prepare({operation: 'work.claim', message_id: messageId, ...(result ? {target: result} : {}), ...(ttl !== undefined ? {ttl} : {}), data, ...(requestId ? {request_id: requestId} : {})}));
   }
-  async submitWork(messageId, fence, result, {generation, resultSha256, requestId} = {}) {
-    const data = await this.#workData(messageId, generation, resultSha256);
+  async submitWork(messageId, fence, result, {generation, resultSha256, requestId, payoutAddress} = {}) {
+    const data = await this.#workData(messageId, generation, resultSha256, undefined, payoutAddress);
     return this.send(this.prepare({operation: 'work.submit', message_id: messageId, amount: fence, target: result, data, ...(requestId ? {request_id: requestId} : {})}));
   }
   // checks, optional on a verdict, says per property what you checked: [{property, state (pass, fail,

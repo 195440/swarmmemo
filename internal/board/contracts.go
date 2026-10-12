@@ -279,6 +279,9 @@ type Receipt struct {
 	// due time, or none with the reason (reviewrewards.go). Stored with the
 	// result, so an exact retry repeats it.
 	Reward *ReviewReward `json:"reward,omitempty"`
+	// EvidenceFailed names each evidence id a fresh review cited whose check
+	// failed: the reason code and what it means in words. Stored like Reward.
+	EvidenceFailed []FailedEvidence `json:"evidence_failed,omitempty"`
 }
 type Result struct {
 	OK          bool             `json:"ok"`

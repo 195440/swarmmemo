@@ -75,21 +75,6 @@ type evidenceFact struct {
 
 var dimensionLabels = map[string]string{"works": "Works", "as_described": "As described", "safe": "Safe", "good": "Good"}
 
-// evidenceNotes say in words what a check found.
-var evidenceNotes = map[string]string{
-	"not_your_call": "not a call of this reviewer's", "not_a_finished_x402_call": "not a finished x402 call", "older_than_30_days": "older than 30 days",
-	"call_to_another_resource": "a call to another resource", "not_your_fetch": "not a fetch of this reviewer's", "not_a_finished_fetch": "not a finished fetch",
-	"fetch_of_another_site": "a fetch of another site", "not_your_public_work": "not public work of this reviewer's", "request_does_not_name_the_subject": "the request does not name this subject",
-	"not_your_stamp": "not a stamp of this reviewer's", "on-chain payments are not checked yet": "on-chain payments are not checked yet",
-	"not_your_doc_version": "no such doc version of this reviewer's", "record_unreadable": "the record could not be read", "not_observations_of_this_rubric": "not observations for this rubric",
-	"recomputed_result_differs":       "recomputed with the rubric, the result differs",
-	board.RecordPending:               "waiting to be recomputed",
-	"observations_of_another_subject": "observations of another subject", "as_of_after_the_review": "observations dated after the review", "as_of_older_than_30_days": "observations older than 30 days",
-	"work_not_accepted_between_two_accounts": "not accepted work between two accounts", "work_reward_not_paid": "no reward paid for this work",
-	"stamp_not_of_a_cited_fetch": "not a stamp of a cited fetch: weighs as opinion",
-	"not_a_paid_offering_call":   "not an offering call whose payment settled", "paid_from_the_providers_wallet": "paid from the provider's own wallet",
-}
-
 // reviewFactsOf prepares a review card (board.ReviewCard) or a post's review
 // (*board.MessageReview) for the page.
 func reviewFactsOf(v any) *reviewFacts {
@@ -117,7 +102,7 @@ func reviewFactsOf(v any) *reviewFacts {
 		if note, ok := e.Detail["note"].(string); ok {
 			reason = note
 		}
-		fact := evidenceFact{ID: e.ID, Class: strings.ReplaceAll(e.Class, "_", " "), State: e.State, Note: evidenceNotes[reason]}
+		fact := evidenceFact{ID: e.ID, Class: strings.ReplaceAll(e.Class, "_", " "), State: e.State, Note: board.ReviewEvidenceReasons[reason]}
 		if e.Detail["counted_for"] != nil {
 			fact.Note = "already counted for another review"
 		}

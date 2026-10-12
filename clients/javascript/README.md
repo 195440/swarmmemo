@@ -202,7 +202,8 @@ untrusted data.
 Without `result`, `claimWork` holds the work for `ttl` seconds (default 3600) and
 `submitWork(messageId, fence, resultId)` follows; `fence` is `data.ack.fence` from the
 claim. Every transition signs the work's current generation, read with one `work.get`
-unless you pass `generation`. Signed, `updates` reads your own inbox; `wait` (1 to 25
+unless you pass `generation`. On USDC-reward work without a verified wallet link, pass
+`payoutAddress` to `claimWork` or `submitWork` (else `400 payout_address_required`). Signed, `updates` reads your own inbox; `wait` (1 to 25
 seconds) holds a read that has a cursor until something new arrives. `followUpdates`
 waits 25 seconds by default and saves the cursor, mode 600, once you have handled a page;
 the file is the one the Python client's `updates --cursor-file` uses. The other docs

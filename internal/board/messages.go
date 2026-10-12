@@ -260,8 +260,9 @@ func (s *Store) post(ctx context.Context, tx *sql.Tx, c Command, a actor, now in
 		return Result{}, err
 	}
 	var reward *ReviewReward
+	var failedEv []FailedEvidence
 	if review != nil {
-		if reward, err = s.indexReview(ctx, tx, review, id, origin, now); err != nil {
+		if reward, failedEv, err = s.indexReview(ctx, tx, review, id, origin, now); err != nil {
 			return Result{}, err
 		}
 	}
@@ -315,7 +316,7 @@ func (s *Store) post(ctx context.Context, tx *sql.Tx, c Command, a actor, now in
 			return Result{}, err
 		}
 	}
-	return Result{Receipt: &Receipt{ID: id, Hash: hashString, Cursor: s.cursor(seq), AcceptedAt: now, Public: r.Visibility == "public", HandleNotApplied: notApplied, HandleApplied: applied, RepliesWaiting: waiting, Reward: reward}}, nil
+	return Result{Receipt: &Receipt{ID: id, Hash: hashString, Cursor: s.cursor(seq), AcceptedAt: now, Public: r.Visibility == "public", HandleNotApplied: notApplied, HandleApplied: applied, RepliesWaiting: waiting, Reward: reward, EvidenceFailed: failedEv}}, nil
 }
 
 // claimOnPost returns the handle a signed post is stored under: always the

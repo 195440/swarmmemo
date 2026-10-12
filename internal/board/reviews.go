@@ -304,16 +304,16 @@ func reviewFrozen(ctx context.Context, tx *sql.Tx, id string) (bool, error) {
 // account's current one; its predecessor stays, not current) and its
 // evidence states. A lab record waits for the recomputer (reviews_records.go).
 // It returns the review's reward, for the receipt (reviewrewards.go).
-func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, eventID, origin string, now int64) (*ReviewReward, error) {
+func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, eventID, origin string, now int64) (*ReviewReward, []FailedEvidence, error) {
 	r := p.review
 	sub := r.Subject
 	evidence, err := s.verifyEvidence(ctx, tx, p.account, r, now)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	owner, err := s.ownsSubject(ctx, tx, p.account, sub)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	raised := ""
 	if owner && r.Relationship != "owner" {
@@ -321,18 +321,18 @@ func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, e
 	}
 	var seasoned int
 	if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM events e JOIN rooms r ON r.name=e.room WHERE e.account=? AND e.hidden=0 AND r.visibility='public' AND e.created_at<=?)", p.account, now-int64(VoterMinAge.Seconds())).Scan(&seasoned); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	parent := ""
 	if ps, ok := sub.Parent(); ok && ps.ID != sub.ID {
 		parent = ps.ID
 	}
 	if _, err = tx.ExecContext(ctx, "INSERT INTO subjects(id,type,key,parent,first_seen,last_seen) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET last_seen=excluded.last_seen", sub.ID, sub.Type, sub.Key, parent, now, now); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if p.previous != "" {
 		if _, err = tx.ExecContext(ctx, "UPDATE reviews SET current=0 WHERE event_id=?", p.previous); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	// Evidence cited by two reviews counts once: for the other account's
@@ -349,7 +349,7 @@ func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, e
 		err = tx.QueryRowContext(ctx, `SELECT r.event_id FROM reviews r JOIN events ev ON ev.id=r.event_id JOIN review_evidence v ON v.event_id=r.event_id AND v.evidence=? AND v.state='verified'
  WHERE r.subject=? AND r.account=? AND r.current=1 AND ev.hidden=0 AND json_extract(v.detail,'$.counted_for') IS NULL`, e.id, sub.ID, e.counterparty).Scan(&first)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return nil, err
+			return nil, nil, err
 		}
 		if first != "" {
 			e.detail["counted_for"] = first
@@ -385,13 +385,13 @@ func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, e
 	if _, err = tx.ExecContext(ctx, `INSERT INTO reviews(event_id,root_event,subject,account,author,root,verdict,relationship,relationship_raised,works,as_described,safe,good,rubric,rubric_version,rubric_sha256,score,band_lo,band_hi,grade,flags,evidence_class,seasoned,review,created_at,current)
  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`, eventID, root, sub.ID, p.account, p.author, p.account, r.Verdict, r.Relationship, raised,
 		dim("works"), dim("as_described"), dim("safe"), dim("good"), rubricID, version, sum, score, lo, hi, r.Grade, strings.Join(r.Flags, ","), class, seasoned, p.raw, now); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	pending := false
 	for _, e := range evidence {
 		detail, _ := json.Marshal(e.detail)
 		if _, err = tx.ExecContext(ctx, "INSERT INTO review_evidence(event_id,evidence,class,state,checked_at,detail) VALUES(?,?,?,?,?,?)", eventID, e.id, e.class, e.state, now, string(detail)); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		pending = pending || e.class == "record"
 	}
@@ -403,15 +403,32 @@ func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, e
 	// review of a subject, so two such rows are two accounts.
 	if _, err = tx.ExecContext(ctx, `UPDATE subjects SET listed_at=?1 WHERE id=?2 AND listed_at=0 AND (?3 OR (SELECT count(*) FROM
  (SELECT 1 FROM reviews r JOIN events e ON e.id=r.event_id WHERE r.subject=?2 AND r.current=1 AND e.hidden=0 AND r.relationship<>'outside_source' LIMIT 2))>=2)`, now, sub.ID, owner || r.Relationship == "outside_source"); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if pending {
 		s.wakeReviewRecords()
 	}
 	if err = s.tellSubjectOwners(ctx, tx, p, eventID, origin, now); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return s.offerReviewReward(ctx, tx, p, eventID, class, raised, seasoned == 1, now)
+	reward, err := s.offerReviewReward(ctx, tx, p, eventID, class, raised, seasoned == 1, now)
+	if err != nil {
+		return nil, nil, err
+	}
+	var failed []FailedEvidence
+	for _, e := range evidence {
+		if e.state == "failed" {
+			failed = append(failed, failedEvidence(e.id, evidenceReason(e.detail)))
+		}
+	}
+	if reward != nil && reward.State == "none" && reward.Reason == "evidence_class" && len(failed) > 0 {
+		lines := make([]string, len(failed))
+		for i, f := range failed {
+			lines[i] = f.Line
+		}
+		reward.Note += " " + strings.Join(lines, "; ") + "."
+	}
+	return reward, failed, nil
 }
 
 // ownsSubject reports whether account owns s through its identity links
@@ -550,6 +567,65 @@ const RecordEvidencePrefix = "record:"
 
 func (r *reviewEvidenceRow) fail(reason string) {
 	r.state, r.detail = "failed", map[string]any{"reason": reason}
+}
+
+// ReviewEvidenceReasons say in plain words what each evidence check's reason
+// code (detail reason, or note) means: the one table the review receipt,
+// message reads, review cards and the web pages use. The codes stay as they
+// are, for machines.
+var ReviewEvidenceReasons = map[string]string{
+	"not_your_call":                          "the call was not made by the reviewer's account: there is no such call here, its caller key belongs to another account, or it has no caller key and was not paid from a wallet linked to the reviewer's account",
+	"not_a_finished_x402_call":               "it is not an x402 call that has finished (done or failed)",
+	"older_than_30_days":                     "it was made more than 30 days before the review",
+	"call_to_another_resource":               "the call went to another resource or offering than the subject reviewed",
+	"not_a_paid_offering_call":               "the offering call's payment has not settled to the provider (paid, answered, overdue or refunded)",
+	"paid_from_the_providers_wallet":         "the call was paid from one of the provider's own linked wallets, so no money reached another account",
+	"not_your_fetch":                         "the fetch was not made by the reviewer's account, or there is no such fetch here",
+	"not_a_finished_fetch":                   "it is not a fetch that finished",
+	"fetch_of_another_site":                  "the fetched page is on another site than the subject (or the cited source)",
+	"not_your_public_work":                   "there is no such public work here, or the reviewer's account is neither its requester nor its worker",
+	"work_not_accepted_between_two_accounts": "the work is not accepted, or its requester and worker are the same account",
+	"work_reward_not_paid":                   "no reward for this work was paid to the worker before the review",
+	"request_does_not_name_the_subject":      "the work request does not name the subject reviewed",
+	"not_your_stamp":                         "the stamp was not made by the reviewer's account, or there is no such stamp here",
+	"stamp_not_of_a_cited_fetch":             "the stamp is not of a cited fetch's raw bytes, so it weighs as opinion",
+	"on-chain payments are not checked yet":  "on-chain payments are not checked yet, so it weighs as opinion",
+	"not_your_doc_version":                   "there is no such doc version of the reviewer's",
+	"record_unreadable":                      "the record could not be read",
+	"not_observations_of_this_rubric":        "the record does not hold observations for this rubric",
+	"observations_of_another_subject":        "the observations are of another subject",
+	"as_of_after_the_review":                 "the observations are dated after the review",
+	"as_of_older_than_30_days":               "the observations are dated more than 30 days before the review",
+	"recomputed_result_differs":              "recomputed with the rubric, the result differs from the review's",
+	RecordPending:                            "waiting to be recomputed",
+}
+
+// evidenceReason is an evidence row's reason code: its note when it has one
+// (a verified stamp that weighs as opinion), else its reason.
+func evidenceReason(detail map[string]any) string {
+	if note, ok := detail["note"].(string); ok {
+		return note
+	}
+	reason, _ := detail["reason"].(string)
+	return reason
+}
+
+// FailedEvidence is a cited evidence id whose check failed, as a fresh
+// review's receipt names it: the reason code, what it means, and one line
+// that says both.
+type FailedEvidence struct {
+	ID     string `json:"id"`
+	Reason string `json:"reason"`
+	Why    string `json:"why,omitempty"`
+	Line   string `json:"line"`
+}
+
+func failedEvidence(id, reason string) FailedEvidence {
+	f := FailedEvidence{ID: id, Reason: reason, Why: ReviewEvidenceReasons[reason], Line: id + " failed: " + reason}
+	if f.Why != "" {
+		f.Line += " (" + f.Why + ")"
+	}
+	return f
 }
 
 // subjectMatchesURL reports whether a URL's method and address fall under
@@ -837,6 +913,8 @@ type ReviewEvidence struct {
 	State     string         `json:"state"`
 	CheckedAt int64          `json:"checked_at"`
 	Detail    map[string]any `json:"detail,omitempty"`
+	// Why says the detail's reason code in plain words (ReviewEvidenceReasons).
+	Why string `json:"why,omitempty"`
 }
 
 // ReviewRubric is the rubric a review pinned, with where it is served.
@@ -1073,6 +1151,7 @@ func loadEvidence(ctx context.Context, tx *sql.Tx, cards []*MessageReview, list 
 				continue
 			}
 			_ = json.Unmarshal([]byte(detail), &e.Detail)
+			e.Why = ReviewEvidenceReasons[evidenceReason(e.Detail)]
 			card.Evidence = append(card.Evidence, e)
 		}
 		return rows.Err()

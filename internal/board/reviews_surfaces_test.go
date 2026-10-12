@@ -83,7 +83,11 @@ func TestOfferingIsAReviewableSubject(t *testing.T) {
 	fails(t, s, reviewPost(t, caller, "x402:POST https://swarmmemo.com/@oracle/nothing", map[string]any{}, ""), "subject_not_found")
 
 	// The caller's paid call is paid use; another account cannot cite it.
-	review := run(t, s, reviewPost(t, caller, uri, map[string]any{"evidence": []string{"call:" + call}}, "")).Receipt.ID
+	mine := run(t, s, reviewPost(t, caller, uri, map[string]any{"evidence": []string{"call:" + call}}, "")).Receipt
+	if mine.EvidenceFailed != nil {
+		t.Fatalf("a verified citation names no failed evidence: %+v", mine.EvidenceFailed)
+	}
+	review := mine.ID
 	if class, state, _ := citedEvidence(t, s, review, "call:"+call); class != "paid_use" || state != "verified" {
 		t.Fatalf("caller's call: %s %s", class, state)
 	}
@@ -91,9 +95,32 @@ func TestOfferingIsAReviewableSubject(t *testing.T) {
 	if err := s.db.QueryRow("SELECT evidence_class FROM reviews WHERE event_id=?", review).Scan(&reviewClass); err != nil || reviewClass != "paid_use" {
 		t.Fatalf("review class %q %v", reviewClass, err)
 	}
-	other := run(t, s, reviewPost(t, stranger, uri, map[string]any{"verdict": "mixed", "evidence": []string{"call:" + call}}, "")).Receipt.ID
+	otherReceipt := run(t, s, reviewPost(t, stranger, uri, map[string]any{"verdict": "mixed", "evidence": []string{"call:" + call}}, "")).Receipt
+	other := otherReceipt.ID
 	if _, state, reason := citedEvidence(t, s, other, "call:"+call); state != "failed" || reason != "not_your_call" {
 		t.Fatalf("stranger citing the call: %s %s", state, reason)
+	}
+	// The receipt names the failed citation, its code and why in words
+	// (C244); so does the card.
+	want := ReviewEvidenceReasons["not_your_call"]
+	if f := otherReceipt.EvidenceFailed; len(f) != 1 || f[0].ID != "call:"+call || f[0].Reason != "not_your_call" || f[0].Why != want ||
+		f[0].Line != "call:"+call+" failed: not_your_call ("+want+")" || !strings.Contains(want, "no caller key") {
+		t.Fatalf("receipt evidence_failed %+v", f)
+	}
+	if r := otherReceipt.Reward; r != nil && r.Reason == "evidence_class" && !strings.Contains(r.Note, "call:"+call+" failed: not_your_call") {
+		t.Fatalf("reward note %q", r.Note)
+	}
+	for _, c := range readSubjectData(t, s, uri)["reviews"].([]ReviewCard) {
+		switch c.ID {
+		case other:
+			if len(c.Evidence) != 1 || c.Evidence[0].Why != want || c.Evidence[0].Detail["reason"] != "not_your_call" {
+				t.Fatalf("card evidence %+v", c.Evidence)
+			}
+		case review:
+			if len(c.Evidence) != 1 || c.Evidence[0].Why != "" || c.Evidence[0].State != "verified" {
+				t.Fatalf("verified card evidence %+v", c.Evidence)
+			}
+		}
 	}
 
 	// The provider owns it (not the board domain's owners), and is told of
