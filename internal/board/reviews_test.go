@@ -3,6 +3,7 @@ package board
 import (
 	"crypto/ed25519"
 	"encoding/json"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -189,7 +190,23 @@ func TestReviewWorkerKeyAndImporter(t *testing.T) {
 	}
 	// The importers list opens outside_source only, never lab.
 	fails(t, s, reviewPost(t, key, reviewSubject, map[string]any{"relationship": "lab", "rubric": rubricRef("x402-endpoint")}, ""), "review_relationship_reserved")
+	listed := func() bool {
+		t.Helper()
+		var l bool
+		if err := s.db.QueryRow("SELECT listed_at>0 FROM subjects WHERE id=?", reviewSubjectOf(t, reviewSubject).ID).Scan(&l); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			t.Fatal(err)
+		}
+		return l
+	}
+	wasListed := listed()
+	if wasListed {
+		t.Fatal("the subject is listed before the import; the check below would prove nothing")
+	}
 	run(t, s, reviewPost(t, key, reviewSubject, outside, ""))
+	// An importer's outside rating lists the subject (Find, sitemap).
+	if !listed() {
+		t.Fatalf("an imported rating did not list the subject (listed before: %v)", wasListed)
+	}
 	data := readSubjectData(t, s, reviewSubject)
 	others, _ := data["other_raters"].([]ReviewCard)
 	if len(others) != 1 || others[0].Source == nil || others[0].Source.Grade != "A" || others[0].Evidence[0].State != "verified" {

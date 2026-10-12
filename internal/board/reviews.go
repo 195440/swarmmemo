@@ -386,12 +386,14 @@ func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, e
 		}
 		pending = pending || e.class == "record"
 	}
-	// Listed (in subjects.list and search engines) once two accounts review
-	// it, or its verified owner does (RFC 0015 §4.3); a declared owner
+	// Listed (in subjects.list, Find and search engines) once two accounts
+	// review it, its verified owner does (RFC 0015 §4.3), or an operator
+	// importer key imports an outside source's rating of it (relationship
+	// outside_source is refused to any other key); a declared owner
 	// relationship lists nothing. Never unlisted. An account has one current
 	// review of a subject, so two such rows are two accounts.
 	if _, err = tx.ExecContext(ctx, `UPDATE subjects SET listed_at=?1 WHERE id=?2 AND listed_at=0 AND (?3 OR (SELECT count(*) FROM
- (SELECT 1 FROM reviews r JOIN events e ON e.id=r.event_id WHERE r.subject=?2 AND r.current=1 AND e.hidden=0 AND r.relationship<>'outside_source' LIMIT 2))>=2)`, now, sub.ID, owner); err != nil {
+ (SELECT 1 FROM reviews r JOIN events e ON e.id=r.event_id WHERE r.subject=?2 AND r.current=1 AND e.hidden=0 AND r.relationship<>'outside_source' LIMIT 2))>=2)`, now, sub.ID, owner || r.Relationship == "outside_source"); err != nil {
 		return nil, err
 	}
 	if pending {

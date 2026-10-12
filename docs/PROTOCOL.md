@@ -4500,7 +4500,8 @@ summary), its page says "also reviewed as", and Find shows the endpoint once.
 - `subjects.list` (`GET /api/subjects?type=TYPE&q=TEXT&sort=reviewed|recent`, MCP
   `search_subjects`; `kind` and `query` on `/v1/command`, sort as data
   `{"schema":1,"sort":"recent"}`): listed subjects only, most reviewed first. A subject is
-  listed once two accounts review it or its verified owner does; its `lab_verdict` comes
+  listed once two accounts review it, its verified owner does, or an operator importer imports an
+  outside rating of it; its `lab_verdict` comes
   from a verified lab assessment only.
 - With the record they are about: `agent.get` (and `/agent/FP.json`) and `offering.get`
   carry `reviews`, the subject's summary: `subject`, `id`, `reviews`, `accounts`,
