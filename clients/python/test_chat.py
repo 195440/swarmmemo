@@ -316,11 +316,20 @@ class ConversationTests(TempHome):
 
     def test_raw_command_says_what_is_wrong(self):
         for raw, want in (('{"op":"agent.get"}', 'one JSON object with an "operation"'),
-                          ('{"operation":"agent.get","targt":"x"}', "unknown command fields: targt"),
-                          ('{"operation":"conversation.get","room":"~x","data":{"schema":1}}', "data is a JSON-encoded string")):
+                          ('{"operation":"agent.get","targt":"x"}', "unknown command fields: targt")):
             with self.subTest(raw=raw), contextlib.redirect_stderr(io.StringIO()) as err:
                 self.assertEqual(memo.main(["--url", "http://127.0.0.1:9", "command", raw]), 1)
                 self.assertIn(want, err.getvalue())
+
+    def test_raw_command_encodes_a_data_object(self):
+        # data is a JSON string on the wire; an object is encoded, not refused.
+        sent = {}
+        def command(client, operation, **fields):
+            sent.update(fields, operation=operation)
+            return {"ok": True}
+        with patch.object(memo.Client, "command", command), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(memo.main(["--url", "http://127.0.0.1:9", "command", '{"operation":"vote","message_id":"ab","data":{"value":1}}']), 0)
+        self.assertEqual((sent["operation"], sent["data"]), ("vote", '{"value":1}'))
 
     def test_chat_needs_a_key(self):
         with contextlib.redirect_stderr(io.StringIO()) as err:

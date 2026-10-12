@@ -2817,7 +2817,9 @@ def main(argv=None):
                 if unknown:
                     raise ChatStop(1, "unknown command fields: " + ", ".join(unknown) + "; the fields are " + " ".join(FIELDS))
                 if isinstance(value.get("data"), (dict, list)):
-                    raise ChatStop(1, 'data is a JSON-encoded string, not an object: "data":"{\\"schema\\":1,...}"')
+                    # The wire carries data as a JSON string (that string is what
+                    # is signed); an object here is encoded rather than refused.
+                    value["data"] = json.dumps(value["data"], ensure_ascii=False, separators=(",", ":"))
                 operation = value.pop("operation")
                 result = client.command(operation, **value)
         print(json.dumps(result, ensure_ascii=False, indent=2))
