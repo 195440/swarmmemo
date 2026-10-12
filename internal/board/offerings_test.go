@@ -149,6 +149,9 @@ func TestOfferingPublish(t *testing.T) {
 		"required not a prop":  {map[string]any{"input": map[string]any{"type": "object", "required": []string{"q"}}}, "invalid_input_schema"},
 		"example too short":    {map[string]any{"input": map[string]any{"type": "object", "properties": map[string]any{"mint": map[string]any{"type": "string", "minLength": 32, "examples": []string{"short"}}}}}, "invalid_input_schema"},
 		"default off enum":     {map[string]any{"input": map[string]any{"type": "object", "properties": map[string]any{"k": map[string]any{"type": "string", "enum": []string{"a"}, "default": "b"}}}}, "invalid_input_schema"},
+		"empty range":          {map[string]any{"input": map[string]any{"type": "object", "properties": map[string]any{"n": map[string]any{"type": "integer", "minimum": 10, "maximum": 1}}}}, "invalid_input_schema"},
+		"no integer in range":  {map[string]any{"input": map[string]any{"type": "object", "properties": map[string]any{"n": map[string]any{"type": "integer", "minimum": 2.2, "maximum": 2.8}}}}, "invalid_input_schema"},
+		"no valid enum value":  {map[string]any{"input": map[string]any{"type": "object", "properties": map[string]any{"k": map[string]any{"type": "string", "maxLength": 2, "enum": []string{"long", "longer"}}}}}, "invalid_input_schema"},
 		"default wrong type":   {map[string]any{"input": map[string]any{"type": "object", "properties": map[string]any{"n": map[string]any{"type": "integer", "default": "1"}}}}, "invalid_input_schema"},
 		"example out of range": {map[string]any{"input": map[string]any{"type": "object", "properties": map[string]any{"n": map[string]any{"type": "number", "maximum": 3, "examples": []any{1, 4}}}}}, "invalid_input_schema"},
 		"examples empty":       {map[string]any{"input": map[string]any{"type": "object", "properties": map[string]any{"q": map[string]any{"type": "string", "examples": []string{}}}}}, "invalid_input_schema"},
@@ -735,15 +738,16 @@ func TestOfferingBazaarExample(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ex := exampleInput(sc)
+	ex, holes := exampleInput(sc)
 	raw := map[string]json.RawMessage{}
 	for k, v := range ex {
 		raw[k], _ = json.Marshal(v)
 	}
-	// The required q takes 20 to 30 characters and gives no hint: "example"
-	// would need padding into a made-up value, so there is no example.
-	if len(ex) != 0 {
-		t.Fatalf("example %v", ex)
+	// The required q takes 20 to 30 characters and gives no hint: it gets a
+	// placeholder, not made-up data, and the sample passes the schema (C226
+	// left q out, so the body was {} and failed it; C233).
+	if err := sc.check(raw); err != nil || ex["q"] != "<q: fill in, 20-30 chars>" || len(holes) != 1 || holes[0] != "q" || len(ex) != 6 {
+		t.Fatalf("example %v %v %v", ex, holes, err)
 	}
 	// Short strings still get "example" (cut to maxLength), as before.
 	short, err := parseInputSchema(json.RawMessage(`{"type":"object","properties":{"kind":{"type":"string","enum":["quick","deep"]},"q":{"type":"string","minLength":3},
@@ -751,8 +755,8 @@ func TestOfferingBazaarExample(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ex = exampleInput(short)
-	if len(ex) != 6 || ex["kind"] != "quick" || ex["q"] != "example" || ex["n"] != 3.0 || ex["neg"] != -3.0 || ex["tiny"] != "exa" || ex["flag"] != true {
+	ex, holes = exampleInput(short)
+	if len(holes) != 0 || len(ex) != 6 || ex["kind"] != "quick" || ex["q"] != "example" || ex["n"] != 3.0 || ex["neg"] != -3.0 || ex["tiny"] != "exa" || ex["flag"] != true {
 		t.Fatalf("example %v", ex)
 	}
 	// A default wins over examples and enum; examples[0] over enum; a long
@@ -765,8 +769,8 @@ func TestOfferingBazaarExample(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ex = exampleInput(hinted)
-	if _, padded := ex["note"]; padded || len(ex) != 3 || ex["kind"] != "quick" || ex["mint"] != "So11111111111111111111111111111111111111112" || ex["n"] != 4.0 {
+	ex, holes = exampleInput(hinted)
+	if _, padded := ex["note"]; padded || len(holes) != 0 || len(ex) != 3 || ex["kind"] != "quick" || ex["mint"] != "So11111111111111111111111111111111111111112" || ex["n"] != 4.0 {
 		t.Fatalf("hinted example %v", ex)
 	}
 	if v, ok := exampleValue(inputProp{typ: "string", enum: []json.RawMessage{json.RawMessage(`"a"`), json.RawMessage(`"b"`)}, examples: []json.RawMessage{json.RawMessage(`"b"`)}}); !ok || v != "b" {
@@ -779,10 +783,51 @@ func TestOfferingBazaarExample(t *testing.T) {
 	if body := offeringBazaar(o0)["info"].(map[string]any)["input"].(map[string]any)["body"].(map[string]any); body["mint"] != "So11111111111111111111111111111111111111112" {
 		t.Fatalf("bazaar body %v", body)
 	}
-	ex = exampleInput(sc)
+	ex, _ = exampleInput(sc)
 	o := offeringRow{Account: "abc", Name: "oracle", Rev: 1, PayTo: "0x3333333333333333333333333333333333333333", Listing: offeringListing{Price: "5", Input: schema}}
 	if body := offeringBazaar(o)["info"].(map[string]any)["input"].(map[string]any)["body"].(map[string]any); body["q"] != ex["q"] {
 		t.Fatalf("bazaar body %v", body)
+	}
+	// A pythia-like oracle (required question, 8 to 200 characters, no
+	// sample) advertises a body its own schema accepts, and names the
+	// placeholder; an optional hintless long string stays out.
+	pythia := json.RawMessage(`{"type":"object","properties":{"question":{"type":"string","minLength":8,"maxLength":200,"description":"What to forecast"},"context":{"type":"string","minLength":40}},"required":["question"],"additionalProperties":false}`)
+	psc, err := parseInputSchema(pythia)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.Listing.Input = pythia
+	ext0, names := offeringBazaarPlaceholders(o)
+	body := ext0["info"].(map[string]any)["input"].(map[string]any)["body"].(map[string]any)
+	praw := map[string]json.RawMessage{}
+	for k, v := range body {
+		praw[k], _ = json.Marshal(v)
+	}
+	if err := psc.check(praw); err != nil || body["question"] != "<question: fill in, 8-200 chars>" || len(body) != 1 || len(names) != 1 || names[0] != "question" {
+		t.Fatalf("pythia body %v %v %v", body, names, err)
+	}
+	if _, names := offeringBazaarPlaceholders(o0); names != nil {
+		t.Fatalf("placeholders for a sampled schema: %v", names)
+	}
+	// The placeholder always fits its bounds: padded with "." up to
+	// minLength, shortened down to maxLength.
+	for _, c := range []struct {
+		min, max int64
+		want     string
+	}{
+		{8, 0, "<question: fill in, 8+ chars>"},
+		{40, 0, "<question: fill in, 40+ chars" + strings.Repeat(".", 10) + ">"},
+		{20, 30, "<question" + strings.Repeat(".", 10) + ">"},
+		{10, 12, "<question>"},
+		{12, 12, "<question..>"},
+		{8, 9, "<fill in>"},
+		{8, 8, "<questio"},
+	} {
+		got := placeholderValue("question", inputProp{typ: "string", minLength: c.min, maxLength: c.max})
+		n := int64(len([]rune(got)))
+		if got != c.want || n < c.min || (c.max > 0 && n > c.max) {
+			t.Fatalf("placeholder(%d, %d) = %q (%d), want %q", c.min, c.max, got, n, c.want)
+		}
 	}
 	// A schema whose example cannot fit falls back to an object body.
 	o.Listing.Input = json.RawMessage(`{"type":"object","properties":{"long":{"type":"string","minLength":5000}},"required":["long"]}`)

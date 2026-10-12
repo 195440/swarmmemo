@@ -342,14 +342,138 @@ func TestMPPEntryReading(t *testing.T) {
 	}
 }
 
+// Endpoints of one service sharing their last segments read apart (C230):
+// the shortened path keeps the segments that differ; a name no sibling
+// shares is today's; a lone long path shortens as before; names are stable.
+func TestMPPNamesApart(t *testing.T) {
+	mk := func(service, method, u string) *MPPEntry {
+		e := &MPPEntry{Service: service, Method: method, URL: u}
+		e.index()
+		return e
+	}
+	build := func() []*MPPEntry {
+		var es []*MPPEntry
+		for _, tool := range []string{"pathfinding-alpha", "pathfinding-beta", "shortest-route", "graph-colouring", "min-cut"} {
+			es = append(es, mk("edges", "POST", "https://mpp.orthogonal.com/edges/v1/toolsets/"+tool+"/entrypoints/run/live"))
+		}
+		es = append(es,
+			mk("edges", "GET", "https://mpp.orthogonal.com/edges/v1/toolsets/min-cut/entrypoints/run/live"), // other method: own group
+			mk("edges", "POST", "https://mpp.orthogonal.com/edges/v1/status"),                               // short, unique
+			mk("openfunnel", "POST", "https://api.openfunnel.dev/api/v1/enrichment/companies/lookup-by-domain/bulk"),
+			mk("openfunnel", "POST", "https://api.openfunnel.dev/api/v1/enrichment/companies/lookup-by-domain/single"),
+			mk("dup", "GET", "https://a.dup.example/v1/aaaaaaaaaa/bbbbbbbbbb/cccccccccc/dddddddddd/same"),
+			mk("dup", "GET", "https://b.dup.example/v1/aaaaaaaaaa/bbbbbbbbbb/cccccccccc/dddddddddd/same"),
+			mk("x", "GET", "https://x.example.com/a/"+strings.Repeat("z", 80)))
+		return es
+	}
+	alone := map[string]string{}
+	for _, e := range build() {
+		alone[e.URL+e.Method] = e.DisplayName()
+	}
+	es := build()
+	mppNameSiblings(es)
+	names := map[string]bool{}
+	for _, e := range es {
+		n := e.DisplayName()
+		if names[n] {
+			t.Errorf("name shared: %q", n)
+		}
+		names[n] = true
+		if !strings.HasPrefix(n, e.who()+" · "+e.Method+" ") {
+			t.Errorf("prefix: %q", n)
+		}
+	}
+	for _, want := range []string{
+		"edges via orthogonal · POST /…/pathfinding-alpha/entrypoints/run/live",
+		"edges via orthogonal · POST /…/pathfinding-beta/entrypoints/run/live",
+		"edges via orthogonal · POST /…/toolsets/min-cut/entrypoints/run/live", // fits, and tells itself apart: unchanged
+		"edges via orthogonal · GET /…/toolsets/min-cut/entrypoints/run/live",  // alone in its group: unchanged
+		"edges via orthogonal · POST /v1/status",
+		"openfunnel · POST /…/companies/lookup-by-domain/bulk",
+		"openfunnel · POST /…/companies/lookup-by-domain/single",
+	} {
+		if !names[want] {
+			t.Errorf("missing %q in %v", want, names)
+		}
+	}
+	for _, e := range es {
+		if !strings.Contains(e.URL, "/toolsets/") || e.Method != "POST" {
+			if n := e.DisplayName(); n != alone[e.URL+e.Method] && e.Service != "dup" {
+				t.Errorf("unique name changed: %q, was %q", n, alone[e.URL+e.Method])
+			}
+		}
+		if e.Service == "dup" && !strings.Contains(e.DisplayName(), alone[e.URL+e.Method]+" #") {
+			t.Errorf("same path, two hosts: %q", e.DisplayName())
+		}
+		if e.Service == "x" && (!strings.HasPrefix(e.DisplayName(), "x · GET /…/zzz") || !strings.HasSuffix(e.DisplayName(), "…")) {
+			t.Errorf("long path: %q", e.DisplayName())
+		}
+	}
+	again := build()
+	slices.Reverse(again)
+	mppNameSiblings(again)
+	for _, e := range again {
+		if !names[e.DisplayName()] {
+			t.Errorf("unstable: %q", e.DisplayName())
+		}
+	}
+}
+
+// An x402 resource is named "<registrable name> · METHOD /path" from its
+// URL and method only (C234); a long path shortens as an MPP entry's, and
+// siblings (one registrable name, one method) read apart.
+func TestX402Names(t *testing.T) {
+	res := func(m, u string) *X402Resource { return &X402Resource{ID: "ignored-free-text", Method: m, URL: u} }
+	in := []*X402Resource{
+		res("GET", "https://x402.agentutility.ai/hacker-news/search?q=1"),
+		res("GET", "https://api.printmoneylab.com/api/v1/kr/prices"),
+		res("POST", "https://a.example.com/v1/aaaaaaaaaa/bbbbbbbbbb/cccccccccc/dddddddddd/run"),
+		res("POST", "https://a.example.com/v1/aaaaaaaaaa/bbbbbbbbbb/cccccccccc/eeeeeeeeee/run"),
+		res("POST", "https://b.example.com/v1/aaaaaaaaaa/bbbbbbbbbb/cccccccccc/eeeeeeeeee/run"),
+		res("GET", "https://a.example.com/v1/aaaaaaaaaa/bbbbbbbbbb/cccccccccc/dddddddddd/run"),
+		res("GET", "https://203.0.113.9/x"),
+		res("PUT", "https://c.example.com/alpha/bbbbbbbbbb/cccccccccc/dddddddddd/eeeeeeeeee/run"),
+		res("PUT", "https://c.example.com/beta/bbbbbbbbbb/cccccccccc/dddddddddd/eeeeeeeeee/run"),
+	}
+	named := make([]namedPath, len(in))
+	for i, r := range in {
+		named[i] = r.namedPath()
+	}
+	got := x402Names(named)
+	for i, want := range []string{
+		"agentutility · GET /hacker-news/search",
+		"printmoneylab · GET /api/v1/kr/prices",
+		"example · POST /…/bbbbbbbbbb/cccccccccc/dddddddddd/run", // its ending tells it apart: unchanged
+		"", "", // one path at two hosts: checked below
+		"example · GET /…/bbbbbbbbbb/cccccccccc/dddddddddd/run", // alone in its group
+		"203.0.113.9 · GET /x",
+		"example · PUT /alpha/bbbbbbbbbb/cccccccccc/dddddddddd/eeeeeeeeee/run", // apart only by its first segment: the whole path (C230)
+		"example · PUT /beta/bbbbbbbbbb/cccccccccc/dddddddddd/eeeeeeeeee/run",
+	} {
+		if want != "" && got[i] != want {
+			t.Errorf("%d: %q, want %q", i, got[i], want)
+		}
+	}
+	seen := map[string]bool{}
+	for _, n := range got {
+		if seen[n] {
+			t.Errorf("name shared: %q in %q", n, got)
+		}
+		seen[n] = true
+	}
+	if !strings.HasPrefix(got[3], "example · POST /…/bbbbbbbbbb/cccccccccc/eeeeeeeeee/run #") || !strings.Contains(got[4], " #") {
+		t.Errorf("one path at two hosts: %q, %q", got[3], got[4])
+	}
+}
+
 // Find's MPP listings carry the name, line and price text (fixture); the
-// x402 ones carry none.
+// x402 ones a name from host, method and path (C234), no line or price text.
 func TestMPPListingsRead(t *testing.T) {
 	h, _ := mppHarness(t)
 	names := map[string]bool{}
 	for _, l := range h.engine.Registry().X402Listings() {
 		if l.Kind != KindMPP {
-			if l.Name != "" || l.Line != "" || l.PriceText != "" {
+			if !strings.Contains(l.Name, " · "+l.Method+" /") || l.Line != "" || l.PriceText != "" {
 				t.Fatalf("x402 listing changed: %+v", l)
 			}
 			continue

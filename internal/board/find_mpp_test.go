@@ -2,6 +2,7 @@ package board
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"swarmmemo/internal/find"
@@ -87,9 +88,34 @@ func TestFindMPPDoc(t *testing.T) {
 	if d = findX402Doc(l, subjectQuality{}); d.Description != l.Line {
 		t.Fatalf("an unscreened summary is never shown: %q", d.Description)
 	}
-	x := services.X402Listing{ID: "exa-search", Kind: services.KindX402, MaxPrice: -1, Name: "ignored", Line: "ignored"}
-	if d = findX402Doc(x, subjectQuality{}); d.Name != "exa search" || d.Description != "" || d.PriceText != "" {
+	x := services.X402Listing{ID: "exa-search", Kind: services.KindX402, MaxPrice: -1, Name: "exa · POST /search", Line: "ignored"}
+	if d = findX402Doc(x, subjectQuality{}); d.Name != x.Name || !strings.HasPrefix(d.Terms, "exa search ") || d.Description != "" || d.PriceText != "" {
 		t.Fatalf("x402 doc changed: %+v", d)
+	}
+	x.Name = ""
+	if d = findX402Doc(x, subjectQuality{}); d.Name != "exa search" {
+		t.Fatalf("x402 doc without a name: %+v", d)
+	}
+}
+
+// An x402 entry is named by host, method and path (C234), and a word only
+// its id's slug held still finds it: the slug stays in its terms.
+func TestFindX402NameKeepsSlugWords(t *testing.T) {
+	l := services.X402Listing{ID: "x402-agentutility-ai-hacker-news-search", Kind: services.KindX402, Method: "GET",
+		URL: "https://x402.agentutility.ai/hn/q", MaxPrice: 1000, Decimals: 6, Name: "agentutility · GET /hn/q"}
+	other := services.X402Listing{ID: "news-0123456789abcdef", Kind: services.KindX402, Method: "GET",
+		URL: "https://news.example.com/latest", MaxPrice: 1000, Decimals: 6, Name: "example · GET /latest", Summary: "Latest headlines"}
+	docs := []find.Doc{findX402Doc(l, subjectQuality{}), findX402Doc(other, subjectQuality{})}
+	if docs[0].Name != l.Name || docs[0].ID != l.ID {
+		t.Fatalf("doc %+v", docs[0])
+	}
+	e := find.NewEngine(find.Config{Source: func(context.Context) ([]find.Doc, error) { return docs, nil }})
+	t.Cleanup(e.Close)
+	for _, q := range []string{"hacker", "hacker news search", "agentutility"} {
+		a, err := e.Find(context.Background(), find.Request{Query: q, Parse: find.ModeRules})
+		if err != nil || len(a.Results) == 0 || a.Results[0].ID != l.ID || a.Results[0].Name != l.Name {
+			t.Fatalf("%q: %+v (%v)", q, a.Results, err)
+		}
 	}
 }
 

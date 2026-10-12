@@ -136,3 +136,13 @@ func TestToolPages(t *testing.T) {
 		t.Errorf("tool paths with every service: %v; the test checks %d pages", paths, len(want))
 	}
 }
+
+// The offering page's curl sample fills a required string without a sample
+// as discovery does: "example" when it fits, else the placeholder, within
+// its bounds and unescaped (C233).
+func TestOfferingCurlExamplePlaceholder(t *testing.T) {
+	got := exampleInput([]byte(`{"type":"object","properties":{"question":{"type":"string","minLength":8,"maxLength":200},"topic":{"type":"string","maxLength":4},"n":{"type":"integer","default":3},"note":{"type":"string","minLength":40}},"required":["question","topic","n"]}`))
+	if got != `{"n":3,"question":"<question: fill in, 8-200 chars>","topic":"exam"}` {
+		t.Fatalf("curl example %s", got)
+	}
+}

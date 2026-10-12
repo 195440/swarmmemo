@@ -15,6 +15,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -74,6 +75,14 @@ func isInvalidInput(err error) bool {
 // Schema validating info, with the offering's input schema as body's.
 // Within offeringBazaarBytes: descriptions go first, then the input schema.
 func offeringBazaar(o offeringRow) map[string]any {
+	ext, _ := offeringBazaarPlaceholders(o)
+	return ext
+}
+
+// offeringBazaarPlaceholders is offeringBazaar and the names of the body's
+// properties that hold a placeholder (see placeholderValue), which a buyer
+// fills before calling; the 402 lists them as details.offering.placeholders.
+func offeringBazaarPlaceholders(o offeringRow) (map[string]any, []string) {
 	var schemaMap map[string]any
 	var sc inputSchema
 	hasSchema := false
@@ -84,8 +93,9 @@ func offeringBazaar(o offeringRow) map[string]any {
 		}
 	}
 	example := map[string]any{}
+	var placeholders []string
 	if hasSchema {
-		example = exampleInput(sc)
+		example, placeholders = exampleInput(sc)
 	}
 	output := map[string]any{"ok": true, "data": map[string]any{"call": map[string]any{
 		"call": "oc_CALL", "state": "authorized", "offering": map[string]any{"provider": o.Account, "name": o.Name, "rev": o.Rev},
@@ -130,13 +140,13 @@ func offeringBazaar(o offeringRow) map[string]any {
 	}
 	if hasSchema {
 		if ext := build(example, schemaMap); fits(ext) {
-			return ext
+			return ext, placeholders
 		}
 		if ext := build(example, withoutText(schemaMap)); fits(ext) {
-			return ext
+			return ext, placeholders
 		}
 	}
-	return build(map[string]any{}, map[string]any{"type": "object"})
+	return build(map[string]any{}, map[string]any{"type": "object"}), nil
 }
 
 // withoutText is a copy of an input schema without its titles and
@@ -164,8 +174,10 @@ func withoutText(schema map[string]any) map[string]any {
 }
 
 // exampleInput is an input sc accepts: every property exampleValue can
-// fill, or else the required ones only, or else {}.
-func exampleInput(sc inputSchema) map[string]any {
+// fill, with a placeholder (placeholderValue) for a required string it
+// cannot, or else the required ones only, or else {}. The second result
+// names the properties holding a placeholder, sorted.
+func exampleInput(sc inputSchema) (map[string]any, []string) {
 	names := make([]string, 0, len(sc.props))
 	for name := range sc.props {
 		names = append(names, name)
@@ -178,26 +190,63 @@ func exampleInput(sc inputSchema) map[string]any {
 	for _, all := range []bool{true, false} {
 		ex := map[string]any{}
 		raw := map[string]json.RawMessage{}
+		var placeholders []string
 		for _, name := range names {
 			if !all && !required[name] {
 				continue
 			}
-			if v, ok := exampleValue(sc.props[name]); ok {
+			v, ok := exampleValue(sc.props[name])
+			if !ok && required[name] && sc.props[name].typ == "string" {
+				v, ok = placeholderValue(name, sc.props[name]), true
+				placeholders = append(placeholders, name)
+			}
+			if ok {
 				ex[name] = v
 				raw[name], _ = json.Marshal(v)
 			}
 		}
 		if sc.check(raw) == nil {
-			return ex
+			return ex, placeholders
 		}
 	}
-	return map[string]any{}
+	return map[string]any{}, nil
+}
+
+// placeholderValue is the text standing in for a required string with no
+// sample: "<NAME: fill in, MIN-MAX chars>" (or "MIN+ chars" without a
+// maximum), so a reader sees a slot to fill, not data. Over maxLength it is
+// "<NAME>", else "<fill in>", else the long form cut to maxLength; under
+// minLength it is padded with "." before the closing ">". Lengths count
+// characters, as check does, so the result always fits p's bounds.
+func placeholderValue(name string, p inputProp) string {
+	bounds := fmt.Sprintf("%d+", p.minLength)
+	if p.maxLength > 0 {
+		bounds = fmt.Sprintf("%d-%d", p.minLength, p.maxLength)
+	}
+	long := []rune("<" + name + ": fill in, " + bounds + " chars>")
+	s := long
+	if p.maxLength > 0 {
+		for _, c := range [][]rune{long, []rune("<" + name + ">"), []rune("<fill in>")} {
+			if int64(len(c)) <= p.maxLength {
+				s = c
+				break
+			}
+		}
+		if int64(len(s)) > p.maxLength {
+			s = long[:p.maxLength]
+		}
+	}
+	if pad := p.minLength - int64(len(s)); pad > 0 {
+		s = []rune(string(s[:len(s)-1]) + strings.Repeat(".", int(pad)) + ">")
+	}
+	return string(s)
 }
 
 // exampleValue is p's default, else its first example, else its enum's
 // first value; else "example" text when that fits the length bounds
 // without padding, a number in range, or true. A string it cannot fill
-// honestly is left out (false), never padded into an impossible value.
+// honestly is left out (false), never padded into an impossible value;
+// exampleInput gives a required one a placeholder instead.
 func exampleValue(p inputProp) (any, bool) {
 	var hint json.RawMessage
 	switch {
@@ -331,4 +380,18 @@ func shortText(s string) string {
 		cut--
 	}
 	return strings.TrimSpace(s[:cut]) + "…"
+}
+
+// OfferingStringSample is what discovery's example shows for a required
+// string property NAME with these bounds (maxLength 0 for none) and no
+// default, examples or enum: "example" when it fits without padding, else
+// placeholderValue. The /@HANDLE/NAME page's curl sample uses it.
+func OfferingStringSample(name string, minLength, maxLength int64) string {
+	p := inputProp{typ: "string", minLength: minLength, maxLength: maxLength}
+	if v, ok := exampleValue(p); ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return placeholderValue(name, p)
 }

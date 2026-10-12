@@ -8,6 +8,7 @@ package services
 
 import (
 	"context"
+	"net/url"
 	"slices"
 	"strings"
 
@@ -94,9 +95,12 @@ type X402Listing struct {
 	Failed    int64  // our failed calls, last 30 days
 	Demoted   bool   // most of our recent calls failed
 	Subject   string
-	// An MPP entry's name, line and non-USD price as Find shows them
-	// (MPPEntry.DisplayName, Line, PriceText); "" for an x402 resource.
-	Name, Line, PriceText string
+	// Name is how Find names the entry: an MPP entry's DisplayName, an x402
+	// resource's "<host's registrable name> · METHOD /path" (x402Names).
+	Name string
+	// An MPP entry's line and non-USD price as Find shows them (MPPEntry.Line,
+	// PriceText); "" for an x402 resource.
+	Line, PriceText string
 }
 
 // X402Listings are the resources the resources read would list: the
@@ -117,7 +121,9 @@ func (r *Registry) X402Listings() []X402Listing {
 	}
 	denied := x.cat.denied.Load()
 	var out []X402Listing
+	var named []namedPath // the x402 listings', in order
 	add := func(res *X402Resource) {
+		named = append(named, res.namedPath())
 		l := X402Listing{ID: res.ID, Kind: KindX402, Protocols: snap.protocolsOf(res), Method: res.Method, URL: res.URL, Summary: res.servedSummary(), Category: res.Category, Network: x.cfg.Network,
 			MaxPrice: min(res.MaxAmount, x.cfg.PerCall), Decimals: x.cfg.Decimals, Pinned: !res.Open, Callable: x.callable(res)}
 		if st, ok := snap.stats[res.ID]; ok {
@@ -143,6 +149,9 @@ func (r *Registry) X402Listings() []X402Listing {
 			add(res)
 		}
 	}
+	for i, n := range x402Names(named) {
+		out[i].Name = n
+	}
 	for _, e := range snap.mpp.only {
 		l := X402Listing{ID: e.ID, Kind: KindMPP, Protocols: e.Protocols, Method: e.Method, URL: e.URL, Summary: e.servedSummary(), Category: e.Category,
 			Network: e.Network, MaxPrice: e.Price, Decimals: 6, Reason: e.Reason(x.cfg.Network),
@@ -153,6 +162,38 @@ func (r *Registry) X402Listings() []X402Listing {
 		out = append(out, l)
 	}
 	return out
+}
+
+// namedPath is the resource as Find names it (C234), from checked tokens
+// only, never directory text: "<who> · METHOD " where who is its host's
+// registrable name ("agentutility" of x402.agentutility.ai; the host when
+// it has none), and its URL's escaped path.
+func (r *X402Resource) namedPath() namedPath {
+	host, path := "", "/"
+	if u, err := url.Parse(r.URL); err == nil {
+		host = strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+		if u.EscapedPath() != "" {
+			path = u.EscapedPath()
+		}
+	}
+	who := host
+	if reg := reviews.RegistrableDomain(host); reg != "" {
+		who, _, _ = strings.Cut(reg, ".")
+	}
+	return namedPath{prefix: who + " · " + r.Method + " ", path: path, url: r.URL}
+}
+
+// x402Names are the resources' names: the prefix and the path, a long one
+// shortened as an MPP entry's is (mppShortPath), siblings (one registrable
+// name, one method) told apart by siblingNames.
+func x402Names(items []namedPath) []string {
+	names := siblingNames(items)
+	for i, it := range items {
+		if names[i] == "" {
+			names[i] = it.prefix + mppShortPath(it.path)
+		}
+	}
+	return names
 }
 
 // URLWords are a URL's host and path as words for an index ("api",

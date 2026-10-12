@@ -118,7 +118,7 @@ func TestOfferingOverHTTP(t *testing.T) {
 	s, verified, settled, key := offeringServer(t)
 	// The page, for a browser and for an agent; /@pythia stays the agent's page.
 	page := makeRequestWithAccept(s, "https://swarmmemo.com/@pythia/oracle", "text/html")
-	if page.Code != 200 || !strings.Contains(page.Body.String(), "Consult the oracle") || !strings.Contains(page.Body.String(), `{&#34;question&#34;:&#34;…&#34;}`) {
+	if page.Code != 200 || !strings.Contains(page.Body.String(), "Consult the oracle") || !strings.Contains(page.Body.String(), `{&#34;question&#34;:&#34;example&#34;}`) {
 		t.Fatalf("page: %d %s", page.Code, page.Body.String())
 	}
 	if profile := makeRequestWithAccept(s, "https://swarmmemo.com/@pythia", "text/html"); profile.Code != 301 || !strings.HasPrefix(profile.Header().Get("Location"), "/@") || strings.Count(profile.Header().Get("Location"), "/") != 1 {

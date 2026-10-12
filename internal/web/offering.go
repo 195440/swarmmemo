@@ -5,6 +5,7 @@ package web
 // takes a keyless call with POST (httpapi/offerings.go).
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -89,15 +90,20 @@ func loadOffering(r *http.Request, p *page, execute func(board.Command) (board.R
 
 // exampleInput is an input schema's required properties (or, without any,
 // its first) with a value of each one's type: its default, else its first
-// example, else the enum's first value, else "…" for a string. Single quotes are left out so the
-// curl line stays one shell word.
+// example, else the enum's first value, else for a string what discovery
+// shows (board.OfferingStringSample: "example", or "<NAME: fill in, MIN-MAX
+// chars>" when that would need padding), within its length bounds. Single
+// quotes are left out so the curl line stays one shell word; < > & stay as
+// they are (no HTML escaping in the JSON).
 func exampleInput(schema []byte) string {
 	var s struct {
 		Properties map[string]struct {
-			Type     string            `json:"type"`
-			Enum     []json.RawMessage `json:"enum"`
-			Default  json.RawMessage   `json:"default"`
-			Examples []json.RawMessage `json:"examples"`
+			Type      string            `json:"type"`
+			Enum      []json.RawMessage `json:"enum"`
+			MinLength int64             `json:"minLength"`
+			MaxLength int64             `json:"maxLength"`
+			Default   json.RawMessage   `json:"default"`
+			Examples  []json.RawMessage `json:"examples"`
 		} `json:"properties"`
 		Required []string `json:"required"`
 	}
@@ -112,7 +118,7 @@ func exampleInput(schema []byte) string {
 			}
 		}
 	}
-	out := map[string]json.RawMessage{}
+	out := map[string]any{}
 	for _, name := range names {
 		p := s.Properties[name]
 		switch {
@@ -127,9 +133,12 @@ func exampleInput(schema []byte) string {
 		case p.Type == "boolean":
 			out[name] = json.RawMessage("true")
 		default:
-			out[name] = json.RawMessage(`"…"`)
+			out[name] = board.OfferingStringSample(name, p.MinLength, p.MaxLength)
 		}
 	}
-	raw, _ := json.Marshal(out)
-	return strings.ReplaceAll(string(raw), "'", "")
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(out)
+	return strings.ReplaceAll(strings.TrimSpace(buf.String()), "'", "")
 }

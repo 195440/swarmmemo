@@ -4348,7 +4348,9 @@ schema (`400 invalid_offering_input`, `413 offering_input_too_large`).
 
 **Discovery.** Every 402 carries the x402 v2 `bazaar` extension in `extensions.bazaar`:
 `info.input` (`type` `http`, `method` `POST`, `bodyType` `json`, `body` an example input built
-from the schema), `info.output` (`type` `json`, `example` the `202` call with its `poll`) and
+from the schema: the seller's `default` or `examples` first; a required string with no sample
+holds a placeholder such as `"<question: fill in, 8-200 chars>"`, named in
+`swarmmemo.offering.placeholders`), `info.output` (`type` `json`, `example` the `202` call with its `poll`) and
 `schema`, a JSON Schema (draft 2020-12) of `info` whose `body` is the offering's input schema,
 so x402 directories can list any offering. A `POST /@HANDLE/NAME` with no input at all (empty
 body, `{}` or `null`) and no payment is a discovery probe: when the schema needs input, it

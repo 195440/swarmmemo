@@ -478,14 +478,20 @@ func findAlso(sub reviews.Subject, quality map[string]subjectQuality, seen map[s
 	return out
 }
 
-// findX402Doc is one catalogue entry as a doc: its id names it, its
-// served summary describes it, its URL's words and protocols match it. An
+// findX402Doc is one catalogue entry as a doc: its host, method and path
+// name it (C234; the id's words before, still matched), its served summary
+// describes it, its URL's words and protocols match it. An
 // MPP entry (kind mpp) is listed, not callable, and its page is its
 // subject's.
 func findX402Doc(l services.X402Listing, q subjectQuality) find.Doc {
-	d := find.Doc{Type: find.TypeService, Kind: find.KindX402, ID: l.ID, Name: x402Name(l.ID), Description: l.Summary, Category: l.Category,
+	d := find.Doc{Type: find.TypeService, Kind: find.KindX402, ID: l.ID, Name: l.Name, Description: l.Summary, Category: l.Category,
 		URL: "/tools/paid-apis", Terms: services.URLWords(l.URL) + " " + strings.ReplaceAll(strings.Join(l.Protocols, " "), "/", " "), Price: find.Unpriced,
 		Network: find.NetworkName(l.Network), Output: "json", Protocols: l.Protocols, SubjectID: l.Subject, Untrusted: !l.Pinned, Quality: find.Quality{LabLower: -1}}
+	if d.Name == "" {
+		d.Name = x402Name(l.ID)
+	} else if l.Kind != services.KindMPP {
+		d.Terms = x402Name(l.ID) + " " + d.Terms
+	}
 	if l.MaxPrice >= 0 {
 		d.Price = usdMicro(l.MaxPrice, l.Decimals)
 	}

@@ -186,6 +186,24 @@ func parseInputProp(name string, raw json.RawMessage) (inputProp, error) {
 	if p.minLength < 0 || p.maxLength < 0 || (p.maxLength > 0 && p.minLength > p.maxLength) {
 		return p, invalidInputSchema(fmt.Sprintf("Property %q: minLength and maxLength are 0 or more, min at most max.", name))
 	}
+	// A property no value can satisfy would refuse every call: an empty
+	// range, an integer range holding no integer, or an enum none of whose
+	// values follows the property's own rules.
+	if p.minimum != nil && p.maximum != nil && *p.minimum > *p.maximum {
+		return p, invalidInputSchema(fmt.Sprintf("Property %q: minimum is at most maximum.", name))
+	}
+	if p.typ == "integer" && p.minimum != nil && p.maximum != nil && math.Ceil(*p.minimum) > math.Floor(*p.maximum) {
+		return p, invalidInputSchema(fmt.Sprintf("Property %q: its minimum and maximum hold no integer.", name))
+	}
+	if len(p.enum) > 0 {
+		valid := false
+		for _, v := range p.enum {
+			valid = valid || p.checkValue(name, v) == ""
+		}
+		if !valid {
+			return p, invalidInputSchema(fmt.Sprintf("Property %q: no enum value follows its type, length and range.", name))
+		}
+	}
 	samples := p.examples
 	if p.def != nil {
 		samples = append([]json.RawMessage{p.def}, samples...)
@@ -653,17 +671,26 @@ func (s *Store) offeringBuyOnce(ctx context.Context, tx *sql.Tx, c Command, a ac
 			return Result{}, err
 		}
 		path := offeringPath(account, handle, name)
-		resource, description, extensions := "https://"+s.config.ServiceID+path, fmt.Sprintf("%s (%s USDC, %s)", o.Listing.Title, o.Listing.Price, path), map[string]any{"bazaar": offeringBazaar(o)}
+		bazaar, placeholders := offeringBazaarPlaceholders(o)
+		resource, description, extensions := "https://"+s.config.ServiceID+path, fmt.Sprintf("%s (%s USDC, %s)", o.Listing.Title, o.Listing.Price, path), map[string]any{"bazaar": bazaar}
 		body, header := cfg.PaymentRequiredWith(req, resource, description, extensions)
+		// placeholders names the bazaar example's fields that hold
+		// "<NAME: fill in, ...>" text rather than a sample (C233).
+		withPlaceholders := func(m map[string]any) map[string]any {
+			if len(placeholders) > 0 {
+				m["placeholders"] = placeholders
+			}
+			return m
+		}
 		if probe {
-			details := map[string]any{"x402": body, "payment_required": header, "offering": map[string]any{"path": path, "rev": o.Rev, "price": o.Listing.Price, "claim_window": window, "sla": o.SLA, "discovery": true}}
+			details := map[string]any{"x402": body, "payment_required": header, "offering": withPlaceholders(map[string]any{"path": path, "rev": o.Rev, "price": o.Listing.Price, "claim_window": window, "sla": o.SLA, "discovery": true})}
 			// The MPP challenge is as unpayable: its opaque carries the
 			// same discovery-only quote, which checkOfferingQuote refuses.
 			offerMPP(s.mpp.offerings, cfg, offeringAsk(req, resource, description, extensions), details)
 			return Result{}, &Error{Status: 402, Code: "payment_required", Message: fmt.Sprintf("This offering costs %s USDC a call. This answer describes it for discovery and cannot be paid: POST the call's input (extensions.bazaar shows an example; offering.get its schema) for a requirement to sign.", o.Listing.Price),
 				Details: details}
 		}
-		details := map[string]any{"x402": body, "payment_required": header, "offering": map[string]any{"path": path, "rev": o.Rev, "price": o.Listing.Price, "claim_window": window, "sla": o.SLA, "input_sha256": inputSHA}}
+		details := map[string]any{"x402": body, "payment_required": header, "offering": withPlaceholders(map[string]any{"path": path, "rev": o.Rev, "price": o.Listing.Price, "claim_window": window, "sla": o.SLA, "input_sha256": inputSHA})}
 		message := fmt.Sprintf("Pay %s USDC on %s to %s, the provider's wallet: sign the requirement in details.x402.accepts (x402 v2, exact, EIP-3009) within %d seconds and send the same request again with the payment in the PAYMENT-SIGNATURE header (or data.payment). The payment is only verified now; it settles when the provider claims the call, and nothing is charged if it is declined or not claimed within %d seconds.", o.Listing.Price, cfg.Network, o.Listing.PayTo, services.TopupQuoteSeconds, window)
 		if offerMPP(s.mpp.offerings, cfg, offeringAsk(req, resource, description, extensions), details) {
 			message += mppNote + fmt.Sprintf(" An MPP authorization's validBefore bounds the claim window: sign it for now plus %d seconds.", window+services.X402ValidBeforeMargin)

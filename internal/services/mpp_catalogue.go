@@ -32,7 +32,9 @@ package services
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -103,6 +105,7 @@ type MPPEntry struct {
 
 	summaryStatus     string
 	canon, host, text string
+	name              string // DisplayName among its service's endpoints (mppNameSiblings); "" alone
 }
 
 // Key is the endpoint's identity in every catalogue: METHOD canonical URL.
@@ -510,6 +513,7 @@ func buildMPP(rows []mppRow, d *x402DenyIndex, verdicts map[string]string, x402K
 	}
 	slices.SortFunc(m.all, byURL)
 	slices.SortFunc(m.only, byURL)
+	mppNameSiblings(m.only)
 	return m
 }
 
@@ -574,10 +578,23 @@ const (
 )
 
 // DisplayName is the entry as Find names it: "<who> · METHOD /path" (who
-// below); a long path loses its leading segments, never its last, so two
-// endpoints of one service read apart. A leading segment that only repeats
-// the service's name ("/agentphone/v1/agents" of agentphone) is left out.
+// below); a long path loses its leading segments, never its last. A leading
+// segment that only repeats the service's name ("/agentphone/v1/agents" of
+// agentphone) is left out. Among a snapshot's entries the shortened path
+// keeps the segments that tell siblings apart (mppNameSiblings).
 func (e *MPPEntry) DisplayName() string {
+	if e.name != "" {
+		return e.name
+	}
+	return e.namePrefix() + mppShortPath(e.namePath())
+}
+
+// namePrefix is "<who> · METHOD ", what every name of the entry starts with.
+func (e *MPPEntry) namePrefix() string { return e.who() + " · " + e.Method + " " }
+
+// namePath is the path the name shows: the URL's escaped path, a leading
+// segment that only repeats the service's name left out.
+func (e *MPPEntry) namePath() string {
 	path := "/"
 	if u, err := url.Parse(e.URL); err == nil && u.EscapedPath() != "" {
 		path = u.EscapedPath()
@@ -587,7 +604,114 @@ func (e *MPPEntry) DisplayName() string {
 			path = "/" + rest
 		}
 	}
-	return e.who() + " · " + e.Method + " " + mppShortPath(path)
+	return path
+}
+
+// mppNameSiblings names entries apart within their group, the entries that
+// share a namePrefix (one service, one method), from checked tokens only:
+// the URL and the name token, never directory text (C230; siblingNames).
+func mppNameSiblings(entries []*MPPEntry) {
+	items := make([]namedPath, len(entries))
+	for i, e := range entries {
+		items[i] = namedPath{prefix: e.namePrefix(), path: e.namePath(), url: e.URL}
+	}
+	for i, n := range siblingNames(items) {
+		entries[i].name = n
+	}
+}
+
+// namedPath is one endpoint as a name is made for it: the prefix every
+// name of it starts with ("<who> · METHOD "), the path it shows, its URL.
+type namedPath struct{ prefix, path, url string }
+
+// siblingNames names endpoints apart within their group, the items that
+// share a prefix (C230; MPP entries and x402 resources alike). An item's
+// name is "" when its usual name, prefix + mppShortPath(path), already
+// tells it apart:
+//
+//   - An item keeps its usual name when no sibling's name or path ends the
+//     same way: "/…/run/live" of one "…/a/run/live" among "…/b/run/live"
+//     does not tell them apart, however long a's path.
+//   - Else its path shows its first i segments, "…", its last j, or the
+//     whole path, the first form no sibling's path shows the same way:
+//     fewest leading segments, then fewest trailing ("/…/abc/run/live",
+//     then "/v1/…/live", ...); the whole path at worst.
+//   - When every form is shared (one path at two URLs of the group), the
+//     usual name gets " #" and 4 hex digits of the URL's SHA-256.
+//
+// A name depends only on the group's URLs: the same on every load.
+func siblingNames(items []namedPath) []string {
+	type member struct {
+		at   int
+		path string
+		segs []string
+	}
+	out := make([]string, len(items))
+	groups := map[string][]member{}
+	var order []string
+	for i, it := range items {
+		if groups[it.prefix] == nil {
+			order = append(order, it.prefix)
+		}
+		groups[it.prefix] = append(groups[it.prefix], member{i, it.path, strings.Split(strings.Trim(it.path, "/"), "/")})
+	}
+	for _, k := range order {
+		g := groups[k]
+		if len(g) < 2 {
+			continue
+		}
+		usual := map[string]int{}
+		for _, m := range g {
+			usual[mppShortPath(m.path)]++
+		}
+		forms := map[[2]int]map[string]int{} // (i, j) -> form -> siblings showing it
+		formsAt := func(i, j int) map[string]int {
+			f := forms[[2]int{i, j}]
+			if f == nil {
+				f = map[string]int{}
+				for _, m := range g {
+					f[mppPathForm(m.segs, i, j)]++
+				}
+				forms[[2]int{i, j}] = f
+			}
+			return f
+		}
+		for _, m := range g {
+			short := mppShortPath(m.path)
+			if usual[short] < 2 && (!strings.HasPrefix(short, "/…/") || formsAt(0, strings.Count(short, "/")-1)[short] < 2) {
+				continue
+			}
+			best, n := "", len(m.segs)
+			for i := 0; i < n && best == ""; i++ {
+				for j := 1; i+j <= n; j++ {
+					if f := mppPathForm(m.segs, i, j); usual[f] == 0 && formsAt(i, j)[f] == 1 {
+						best = f
+						break
+					}
+				}
+			}
+			if best == "" {
+				sum := sha256.Sum256([]byte(items[m.at].url))
+				best = short + " #" + hex.EncodeToString(sum[:2])
+			}
+			out[m.at] = k + best
+		}
+	}
+	return out
+}
+
+// mppPathForm is segs shown as the first i segments, "…", the last j; the
+// whole path when i+j covers them. The last segment is cut at mppNameLastMax.
+func mppPathForm(segs []string, i, j int) string {
+	n := len(segs)
+	shown := slices.Clone(segs)
+	if r := []rune(shown[n-1]); len(r) > mppNameLastMax {
+		shown[n-1] = string(r[:mppNameLastMax]) + "…"
+	}
+	if i+j >= n {
+		return "/" + strings.Join(shown, "/")
+	}
+	return "/" + strings.Join(slices.Concat(shown[:i], []string{"…"}, shown[n-j:]), "/")
 }
 
 // who names the entry's service from checked tokens only (C227): its name
