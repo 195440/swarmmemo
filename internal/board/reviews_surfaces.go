@@ -31,6 +31,12 @@ func offeringOwner(ctx context.Context, q interface {
 	args := []any{alias}
 	if fingerprintRE.MatchString(alias) {
 		query, args = "SELECT i.account FROM identities i WHERE i.id=? OR i.account=?", []any{alias, alias}
+	} else if former, held, err := formerHandleAccount(ctx, q, alias); err != nil {
+		return "", "", "", false, err
+	} else if held {
+		// A former handle names its account's offering while no key holds
+		// it (C249): its subject resolves to the current address.
+		query, args = "SELECT ?", []any{former}
 	}
 	rows, err := q.QueryContext(ctx, `SELECT o.account,coalesce((SELECT h.handle FROM identities h WHERE h.account=o.account AND h.successor='' ORDER BY h.handle='', h.created_at DESC LIMIT 1),'')
  FROM offerings o WHERE o.name=? AND o.account=(`+query+` LIMIT 1)`, append([]any{name}, args...)...)
@@ -60,6 +66,63 @@ func (s *Store) offeringSubject(account, handle, name string) (reviews.Subject, 
 func (s *Store) offeringSubjectAs(typ, account, handle, name string) (reviews.Subject, error) {
 	opt := s.subjectOptions()
 	return reviews.Canonical(typ, "POST https://"+opt.OwnHosts[0]+offeringPath(account, handle, name), opt)
+}
+
+// offeringAddresses are an offering subject's siblings at its provider's
+// other addresses (C249): reviews stay on the subject they named, so a
+// renamed provider's offering lists its current address (when sub is not
+// it) and each former handle's subject that holds reviews, with their
+// summaries. Nil for every other subject.
+func (s *Store) offeringAddresses(ctx context.Context, tx *sql.Tx, sub reviews.Subject) ([]OfferingAddress, error) {
+	account, handle, name, ok, err := offeringOwner(ctx, tx, sub, s.subjectOptions())
+	if err != nil || !ok {
+		return nil, err
+	}
+	former, err := formerHandles(ctx, tx, account)
+	if err != nil || len(former) == 0 {
+		return nil, err
+	}
+	var subs []reviews.Subject
+	current, err := s.offeringSubjectAs(sub.Type, account, handle, name)
+	if err != nil {
+		return nil, nil
+	}
+	if current.ID != sub.ID {
+		subs = append(subs, current)
+	}
+	for _, h := range former {
+		fs, err := s.offeringSubjectAs(sub.Type, account, h, name)
+		if err != nil || fs.ID == sub.ID {
+			continue
+		}
+		var exists bool
+		if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM subjects WHERE id=?)", fs.ID).Scan(&exists); err != nil {
+			return nil, err
+		}
+		if exists {
+			subs = append(subs, fs)
+		}
+	}
+	if len(subs) == 0 {
+		return nil, nil
+	}
+	ids := make([]string, 0, len(subs))
+	for _, x := range subs {
+		ids = append(ids, x.ID)
+	}
+	sums, err := reviewSummaries(ctx, tx, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]OfferingAddress, 0, len(subs))
+	for _, x := range subs {
+		a := OfferingAddress{SubjectSibling: SubjectSibling{SubjectParent: SubjectParent{ID: x.ID, Type: x.Type, Key: x.Key, URI: x.URI(), URL: "/s/" + x.ID}}, Current: x.ID == current.ID}
+		if sum, ok := sums[x.ID]; ok {
+			a.Reviews = &sum
+		}
+		out = append(out, a)
+	}
+	return out, nil
 }
 
 // boardSubject is sub as this board names it: an offering written with a
@@ -180,6 +243,9 @@ type SubjectReviews struct {
 	Badge  string            `json:"badge"`
 	Review string            `json:"review"`
 	Reward *ReviewRewardHint `json:"review_reward,omitempty"`
+	// OtherAddresses: an offering's subjects at its provider's former
+	// handles that hold reviews (C249).
+	OtherAddresses []OfferingAddress `json:"other_addresses,omitempty"`
 }
 
 // subjectReviews summarises sub for another record's read, in its
@@ -245,7 +311,14 @@ func (s *Store) offeringReviews(ctx context.Context, tx *sql.Tx, account, name s
 	if err != nil {
 		return nil, nil
 	}
-	return s.subjectReviews(ctx, tx, sub, "/s/"+sub.ID+"/badge.svg", now)
+	out, err := s.subjectReviews(ctx, tx, sub, "/s/"+sub.ID+"/badge.svg", now)
+	if err != nil {
+		return nil, err
+	}
+	if out.OtherAddresses, err = s.offeringAddresses(ctx, tx, sub); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // tellSubjectOwners puts a new review in its subject's owners' inboxes (a

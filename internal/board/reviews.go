@@ -393,7 +393,7 @@ func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, e
 		if _, err = tx.ExecContext(ctx, "INSERT INTO review_evidence(event_id,evidence,class,state,checked_at,detail) VALUES(?,?,?,?,?,?)", eventID, e.id, e.class, e.state, now, string(detail)); err != nil {
 			return nil, nil, err
 		}
-		pending = pending || e.class == "record"
+		pending = pending || e.state == "unknown" && (e.class == "record" || e.detail["reason"] == TxPending)
 	}
 	// Listed (in subjects.list, Find and search engines) once two accounts
 	// review it, its verified owner does (RFC 0015 §4.3), or an operator
@@ -526,11 +526,8 @@ func (s *Store) verifyEvidence(ctx context.Context, tx *sql.Tx, account string, 
 			row.class = "observed"
 			err = verifyStamp(ctx, tx, account, value, &row)
 		case "tx":
-			// TODO(RFC 0015 §5.2): check the transfer to the subject's pay_to
-			// from a wallet the reviewer linked, through a fixed RPC, after
-			// commit. Until then it is recorded and weighs as opinion.
-			row.class, row.state = "paid_use", "unknown"
-			row.detail["reason"] = "on-chain payments are not checked yet"
+			// Read on chain after commit (reviews_tx.go): pending until then.
+			err = s.checkTxEvidence(ctx, tx, r.Subject, value, &row)
 		}
 		if err != nil {
 			return nil, err
@@ -576,10 +573,10 @@ func (r *reviewEvidenceRow) fail(reason string) {
 var ReviewEvidenceReasons = map[string]string{
 	"not_your_call":                          "the call was not made by the reviewer's account: there is no such call here, its caller key belongs to another account, or it has no caller key and was not paid from a wallet linked to the reviewer's account",
 	"not_a_finished_x402_call":               "it is not an x402 call that has finished (done or failed)",
-	"older_than_30_days":                     "it was made more than 30 days before the review",
+	"older_than_30_days":                     "it was made (or mined) more than 30 days before the review",
 	"call_to_another_resource":               "the call went to another resource or offering than the subject reviewed",
 	"not_a_paid_offering_call":               "the offering call's payment has not settled to the provider (paid, answered, overdue or refunded)",
-	"paid_from_the_providers_wallet":         "the call was paid from one of the provider's own linked wallets, so no money reached another account",
+	"paid_from_the_providers_wallet":         "the call or payment was paid from one of the provider's own linked wallets, so no money reached another account",
 	"not_your_fetch":                         "the fetch was not made by the reviewer's account, or there is no such fetch here",
 	"not_a_finished_fetch":                   "it is not a fetch that finished",
 	"fetch_of_another_site":                  "the fetched page is on another site than the subject (or the cited source)",
@@ -589,7 +586,18 @@ var ReviewEvidenceReasons = map[string]string{
 	"request_does_not_name_the_subject":      "the work request does not name the subject reviewed",
 	"not_your_stamp":                         "the stamp was not made by the reviewer's account, or there is no such stamp here",
 	"stamp_not_of_a_cited_fetch":             "the stamp is not of a cited fetch's raw bytes, so it weighs as opinion",
-	"on-chain payments are not checked yet":  "on-chain payments are not checked yet, so it weighs as opinion",
+	txUnchecked:                              "on-chain payments are not checked on this board, so it weighs as opinion",
+	TxPending:                                "waiting to be read on chain",
+	"tx_not_on_base":                         "the transaction is not on Base (eip155:8453), the one chain checked",
+	"not_an_x402_or_mpp_subject":             "the subject is not an x402 or MPP endpoint, so it has no pay_to to pay",
+	"subject_pay_to_unknown":                 "no catalogue, pinned resource or offering here names the subject's pay_to, so the payment cannot be matched",
+	"tx_not_found":                           "no mined transaction has this hash on Base, a day after the review",
+	"tx_failed":                              "the transaction failed on chain (status 0) and paid nothing",
+	"tx_after_the_review":                    "the transaction was mined after the review",
+	"tx_not_to_the_subjects_pay_to":          "the transaction has no Base USDC transfer to the subject's pay_to",
+	"tx_not_from_your_wallet":                "the transfer to the subject's pay_to is not from a wallet linked to the reviewer's account",
+	"tx_amount_zero":                         "the transfer from the reviewer's wallet to the subject's pay_to moved no USDC",
+	"tx_cited_by_another_review":             "another account's review of this subject already counts this transaction",
 	"not_your_doc_version":                   "there is no such doc version of the reviewer's",
 	"record_unreadable":                      "the record could not be read",
 	"not_observations_of_this_rubric":        "the record does not hold observations for this rubric",
@@ -872,6 +880,16 @@ type SubjectInfo struct {
 	// x402 subject's mpp subject and the reverse), each with its reviews'
 	// summary once reviewed; subject.get fills them.
 	Siblings []SubjectSibling `json:"also_reviewed_as,omitempty"`
+	// OtherAddresses name an agent offering's subject at its provider's
+	// other addresses (C249): its current one, and the former handles that
+	// still lead to it, each once reviewed, with its reviews' summary.
+	OtherAddresses []OfferingAddress `json:"other_addresses,omitempty"`
+}
+
+// OfferingAddress is an offering's subject at another of its addresses.
+type OfferingAddress struct {
+	SubjectSibling
+	Current bool `json:"current"`
 }
 
 // SubjectSibling is a sibling subject on a subject's page: where it is,
@@ -1200,6 +1218,9 @@ func (s *Store) readSubjects(ctx context.Context, tx *sql.Tx, c Command, now int
 		if err != nil {
 			return Result{}, err
 		}
+		if info.OtherAddresses, err = s.offeringAddresses(ctx, tx, sub); err != nil {
+			return Result{}, err
+		}
 		data := map[string]any{"subject": info}
 		if info.Exists {
 			sums, err := reviewSummaries(ctx, tx, []string{sub.ID})
@@ -1292,6 +1313,9 @@ func (s *Store) readSubject(ctx context.Context, tx *sql.Tx, c Command, now int6
 		return Result{}, err
 	}
 	if info.Siblings, err = subjectSiblings(ctx, tx, sub); err != nil {
+		return Result{}, err
+	}
+	if info.OtherAddresses, err = s.offeringAddresses(ctx, tx, sub); err != nil {
 		return Result{}, err
 	}
 	data := map[string]any{"subject": info, "text_is_untrusted": true, "order": reviewOrderNote()}
@@ -1803,7 +1827,7 @@ func (s *Store) ReviewsCapabilities() map[string]any {
 		"room": ReviewsRoom, "kind": "review", "page": "the subject's id", "docs": "/protocol.md#subjects-and-reviews",
 		"data":           `{"schema":1,"review":{"subject":"TYPE:KEY","verdict":"good"}} with optional dimensions, relationship, evidence, observations, rubric, record; score, band, grade, flags for relationship lab; source for outside_source`,
 		"data_max_bytes": maxPostData, "verdicts": reviews.Verdicts, "lab_verdicts": reviews.LabVerdicts, "dimensions": reviews.Dimensions, "relationships": reviews.Relationships,
-		"evidence": map[string]any{"kinds": reviews.EvidenceKinds, "classes": ReviewEvidenceWeights, "max": reviews.MaxEvidence, "within_days": ReviewEvidenceDays, "checked": "call (an x402 call, or an offering call oc_ID you made, signed, whose payment settled: paid_use), fetch, work and stamp when the review is posted (work: accepted, its reward paid between two accounts; stamp: observed only when it stamps a cited fetch's raw bytes, else opinion); a lab record (record:SHA256) is recomputed after commit, unknown until then; tx is recorded as unknown for now"},
+		"evidence": map[string]any{"kinds": reviews.EvidenceKinds, "classes": ReviewEvidenceWeights, "max": reviews.MaxEvidence, "within_days": ReviewEvidenceDays, "checked": "call (an x402 call, or an offering call oc_ID you made, signed, whose payment settled: paid_use), fetch, work and stamp when the review is posted (work: accepted, its reward paid between two accounts; stamp: observed only when it stamps a cited fetch's raw bytes, else opinion); a lab record (record:SHA256) is recomputed after commit, unknown until then; tx (tx:eip155:8453:0xHASH, an x402 or MPP subject) is read on Base after commit, unknown until then: a USDC transfer to the subject's pay_to from one of your verified linked wallets (not the provider's), within 30 days before the review, is paid_use; unknown and unchecked when the board has no chain reader"},
 		"caps":     map[string]any{"per_account_per_day": ReviewsPerAccountDay, "operator_import_or_lab_per_day": ReviewsOperatorDay, "lab_records_failed_or_waiting_per_day": ReviewRecordFailuresPerDay, "observations": reviews.MaxObservations, "flags": reviews.MaxFlags, "current_per_account_and_subject": 1},
 		"signed":   true, "worker_keys": false, "outside_source": "operator importer keys only (the importers parameters)", "lab": "operator lab keys only (the labs parameters); shown as the lab assessment once its record recomputes, self-reported until then",
 		"order": reviewOrderNote(), "rubrics": rubrics, "rewards": s.reviewRewardsCapabilities(context.Background()),

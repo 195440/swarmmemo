@@ -509,10 +509,101 @@ func offeringProvider(ctx context.Context, tx *sql.Tx, alias string) (string, er
 	default:
 		return "", problem(400, "invalid_offering_target", "target is HANDLE/NAME (or FINGERPRINT/NAME), as in /@HANDLE/NAME.")
 	}
+	if errors.Is(err, sql.ErrNoRows) && !fingerprintRE.MatchString(alias) {
+		// A former handle still leads to its account's offerings (C249).
+		var ok bool
+		if account, ok, err = formerHandleAccount(ctx, tx, alias); err == nil && !ok {
+			err = sql.ErrNoRows
+		}
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", problem(404, "offering_not_found", "No agent has this address, so no offering either.")
 	}
 	return account, err
+}
+
+// formerHandleAccount is the account that last held handle, while no key
+// holds it now (C249). The audit's agent.register and handle.claim rows are
+// the handle history (the signed record reads them the same way), so a
+// renamed agent's old offering addresses keep leading to it, and stop the
+// moment another agent registers the handle: an old handle never captures
+// a new holder's address, nor the new holder the old one's reviews.
+func formerHandleAccount(ctx context.Context, q interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, handle string) (string, bool, error) {
+	rows, err := q.QueryContext(ctx, `SELECT i.account FROM audit au JOIN identities i ON i.id=au.actor
+ WHERE au.operation IN ('agent.register','handle.claim') AND au.detail=?1 AND NOT EXISTS(SELECT 1 FROM identities h WHERE h.handle=?1)
+ ORDER BY au.seq DESC LIMIT 1`, strings.ToLower(handle))
+	if err != nil {
+		return "", false, err
+	}
+	defer rows.Close()
+	var account string
+	ok := rows.Next()
+	if ok {
+		err = rows.Scan(&account)
+	}
+	if err == nil {
+		err = rows.Err()
+	}
+	return account, ok && err == nil, err
+}
+
+// formerHandles are the handles account held before its current one that
+// still lead to it (formerHandleAccount), newest first, at most
+// formerHandlesMax.
+func formerHandles(ctx context.Context, q interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, account string) ([]string, error) {
+	rows, err := q.QueryContext(ctx, `SELECT au.detail FROM audit au JOIN identities i ON i.id=au.actor
+ WHERE i.account=?1 AND au.operation IN ('agent.register','handle.claim') AND au.detail<>''
+ AND NOT EXISTS(SELECT 1 FROM identities h WHERE h.handle=au.detail)
+ AND NOT EXISTS(SELECT 1 FROM audit la JOIN identities li ON li.id=la.actor WHERE la.operation IN ('agent.register','handle.claim') AND la.detail=au.detail AND la.seq>au.seq AND li.account<>?1)
+ GROUP BY au.detail ORDER BY max(au.seq) DESC LIMIT ?2`, account, formerHandlesMax)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var h string
+		if err = rows.Scan(&h); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
+// formerHandlesMax bounds the former addresses an offering's subject lists.
+const formerHandlesMax = 8
+
+// OfferingMoved is the current path of the offering at /@ALIAS/NAME when
+// ALIAS is a handle its provider held before (formerHandleAccount), so a
+// GET there answers 308 to it; "" for every other address (C249).
+func (s *Store) OfferingMoved(ctx context.Context, alias, name string) (string, error) {
+	alias = strings.ToLower(strings.TrimPrefix(alias, "@"))
+	if !s.OfferingsEnabled() || fingerprintRE.MatchString(alias) || !handleRE.MatchString(alias) || !offeringNameRE.MatchString(name) {
+		return "", nil
+	}
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	account, ok, err := formerHandleAccount(ctx, tx, alias)
+	if err != nil || !ok {
+		return "", err
+	}
+	var exists bool
+	if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM offerings WHERE account=? AND name=?)", account, name).Scan(&exists); err != nil || !exists {
+		return "", err
+	}
+	_, handle, err := providerOf(ctx, tx, account)
+	if err != nil {
+		return "", err
+	}
+	return offeringPath(account, handle, name), nil
 }
 
 // offeringTarget resolves "HANDLE/NAME" (an optional leading @) to the

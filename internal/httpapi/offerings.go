@@ -27,6 +27,12 @@ type offeringStore interface {
 	OfferingPoll(ctx context.Context, alias, name, id, secret string) (map[string]any, error)
 }
 
+// offeringMover names an offering's current address when the one asked
+// for is its provider's former handle (board.Store).
+type offeringMover interface {
+	OfferingMoved(ctx context.Context, alias, name string) (string, error)
+}
+
 // offeringsCapabilities is the /capabilities "offerings" object; nil omits it.
 func (s *Server) offeringsCapabilities() map[string]any {
 	if o, ok := s.service.(offeringStore); ok {
@@ -61,6 +67,22 @@ func (s *Server) offeringRoute(w http.ResponseWriter, r *http.Request) bool {
 	case len(parts) == 1 && r.Method == http.MethodPost:
 		s.offeringBuy(w, r, alias, parts[0])
 	case len(parts) == 1 && readMethod(r):
+		// A provider's former handle (C249): 308 to the offering's current
+		// address. POST and the poll keep answering at the old one.
+		if m, ok := s.service.(offeringMover); ok {
+			to, err := m.OfferingMoved(r.Context(), alias, parts[0])
+			if err != nil {
+				writeError(w, err)
+				return true
+			}
+			if to != "" {
+				if r.URL.RawQuery != "" {
+					to += "?" + r.URL.RawQuery
+				}
+				http.Redirect(w, r, to, http.StatusPermanentRedirect)
+				return true
+			}
+		}
 		if s.ui != nil && !wantsJSON(r) && strings.Contains(r.Header.Get("Accept"), "text/html") {
 			s.ui.ServeHTTP(w, r)
 			return true

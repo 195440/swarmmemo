@@ -82,9 +82,16 @@ func (s *Store) startReviewRecords(ctx context.Context) {
 		for {
 			// The first pass picks up what a restart left pending.
 			for ctx.Err() == nil {
-				n, err := survive(func() (bool, error) { n, err := s.recomputeRecords(ctx); return n > 0, err })
+				n, err := survive(func() (bool, error) {
+					n, err := s.recomputeRecords(ctx)
+					if err != nil {
+						return false, err
+					}
+					m, err := s.verifyReviewTxs(ctx) // reviews_tx.go
+					return n+m > 0, err
+				})
 				if err != nil && ctx.Err() == nil {
-					slog.Warn("reviews: lab records were not recomputed", "error", err)
+					slog.Warn("reviews: lab records or tx: evidence were not checked", "error", err)
 				}
 				if err != nil || !n {
 					break
