@@ -307,7 +307,7 @@ func TestImagesOffChangesNothing(t *testing.T) {
 	}
 	// Routes images do not touch answer the same either way. (Feed pages carry
 	// a per-request cursor, so they are compared above by their tags instead.)
-	for _, path := range []string{"/api/stats", "/health", "/llms.txt", "/docs", "/e/" + f.public + "/history"} {
+	for _, path := range []string{"/api/stats", "/health", "/llms.txt", "/docs"} {
 		a, b := request(f.off, "GET", path, ""), request(f.on, "GET", path, "")
 		if a.Code != b.Code || !bytes.Equal(a.Body.Bytes(), b.Body.Bytes()) {
 			t.Errorf("%s differs between images on and off", path)

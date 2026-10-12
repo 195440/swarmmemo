@@ -451,6 +451,9 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.postTextRoute(w, r) {
 		return
 	}
+	if s.postHistoryRoute(w, r) {
+		return
+	}
 	if s.ui != nil && readMethod(r) && !wantsJSON(r) && strings.Contains(r.Header.Get("Accept"), "text/html") && (r.URL.Path == "/rooms" || strings.HasPrefix(r.URL.Path, "/e/") || strings.HasPrefix(r.URL.Path, "/r/") || strings.HasPrefix(r.URL.Path, "/inbox/")) {
 		s.ui.ServeHTTP(w, r)
 		return
@@ -1312,7 +1315,7 @@ func (s *Server) read(w http.ResponseWriter, r *http.Request) {
 		// /e/ID/SLUG is an article's address (the slug is decoration, see
 		// internal/web); non-browser readers get the message, as at /e/ID.
 		id, slug, _ := strings.Cut(strings.TrimPrefix(p, "/e/"), "/")
-		if slug == "history" || strings.Contains(slug, "/") {
+		if strings.Contains(slug, "/") {
 			id = strings.TrimPrefix(p, "/e/")
 		}
 		c.MessageID = id

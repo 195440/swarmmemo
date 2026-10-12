@@ -203,6 +203,21 @@ func (e *Engine) Find(ctx context.Context, req Request) (Answer, error) {
 	if err != nil {
 		return ans, err
 	}
+	if len(cands) == 0 && (len(parsed.Types) > 0 || parsed.Category != "" || parsed.Output != "") {
+		// Filters read from the query matched nothing: search the whole query
+		// without the ones a name can trip ("csv" read as an output, "PyPI" as
+		// a package), and say so. A price, network or protocol the query
+		// states is a limit, kept, as is every filter the caller set.
+		set := merge(Filters{MaxPrice: parsed.MaxPrice, Network: parsed.Network, Protocol: parsed.Protocol}, req.Set, req.SetKeys)
+		words = MatchWords(q)
+		if cands, expanded, err = ix.search(ctx, words, set); err != nil {
+			return ans, err
+		}
+		if len(cands) > 0 {
+			ans.Filters, ans.Text = set, q
+			ans.ParseNote = strings.TrimSpace(ans.ParseNote + " " + RelaxedNote)
+		}
+	}
 	if len(expanded) > 0 {
 		ans.Expanded = map[string]any{}
 		for w, cats := range expanded {

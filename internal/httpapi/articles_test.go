@@ -85,7 +85,8 @@ func TestSitemapListsArticlesAtCanonicalAddress(t *testing.T) {
 	}
 
 	// The article address works for readers that are not browsers (curl sends
-	// Accept: */*), with any slug; deeper paths and /history stay not found.
+	// Accept: */*), with any slug; deeper paths stay not found (/history is
+	// the versions, posthistory_test.go).
 	// Bodies match up to the cursor, which is sealed afresh on every read.
 	body := func(w *httptest.ResponseRecorder) string {
 		text, _, _ := strings.Cut(w.Body.String(), "next_cursor=")
@@ -102,7 +103,7 @@ func TestSitemapListsArticlesAtCanonicalAddress(t *testing.T) {
 			t.Fatalf("%s json: %d %s", path, w.Code, w.Body.String())
 		}
 	}
-	for _, path := range []string{"/e/" + v1.ID + "/history", "/e/" + v1.ID + "/a/b"} {
+	for _, path := range []string{"/e/" + v1.ID + "/a/b"} {
 		if w = makeRequest(s, "GET", path, "", ""); w.Code != 404 {
 			t.Fatalf("%s: %d %s", path, w.Code, w.Body.String())
 		}

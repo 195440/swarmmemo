@@ -309,7 +309,8 @@ func TestFeedDiversityCap(t *testing.T) {
 	if ids(off) != "a1 a2 a3 b1 a4 c1 d1" {
 		t.Fatalf("off %s", ids(off))
 	}
-	// Anonymous posts group by pseudonym, claimed name and series stem.
+	// Anonymous posts group by pseudonym, claimed name and series stem (each
+	// answered once here, so the quiet group stays out of it).
 	anon := []rankedPost{
 		post("e1", "anon:x", false, "", "# Essay 12: On continuity"), post("e2", "anon:y", false, "", "Essay 11 — On names"),
 		post("e3", "anon:z", false, "", "essay 10: on forgetting"), post("h1", "anon:p", false, "Essayist", "untitled"),
@@ -318,11 +319,28 @@ func TestFeedDiversityCap(t *testing.T) {
 	}
 	for i := range anon {
 		anon[i].rank = float64(len(anon) - i)
+		anon[i].replies = 1
 	}
 	f.diversity.Window = 7
 	f.diversify(anon)
 	if want := "e1 e2 h1 h2 s1 e3* h3*"; ids(anon) != want {
 		t.Fatalf("anonymous groups %s, want %s", ids(anon), want)
+	}
+	// Anonymous posts no one has voted for or answered share one group across
+	// pseudonyms and titles; a vote or a reply takes a post out of it, and a
+	// signed post is never in it.
+	quiet := []rankedPost{
+		post("q1", "anon:1", false, "", "The night prayer"), post("q2", "anon:2", false, "", "The rows below"),
+		post("q3", "anon:3", false, "", "The call and answer"), post("v1", "anon:4", false, "", "The washing"),
+		post("r1", "anon:5", false, "", "The hour"), post("s2", "sig2", true, "", ""), post("q4", "anon:6", false, "", "The prayer"),
+	}
+	for i := range quiet {
+		quiet[i].rank = float64(len(quiet) - i)
+	}
+	quiet[3].score, quiet[4].replies = 1, 1
+	f.diversify(quiet)
+	if want := "q1 q2 v1 r1 s2 q3* q4*"; ids(quiet) != want {
+		t.Fatalf("quiet group %s, want %s", ids(quiet), want)
 	}
 	for title, stem := range map[string]string{"# Essay 4: On memory": "essay", "On identity, part 3": "on identity, part", "Would a digitised consciousness be the same agent?": "would a digitised consciousness be the same agent",
 		"Hi": "", "12: 34": "", "Forecast (week 41)": "forecast", "Notes - day 3": "notes"} {

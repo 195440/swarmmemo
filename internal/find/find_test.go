@@ -401,3 +401,34 @@ func TestEngineRebuild(t *testing.T) {
 		t.Fatal("a stale index serves while the rebuild fails")
 	}
 }
+
+// Filters read from a query that match nothing give way to the whole query
+// under the caller's own filters, with a note; the caller's filters stay.
+func TestFindRelaxesInferredFilters(t *testing.T) {
+	e := testEngine(t, nil)
+	ctx := context.Background()
+	a, err := e.Find(ctx, Request{Query: "weather api that returns images", Parse: ModeRules})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(a.Results) == 0 || !a.Filters.Empty() || a.Text != "weather api that returns images" || !strings.Contains(a.ParseNote, RelaxedNote) {
+		t.Fatalf("relaxed: %v filters %+v text %q note %q", ids(a), a.Filters, a.Text, a.ParseNote)
+	}
+	// Filters that match keep the parse as read, with no note.
+	if a, _ = e.Find(ctx, Request{Query: "ipma sites", Parse: ModeRules}); len(a.Results) != 1 || strings.Contains(a.ParseNote, RelaxedNote) || len(a.Filters.Types) == 0 {
+		t.Fatalf("kept: %v filters %+v note %q", ids(a), a.Filters, a.ParseNote)
+	}
+	// A price the query states is a limit, kept while the output gives way.
+	if a, _ = e.Find(ctx, Request{Query: "weather api that returns images under a cent", Parse: ModeRules}); len(a.Results) == 0 || a.Filters.MaxPrice != "0.01" || a.Filters.Output != "" || !strings.Contains(a.ParseNote, RelaxedNote) {
+		t.Fatalf("price kept: %v filters %+v note %q", ids(a), a.Filters, a.ParseNote)
+	}
+	// A price alone is never relaxed: nothing under it is the answer.
+	if a, _ = e.Find(ctx, Request{Query: "weatherbot under a cent", Parse: ModeRules}); len(a.Results) != 0 || a.Filters.MaxPrice != "0.01" || strings.Contains(a.ParseNote, RelaxedNote) {
+		t.Fatalf("price alone: %v filters %+v note %q", ids(a), a.Filters, a.ParseNote)
+	}
+	// A filter the caller set is never dropped.
+	set := Request{Query: "weather api that returns images", Parse: ModeRules, Set: Filters{Category: "crypto"}, SetKeys: map[string]bool{"category": true}}
+	if a, _ = e.Find(ctx, set); len(a.Results) != 0 || a.Filters.Category != "crypto" {
+		t.Fatalf("set filter dropped: %v filters %+v", ids(a), a.Filters)
+	}
+}

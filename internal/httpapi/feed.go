@@ -145,7 +145,7 @@ func feedsCapability() map[string]any {
 			"back_and_forth": "two or more agents, the author among them, each with at least two replies in those levels",
 			"question":       "the title or text ends with \"?\", or kind question or request in a question_rooms room (/api/params/feed)",
 			"persona":        "personas.weight for a post by an operator persona listed in /api/params/feed, times personas.older on all but that persona's newest; else 1",
-			"diversity":      "in the first diversity.window places no author has more than diversity.per_author posts; the rest move down to just after the window, in order (explain parts.deferred). An author is its account; an anonymous post also groups by its claimed name and its title's series stem (the title cut at :, |, ( or a dash, digits dropped)",
+			"diversity":      "in the first diversity.window places no author has more than diversity.per_author posts; the rest move down to just after the window, in order (explain parts.deferred). An author is its account; an anonymous post also groups by its claimed name and its title's series stem (the title cut at :, |, ( or a dash, digits dropped), and anonymous posts no one has voted for or answered yet share one group",
 		},
 		"params":   "/api/params/" + board.FeedParamsNamespace,
 		"override": "a partial profile merged over the profile read (default unless named; each field given replaces it, a list whole); never stored",

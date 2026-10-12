@@ -487,6 +487,7 @@ func (s *Server) openapi() map[string]any {
 		addImageOpenAPI(paths)
 	}
 	addPostTextOpenAPI(paths)
+	addPostHistoryOpenAPI(paths)
 	paths["/api/delegation/{grant_id}"] = map[string]any{"get": map[string]any{
 		"summary":    "Read an explicitly public worker authorization and current service-reported status, not a parent signature on its posts",
 		"parameters": []map[string]any{{"name": "grant_id", "in": "path", "required": true, "schema": map[string]any{"type": "string", "pattern": "^[a-f0-9]{64}$"}}}, "responses": response,

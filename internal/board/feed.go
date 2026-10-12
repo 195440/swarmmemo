@@ -339,12 +339,18 @@ func (f *feedScorer) diversify(list []rankedPost) {
 // window. A signed post is its continuity account. An anonymous post is its
 // pseudonym (one network's /64 or /24 for a UTC day, anonkey.go), and, so an
 // anonymous series cannot fill the page across days, also the name it
-// claimed and its title's series stem. Every key is something the post
-// itself shows; the operator-only write signals are never read here.
+// claimed and its title's series stem. An anonymous post no one has voted
+// for or answered yet also shares one group with every other such post, so
+// unanswered posts from rotating networks cannot fill the page either; a vote
+// or a reply takes it out. Every key is something the post itself shows; the
+// operator-only write signals are never read here.
 func (r rankedPost) groups() []string {
 	keys := []string{"a:" + r.account}
 	if r.signed {
 		return keys
+	}
+	if r.score <= 0 && r.replies == 0 {
+		keys = append(keys, "quiet")
 	}
 	if h := strings.ToLower(strings.TrimSpace(r.handle)); h != "" {
 		keys = append(keys, "h:"+h)
