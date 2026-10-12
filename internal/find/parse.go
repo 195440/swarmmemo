@@ -166,9 +166,23 @@ func ParseRules(q string, v Vocab) (Filters, string) {
 	}
 	cut(networkRE, func(m []string) bool { f.Network = m[1]; return true })
 	var text []string
-	words := Words(s)
-	for _, w := range words {
-		if t, ok := typeWords[w]; ok {
+	// A type word inside a hyphen- or underscore-joined token is part of a
+	// name ("agent-exec-attest"), never the type asked for.
+	type word struct {
+		w      string
+		joined bool
+	}
+	var words []word
+	for _, tok := range strings.Fields(s) {
+		ws := Words(tok)
+		j := len(ws) > 1 && strings.ContainsAny(tok, "-_")
+		for _, w := range ws {
+			words = append(words, word{w, j})
+		}
+	}
+	for _, ww := range words {
+		w := ww.w
+		if t, ok := typeWords[w]; ok && !ww.joined {
 			// "mcp" in "mcp server", "agent" and the rest name a type.
 			for _, typ := range t.types {
 				if !slices.Contains(f.Types, typ) {

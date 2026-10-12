@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"slices"
 	"strings"
 	"sync"
@@ -109,14 +110,15 @@ func (in *Intent) Parse(ctx context.Context, q, mode string) intentParse {
 	defer cancel()
 	raw, err := in.model.Complete(ctx, intentSystem(in.vocab), q)
 	if err != nil {
-		in.fail()
-		if errors.Is(err, ErrNoModel) {
-			return rules("no model configured")
+		note := "model unavailable"
+		switch {
+		case errors.Is(err, ErrNoModel):
+			note = "no model configured"
+		case ctx.Err() != nil:
+			note = "model timed out"
 		}
-		if ctx.Err() != nil {
-			return rules("model timed out")
-		}
-		return rules("model unavailable")
+		in.fail(note, err)
+		return rules(note)
 	}
 	f, text, problem := in.read(raw, q)
 	if problem != "" {
@@ -145,10 +147,17 @@ func (in *Intent) admit() string {
 	return ""
 }
 
-func (in *Intent) fail() {
+// fail pauses the model for ModelPause and logs the pause once: a
+// failure while paused (a call admitted just before) extends it quietly.
+func (in *Intent) fail(why string, err error) {
 	in.mu.Lock()
-	in.pausedTo = in.now().Add(ModelPause)
+	now := in.now()
+	already := now.Before(in.pausedTo)
+	in.pausedTo = now.Add(ModelPause)
 	in.mu.Unlock()
+	if !already {
+		slog.Warn("Find intent model paused; the rules parse meanwhile", "why", why, "err", err, "pause", ModelPause.String())
+	}
 }
 
 func (in *Intent) cached(key string) (intentParse, bool) {

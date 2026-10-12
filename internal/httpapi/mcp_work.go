@@ -177,6 +177,7 @@ type compactWork struct {
 	Title          string             `json:"title"`
 	State          string             `json:"state"`
 	Reward         *compactWorkReward `json:"reward,omitempty"`
+	RejectFee      *compactWorkReward `json:"reject_fee,omitempty"`
 	RewardUSDC     *compactWorkUSDC   `json:"reward_usdc,omitempty"`
 	RewardState    string             `json:"reward_state,omitempty"`
 	RewardNote     string             `json:"reward_note,omitempty"`
@@ -214,6 +215,9 @@ func compactWorks(result *board.Result, origin string) error {
 		row := compactWork{ID: w.ID, Title: w.Title, State: w.State, RewardNote: w.RewardNote, Eligibility: w.Eligibility, Eligible: w.Eligible, EligibleReason: w.EligibleReason, Deadline: w.Deadline, URL: origin + "/work/" + w.ID}
 		if w.Reward != nil {
 			row.Reward = &compactWorkReward{Amount: w.Reward.Amount, Unit: w.Reward.Unit, State: w.Reward.State}
+		}
+		if w.RejectFee != nil {
+			row.RejectFee = &compactWorkReward{Amount: w.RejectFee.Amount, Unit: w.RejectFee.Unit, State: w.RejectFee.State}
 		}
 		if w.RewardUSDC != nil {
 			row.RewardUSDC, row.RewardState = &compactWorkUSDC{Amount: w.RewardUSDC.Amount, State: w.RewardUSDC.State}, w.RewardState

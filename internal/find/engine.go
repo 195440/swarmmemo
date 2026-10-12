@@ -203,17 +203,32 @@ func (e *Engine) Find(ctx context.Context, req Request) (Answer, error) {
 	if err != nil {
 		return ans, err
 	}
-	if len(cands) == 0 && (len(parsed.Types) > 0 || parsed.Category != "" || parsed.Output != "") {
-		// Filters read from the query matched nothing: search the whole query
-		// without the ones a name can trip ("csv" read as an output, "PyPI" as
-		// a package), and say so. A price, network or protocol the query
-		// states is a limit, kept, as is every filter the caller set.
+	if inferredNarrows(parsed, req.SetKeys) {
+		// A type, category or output read from the query (never one the
+		// caller set) can hide the match: "csv" read as an output, "PyPI" as
+		// a package, "agent" in an offering's name as the agent type. Search
+		// the whole query without them too, and answer with that when the
+		// filtered search matched nothing or matched clearly worse. A price,
+		// network or protocol the query states is a limit, kept, as is every
+		// filter the caller set.
 		set := merge(Filters{MaxPrice: parsed.MaxPrice, Network: parsed.Network, Protocol: parsed.Protocol}, req.Set, req.SetKeys)
-		words = MatchWords(q)
-		if cands, expanded, err = ix.search(ctx, words, set); err != nil {
+		all := MatchWords(q)
+		wide, wideExpanded, err := ix.search(ctx, all, set)
+		if err != nil {
 			return ans, err
 		}
-		if len(cands) > 0 {
+		relax := len(wide) > 0 && len(cands) == 0
+		if len(wide) > 0 && len(cands) > 0 && len(all) > 0 {
+			// Both sides are scored on the whole query's words, so the words
+			// the parse took out do not tip it by themselves.
+			narrow, _, err := ix.search(ctx, all, ans.Filters)
+			if err != nil {
+				return ans, err
+			}
+			relax = clearlyBetter(wide, narrow)
+		}
+		if relax {
+			cands, expanded, words = wide, wideExpanded, all
 			ans.Filters, ans.Text = set, q
 			ans.ParseNote = strings.TrimSpace(ans.ParseNote + " " + RelaxedNote)
 		}
@@ -241,6 +256,36 @@ func (e *Engine) Find(ctx context.Context, req Request) (Answer, error) {
 		ans.NextCursor = strconv.Itoa(end)
 	}
 	return ans, nil
+}
+
+// RelaxRatio is how much stronger the whole query's best match, searched
+// without the type, category and output the parse inferred, must be than the
+// best match those filters admit (BM25, on the same words) for Find to answer
+// with it. At 1.5 the filtered best is at most two thirds of the relaxed
+// one: further apart than quality can ever move a result (QualityShift),
+// and about what a second rare query word, or a word in the name rather
+// than the description, is worth; a near tie keeps the filters the query
+// asked for.
+const RelaxRatio = 1.5
+
+// inferredNarrows reports whether the parse read a type, category or output
+// the caller did not set.
+func inferredNarrows(parsed Filters, set map[string]bool) bool {
+	return (len(parsed.Types) > 0 && !set["type"]) || (parsed.Category != "" && !set["category"]) || (parsed.Output != "" && !set["output"])
+}
+
+// clearlyBetter reports whether wide's best match beats narrow's by
+// RelaxRatio. Candidates come best first; FTS5's bm25 is negative, lower is
+// better, so -bm25 is the strength.
+func clearlyBetter(wide, narrow []match) bool {
+	if len(wide) == 0 {
+		return false
+	}
+	if len(narrow) == 0 {
+		return true
+	}
+	w, n := -wide[0].bm25, -narrow[0].bm25
+	return w > 0 && w >= RelaxRatio*n
 }
 
 // MatchWords are the words of text a search matches: no filler, at most

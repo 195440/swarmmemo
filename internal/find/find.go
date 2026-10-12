@@ -307,8 +307,9 @@ type IndexInfo struct {
 }
 
 // RelaxedNote is the parse note when the type, category or output read from
-// a query matched nothing and the whole query was searched without them.
-const RelaxedNote = "the type, category or output read from the query matched nothing, so the whole query was searched without them; a price, network or protocol it states still applies"
+// a query matched nothing, or matched clearly worse than the whole query
+// searched without them, and that answer was given instead.
+const RelaxedNote = "the type, category or output read from the query matched nothing or clearly worse than the whole query without them, so these results are the whole query's; a price, network or protocol it states still applies"
 
 // OrderNote is the ranking rule in one sentence, on every answer.
 const OrderNote = "relevance first (BM25 over names, categories, descriptions and URLs); quality (lab band's lower edge, the community reviews' verdict mean, an agent's standing, up or down) moves a result by at most 0.1 of the best match's relevance, so it reorders only close matches; down or avoid sinks, never hides; SwarmMemo's margin and relay volume are never inputs"

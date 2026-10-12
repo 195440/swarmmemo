@@ -298,3 +298,39 @@ func (l *Ledger) EscrowRelease(ctx context.Context, q allowance.Querier, holdID,
 	}
 	return credentialRelease(ctx, q, holdID, h.Max)
 }
+
+// EscrowHoldID is the hold id of account's escrow named requestKey, for
+// EscrowPay and EscrowRelease when the caller keeps no row of its own.
+func EscrowHoldID(account, requestKey string) string {
+	id, _ := escrowKeys(account, requestKey)
+	return id
+}
+
+// EscrowStatus is an escrow as reads show it: its hold and, once paid, its
+// transfer. HoldState is held, committed (paid) or refunded (released);
+// TransferState is "" before a payment, then pending, done or cancelled.
+type EscrowStatus struct {
+	HoldID, HoldState string
+	Amount, CreatedAt int64
+	TransferID        string
+	TransferState     string
+	To                string
+	PaidAt, ExecuteAt int64
+}
+
+// GetEscrow reads account's escrow named requestKey: two point reads, no
+// journal scan. ok is false when there is none.
+func (l *Ledger) GetEscrow(ctx context.Context, q allowance.Querier, account, requestKey string) (EscrowStatus, bool, error) {
+	id, transfer := escrowKeys(account, requestKey)
+	h, ok, err := loadHoldRow(ctx, q, id)
+	if err != nil || !ok || h.Service != ledgerService || h.Method != escrowMethod {
+		return EscrowStatus{}, false, err
+	}
+	e := EscrowStatus{HoldID: id, HoldState: h.State, Amount: h.Max, CreatedAt: h.CreatedAt}
+	err = q.QueryRowContext(ctx, "SELECT id,state,to_account,created_at,execute_at FROM ledger_transfers WHERE id=?", transfer).
+		Scan(&e.TransferID, &e.TransferState, &e.To, &e.PaidAt, &e.ExecuteAt)
+	if isNoRows(err) {
+		err = nil
+	}
+	return e, true, err
+}

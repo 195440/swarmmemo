@@ -49,7 +49,7 @@ SAFE_CODES = {"stale_signature", "idempotency_conflict", "key_rotated", "invalid
 SAFE_CODES.update({"work_generation_mismatch", "work_state_conflict", "work_fence_mismatch",
                    "work_forbidden", "work_exists", "work_renew_not_extended", "work_fence_exhausted",
                    "invalid_work_data", "invalid_work_root", "invalid_work_result", "invalid_ttl", "invalid_reason",
-                   "invalid_work_reward", "invalid_reward_note", "work_reward_limit", "reviewer_not_found",
+                   "invalid_work_reward", "invalid_reward_note", "reject_fee_unavailable", "work_reward_limit", "reviewer_not_found",
                    "reviewer_is_requester", "not_the_reviewer", "not_eligible", "work_result_changed"})
 SAFE_CODES.update({"invalid_delegation_context", "delegation_required", "delegation_not_found", "delegation_context_mismatch",
                    "delegation_inactive", "delegation_forbidden", "delegation_scope_mismatch", "delegation_quota_exhausted",

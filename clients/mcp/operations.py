@@ -212,7 +212,7 @@ def _valid_checks(checks):
 
 
 def _work(profile, work, expected=None):
-    optional = {"worker", "result_id", "attempt_grant_id", "reward", "reviewer", "reviewer_fee", "eligibility", "request", "eligible", "eligible_reason", "eligible_agent", "eligible_preview", "resolved_from", "result_sha256", "result_changed_since_submit", "requester_record", "verdict_checks"}
+    optional = {"worker", "result_id", "attempt_grant_id", "reward", "reviewer", "reviewer_fee", "reject_fee", "eligibility", "request", "eligible", "eligible_reason", "eligible_agent", "eligible_preview", "resolved_from", "result_sha256", "result_changed_since_submit", "requester_record", "verdict_checks"}
     fields = set("id room title capabilities simulated state stored_state generation service_generation service_id created_at updated_at deadline fence claim_expires_at requester_author requester result_available".split()) | optional
     required = fields - optional
     if not isinstance(work, dict) or set(work) - fields or not required <= work.keys(): raise BridgeError("invalid_response")
@@ -263,7 +263,7 @@ def _work(profile, work, expected=None):
         if name in work and (not isinstance(work[name], str) or not re.fullmatch(HEX64, work[name])): raise BridgeError("invalid_response")
     if "result_id" in work and (not isinstance(work["result_id"], str) or not re.fullmatch(HEX32, work["result_id"])): raise BridgeError("invalid_response")
     if "eligibility" in work and work["eligibility"] not in ("open", "first_work", "linked", "new_agent"): raise BridgeError("invalid_response")
-    for name in ("reward", "reviewer_fee"):
+    for name in ("reward", "reviewer_fee", "reject_fee"):
         if name in work and not isinstance(work[name], dict): raise BridgeError("invalid_response")
     for name in ("requester", "worker", "reviewer"):
         if name not in work: continue
@@ -277,7 +277,7 @@ def _work(profile, work, expected=None):
 
 
 def _transition(profile, item, work_id):
-    optional = {"delegation_id", "resolved_from", "result_sha256", "result_sha256_signed", "checks", "reviewer", "previous_reviewer"}
+    optional = {"delegation_id", "resolved_from", "result_sha256", "result_sha256_signed", "checks", "reviewer", "previous_reviewer", "reject_fee"}
     fields = set("sequence operation author public_key signature signed_payload accepted_at fence generation state".split()) | optional
     if not isinstance(item, dict) or set(item) - fields or not fields - optional <= item.keys(): raise BridgeError("invalid_response")
     for name in ("sequence", "accepted_at", "fence"):

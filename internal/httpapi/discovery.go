@@ -94,6 +94,19 @@ func (s *Server) capabilitiesWith(catalog []services.Entry) map[string]any {
 	caps["gives"] = web.Gives(s.cfg.Features, catalog)
 	caps["personal_assistants"] = s.assistantCapabilities()
 	caps["core_profile"] = s.coreCapabilities()
+	if s.cfg.Features.WorkRejectFee {
+		// C119: an optional reject fee; absent while WORK_REJECT_FEE is off.
+		caps["work_coordination"].(map[string]any)["reject_fee"] = map[string]any{
+			"optional": true, "field": "work.create data reject_fee", "unit": "credit", "minimum": 1,
+			"cap":      fmt.Sprintf("%d%% of the credit reward (at least 1)", board.WorkRejectFeeMaxPercent),
+			"requires": "a credit reward",
+			"escrow":   "held at create beside the reward, with its own transfer fee",
+			"paid":     "once per work item, to the worker whose submitted result is rejected (or cancelled), or left undecided at the deadline (requester_lapsed, review_lapsed)",
+			"returned": "to the requester on accept, on cancel before a result, and at a deadline with no result",
+			"shown_as": "work.get, works.list and work.history reject_fee (state, reason, paid_to); the moving transition's reject_fee",
+			"flag":     "WORK_REJECT_FEE", "instructions": "/protocol.md#work-reject-fee",
+		}
+	}
 	if s.cfg.Features.InboxEntries == board.InboxRead {
 		// C61 step 4: push is a transport of the inbox entry log.
 		caps["push_delivery"].(map[string]any)["inbox"] = map[string]any{

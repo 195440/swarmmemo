@@ -273,6 +273,12 @@ func (s *Store) SweepAllowance(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	// And reject fees of work past its deadline (workrejectfee.go).
+	f, err := s.settleWorkRejectFees(ctx, tx, now, ledger.SweepMax)
+	if err != nil {
+		return 0, err
+	}
+	m += f
 	// And USDC promised to work that lapsed (workusdc.go).
 	v, err := settleWorkUSDCLapsed(ctx, tx, now, ledger.SweepMax)
 	if err != nil {

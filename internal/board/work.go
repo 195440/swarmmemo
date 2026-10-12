@@ -86,6 +86,9 @@ type Work struct {
 	// instead of the requester; ReviewerFee is the credit held for it.
 	Reviewer    *AgentRef   `json:"reviewer,omitempty"`
 	ReviewerFee *WorkReward `json:"reviewer_fee,omitempty"`
+	// RejectFee is the credit held for the worker whose submitted result
+	// is rejected (WORK_REJECT_FEE, workrejectfee.go), once per work item.
+	RejectFee *WorkRejectFee `json:"reject_fee,omitempty"`
 	// RequesterMayDecideAt is when, on a submitted result its reviewer has
 	// left undecided, the requester may accept or reject in the reviewer's
 	// place: the reviewer grace (REVIEWER_GRACE) after the submit. Set only
@@ -202,6 +205,9 @@ type WorkTransition struct {
 	// Checks is the per-property list a verdict (accept or reject) signed
 	// in its data (C97); absent when it sent none.
 	Checks []VerdictCheck `json:"checks,omitempty"`
+	// RejectFee marks the transition that moved the work's reject fee:
+	// paid (a reject or cancel of a submitted result) or released.
+	RejectFee string `json:"reject_fee,omitempty"`
 }
 
 // WorkVerdictChecks is the newest verdict on a work item that signed a
@@ -277,6 +283,9 @@ type workData struct {
 	TxHash            string
 	Reviewer          string
 	ReviewerFee       int64
+	RejectFee         int64
+	RejectFeeSet      bool // reject_fee was sent (refused while WORK_REJECT_FEE is off)
+	RejectFeeBad      bool // and was not an integer
 	Eligibility       string
 	RewardNote        string
 	ResultSHA256      string
@@ -324,7 +333,7 @@ func workDataTakes(operation, name string) bool {
 		return true
 	case "reviewer":
 		return operation == "work.create" || operation == WorkReviewerSet
-	case "title", "capabilities", "reward", "reviewer_fee", "eligibility", "reward_note":
+	case "title", "capabilities", "reward", "reviewer_fee", "reject_fee", "eligibility", "reward_note":
 		return operation == "work.create"
 	case "result_sha256":
 		return workResultHashOp(operation)
@@ -413,6 +422,15 @@ func parseWorkData(raw string, operation string) (workData, error) {
 			dest = &d.Reviewer
 		case "reviewer_fee":
 			dest = &d.ReviewerFee
+		case "reject_fee":
+			// Its own checks, after the flag: an ill-typed value is
+			// reject_fee_unavailable while off, invalid_work_reward while on.
+			if !workDataTakes(operation, name) {
+				return workData{}, invalidWorkField(operation, name)
+			}
+			d.RejectFeeSet = true
+			d.RejectFeeBad = string(value) == "null" || json.Unmarshal(value, &d.RejectFee) != nil
+			continue
 		case "eligibility":
 			dest = &d.Eligibility
 		case "reward_note":
@@ -472,7 +490,7 @@ func parseWorkData(raw string, operation string) (workData, error) {
 	}
 	if create {
 		want = 4
-		for _, optional := range []string{"reward", "reviewer", "reviewer_fee", "eligibility", "reward_note"} {
+		for _, optional := range []string{"reward", "reviewer", "reviewer_fee", "reject_fee", "eligibility", "reward_note"} {
 			if seen[optional] {
 				want++
 			}
@@ -685,6 +703,9 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 	if err != nil {
 		return Result{}, err
 	}
+	if d.RejectFeeSet && !s.config.Features.WorkRejectFee {
+		return Result{}, rejectFeeUnavailable()
+	}
 	if c.Operation == "work.claim" && c.Target == "" && d.ResultSHA256 != "" {
 		return Result{}, problem(400, "invalid_work_data", "result_sha256 goes with a claim that names its result (target), a submit or an accept.")
 	}
@@ -713,7 +734,7 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 	w, err := scanWork(tx.QueryRowContext(ctx, `SELECT `+workColumns+` FROM works w WHERE id=?`, c.MessageID))
 	// The worker before the transition: a reject or cancel clears it, and
 	// that worker still hears of it (MCP Events work.update).
-	worker := w.Worker
+	worker, before := w.Worker, w.State
 	verdict := false  // a reviewer's accept or reject of a submitted result
 	fallback := false // the requester's verdict in a silent reviewer's place
 	if c.Operation == "work.create" {
@@ -742,6 +763,11 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 		}
 		if d.ReviewerFee != 0 && root.Kind != "request" {
 			return Result{}, invalidReviewerFee()
+		}
+		if d.RejectFeeSet {
+			if err = checkRejectFee(d, root.Kind); err != nil {
+				return Result{}, err
+			}
 		}
 		if d.RewardNote != "" && root.Kind != "request" {
 			return Result{}, invalidWorkRewardNote()
@@ -998,6 +1024,7 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 	if _, err = tx.ExecContext(ctx, "UPDATE works SET attempt_grant_id=? WHERE id=?", w.AttemptGrantID, w.ID); err != nil {
 		return Result{}, err
 	}
+	var rejectFeePaid int64
 	// The reward moves with the transition, in its transaction: held on
 	// create, paid on accept, released on cancel. Reject reopens the work
 	// and keeps it held. A reviewer fee is held on create too, paid to the
@@ -1008,6 +1035,9 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 		// credit escrows' does.
 		if err = s.promiseWorkUSDC(ctx, tx, a, w, d.RewardUSDC, now); err == nil {
 			err = s.holdWorkEscrows(ctx, tx, a, w, d.Reward, d.ReviewerFee, now)
+		}
+		if err == nil {
+			err = s.holdWorkRejectFee(ctx, tx, a, w, d.RejectFee, now)
 		}
 	case "work.claim", "work.submit":
 		err = s.setWorkPayTo(ctx, tx, c.Operation, w, d, w.State == "submitted")
@@ -1066,6 +1096,11 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 				err = s.releaseWorkReward(ctx, tx, f, "cancelled", now)
 			}
 		}
+		// The reject fee: paid to the worker of a rejected (or cancelled)
+		// submitted result, released on accept or a cancel before one.
+		if err == nil {
+			rejectFeePaid, err = s.settleRejectFee(ctx, tx, c.Operation, before, w, worker, now)
+		}
 	}
 	if err != nil {
 		return Result{}, err
@@ -1120,6 +1155,9 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 	}
 	if c.Operation == "work.accept" && reward > 0 {
 		ack.Note = workPaidNote(reward)
+	}
+	if rejectFeePaid > 0 {
+		ack.Note = fmt.Sprintf("The reject fee, %d credits, was paid to the worker.", rejectFeePaid)
 	}
 	if c.Operation == "work.accept" || c.Operation == WorkSettle {
 		u, e := loadWorkUSDC(ctx, tx, w.ID)
@@ -1183,6 +1221,9 @@ func (s *Store) projectWork(ctx context.Context, tx *sql.Tx, w workRow, root wor
 		}
 	}
 	if p.Reward, err = s.projectWorkReward(ctx, tx, workRewardsTable, w.ID); err != nil {
+		return Work{}, err
+	}
+	if p.RejectFee, err = s.projectRejectFee(ctx, tx, w); err != nil {
 		return Work{}, err
 	}
 	if p.RewardUSDC, p.RewardReceipt, err = projectWorkUSDC(ctx, tx, w.ID, p.State); err != nil {
@@ -1625,6 +1666,14 @@ func (s *Store) workHistory(ctx context.Context, tx *sql.Tx, c Command, w workRo
 	}
 	if fee != nil {
 		r.Data["reviewer_fee"] = fee
+	}
+	rejectFee, err := s.projectRejectFee(ctx, tx, w)
+	if err != nil {
+		return Result{}, workReadError(err)
+	}
+	if rejectFee != nil {
+		r.Data["reject_fee"] = rejectFee
+		annotateRejectFee(transitions, rejectFee)
 	}
 	effective, err := effectiveWork(ctx, tx, w.ID, generation, s.now().Unix())
 	if err != nil {

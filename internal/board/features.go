@@ -90,6 +90,11 @@ type Features struct {
 	// answers from the queries it always did, or read, which also answers
 	// updates.get, journal.get since and wait= from the log (inbox_read.go).
 	InboxEntries InboxMode
+	// WorkRejectFee is WORK_REJECT_FEE (on or off, the default; C119,
+	// workrejectfee.go): work.create may escrow a reject_fee in credits,
+	// paid to the worker whose submitted result is rejected. Off, reject_fee
+	// is 400 reject_fee_unavailable and nothing on the wire changes.
+	WorkRejectFee bool
 }
 
 // InboxMode is INBOX_ENTRIES: off (the zero value), shadow (written, not
@@ -183,6 +188,13 @@ func ParseFeatures(getenv func(string) string) (Features, error) {
 		f.MPP = true
 	default:
 		errs = append(errs, fmt.Sprintf("MPP must be on or off, not %q", v))
+	}
+	switch v := getenv("WORK_REJECT_FEE"); v {
+	case "", "off":
+	case "on":
+		f.WorkRejectFee = true
+	default:
+		errs = append(errs, fmt.Sprintf("WORK_REJECT_FEE must be on or off, not %q", v))
 	}
 	switch v := getenv("INBOX_ENTRIES"); v {
 	case "", "off":

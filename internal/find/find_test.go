@@ -71,6 +71,8 @@ func TestParseRules(t *testing.T) {
 		{"npm package for dates", Filters{Types: []string{TypePkg}}, "npm dates"},
 		{"forecast for 3 days", Filters{}, "forecast 3 days"},
 		{"an api that returns images of cats", Filters{Types: []string{TypeService}, Output: "image"}, "cats"},
+		{"agent-exec-attest for a build", Filters{}, "agent exec attest build"},
+		{"agent-exec-attest agent", Filters{Types: []string{TypeAgent}}, "agent exec attest"},
 	} {
 		f, text := ParseRules(c.q, testVocab)
 		if !slices.Equal(f.Types, c.want.Types) || f.Category != c.want.Category || f.MaxPrice != c.want.MaxPrice || f.Output != c.want.Output || f.Network != c.want.Network {
@@ -430,5 +432,47 @@ func TestFindRelaxesInferredFilters(t *testing.T) {
 	set := Request{Query: "weather api that returns images", Parse: ModeRules, Set: Filters{Category: "crypto"}, SetKeys: map[string]bool{"category": true}}
 	if a, _ = e.Find(ctx, set); len(a.Results) != 0 || a.Filters.Category != "crypto" {
 		t.Fatalf("set filter dropped: %v filters %+v", ids(a), a.Filters)
+	}
+}
+
+// A type read from the query that hides a clearly better match gives way
+// to the whole query (Skitter c47: "agent exec attest" read as type agent
+// hid the agent-exec-attest offering behind weak agent matches); a near
+// tie keeps the filtered answer, and a type the caller set never relaxes.
+func TestFindRelaxesHiddenBetterMatch(t *testing.T) {
+	docs := []Doc{
+		{Type: TypeOffering, ID: "ax/agent-exec-attest", Name: "agent exec attest", Description: "Run a command in a sandbox and get a signed attestation of the exec.", Price: 10000, Network: "base", Quality: Quality{LabLower: -1}},
+		{Type: TypeAgent, ID: "fp-helper", Name: "helper agent", Description: "A general purpose agent.", Price: Unpriced, Quality: Quality{LabLower: -1}},
+		{Type: TypeAgent, ID: "fp-research", Name: "research agent", Description: "An agent for research.", Price: Unpriced, Quality: Quality{LabLower: -1}},
+		{Type: TypeAgent, ID: "fp-trader", Name: "trading agent", Description: "An agent that trades.", Price: Unpriced, Quality: Quality{LabLower: -1}},
+		{Type: TypeAgent, ID: "fp-translator", Name: "translator agent", Description: "I translate documents.", Price: Unpriced, Quality: Quality{LabLower: -1}},
+		{Type: TypeOffering, ID: "tx/translator", Name: "translator", Description: "Documents translated in a day.", Price: 10000, Quality: Quality{LabLower: -1}},
+	}
+	e := NewEngine(Config{Source: func(context.Context) ([]Doc, error) { return docs, nil }, Vocab: testVocab})
+	t.Cleanup(e.Close)
+	ctx := context.Background()
+	a, err := e.Find(ctx, Request{Query: "agent exec attest", Parse: ModeRules})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(a); len(got) == 0 || got[0] != "ax/agent-exec-attest" || len(a.Filters.Types) != 0 || a.Text != "agent exec attest" || !strings.Contains(a.ParseNote, RelaxedNote) {
+		t.Fatalf("hidden better match: %v filters %+v text %q note %q", got, a.Filters, a.Text, a.ParseNote)
+	}
+	// A comparable match of the type read keeps the filtered answer.
+	if a, _ = e.Find(ctx, Request{Query: "translator agent", Parse: ModeRules}); len(a.Results) == 0 || a.Results[0].ID != "fp-translator" || !slices.Equal(a.Filters.Types, []string{TypeAgent}) || strings.Contains(a.ParseNote, RelaxedNote) {
+		t.Fatalf("comparable: %v filters %+v note %q", ids(a), a.Filters, a.ParseNote)
+	}
+	// A type the caller set is never relaxed, even when nothing matches.
+	set := Request{Query: "agent exec attest", Parse: ModeRules, Set: Filters{Types: []string{TypeAgent}}, SetKeys: map[string]bool{"type": true}}
+	if a, _ = e.Find(ctx, set); slices.Contains(ids(a), "ax/agent-exec-attest") || !slices.Equal(a.Filters.Types, []string{TypeAgent}) || strings.Contains(a.ParseNote, RelaxedNote) {
+		t.Fatalf("caller type relaxed: %v filters %+v note %q", ids(a), a.Filters, a.ParseNote)
+	}
+	// A price the query states holds while the type gives way.
+	if a, _ = e.Find(ctx, Request{Query: "agent exec attest under a cent", Parse: ModeRules}); len(a.Results) == 0 || a.Results[0].ID != "ax/agent-exec-attest" || a.Filters.MaxPrice != "0.01" || !strings.Contains(a.ParseNote, RelaxedNote) {
+		t.Fatalf("price kept: %v filters %+v note %q", ids(a), a.Filters, a.ParseNote)
+	}
+	// The joined name reads as a name: no type is inferred at all.
+	if a, _ = e.Find(ctx, Request{Query: "agent-exec-attest", Parse: ModeRules}); len(a.Results) == 0 || a.Results[0].ID != "ax/agent-exec-attest" || len(a.Filters.Types) != 0 || strings.Contains(a.ParseNote, RelaxedNote) {
+		t.Fatalf("joined: %v filters %+v note %q", ids(a), a.Filters, a.ParseNote)
 	}
 }
