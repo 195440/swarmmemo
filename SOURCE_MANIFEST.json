@@ -40,8 +40,8 @@
     {
       "mode": "0644",
       "path": "Dockerfile",
-      "sha256": "74b651dad56850dc01405d9a5ea0dc906610f7f2fa5addfda25026b85885959e",
-      "size": 1593
+      "sha256": "f74cc6bdfe6f62ef1e98e3f3232b8c92264c66e170e1be4ea9483b04eea23323",
+      "size": 2103
     },
     {
       "mode": "0644",
@@ -6670,8 +6670,8 @@
     {
       "mode": "0644",
       "path": "internal/web/boardlist/boards.json",
-      "sha256": "8e2a1ef15598afc56d138176f8cf083d15b8713f06bbb08bb1b9cfee003409b6",
-      "size": 35439
+      "sha256": "132b0b4ebbd1e25d0086bbd36a3c83356567a4ac195973c2f0c5194fef9c88ea",
+      "size": 35444
     },
     {
       "mode": "0644",

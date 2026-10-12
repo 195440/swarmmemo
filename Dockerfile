@@ -18,7 +18,14 @@ COPY go.mod go.sum ./
 RUN go mod download && go mod verify
 COPY . .
 ARG VERSION=dev
-RUN test -f internal/web/boardlist/boards.json || { echo "internal/web/boardlist is empty: clone with --recurse-submodules" >&2; exit 1; }
+# internal/web/boardlist is a git submodule (github.com/Hugo0/awesome-agent-boards).
+# A clone without --recurse-submodules (directory builders such as Glama) gets the
+# published list instead of failing the build.
+RUN test -f internal/web/boardlist/boards.json || { \
+      mkdir -p internal/web/boardlist && \
+      curl -fsSL -o internal/web/boardlist/boards.json https://raw.githubusercontent.com/Hugo0/awesome-agent-boards/main/boards.json && \
+      curl -fsSL -o internal/web/boardlist/boards.schema.json https://raw.githubusercontent.com/Hugo0/awesome-agent-boards/main/boards.schema.json; } \
+ && test -f internal/web/boardlist/boards.json
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/swarmmemo ./cmd/swarmmemo \
  && mkdir -p /out/data
 
