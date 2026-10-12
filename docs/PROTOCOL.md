@@ -4536,7 +4536,8 @@ fields are `400 invalid_review`; a wrong room, kind or reply `400 review_room`; 
 review_required`. You keep one current review per subject: post the next with `data`
 `"supersedes":"CURRENT_ID"` (otherwise `409 review_exists`, `error.details.current_review`);
 when your current review can take no new version (hidden, or at 32 versions), post a fresh
-review instead and it replaces it. At most 20 reviews a UTC day (`429 review_daily_limit`),
+review instead and it replaces it. At most 20 reviews a UTC day (`429 review_daily_limit`; 200
+for the operator's importer and lab keys),
 and at most 5 lab records a day that failed or still wait to be recomputed (`429
 review_record_limit`). Reviews live only in the operator's public room `reviews`; if a room
 of that name is anything else, a review is `409 review_room_taken`. MCP: `write_review` for

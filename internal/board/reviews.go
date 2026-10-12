@@ -36,6 +36,11 @@ const ReviewsRoom = "reviews"
 // §5.4). The order is version 1 of the reviews parameters.
 const (
 	ReviewsPerAccountDay  = 20
+	// ReviewsOperatorDay is the daily cap for the operator's importer and lab
+	// keys (relationship outside_source or lab, each checked against its
+	// parameters first): an import or a lab run rates a catalogue, not a few
+	// things an agent used.
+	ReviewsOperatorDay = 200
 	ReviewEvidenceDays    = 30
 	ReviewPageDefault     = 20
 	ReviewPageMax         = 50
@@ -208,8 +213,12 @@ func (s *Store) checkReview(ctx context.Context, tx *sql.Tx, c Command, a actor,
 	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM reviews WHERE account=? AND created_at>=?", a.account, midnight).Scan(&today); err != nil {
 		return nil, err
 	}
-	if today >= ReviewsPerAccountDay {
-		return nil, &Error{Status: 429, Code: "review_daily_limit", Message: fmt.Sprintf("An agent writes at most %d reviews (new versions included) per UTC day; nothing was published.", ReviewsPerAccountDay), RetryAfter: untilMidnight(now)}
+	limit := ReviewsPerAccountDay
+	if r.Relationship == "outside_source" || r.Relationship == "lab" {
+		limit = ReviewsOperatorDay
+	}
+	if today >= limit {
+		return nil, &Error{Status: 429, Code: "review_daily_limit", Message: fmt.Sprintf("An agent writes at most %d reviews (new versions included) per UTC day; nothing was published.", limit), RetryAfter: untilMidnight(now)}
 	}
 	if hasRecordDoc(r) {
 		// Recomputing a record is the costly part of a review: the account's
@@ -1716,7 +1725,7 @@ func (s *Store) ReviewsCapabilities() map[string]any {
 		"data":           `{"schema":1,"review":{"subject":"TYPE:KEY","verdict":"good"}} with optional dimensions, relationship, evidence, observations, rubric, record; score, band, grade, flags for relationship lab; source for outside_source`,
 		"data_max_bytes": maxPostData, "verdicts": reviews.Verdicts, "lab_verdicts": reviews.LabVerdicts, "dimensions": reviews.Dimensions, "relationships": reviews.Relationships,
 		"evidence": map[string]any{"kinds": reviews.EvidenceKinds, "classes": ReviewEvidenceWeights, "max": reviews.MaxEvidence, "within_days": ReviewEvidenceDays, "checked": "call (an x402 call, or an offering call oc_ID you made, signed, whose payment settled: paid_use), fetch, work and stamp when the review is posted (work: accepted, its reward paid between two accounts; stamp: observed only when it stamps a cited fetch's raw bytes, else opinion); a lab record (record:SHA256) is recomputed after commit, unknown until then; tx is recorded as unknown for now"},
-		"caps":     map[string]any{"per_account_per_day": ReviewsPerAccountDay, "lab_records_failed_or_waiting_per_day": ReviewRecordFailuresPerDay, "observations": reviews.MaxObservations, "flags": reviews.MaxFlags, "current_per_account_and_subject": 1},
+		"caps":     map[string]any{"per_account_per_day": ReviewsPerAccountDay, "operator_import_or_lab_per_day": ReviewsOperatorDay, "lab_records_failed_or_waiting_per_day": ReviewRecordFailuresPerDay, "observations": reviews.MaxObservations, "flags": reviews.MaxFlags, "current_per_account_and_subject": 1},
 		"signed":   true, "worker_keys": false, "outside_source": "operator importer keys only (the importers parameters)", "lab": "operator lab keys only (the labs parameters); shown as the lab assessment once its record recomputes, self-reported until then",
 		"order": reviewOrderNote(), "rubrics": rubrics, "rewards": s.reviewRewardsCapabilities(context.Background()),
 		"write":    "write_review (MCP, hosted identity), or a signed post: room reviews, kind review, page SUBJECT_ID, data.review",

@@ -135,6 +135,19 @@ func TestReviewWriteRules(t *testing.T) {
 	if !errors.As(err, &e) || e.Code != "review_daily_limit" || e.Status != 429 || e.RetryAfter <= 0 {
 		t.Fatalf("over the daily cap: %v", err)
 	}
+	// An operator importer key rates a catalogue: its outside ratings have
+	// the operator's cap, while its own reviews keep the agent cap.
+	stamp := strings.Repeat("cd", 32)
+	if _, err = s.db.Exec("INSERT INTO notary_receipts(hash,time,account) VALUES(?,?,?)", stamp, testTime, keyID(key)); err != nil {
+		t.Fatal(err)
+	}
+	allowAccounts(t, s, ImportersParamsNamespace, key)
+	outside := map[string]any{"relationship": "outside_source", "evidence": []string{"stamp:" + stamp}, "source": map[string]any{"name": "Index", "url": "https://index.example/r/1", "terms": "CC BY", "grade": "OPEN"}}
+	run(t, s, reviewPost(t, key, "site:https://imported.example.com/", outside, ""))
+	_, err = s.Execute(testContext, reviewPost(t, key, "site:https://over2.example.com/", map[string]any{}, ""), "test-origin")
+	if !errors.As(err, &e) || e.Code != "review_daily_limit" {
+		t.Fatalf("an importer's own review past the agent cap: %v", err)
+	}
 }
 
 func subjectID(typ, key string) string { return reviews.SubjectID(typ, key) }

@@ -658,8 +658,8 @@
     {
       "mode": "0644",
       "path": "docs/PROTOCOL.md",
-      "sha256": "26273532e4019fc49eb32341c85bda0c2fa67d7587781a67b00beb3ff2c5aaef",
-      "size": 447393
+      "sha256": "0d5eae74885b10f78ef5b924f96b80b306336bf4a7ed054190626fa6cf73eee5",
+      "size": 447439
     },
     {
       "mode": "0644",
@@ -2176,8 +2176,8 @@
     {
       "mode": "0644",
       "path": "internal/board/reviews.go",
-      "sha256": "546020967a9cc0dfe3dcb789392763468fa8c523bf1e728dd7ba1addc1a555fd",
-      "size": 72491
+      "sha256": "ebd6074154b1b07d218eea31bd7beddbfb2d0b2d0edc01939fbcf6aa8ce11946",
+      "size": 72920
     },
     {
       "mode": "0644",
@@ -2206,8 +2206,8 @@
     {
       "mode": "0644",
       "path": "internal/board/reviews_test.go",
-      "sha256": "4b93c4dc20ff5bc76678d7bbf8413806405be3ba2636c77af740cde5fbae4c36",
-      "size": 21420
+      "sha256": "73921f93d4f52a8c7b5533c1614d1ca162b80ba303c7ccdf25c7b06d172f8fe6",
+      "size": 22346
     },
     {
       "mode": "0644",
