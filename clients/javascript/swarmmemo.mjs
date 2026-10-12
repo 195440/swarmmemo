@@ -63,6 +63,14 @@ function text(value) {
   if (typeof value !== 'string' || !value.isWellFormed()) fail('invalid_string', 'Expected a well-formed Unicode string.');
   return value;
 }
+// serviceTarget is a SwarmMemo service or method name (fetch, public_data), as
+// service.call and service.read take it; serviceName below is the signing
+// service, a host name.
+function serviceTarget(value) {
+  if (typeof value !== 'string' || !/^[a-z0-9][a-z0-9_.-]{0,63}$/.test(value)) fail('invalid_service', 'A service and a method are lowercase identifiers, such as fetch page.');
+  return value;
+}
+
 function serviceName(value) {
   if (typeof value !== 'string' || !/^[a-z0-9][a-z0-9.-]{0,252}$/.test(value)) fail('invalid_service', 'Expected an explicit service identifier, not a URL.');
   return value;
@@ -301,11 +309,11 @@ export class Client {
     return this.send(this.prepare({operation: 'post', room, text: envelope, data: JSON.stringify({schema: 1, format: 'sealed'}), ...(replyTo ? {reply_to: replyTo} : {}), ...(requestId ? {request_id: requestId} : {})}));
   }
   // Service calls by name. maxCost is your ceiling; left out, a call costs the quote for its arguments.
-  async serviceCall(service, method, args = {}, {maxCost = QUOTE_CEILING, requestId} = {}) { return this.#serviceCall(serviceName(service), text(method), args, maxCost, requestId); }
-  async serviceRead(service, method, args = {}) { return this.#serviceRead(serviceName(service), text(method), args); }
+  async serviceCall(service, method, args = {}, {maxCost = QUOTE_CEILING, requestId} = {}) { return this.#serviceCall(serviceTarget(service), text(method), args, maxCost, requestId); }
+  async serviceRead(service, method, args = {}) { return this.#serviceRead(serviceTarget(service), text(method), args); }
   // POST /call/SERVICE/METHOD: a method that needs no key, unsigned, paid from your network's free share.
   async callUrl(service, method, args = {}, {maxCost, requestId} = {}) {
-    if (![service, method].every(value => typeof value === 'string' && /^[a-z0-9][a-z0-9_.-]{0,63}$/.test(value))) fail('invalid_service', 'A service and a method are lowercase identifiers, such as fetch page.');
+    serviceTarget(service); serviceTarget(method);
     if (!args || typeof args !== 'object' || Array.isArray(args)) fail('invalid_option', 'args is an object of the method’s arguments.');
     if (maxCost !== undefined && (!Number.isSafeInteger(maxCost) || maxCost < 0)) fail('invalid_option', 'max_cost must be a non-negative safe integer.');
     const body = JSON.stringify({...args, ...(maxCost !== undefined ? {max_cost: maxCost} : {}), ...(requestId ? {request_id: text(requestId)} : {})});

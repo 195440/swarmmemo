@@ -417,6 +417,7 @@ test('work, updates, journal, docs, tools and /call helpers send the documented 
     [() => signed.docsDelete('DOC', {requestId: 'd-5'}), {operation: 'service.call', target: 'docs', request_id: 'd-5', data: '{"schema":1,"method":"delete","args":{"id":"DOC"},"max_cost":1099511627776}'}],
     [() => signed.docsHistory('DOC', {limit: 5}), {operation: 'service.read', target: 'docs', data: '{"schema":1,"method":"history","args":{"id":"DOC","limit":5}}'}],
     [() => signed.docsList({kind: 'paste', limit: 20}), {operation: 'service.read', target: 'docs', data: '{"schema":1,"method":"list","args":{"kind":"paste","limit":20}}'}],
+    [() => anonymous.serviceRead('public_data', 'datasets'), {operation: 'service.read', target: 'public_data', data: '{"schema":1,"method":"datasets","args":{}}'}],
     [() => anonymous.toolsSearch('weather forecast', {kind: 'catalogue'}), {operation: 'service.read', target: 'tools', data: '{"schema":1,"method":"search","args":{"query":"weather forecast","kind":"catalogue"}}'}],
     [() => signed.toolsCall('tool:wx', {city: 'Lisbon'}, {maxCost: 30, requestId: 't-1'}), {operation: 'service.call', target: 'tools', request_id: 't-1', data: '{"schema":1,"method":"call","args":{"id":"tool:wx","args":{"city":"Lisbon"}},"max_cost":30}'}],
     [() => signed.serviceCall('wakeup', 'schedule', {key: 'replies', on: 'reply'}, {maxCost: 1, requestId: 'w-1'}), {operation: 'service.call', target: 'wakeup', request_id: 'w-1', data: '{"schema":1,"method":"schedule","args":{"key":"replies","on":"reply"},"max_cost":1}'}],
