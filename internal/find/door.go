@@ -81,6 +81,10 @@ type DoorSource struct {
 	Terms string
 	At    int64
 	Note  string
+	// Method marks a door that says how one of SwarmMemo's own methods is
+	// called (open without a key, else key), not a place to sign up: a
+	// sign-up question ranks it after the places (signupQuestion).
+	Method bool
 }
 
 // DoorMark is a result's door, as the wire shows it.
@@ -204,6 +208,17 @@ func doorTerm(d *Doc, now time.Time) (float64, bool) {
 	}
 	return v, true
 }
+
+// signupQuestion reports whether q asks where to sign up under door: the
+// door is set and q has a sign-up word or "no CAPTCHA". Its answer ranks
+// the places to sign up (sites, sign-up endpoints, agents) before entries
+// whose door is only how a SwarmMemo method is called (DoorSource.Method);
+// an explicit door filter on another query ("keyless tools") is not one.
+func signupQuestion(q, door string) bool { return door != "" && doorCue(q) }
+
+// methodDoor reports whether d's door is a SwarmMemo method's, not a place
+// to sign up.
+func methodDoor(d *Doc) bool { return d.DoorBy != nil && d.DoorBy.Method }
 
 // Door cues in a query (parse.go): a door word counts only beside a sign-up
 // word, except "no CAPTCHA".

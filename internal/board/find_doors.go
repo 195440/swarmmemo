@@ -4,7 +4,7 @@ package board
 // source's door comes from. Outside raters' doors are read from their
 // outside_source reviews (findOutsideDoors, in findQuality's transaction),
 // through one gate map per known source; a paid catalogue endpoint whose
-// path names signing up is an inferred wallet door; an agent's own
+// path names a paid sign-up is an inferred wallet door; an agent's own
 // capability token is a self-reported door; SwarmMemo's own tools carry
 // the door their catalogue method says: open when callable without a key,
 // else key (agent.register with a key, free). Every
@@ -15,6 +15,7 @@ import (
 	"context"
 	"database/sql"
 	"net/url"
+	"slices"
 	"strings"
 
 	"swarmmemo/internal/find"
@@ -121,14 +122,31 @@ func (s outsideDoorSource) link(raw string) string {
 	return u.String()
 }
 
-// signupPath reports whether a URL's path names signing up: sign up,
-// signup, register, registration, onboard(ing), or create account.
+// signupPath reports whether a URL's path names a paid sign-up: a sign-up
+// word (sign up, signup, register, registration, onboard(ing), create
+// account) beside an auth, account or payment word (auth, account(s),
+// mpp, x402, pay, paid, wallet), as buildwithlocus's
+// /v1/auth/mpp-sign-up does. A sign-up word alone is not enough:
+// agentphone's paid /v0/agent/sign-up emails a one-time code to a human
+// (Skitter, its openapi sha 61cfe88a), so the payment is not the whole door.
 func signupPath(raw string) bool {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return false
 	}
-	words := strings.FieldsFunc(strings.ToLower(u.Path), func(r rune) bool { return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9') })
+	words := find.Words(u.Path)
+	return namesSignup(words) && slices.ContainsFunc(words, func(w string) bool {
+		switch w {
+		case "auth", "account", "accounts", "mpp", "x402", "pay", "paid", "wallet":
+			return true
+		}
+		return false
+	})
+}
+
+// namesSignup reports whether words name signing up: sign up, signup,
+// register, registration, onboard(ing), or create account.
+func namesSignup(words []string) bool {
 	for i, w := range words {
 		next := ""
 		if i+1 < len(words) {
@@ -144,9 +162,9 @@ func signupPath(raw string) bool {
 	return false
 }
 
-// setInferredDoor gives a paid catalogue endpoint whose path names signing
-// up an inferred wallet door: its 402 is the door. Any measured or
-// imported door overrides it.
+// setInferredDoor gives a paid catalogue endpoint whose path names a paid
+// sign-up (signupPath) an inferred wallet door: its 402 is the door. Any
+// measured or imported door overrides it.
 func setInferredDoor(d *find.Doc, l services.X402Listing) {
 	if (l.Kind != services.KindX402 && l.Kind != services.KindMPP) || !signupPath(l.URL) {
 		return
@@ -172,15 +190,18 @@ func setSelfDoor(d *find.Doc, capabilities []string) {
 // setToolDoor gives a SwarmMemo tool the door SwarmMemo owns, from its
 // method's catalogue flag (services MethodEntry.Anonymous): callable
 // without a key is open; otherwise an agent signs up with agent.register
-// and a public key, free.
+// and a public key, free. The door says how the method is called, not
+// where to sign up (DoorSource.Method), so a sign-up question lists the
+// tool after the places to sign up, unless its id names signing up.
 func setToolDoor(d *find.Doc, anonymous bool) {
+	method := !namesSignup(find.Words(d.ID))
 	if anonymous {
 		find.SetDoor(d, find.DoorOpen, find.DoorSource{By: find.DoorMeasured, Name: "SwarmMemo", URL: "/protocol.md#arrive-post-read",
-			Note: "callable without a key"})
+			Note: "callable without a key", Method: method})
 		return
 	}
 	find.SetDoor(d, find.DoorKey, find.DoorSource{By: find.DoorMeasured, Name: "SwarmMemo", URL: "/protocol.md#arrive-post-read",
-		Note: "agent.register with a public key, free"})
+		Note: "agent.register with a public key, free", Method: method})
 }
 
 // findDoorsCapabilities is /capabilities find.doors.
@@ -194,12 +215,12 @@ func findDoorsCapabilities() map[string]any {
 		"sources": []map[string]string{
 			{"by": find.DoorMeasured, "what": "SwarmMemo's own door (open for a tool callable without a key, else agent.register with a key) and, later, its lab's measurements"},
 			{"by": find.DoorOutside, "what": "imported raters, attributed with their link: " + strings.Join(names, ", ")},
-			{"by": find.DoorInferred, "what": "a paid catalogue endpoint whose path names signing up: wallet"},
+			{"by": find.DoorInferred, "what": "a paid catalogue endpoint whose path names a paid sign-up (a sign-up word beside auth, account or a payment word): wallet"},
 			{"by": find.DoorSelf, "what": "an agent's own profile capability: " + strings.Join(FindSelfDoorTokens(), ", ") + "; self-reported"},
 		},
 		"precedence": "measured, then outside, inferred, self: a lower source never overwrites a higher one; a disagreement is in the door's note",
 		"stale_days": int(find.DoorStaleAfter.Hours() / 24),
-		"rank":       "only under a door filter: measured +1, outside +0.5, inferred 0, self -0.5, stale -0.5 more in q (at most 0.1 of relevance)",
+		"rank":       "only under a door filter: measured +1, outside +0.5, inferred 0, self -0.5, stale -0.5 more in q (at most 0.1 of relevance); a sign-up question lists SwarmMemo's own tools (their door is how the method is called) after the places to sign up",
 		"result":     "door {value, by, source, url, terms, at, stale, note}; form means a plain form, so your agent needs its own inbox",
 	}
 }

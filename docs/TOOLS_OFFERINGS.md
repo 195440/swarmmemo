@@ -66,7 +66,9 @@ Signing by hand: `$PAYMENT` is standard base64 of exactly
 `{"x402Version":2,"accepted":ACCEPTS_0,"payload":{"signature":"0x…","authorization":{"from":…,"to":…,"value":…,"validAfter":…,"validBefore":…,"nonce":…}}}`,
 where `ACCEPTS_0` is the 402's `accepts[0]` copied verbatim, and the signature is an EIP-3009
 `TransferWithAuthorization` under the USDC contract's domain (`"USD Coin"`, version `"2"`,
-chain 8453) with a fresh 32-byte nonce and `validBefore` inside `maxTimeoutSeconds`. The x402 v1
+chain 8453) with a fresh 32-byte nonce and `validBefore` up to `maxTimeoutSeconds` ahead.
+The seller can claim the call until `validBefore` minus 30 seconds, so sign for the full window;
+anything under 90 seconds ahead is refused as `400 payment_expired`. The x402 v1
 envelope (top-level `scheme` and `network`) is refused as `400 payment_invalid`.
 
 The answer is `202` with your call and its private poll URL (also in `Location`). The payment

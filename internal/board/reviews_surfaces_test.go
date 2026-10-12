@@ -143,6 +143,24 @@ func TestOfferingIsAReviewableSubject(t *testing.T) {
 		t.Fatalf("agent hit %+v", agentHit)
 	}
 
+	// A keyless call (paid by a wallet alone, no caller key) is the
+	// reviewer's when it was paid from one of the reviewer's verified linked
+	// wallets; nobody else can cite it (alex-226, 544a96d6).
+	walletOwner := keyFor(194)
+	register(t, s, walletOwner)
+	keyless, _ := paidCall(t, s, key, nil, "oracle/forecast", 9)
+	var payer string
+	if err := s.db.QueryRow("SELECT payer FROM offering_calls WHERE id=?", keyless).Scan(&payer); err != nil || payer == "" {
+		t.Fatalf("keyless payer %q %v", payer, err)
+	}
+	if _, err := s.db.Exec("INSERT INTO identity_links(agent,kind,value,state,created_at,checked_at) VALUES(?,'wallet',?,'verified',1,1)", keyID(walletOwner), payer); err != nil {
+		t.Fatal(err)
+	}
+	walletReview := run(t, s, reviewPost(t, walletOwner, uri, map[string]any{"evidence": []string{"call:" + keyless}}, "")).Receipt.ID
+	if class, state, reason := citedEvidence(t, s, walletReview, "call:"+keyless); class != "paid_use" || state != "verified" {
+		t.Fatalf("keyless call from the reviewer's linked wallet: %s %s %s", class, state, reason)
+	}
+
 	// A call paid from one of the provider's own linked wallets proves
 	// nothing about the offering.
 	second, _ := paidCall(t, s, key, late, "oracle/forecast", 2)

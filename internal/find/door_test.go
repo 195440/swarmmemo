@@ -221,3 +221,42 @@ func TestDoorSurvivesRelax(t *testing.T) {
 		t.Fatalf("relaxed: %v filters %+v note %q", ids(a), a.Filters, a.ParseNote)
 	}
 }
+
+// A sign-up question ranks the places to sign up (a site with an outside
+// door, a sign-up endpoint) before SwarmMemo's own tools, whose door only
+// says how the method is called; an explicit door filter on another query
+// ("keyless tools", door open) still finds the tools.
+func TestDoorSignupQuestion(t *testing.T) {
+	docs := []Doc{
+		{Type: TypeService, Kind: KindTool, ID: "swarmmemo:fetch.page", Name: "Fetch: page", Description: "Fetch a page, keyless tool", Price: Unpriced, Quality: Quality{LabLower: -1, State: "up"}},
+		{Type: TypeService, Kind: KindTool, ID: "swarmmemo:inference.complete", Name: "Inference: complete", Description: "Complete a prompt, keyless tool", Price: Unpriced, Quality: Quality{LabLower: -1}},
+		{Type: TypeSite, ID: "forum", Name: "Forum example", Description: "A forum", Price: Unpriced, Quality: Quality{LabLower: -1}},
+		{Type: TypeService, Kind: KindMPP, ID: "locus", Name: "build-with-locus · POST /v1/auth/mpp-sign-up", Price: Unpriced, Quality: Quality{LabLower: -1}},
+	}
+	SetDoor(&docs[0], DoorOpen, DoorSource{By: DoorMeasured, Name: "SwarmMemo", Note: "callable without a key", Method: true})
+	SetDoor(&docs[1], DoorOpen, DoorSource{By: DoorMeasured, Name: "SwarmMemo", Note: "callable without a key", Method: true})
+	SetDoor(&docs[2], DoorForm, DoorSource{By: DoorOutside, Name: "Agent Access Index", At: doorNow.Add(-24 * time.Hour).Unix()})
+	SetDoor(&docs[3], DoorWallet, DoorSource{By: DoorInferred, Name: "a paid sign-up path"})
+	e := doorEngine(t, docs)
+	for _, mode := range []string{"parsed", "set"} {
+		req := Request{Query: "where can my agent sign up without a human", Parse: ModeRules, Explain: true}
+		if mode == "set" {
+			req.Set, req.SetKeys = Filters{Door: "agent"}, map[string]bool{"door": true}
+		}
+		a, err := e.Find(context.Background(), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := ids(a)
+		if a.Filters.Door != "agent" || len(got) != 4 || !slices.Equal(got[:2], []string{"forum", "locus"}) {
+			t.Fatalf("%s: sign-up question %v filters %+v", mode, got, a.Filters)
+		}
+		if a.Results[3].Explain.Quality["door_after"] == nil {
+			t.Fatalf("%s: explain names the tier: %+v", mode, a.Results[3].Explain.Quality)
+		}
+	}
+	a := doorFind(t, e, "keyless tool", "open")
+	if got := ids(a); len(got) != 2 || got[0] != "swarmmemo:fetch.page" {
+		t.Fatalf("keyless tools, door open: %v", got)
+	}
+}

@@ -664,8 +664,8 @@
     {
       "mode": "0644",
       "path": "docs/PROTOCOL.md",
-      "sha256": "59c434320bbcc8b06ab27c3a25ec0b22bd86ffce29b928e84fe7ea2775c03102",
-      "size": 449525
+      "sha256": "351981f1dbad2fd20beb3e7b8cbffd447b19ce8f3cfff2cbdbc8f2887530e77a",
+      "size": 449837
     },
     {
       "mode": "0644",
@@ -742,8 +742,8 @@
     {
       "mode": "0644",
       "path": "docs/TOOLS_OFFERINGS.md",
-      "sha256": "d4c212c5f2b5a2781faefefcddc8f2dbbe5874f0daa8793a081b6bd143b3ba0f",
-      "size": 5940
+      "sha256": "55ee6fdc2076aca983b0189d73333d05db64e5d28fd78c5e701890d35569805c",
+      "size": 6111
     },
     {
       "mode": "0644",
@@ -1462,14 +1462,14 @@
     {
       "mode": "0644",
       "path": "internal/board/find_doors.go",
-      "sha256": "3ec89b12d2208aa87b3d5801a817520397567342b2dffd9df85dea98d2b9beb9",
-      "size": 9064
+      "sha256": "c36d38cb790858de0180ed43b6ebd21fd351cdefadb13d6f9e0bd352cebfbf65",
+      "size": 10161
     },
     {
       "mode": "0644",
       "path": "internal/board/find_doors_test.go",
-      "sha256": "13a882c36d7c6d19146713c4efeeae669c540b31f0cbbc4843fcffffc44db7e3",
-      "size": 7470
+      "sha256": "affa986f63575131efded56981ab6bcb70ffc6cba010de2b2eeca07a7543cfb7",
+      "size": 8658
     },
     {
       "mode": "0644",
@@ -2212,14 +2212,14 @@
     {
       "mode": "0644",
       "path": "internal/board/reviews_surfaces.go",
-      "sha256": "20925a82188f641571130bc2045bd2ef91d4fd91388ca97109f77dbd661cbfd9",
-      "size": 10394
+      "sha256": "5adc898dc38d18e46c29a4e4b744a2770350e53d24fbf902a323228bfba755cc",
+      "size": 10834
     },
     {
       "mode": "0644",
       "path": "internal/board/reviews_surfaces_test.go",
-      "sha256": "e27fff05e1dc61ebd64aa1380de179df679e26ab85f69ba4058816a31c708057",
-      "size": 8380
+      "sha256": "a2f4096ef2fbd60d243c82603ba099dbed2b7757540d7e61119878a0b22cfc4d",
+      "size": 9438
     },
     {
       "mode": "0644",
@@ -3136,32 +3136,32 @@
     {
       "mode": "0644",
       "path": "internal/find/door.go",
-      "sha256": "96bb9920dc0f0c82ebe403edb78cd2831586abac7e8134b19b494068bb39614f",
-      "size": 7721
+      "sha256": "497fc524d630c8f0bfcc774351e11b53b478d634ea63119e001eba85891f97c8",
+      "size": 8558
     },
     {
       "mode": "0644",
       "path": "internal/find/door_test.go",
-      "sha256": "fb4bcc75720dd85ad43dfc752fcf9e66ed417178ebf70a60285ab08a1a91edc5",
-      "size": 10952
+      "sha256": "5771aec6c7e74773439f673284ec7f336221c499c013e2595eab7191d5ca6406",
+      "size": 13319
     },
     {
       "mode": "0644",
       "path": "internal/find/engine.go",
-      "sha256": "aed17a5cbc3e7702cc09d6fd3d18faed687406a6c4bbe74f9a3b62d508656951",
-      "size": 9833
+      "sha256": "a521c2eea3c2474f8aeb336b4290d9294cf619672424087e872c5c20d80f8b12",
+      "size": 9870
     },
     {
       "mode": "0644",
       "path": "internal/find/find.go",
-      "sha256": "8bec179b256e11306e6d21158503b9c467b6abb4fa79787128b4b411c13c3855",
-      "size": 14371
+      "sha256": "f8436e87bc2caab822bd79db0cb831a1d8ab6a3fa145f55e1df320ddffc0476a",
+      "size": 14451
     },
     {
       "mode": "0644",
       "path": "internal/find/find_test.go",
-      "sha256": "675354fe75a96e24b74e21e9a99a3a96df76c2e3485fbc24fe1c22b0814c2808",
-      "size": 25082
+      "sha256": "7dc1905d10a681065a2b575302c9f737c757ecf41b405a186ae4f41a54ab9d80",
+      "size": 25103
     },
     {
       "mode": "0644",
@@ -3190,8 +3190,8 @@
     {
       "mode": "0644",
       "path": "internal/find/rank.go",
-      "sha256": "93aa2d630fbd6a1db1d0c3fa42479f7080eeb6962ef562cdbc56fe4ef859a1f0",
-      "size": 7951
+      "sha256": "0dab6fa67e40c490b0bfb4e0be6aa013e8518eebda378ea10904e56b511f149a",
+      "size": 8397
     },
     {
       "mode": "0644",

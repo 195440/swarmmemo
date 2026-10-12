@@ -94,8 +94,17 @@ func TestFindInferredAndOwnDoors(t *testing.T) {
 	if d = findX402Doc(phone, subjectQuality{}); d.Door != "" {
 		t.Fatalf("agentphone %q %+v", d.Door, d.DoorBy)
 	}
-	for path, want := range map[string]bool{"/v1/signup": true, "/api/register": true, "/accounts/create-account": true, "/onboarding/start": true,
-		"/v1/sign/in": false, "/registry/list": false, "/agents": false, "/v1/upsign": false} {
+	// agentphone's paid sign-up (mpp.dev, live on 1.95.0) emails a code to a
+	// human (Skitter, openapi sha 61cfe88a): a sign-up word alone infers
+	// nothing; it needs an auth, account or payment word beside it.
+	phoneSignup := services.X402Listing{ID: "mpp-orthogonal-com-agentphone-v0-agent-sign-up-1d204915740fbddc", Kind: services.KindMPP, Method: "POST",
+		URL: "https://mpp.orthogonal.com/agentphone/v0/agent/sign-up", MaxPrice: -1, Decimals: 6, Protocols: []string{"mpp/tempo"}, Name: "agentphone via orthogonal · POST /v0/agent/sign-up"}
+	if d = findX402Doc(phoneSignup, subjectQuality{}); d.Door != "" {
+		t.Fatalf("agentphone sign-up %q %+v", d.Door, d.DoorBy)
+	}
+	for path, want := range map[string]bool{"/v1/auth/mpp-sign-up": true, "/v1/auth/register": true, "/accounts/create-account": true, "/v1/account/signup": true, "/x402/register": true,
+		"/agentphone/v0/agent/sign-up": false, "/v1/signup": false, "/api/register": false, "/onboarding/start": false, "/agentphone/v1/agents": false,
+		"/v1/sign/in": false, "/registry/list": false, "/agents": false, "/v1/upsign": false, "/v1/auth/login": false} {
 		if signupPath("https://x.example.com"+path) != want {
 			t.Errorf("%s: want %v", path, want)
 		}
@@ -115,8 +124,13 @@ func TestFindInferredAndOwnDoors(t *testing.T) {
 	}
 	var keyless find.Doc
 	setToolDoor(&keyless, true)
-	if keyless.Door != find.DoorOpen || keyless.DoorBy.By != find.DoorMeasured {
+	if keyless.Door != find.DoorOpen || keyless.DoorBy.By != find.DoorMeasured || !keyless.DoorBy.Method || !tool.DoorBy.Method {
 		t.Fatalf("keyless tool door %+v", keyless.DoorBy)
+	}
+	// A tool that is itself a registration method is a place to sign up.
+	reg := find.Doc{ID: "swarmmemo:identity.register"}
+	if setToolDoor(&reg, true); reg.DoorBy.Method {
+		t.Fatalf("a registration tool is not just a method's door: %+v", reg.DoorBy)
 	}
 	e := find.NewEngine(find.Config{Source: func(context.Context) ([]find.Doc, error) {
 		return []find.Doc{findX402Doc(locus, subjectQuality{}), findX402Doc(phone, subjectQuality{})}, nil

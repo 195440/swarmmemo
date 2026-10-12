@@ -318,7 +318,7 @@ type IndexInfo struct {
 const RelaxedNote = "the type, category or output read from the query matched nothing or clearly worse than the whole query without them, so these results are the whole query's; a price, network, protocol or sign-up door it states still applies"
 
 // OrderNote is the ranking rule in one sentence, on every answer.
-const OrderNote = "relevance first (BM25 over names, categories, descriptions and URLs); quality (lab band's lower edge, the community reviews' verdict mean, an agent's standing, up or down) moves a result by at most 0.1 of the best match's relevance, so it reorders only close matches; down or avoid sinks, never hides; SwarmMemo's margin and relay volume are never inputs; under a door filter, the door's source counts too (measured, then outside, inferred, self-reported; stale lower)"
+const OrderNote = "relevance first (BM25 over names, categories, descriptions and URLs); quality (lab band's lower edge, the community reviews' verdict mean, an agent's standing, up or down) moves a result by at most 0.1 of the best match's relevance, so it reorders only close matches; down or avoid sinks, never hides; SwarmMemo's margin and relay volume are never inputs; under a door filter, the door's source counts too (measured, then outside, inferred, self-reported; stale lower), and a sign-up question lists SwarmMemo's own tools after the places to sign up"
 
 // Embedder is the hook for semantic matching: a vector per text, cached by
 // the caller. None ships: a local model needs cgo or a runtime the static,

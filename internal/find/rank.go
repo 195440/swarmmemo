@@ -87,6 +87,7 @@ type scored struct {
 	rel     float64
 	q       float64
 	score   float64
+	after   bool // ranked after the rest: a method's door on a sign-up question
 	parts   map[string]any
 	matched []string
 	fields  []string
@@ -95,8 +96,10 @@ type scored struct {
 
 // rank orders the candidates. words are the query's words (for the why and
 // the explain); with none, relevance is 1 for every candidate. door says a
-// door filter applies.
-func (ix *Index) rank(cands []match, words []string, door bool) []scored {
+// door filter applies; signup that the query asks where to sign up, so
+// entries whose door is only a SwarmMemo method's come after the places to
+// sign up, whatever their score (signupQuestion).
+func (ix *Index) rank(cands []match, words []string, door, signup bool) []scored {
 	best := 0.0
 	for _, m := range cands {
 		best = math.Max(best, -m.bm25)
@@ -109,12 +112,19 @@ func (ix *Index) rank(cands []match, words []string, door bool) []scored {
 			s.rel = -m.bm25 / best
 		}
 		s.q, s.parts = quality(d, door, ix.BuiltAt)
+		if signup && methodDoor(d) {
+			s.after = true
+			s.parts["door_after"] = "a SwarmMemo method's door, after the places to sign up"
+		}
 		s.score = s.rel + QualityShift*s.q
 		s.matched, s.fields = matchedWords(d, words, ix.vocab)
 		out = append(out, s)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		a, b := out[i], out[j]
+		if a.after != b.after {
+			return b.after
+		}
 		if a.score != b.score {
 			return a.score > b.score
 		}

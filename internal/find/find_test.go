@@ -183,12 +183,12 @@ func TestQualityNeverOverridesClearlyBetter(t *testing.T) {
 		{Type: TypeService, ID: "close-good", Name: "close-good", Quality: best},
 	}}
 	// strong: relevance 1; weak 0.79 (more than 2 × QualityShift behind).
-	got := ix.rank([]match{{0, -10}, {1, -7.9}}, nil, false)
+	got := ix.rank([]match{{0, -10}, {1, -7.9}}, nil, false, false)
 	if got[0].doc.ID != "strong" || got[1].doc.ID != "weak" {
 		t.Fatalf("a clearly better match was overtaken: %s first", got[0].doc.ID)
 	}
 	// Within 2 × QualityShift, quality decides.
-	got = ix.rank([]match{{2, -10}, {3, -9.0}}, nil, false)
+	got = ix.rank([]match{{2, -10}, {3, -9.0}}, nil, false, false)
 	if got[0].doc.ID != "close-good" {
 		t.Fatalf("quality should reorder close matches: %s first", got[0].doc.ID)
 	}
@@ -199,7 +199,7 @@ func TestQualityNeverOverridesClearlyBetter(t *testing.T) {
 		t.Fatalf("down sinks: q %v", q)
 	}
 	// The bound holds for any qualities: score - relevance is within ±QualityShift.
-	for _, s := range ix.rank([]match{{0, -3}, {1, -2}, {2, -1}, {3, -0.5}}, nil, false) {
+	for _, s := range ix.rank([]match{{0, -3}, {1, -2}, {2, -1}, {3, -0.5}}, nil, false, false) {
 		if math.Abs(s.score-s.rel) > QualityShift+1e-9 {
 			t.Fatalf("%s moved %v", s.doc.ID, s.score-s.rel)
 		}

@@ -239,7 +239,7 @@ func (e *Engine) Find(ctx context.Context, req Request) (Answer, error) {
 			ans.Expanded[w] = cats
 		}
 	}
-	ranked := ix.rank(cands, words, ans.Filters.Door != "")
+	ranked := ix.rank(cands, words, ans.Filters.Door != "", signupQuestion(q, ans.Filters.Door))
 	ans.Matched = len(ranked)
 	ans.Index = IndexInfo{BuiltAt: ix.BuiltAt.Unix(), Docs: ix.Counts, Match: "sqlite fts5 bm25, porter stemming, category synonyms"}
 	limit := req.Limit

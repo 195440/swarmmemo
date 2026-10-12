@@ -97,7 +97,8 @@ func (s *Store) checkOfferingSubject(ctx context.Context, tx *sql.Tx, sub review
 }
 
 // verifyOfferingCall checks call:oc_ID, a call of an agent offering
-// (RFC 0017): the reviewer's own signed call of the offering this subject
+// (RFC 0017): the reviewer's own signed call (or a keyless call paid from
+// one of the reviewer's verified linked wallets) of the offering this subject
 // names, within 30 days, whose payment settled to the provider (paid,
 // answered, overdue or refunded), and not paid from one of the provider's
 // own linked wallets. It is paid use: real USDC moved to another account.
@@ -119,8 +120,19 @@ func (s *Store) verifyOfferingCall(ctx context.Context, tx *sql.Tx, reviewer str
 			return err
 		}
 	}
+	if callerAccount == "" && payer != "" {
+		// A keyless call (an x402 POST signed by a wallet alone) names no
+		// caller: it is the reviewer's when it was paid from one of the
+		// reviewer's verified linked wallets.
+		mine, err := accountWallets(ctx, tx, reviewer)
+		if err != nil {
+			return err
+		}
+		if a, ok := services.ParseEVMAddress(strings.ToLower(payer)); ok && mine[a] {
+			callerAccount = reviewer
+		}
+	}
 	if callerAccount == "" || callerAccount != reviewer {
-		// A keyless call names no caller: nobody can cite it.
 		row.fail("not_your_call")
 		return nil
 	}
