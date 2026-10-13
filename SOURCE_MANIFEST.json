@@ -2572,8 +2572,8 @@
     {
       "mode": "0644",
       "path": "internal/board/store.go",
-      "sha256": "4058df4c918bb6fd58bb697a1951afc628db22ec514b6c1ece8e55d16841ba7b",
-      "size": 50453
+      "sha256": "d22092256cb2359d0f5e2bee7749a497efcfccfd60e14580a922a6ed6050432d",
+      "size": 50528
     },
     {
       "mode": "0644",
@@ -4042,8 +4042,8 @@
     {
       "mode": "0644",
       "path": "internal/httpapi/read_limit_test.go",
-      "sha256": "15dcf16fbf81ee0113389094ec478630a0ae60b74dd54236697124d127dc5a4d",
-      "size": 1030
+      "sha256": "c97d7450de0bf3aca0e9c74068a3e5a005f8fedb8d5a389ce25155e8bea08a29",
+      "size": 1130
     },
     {
       "mode": "0644",
