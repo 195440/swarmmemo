@@ -8,10 +8,23 @@ import {join} from 'node:path';
 import {spawn, spawnSync} from 'node:child_process';
 import {gzipSync} from 'node:zlib';
 import {createPrivateKey, createPublicKey, sign, verify} from 'node:crypto';
-import {Client, DelegatedClient, ClientError, canonical, delegationContext, generateKey, importKey, writeKey, loadKey, conversationRoom, loadSeal} from './swarmmemo.mjs';
+import {Client, DelegatedClient, ClientError, CONTRACT, FIELDS, canonical, delegationContext, generateKey, importKey, writeKey, loadKey, conversationRoom, loadSeal} from './swarmmemo.mjs';
 
 const vector = JSON.parse(await readFile(new URL('../python/signing-vector.json', import.meta.url), 'utf8'));
 const fixtureKey = importKey({private_key: Buffer.from(vector.seed_hex, 'hex').toString('base64url'), public_key: vector.command.public_key});
+
+test('the generated CONTRACT block is exactly clients/contract.json', async () => {
+  // Two-way equality: written by go generate ./internal/clientcontract from the Go code that enforces each fact.
+  const contract = JSON.parse(await readFile(new URL('../contract.json', import.meta.url), 'utf8'));
+  assert.deepEqual(JSON.parse(JSON.stringify(CONTRACT)), contract);
+  assert.deepEqual([...FIELDS], contract.command.fields);
+});
+
+test('find types and review options are checked against the contract before any network', async () => {
+  const client = new Client('http://127.0.0.1:9', fixtureKey);
+  await assert.rejects(client.find('x', {types: ['nonsense']}), error => error.code === 'invalid_option');
+  await assert.rejects(client.find('x', {types: 'nonsense'}), error => error.code === 'invalid_option');
+});
 
 test('six shared ordinary, public and private canonical/proof vectors agree offline', async () => {
   const shared = JSON.parse(await readFile(new URL('../../testdata/private_read_vectors.json', import.meta.url), 'utf8'));

@@ -358,3 +358,73 @@ func sparkline(values []int64) template.HTML {
 func statsBar(width float64) template.HTML {
 	return template.HTML(`<svg class="via-bar" width="100%" height="8" aria-hidden="true" focusable="false"><rect height="100%" width="` + strconv.FormatFloat(max(0, min(width, 100)), 'f', 1, 64) + `%" fill="currentColor"/></svg>`)
 }
+
+// buildBarChart draws series as stacked bars, one bar per x, each series a
+// band (its Class, b-1 to b-6) stacked from the baseline, labelled under
+// its bar by labels ("" for none). A bar marked partial (a week not over
+// yet, or cut by the range) is drawn faint and named partialLabel in the
+// legend, so it never reads as a drop. Each band carries its values for
+// the readout, like the share chart's.
+func buildBarChart(title, note string, xs, labels []string, partial []bool, partialLabel string, series []chartSeries) lineChart {
+	n := len(xs)
+	c := lineChart{Title: title, Note: note, Xs: strings.Join(xs, "|")}
+	totals := make([]int64, n)
+	for _, s := range series {
+		for i, v := range s.Values {
+			totals[i] += v
+		}
+	}
+	var peak, grand int64
+	for _, t := range totals {
+		peak, grand = max(peak, t), grand+t
+	}
+	top := scaleTop(peak, false)
+	c.Max, c.Half = count(top), count(top/2)
+	if top%2 != 0 {
+		c.Half = ""
+	}
+	slot := float64(chartWidth) / float64(max(n, 1))
+	for i, l := range labels {
+		if l != "" {
+			c.Axis = append(c.Axis, axisLabel{Left: (float64(i) + .5) * 100 / float64(max(n, 1)), Text: l})
+		}
+	}
+	if len(c.Axis) > axisLabelsNarrow {
+		for i := 1; i < len(c.Axis); i += 2 {
+			c.Axis[i].Minor = true
+		}
+	}
+	var b strings.Builder
+	b.WriteString(chartOpen + gridLines)
+	below := make([]float64, n)
+	legend := []string{}
+	anyPartial := false
+	for _, s := range series {
+		var total int64
+		fmt.Fprintf(&b, `<g class="band %s" fill="currentColor" fill-opacity="%s" data-label="%s" data-values="%s">`, s.Class, bandOpacity(s.Class), html.EscapeString(s.Label), html.EscapeString(joinFormatted(s.Values, count)))
+		for i, v := range s.Values {
+			total += v
+			if v <= 0 {
+				continue
+			}
+			h := float64(v) * 100 / float64(top)
+			below[i] += h
+			faint := ""
+			if i < len(partial) && partial[i] {
+				faint, anyPartial = ` fill-opacity=".35"`, true
+			}
+			fmt.Fprintf(&b, `<rect x="%s" y="%s" width="%s" height="%s"%s vector-effect="non-scaling-stroke"/>`, num(float64(i)*slot+slot*.15), num(100-below[i]), num(slot*.7), num(h), faint)
+		}
+		b.WriteString(`</g>`)
+		c.Legend = append(c.Legend, chartKey{Class: s.Class, Label: s.Label, Term: s.Term, Total: count(total), Share: percent(total, grand), Area: true, Key: keySVG(s.Class, true)})
+		legend = append(legend, s.Label+" "+count(total))
+	}
+	b.WriteString(chartClose)
+	c.SVG = template.HTML(b.String())
+	c.Summary = title + ". " + note + " Over the range: " + strings.Join(legend, ", ") + "."
+	if anyPartial {
+		c.Legend = append(c.Legend, chartKey{Class: "partial", Label: partialLabel, Key: template.HTML(`<svg class="key" width="16" height="10" viewBox="0 0 16 10" aria-hidden="true" focusable="false"><rect x="0" y="0" width="16" height="10" fill="currentColor" fill-opacity=".35"/></svg>`)})
+		c.Summary += " Faint bars are " + strings.ToLower(partialLabel) + "."
+	}
+	return c
+}

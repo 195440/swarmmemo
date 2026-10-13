@@ -65,7 +65,7 @@ func TestOperatorFunnel(t *testing.T) {
 		t.Fatal(err)
 	}
 	html, _ := os.ReadFile(page)
-	for _, want := range []string{"1. Acquisition", "2. Funnel", "3. What convinces them", "4. Expansion", "5. Retention", "6. Nudges", "7. Feedback"} {
+	for _, want := range []string{"Key takeaways", "id=\"funnel\"", "id=\"retention\"", "id=\"acquisition\"", "id=\"converts\"", "id=\"nudges\"", "id=\"feedback\"", "id=\"lapsing\""} {
 		if !bytes.Contains(html, []byte(want)) {
 			t.Errorf("page lacks %q", want)
 		}

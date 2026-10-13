@@ -1175,3 +1175,48 @@ func TestFunnelDailyResumes(t *testing.T) {
 		t.Fatalf("%d rows for %d accounts", len(rows), len(accounts))
 	}
 }
+
+// The report's weeks cover the range, every one, new agents adding up to
+// the identities; the last (today) is partial, its durable count is the
+// funnel's; each segment dimension splits the same new agents, its rates
+// only over closed windows.
+func TestFunnelWeeklyAndSegments(t *testing.T) {
+	s, w := funnelScenario(t)
+	rep, err := s.FunnelReport(testContext, FunnelQuery{From: w.base, To: w.base + 21*86400})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Weekly) < 3 {
+		t.Fatalf("weeks %+v", rep.Weekly)
+	}
+	newSum := 0
+	for i, wk := range rep.Weekly {
+		newSum += wk.New
+		if i > 0 {
+			a, _ := time.Parse("2006-01-02", rep.Weekly[i-1].Week)
+			b, _ := time.Parse("2006-01-02", wk.Week)
+			if b.Sub(a) != 7*24*time.Hour {
+				t.Fatalf("weeks not consecutive: %s %s", a, b)
+			}
+		}
+		if wk.Activated.N > wk.New || wk.Days < 1 || wk.Days > 7 || (wk.Days < 7 && !wk.Partial) {
+			t.Fatalf("week %+v", wk)
+		}
+	}
+	last := rep.Weekly[len(rep.Weekly)-1]
+	if int64(newSum) != rep.Steps[1].Count || !last.Partial || int64(last.Durable) != rep.Steps[5].Count || rep.Weekly[0].Active == 0 {
+		t.Fatalf("weeks: new %d of %d, last %+v, durable %d", newSum, rep.Steps[1].Count, last, rep.Steps[5].Count)
+	}
+	perDim := map[string]int{}
+	for _, seg := range rep.Segments {
+		perDim[seg.Dim] += seg.N
+		if seg.Activated.N > seg.N || seg.D7.N > seg.N {
+			t.Fatalf("segment %+v", seg)
+		}
+	}
+	for _, dim := range FunnelSegmentDims {
+		if int64(perDim[dim]) != rep.Steps[1].Count {
+			t.Fatalf("dimension %s covers %d of %d", dim, perDim[dim], rep.Steps[1].Count)
+		}
+	}
+}

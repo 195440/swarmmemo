@@ -123,10 +123,9 @@ class WorkListKindsTest(unittest.TestCase):
 
 class ReviewRelationshipsTest(unittest.TestCase):
     def test_cli_takes_every_relationship_the_server_takes(self):
-        import re, pathlib, swarmmemo
-        go = (pathlib.Path(__file__).resolve().parents[2] / "internal/reviews/review.go").read_text()
-        server = re.findall(r'"([a-z_]+)"', re.search(r"var Relationships = \[\]string\{([^}]*)\}", go).group(1))
-        self.assertEqual(sorted(swarmmemo.REVIEW_RELATIONSHIPS), sorted(server))
+        import json, pathlib, swarmmemo
+        server = json.loads((pathlib.Path(__file__).resolve().parents[1] / "contract.json").read_text())["enums"]["review_relationships"]
+        self.assertEqual(swarmmemo.REVIEW_RELATIONSHIPS, server)
         parser = swarmmemo.build_parser()
         for value in server:
             with self.subTest(value=value):

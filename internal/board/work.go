@@ -11,6 +11,7 @@ import (
 	"math"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -152,6 +153,13 @@ type WorkRequest struct {
 const (
 	WorkRequestTextMax    = 4096
 	WorkRequestExcerptMax = 280
+)
+
+// WorkTitleBytes bounds a work title (UTF-8 bytes); WorkCapabilitiesMax the
+// capability slugs one work.create names.
+const (
+	WorkTitleBytes      = 160
+	WorkCapabilitiesMax = 16
 )
 
 // ResultEdited says whether the worker edited the submitted result since.
@@ -344,7 +352,7 @@ var workDataAliases = map[string]string{
 }
 
 // workCreateOptional are the fields work.create data may add to schema,
-// generation, title and capabilities. clients/message-fields.json lists the
+// generation, title and capabilities. clients/contract.json lists the
 // whole set ("work_create_data"), which clients/mcp checks signed history
 // against.
 var workCreateOptional = []string{"reward", "reviewer", "reviewer_fee", "reject_fee", "eligibility", "reward_note", "seats", "per_agent_day", "day_max", "tiers", "usdc_per_agent_day", "usdc_day_max"}
@@ -575,7 +583,7 @@ func parseWorkData(raw string, operation string) (workData, error) {
 		return workData{}, invalidWorkRewardNote()
 	}
 	if create {
-		if strings.TrimSpace(d.Title) == "" || len(d.Title) > 160 || strings.ContainsRune(d.Title, 0) || d.Capabilities == nil || len(d.Capabilities) > 16 {
+		if strings.TrimSpace(d.Title) == "" || len(d.Title) > WorkTitleBytes || strings.ContainsRune(d.Title, 0) || d.Capabilities == nil || len(d.Capabilities) > WorkCapabilitiesMax {
 			return invalid()
 		}
 		if seen["reviewer_fee"] && (!seen["reviewer"] || d.ReviewerFee < 1 || d.ReviewerFee > WorkRewardMax) {
@@ -1606,7 +1614,7 @@ func (s *Store) readWork(ctx context.Context, tx *sql.Tx, c Command, a actor, no
 	if !utf8.ValidString(c.Query) || strings.ContainsRune(c.Query, 0) {
 		return Result{}, problem(400, "invalid_query", "Query must be valid UTF-8 without NUL.")
 	}
-	if c.Kind != "" && c.Kind != "open" && c.Kind != "claimed" && c.Kind != "submitted" && c.Kind != "accepted" && c.Kind != "cancelled" && c.Kind != "expired" && c.Kind != "review_lapsed" && c.Kind != "recovery_required" && c.Kind != WorkKindRewarded && c.Kind != WorkKindEarn {
+	if c.Kind != "" && !slices.Contains(WorkListKinds(), c.Kind) {
 		return Result{}, problem(400, "invalid_work_state", "Unknown work state filter.")
 	}
 	// Each row answers eligibility for the agent data names, else the signer.

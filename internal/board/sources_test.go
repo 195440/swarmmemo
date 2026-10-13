@@ -368,52 +368,6 @@ func TestClientErrorCodesMatchService(t *testing.T) {
 	}
 }
 
-// Command fields and operation sets the clients hard-code, held to the table.
-func TestClientOperationSetsMatchTable(t *testing.T) {
-	js := readRepo(t, "clients/javascript/swarmmemo.mjs")
-	py := readRepo(t, "clients/python/swarmmemo.py")
-	fields := strings.Join(CommandFields(), " ")
-	if !strings.Contains(js, "export const FIELDS = Object.freeze('"+fields+"'.split(' '))") {
-		t.Errorf("clients/javascript/swarmmemo.mjs FIELDS differs from the canonical command fields:\n%s", fields)
-	}
-	if !strings.Contains(py, `FIELDS = "`+fields+`".split()`) {
-		t.Errorf("clients/python/swarmmemo.py FIELDS differs from the canonical command fields:\n%s", fields)
-	}
-	delegable, mutations, reads := map[string]bool{}, map[string]bool{}, map[string]bool{}
-	for _, op := range Operations() {
-		if op.Delegable {
-			delegable[op.Name] = true
-		}
-		// The Node client refuses private read grants by design (README).
-		if strings.HasPrefix(op.Name, "private_read.") {
-			continue
-		}
-		if op.Mutation {
-			mutations[op.Name] = true
-		} else {
-			reads[op.Name] = true
-		}
-	}
-	want := strings.Join(sortedKeys(delegable), " ")
-	for name, got := range map[string]map[string]bool{
-		"javascript delegatedOperations": wordsIn(js, `const delegatedOperations = new Set\('([^']*)'`),
-		"python DELEGATED_OPERATIONS":    wordsIn(py, `DELEGATED_OPERATIONS = frozenset\("([^"]*)"`),
-		"javascript mutations":           wordsIn(js, `const mutations = new Set\('([^']*)'`),
-		"javascript reads":               wordsIn(js, `const reads = new Set\('([^']*)'`),
-	} {
-		expected := want
-		switch name {
-		case "javascript mutations":
-			expected = strings.Join(sortedKeys(mutations), " ")
-		case "javascript reads":
-			expected = strings.Join(sortedKeys(reads), " ")
-		}
-		if have := strings.Join(sortedKeys(got), " "); have != expected {
-			t.Errorf("%s drifted from the operation table:\n have %s\n want %s", name, have, expected)
-		}
-	}
-}
-
 // Generated sections of docs/PROTOCOL.md. Each sits between
 // <!-- BEGIN GENERATED: name --> and <!-- END GENERATED: name -->.
 func generatedSections(t *testing.T) map[string]string {

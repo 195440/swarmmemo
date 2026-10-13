@@ -951,7 +951,6 @@ func computeFunnel(a *funnelAccount, today int64) FunnelRow {
 	var trailActs, trailOrganic, trailBounty uint64
 	families, clients, vias := map[string]int{}, map[string]int{}, map[string]int{}
 	verDays, verOrganic := 0, 0
-	buckets := map[int64]bool{}
 	firstNamed := false
 	for _, d := range a.days {
 		if d.acts == 0 {
@@ -986,9 +985,6 @@ func computeFunnel(a *funnelAccount, today int64) FunnelRow {
 				}
 			}
 		}
-		if d.acts&VerifiableActs != 0 && d.day <= today && d.day > today-7*FunnelDurableBuckets {
-			buckets[(today-d.day)/7] = true
-		}
 		if d.day <= today && d.day > today-FunnelSegmentDays {
 			trailActs |= d.acts
 			trailOrganic |= d.organic
@@ -1004,12 +1000,25 @@ func computeFunnel(a *funnelAccount, today int64) FunnelRow {
 			}
 		}
 	}
-	r.Durable = len(buckets) >= FunnelDurableActive
+	r.Durable = durableOn(a.days, today)
 	r.Role, r.Roles = RolesOf(trailActs, trailOrganic, trailBounty)
 	r.Tenure = tenureOf(today, d0, activeDays)
 	r.Family, r.Client = mostFrequent(families), mostFrequent(clients)
 	r.Transport = TransportOf(mostFrequent(vias), a.hosted)
 	return r
+}
+
+// durableOn reports whether the sorted days make an account durable on day
+// today: a verifiable act in FunnelDurableActive of the last
+// FunnelDurableBuckets buckets of 7 days ending today.
+func durableOn(days []agentDay, today int64) bool {
+	buckets := map[int64]bool{}
+	for _, d := range days {
+		if d.acts&VerifiableActs != 0 && d.day <= today && d.day > today-7*FunnelDurableBuckets {
+			buckets[(today-d.day)/7] = true
+		}
+	}
+	return len(buckets) >= FunnelDurableActive
 }
 
 // mostFrequent is the key with the highest count, the smallest on a tie.

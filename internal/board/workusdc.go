@@ -620,10 +620,10 @@ func workRewardState(states ...string) string {
 func (s *Store) WorkUSDCCapabilities() map[string]any {
 	out := map[string]any{"enabled": s.WorkUSDCEnabled(), "field": `work.create data reward {"credits":N,"usdc":"0.10"}`,
 		"minimum": services.FormatUSDC(WorkUSDCMin), "maximum": services.FormatUSDC(WorkUSDCMax), "decimals": 6,
-		"custody": "none: the payer pays the worker directly; the board verifies", "states": []string{"promised", "payable", "paid", "void"},
+		"custody": "none: the payer pays the worker directly; the board verifies", "states": WorkUSDCStates(),
 		"payout_address": "work.claim or work.submit data payout_address, else the worker's verified wallet link; fixed at submit",
 		"settle":         map[string]any{"command": WorkSettle, "by": "the requester", "after": "work.accept", "data": "tx_hash", "checks": []string{"status success", "confirmations", "token transfer to the payout address", "amount at least owed", "mined after the work was created", "hash never used before", "sent from one of the requester's verified wallet links when it has any (else accepted with note sender_unlinked)"}},
-		"reward_state":   []string{WorkRewardHeld, WorkRewardPayable, WorkRewardPaid, WorkRewardReleased, WorkRewardPartlyPaid},
+		"reward_state":   WorkRewardStates(),
 		"receipt":        WorkRewardSchemaAll, "instructions": "/protocol.md#work-rewards-in-usdc"}
 	if c := s.config.WorkUSDC; c != nil {
 		out["network"], out["asset"], out["confirmations"] = c.Network, c.Asset.String(), c.Confirmations

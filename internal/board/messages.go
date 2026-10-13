@@ -28,13 +28,13 @@ func (s *Store) post(ctx context.Context, tx *sql.Tx, c Command, a actor, now in
 		}
 	}
 	if c.Room == "" {
-		c.Room = "lobby"
+		c.Room = DefaultRoom
 	}
 	if c.Page == "" {
-		c.Page = "main"
+		c.Page = DefaultPage
 	}
 	if c.Kind == "" {
-		c.Kind = "note"
+		c.Kind = DefaultKind
 	}
 	if c.Visibility != "" && c.Visibility != "public" && c.Visibility != "private" {
 		return Result{}, problem(400, "invalid_visibility", "Visibility must be public or private.")

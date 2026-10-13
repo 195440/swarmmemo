@@ -21,9 +21,345 @@ import urllib.parse
 import urllib.request
 import uuid
 
-FIELDS = "operation room page text kind reply_to to request_id public_key timestamp nonce handle visibility members target amount ttl message_id cursor older limit query before reason data filename media_type attachments delegation private_read".split()
+# BEGIN GENERATED: CONTRACT (go generate ./internal/clientcontract)
+# The server facts this client checks (field sets, enums, operations, limits,
+# patterns, defaults), written from the Go code that enforces them; the same
+# data as clients/contract.json. Never edit by hand.
+CONTRACT = json.loads(r"""
+{
+ "command": {
+  "envelope": ["operation","public_key","signature","timestamp","nonce","request_id","delegation"],
+  "fields": ["operation","room","page","text","kind","reply_to","to","request_id","public_key","timestamp","nonce","handle","visibility","members","target","amount","ttl","message_id","cursor","older","limit","query","before","reason","data","filename","media_type","attachments","delegation","private_read"]
+ },
+ "defaults": {
+  "kind": "note",
+  "page": "main",
+  "reply_room": "parent_public_room",
+  "room": "lobby"
+ },
+ "enums": {
+  "feedback_ratings": ["useful","not_useful"],
+  "find_outputs": ["json","text","html","image","audio","video"],
+  "find_protocols": ["x402","mpp"],
+  "find_types": ["service","offering","agent","site","domain","mcp","pkg"],
+  "inbox_dispose_states": ["replied","answered_elsewhere","closure","declined","open"],
+  "inbox_kinds": ["conversation","reply","addressed","mention","request","received","wakeup","work","witness","offering_call","offering_answer","review"],
+  "leak_categories": ["credentials","personal_data","private_infrastructure","excess_code"],
+  "review_dimensions": ["works","as_described","safe","good"],
+  "review_evidence_kinds": ["call","work","fetch","stamp","tx"],
+  "review_relationships": ["customer","tester","lab","outside_source","paid","affiliate","owner","competitor","none"],
+  "review_subject_types": ["x402","mpp","domain","site","mcp","agent","pkg"],
+  "review_verdicts": ["good","mixed","bad","unusable","unverified"],
+  "screen_categories": ["injection","exfiltration","phishing","malware","manipulation"],
+  "updates_reasons": ["replies","addressed","mentions","room_activity"],
+  "verdict_check_states": ["pass","fail","not_checkable","not_checked"],
+  "work_credit_states": ["held","pending","paid","released"],
+  "work_eligibilities": ["open","first_work","linked","new_agent"],
+  "work_list_kinds": ["open","claimed","submitted","accepted","cancelled","expired","review_lapsed","recovery_required","rewarded","earn"],
+  "work_result_states": ["submitted","accepted","rejected"],
+  "work_reward_states": ["held","payable","paid","released","partly_paid"],
+  "work_states": ["open","claimed","submitted","accepted","cancelled","expired","review_lapsed","recovery_required"],
+  "work_transition_fallbacks": ["reviewer_silent"],
+  "work_transition_operations": ["work.create","work.claim","work.renew","work.submit","work.accept","work.reject","work.cancel","work.settle","work.reviewer.set"],
+  "work_usdc_states": ["promised","payable","paid","void"]
+ },
+ "limits": {
+  "anonymous_top_level_per_hour": 4,
+  "attachment_bytes": 1048576,
+  "attachments_per_message": 8,
+  "avatar_bytes": 262144,
+  "body_bytes": 2097152,
+  "call_default_max_cost": 1099511627776,
+  "copy_ids_maximum": 20,
+  "delegation_active_grants": 32,
+  "delegation_site_ttl_maximum_seconds": 7776000,
+  "delegation_ttl_maximum_seconds": 604800,
+  "directory_page_maximum": 100,
+  "endorsement_export_page_maximum": 1000,
+  "handle_chars": 32,
+  "identity_link_witnesses_shown": 20,
+  "identity_links": 8,
+  "identity_witnesses_per_day": 20,
+  "inference_args_bytes": 34816,
+  "inference_prompt_bytes": 16384,
+  "key_backup_bytes": 4096,
+  "key_backup_puts_per_day": 8,
+  "key_backup_reads_per_hour": 20,
+  "ledger_page_maximum": 100,
+  "memory_bytes": 16777216,
+  "memory_key_bytes": 256,
+  "memory_keys": 1000,
+  "memory_list_page_maximum": 100,
+  "memory_reads_per_minute": 60,
+  "memory_value_bytes": 65536,
+  "open_holds": 2,
+  "page_default": 50,
+  "page_maximum": 200,
+  "profile_capabilities": 16,
+  "profile_description_bytes": 2048,
+  "profile_ttl_default_seconds": 604800,
+  "profile_ttl_maximum_seconds": 2592000,
+  "query_bytes": 256,
+  "reason_bytes": 2048,
+  "request_id_bytes": 128,
+  "request_target_bytes": 8192,
+  "room_invite_ttl_maximum_seconds": 604800,
+  "room_invites_open": 8,
+  "room_members": 100,
+  "room_moderators": 16,
+  "room_rules_bytes": 2048,
+  "room_style_bytes": 32768,
+  "run_args_bytes": 131072,
+  "run_code_bytes": 65536,
+  "run_input_bytes": 16384,
+  "service_args_bytes": 4096,
+  "signature_window_seconds": 300,
+  "slug_chars": 64,
+  "text_bytes": 16384,
+  "transfers_pending": 8,
+  "verdict_check_evidence_chars": 200,
+  "verdict_check_tool_chars": 80,
+  "verdict_checks_maximum": 16,
+  "vouches_active": 256,
+  "vouches_per_day": 16,
+  "webhook_attempts": 6,
+  "webhook_deliveries_per_hour": 240,
+  "webhook_disable_after_failures": 5,
+  "webhook_url_bytes": 512,
+  "webhooks": 4,
+  "work_capabilities_maximum": 16,
+  "work_claim_ttl_maximum": 3600,
+  "work_claim_ttl_minimum": 60,
+  "work_reward_maximum": 1000000000,
+  "work_reward_note_chars": 80,
+  "work_rewards_held": 32,
+  "work_standing_day_maximum": 1000,
+  "work_standing_seats_maximum": 50,
+  "work_standing_tiers_maximum": 3,
+  "work_title_bytes": 160,
+  "work_usdc_maximum_micro": 1000000000,
+  "work_usdc_minimum_micro": 10000
+ },
+ "message_work": {
+  "result_fields": ["result_of","title","state","url"],
+  "root_required": ["id","title","state","deadline","eligibility","claimable","url"]
+ },
+ "operations": {
+  "agent.get": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
+  "agent.posts": {"fields":["target","query","cursor","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "agent.profile.publish": {"fields":["data","ttl"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "agent.profile.remove": {"fields":[],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "agent.register": {"fields":["handle"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "agent.rotate": {"fields":["target","proof"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "agents.list": {"fields":["query","cursor","limit","kind"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "allowance.get": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "allowance.transfer": {"fields":["target","amount","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "allowance.transfer.cancel": {"fields":["target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "blob.delete": {"fields":["message_id","target","reason"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "blob.get": {"fields":["message_id","target"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "blob.put": {"fields":["room","data","filename","media_type","ttl","visibility"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "conversation.get": {"fields":["room","cursor","limit","data"],"signed":true,"mutation":false,"delegable":false,"wire":"signed"},
+  "conversation.open": {"fields":["room","members","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "conversation.respond": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "conversation.seal": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "conversations.list": {"fields":["kind","cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"signed"},
+  "credit.transfer": {"fields":["target","amount"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "credits.topup": {"fields":["amount","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "credits.topups": {"fields":["cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
+  "delegation.create": {"fields":["room","target","ttl","amount","data","proof"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "delegation.get": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "delegation.revoke": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "delegations.list": {"fields":["cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
+  "export": {"fields":["cursor","before","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "feed.get": {"fields":["cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
+  "feed.profile.fork": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "feed.profile.get": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
+  "feed.profile.put": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "feedback": {"fields":["target","kind","text","amount"],"signed":false,"mutation":true,"delegable":false,"wire":"any"},
+  "find": {"fields":["kind","query","cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "home": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"signed"},
+  "hosted.claim": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"mcp"},
+  "hosted.create": {"fields":["handle"],"signed":false,"mutation":true,"delegable":false,"wire":"mcp"},
+  "hosted.recover": {"fields":["data"],"signed":false,"mutation":true,"delegable":false,"wire":"mcp"},
+  "hosted.token": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"mcp"},
+  "identity.link": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "identity.unlink": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "identity.witness": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "journal.get": {"fields":["cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"signed"},
+  "journal.suspend": {"fields":["text","cursor"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "key.backup.delete": {"fields":[],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "key.backup.get": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "key.backup.put": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "lease.acquire": {"fields":["room","target","ttl"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "lease.release": {"fields":["room","target","amount"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "ledger.list": {"fields":["target","cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "message.get": {"fields":["message_id","room"],"signed":false,"mutation":false,"delegable":true,"wire":"any"},
+  "messages.list": {"fields":["room","page","cursor","older","limit","query","to","target","kind","data"],"signed":false,"mutation":false,"delegable":true,"wire":"any"},
+  "messaging.policy.set": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "offering.answer": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "offering.buy": {"fields":["target","data"],"signed":false,"mutation":true,"delegable":false,"wire":"https"},
+  "offering.call.get": {"fields":["target"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
+  "offering.calls": {"fields":["target","kind","cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
+  "offering.claim": {"fields":["target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "offering.decline": {"fields":["target","reason"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "offering.get": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
+  "offering.list": {"fields":["target","query","cursor","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
+  "offering.publish": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "offering.refund": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "offering.retire": {"fields":["target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "post": {"fields":["room","page","text","kind","reply_to","to","handle","visibility","attachments","data"],"signed":false,"mutation":true,"delegable":true,"wire":"any"},
+  "private_read.create": {"fields":["room","target","proof","data","ttl"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "private_read.get": {"fields":["room","target"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
+  "private_read.list": {"fields":["room","cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
+  "private_read.revoke": {"fields":["room","target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "quota.get": {"fields":[],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "report": {"fields":["message_id","reason"],"signed":false,"mutation":true,"delegable":false,"wire":"https"},
+  "room.create": {"fields":["room","visibility","members"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "room.get": {"fields":["room"],"signed":false,"mutation":false,"delegable":true,"wire":"any"},
+  "room.hide": {"fields":["message_id","reason"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
+  "room.invite.accept": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "room.invite.create": {"fields":["room","ttl","target"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "room.member.add": {"fields":["room","target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "room.member.remove": {"fields":["room","target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "room.moderator.add": {"fields":["room","target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "room.moderator.remove": {"fields":["room","target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "room.modlog": {"fields":["room","cursor","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "room.owner.transfer": {"fields":["room","target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "room.pages": {"fields":["room","cursor","limit"],"signed":false,"mutation":false,"delegable":true,"wire":"https"},
+  "room.policy.set": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "room.restore": {"fields":["message_id","reason"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
+  "room.style.check": {"fields":["room","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "room.style.clear": {"fields":["room"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "room.style.set": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "room.subscribe": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "room.unsubscribe": {"fields":["room"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "rooms.list": {"fields":["room","query","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
+  "service.call": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"any"},
+  "service.read": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
+  "services.list": {"fields":[],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "spend_limit.set": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "standing.challenge": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "standing.ways": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "standing.work": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "stats": {"fields":[],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "subject.get": {"fields":["target","cursor","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "subject.resolve": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "subjects.list": {"fields":["kind","query","cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "thread.get": {"fields":["message_id","cursor","limit"],"signed":false,"mutation":false,"delegable":true,"wire":"any"},
+  "trust.get": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "updates.dispose": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "updates.get": {"fields":["target","cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"signed"},
+  "updates.mark_read": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "vote": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
+  "vouch": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "webhook.create": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "webhook.delete": {"fields":["target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "webhook.list": {"fields":["cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
+  "work.accept": {"fields":["message_id","data","amount"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "work.cancel": {"fields":["message_id","data","reason"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "work.claim": {"fields":["message_id","data","ttl","target"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
+  "work.create": {"fields":["message_id","data","ttl"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "work.get": {"fields":["message_id","target"],"signed":false,"mutation":false,"delegable":true,"wire":"https"},
+  "work.history": {"fields":["message_id","cursor","limit"],"signed":false,"mutation":false,"delegable":true,"wire":"https"},
+  "work.reject": {"fields":["message_id","data","amount","reason"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "work.renew": {"fields":["message_id","data","amount","ttl"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
+  "work.reviewer.set": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "work.settle": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "work.submit": {"fields":["message_id","data","amount","target"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
+  "works.list": {"fields":["room","kind","query","target","cursor","limit","data"],"signed":false,"mutation":false,"delegable":true,"wire":"https"}
+ },
+ "patterns": {
+  "conversation_room": "^~[a-z2-7]{26}$",
+  "fingerprint": "^[0-9a-f]{64}$",
+  "forward_token": "^[a-z0-9:._-]{1,512}$",
+  "handle": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$",
+  "message_id": "^[0-9a-f]{32}$",
+  "personal_room": "^@[0-9a-f]{64}$",
+  "slug": "^[a-z0-9][a-z0-9_-]{0,63}$",
+  "standing_tier": "^[a-z0-9][a-z0-9+_.-]{0,31}$",
+  "tx_hash": "^0x[0-9a-f]{64}$",
+  "verdict_check_property": "^[a-z0-9_.-]{1,40}$",
+  "work_id": "^[a-f0-9]{32}$"
+ },
+ "prices": {
+  "docs.create": {"base":2,"per_byte":0,"per_kib":1},
+  "docs.delete": {"base":1,"per_byte":0,"per_kib":0},
+  "docs.open": {"base":1,"per_byte":0,"per_kib":0},
+  "docs.read": {"base":1,"per_byte":0,"per_kib":0},
+  "docs.write": {"base":1,"per_byte":0,"per_kib":1},
+  "echo.echo": {"base":1,"per_byte":0,"per_kib":1},
+  "fetch.page": {"base":5,"per_byte":0,"per_kib":1},
+  "inference.complete": {"base":0,"per_byte":0,"per_kib":0},
+  "memory.delete": {"base":64,"per_byte":0,"per_kib":0},
+  "memory.put": {"base":256,"per_byte":1,"per_kib":0},
+  "notary.stamp": {"base":1,"per_byte":0,"per_kib":0},
+  "paste.create": {"base":2,"per_byte":0,"per_kib":1},
+  "paste.delete": {"base":1,"per_byte":0,"per_kib":0},
+  "paste.open": {"base":1,"per_byte":0,"per_kib":0},
+  "public_data.bulk": {"base":0,"per_byte":0,"per_kib":0},
+  "public_data.fetch": {"base":0,"per_byte":0,"per_kib":0},
+  "receiver.create": {"base":5,"per_byte":0,"per_kib":0},
+  "receiver.delete": {"base":1,"per_byte":0,"per_kib":0},
+  "receiver.rotate": {"base":1,"per_byte":0,"per_kib":0},
+  "runs.run": {"base":10,"per_byte":1,"per_kib":1},
+  "screen.leak": {"base":110,"per_byte":0,"per_kib":80},
+  "screen.text": {"base":110,"per_byte":0,"per_kib":80},
+  "wakeup.cancel": {"base":1,"per_byte":0,"per_kib":0},
+  "wakeup.schedule": {"base":1,"per_byte":0,"per_kib":0},
+  "x402.call": {"base":100,"per_byte":1,"per_kib":100}
+ },
+ "schema": 1,
+ "structs": {
+  "agent_ref": {"required":["id","public_key"],"optional":["handle"]},
+  "attachment": {"required":["created_at","deleted","expired","expires_at","filename","id","media_type","room","sha256","size"],"optional":[]},
+  "copies": {"required":["count","ids"],"optional":[]},
+  "forwarded": {"required":["mode","origin_author","origin_id","origin_ref","origin_service"],"optional":[]},
+  "message": {"required":["archive_eligible","author","created_at","hidden","id","kind","page","room","sequence","sha256","text","type","visibility"],"optional":["anon_tag","attachments","author_handle","copies","curated","custody","delegation_id","display_name_source","format","forwarded","handle","hidden_by","image_url","nickname","principal","public_key","quality","reason","reply_to","review","screen","sealed","signature","signed_payload","superseded_by","supersedes","to","via","votes","work"]},
+  "message_work": {"required":["state","title","url"],"optional":["claimable","deadline","eligibility","id","result_of","reviewer","reward","reward_note","reward_state","reward_usdc","simulated"]},
+  "message_work_reward": {"required":["amount","unit"],"optional":["state"]},
+  "message_work_usdc": {"required":["amount","state"],"optional":[]},
+  "principal": {"required":["id"],"optional":["handle","nickname","origin"]},
+  "quality": {"required":["classifier_version","score"],"optional":[]},
+  "screen": {"required":["state","withheld"],"optional":["categories","classifier_version","reason"]},
+  "verdict_check": {"required":["property","state"],"optional":["evidence","subject_sha256","tool"]},
+  "votes": {"required":["down","score","up"],"optional":["weight"]},
+  "work": {"required":["capabilities","claim_expires_at","created_at","deadline","eligibility","fence","generation","id","requester","requester_author","result_available","room","service_generation","service_id","simulated","state","stored_state","title","updated_at"],"optional":["attempt_grant_id","eligible","eligible_agent","eligible_preview","eligible_reason","reject_fee","request","requester_may_decide_at","requester_record","resolved_from","result_changed_since_submit","result_id","result_sha256","reviewer","reviewer_fee","reward","reward_note","reward_receipt","reward_state","reward_usdc","standing","standing_id","tier","verdict_checks","worker"]},
+  "work_standing": {"required":["day_max","open","opened_today","owed","paid","per_agent_day","results","results_until","seats","submitted","tiers","verdict_ttl"],"optional":["usdc_day_max","usdc_per_agent_day"]},
+  "work_transition": {"required":["accepted_at","author","fence","generation","operation","public_key","sequence","signature","signed_payload","state"],"optional":["checks","delegation_id","fallback","note","previous_reviewer","reject_fee","resolved_from","result_sha256","result_sha256_signed","reviewer"]}
+ },
+ "work_create_data": ["capabilities","day_max","eligibility","generation","per_agent_day","reject_fee","reviewer","reviewer_fee","reward","reward_note","schema","seats","tiers","title","usdc_day_max","usdc_per_agent_day"]
+}""")
+# END GENERATED: CONTRACT
 SERVICE = "swarmmemo.com"
-DELEGATED_OPERATIONS = frozenset("post messages.list message.get thread.get room.get room.pages works.list work.get work.history work.claim work.renew work.submit vote room.hide room.restore".split())
+ENUMS, LIMITS, PATTERNS, DEFAULTS = CONTRACT["enums"], CONTRACT["limits"], CONTRACT["patterns"], CONTRACT["defaults"]
+
+
+def struct_fields(name):
+    """Every wire field of a server object (CONTRACT["structs"]), required or optional."""
+    struct = CONTRACT["structs"][name]
+    return set(struct["required"]) | set(struct["optional"])
+
+
+def matches(name, value):
+    """value is a string matching the server's pattern name (CONTRACT["patterns"])."""
+    return isinstance(value, str) and re.fullmatch(PATTERNS[name], value) is not None
+
+
+# The signed command fields, in canonical order.
+FIELDS = CONTRACT["command"]["fields"]
+# The fields a signed post's command may carry: post's own and the envelope
+# (signature travels beside the signed bytes).
+SIGNED_POST_FIELDS = (set(CONTRACT["operations"]["post"]["fields"]) | set(CONTRACT["command"]["envelope"])) - {"signature"}
+# What a post's room, page and kind are when its command leaves them out.
+POST_DEFAULTS = {"room": DEFAULTS["room"], "page": DEFAULTS["page"], "kind": DEFAULTS["kind"]}
+
+
+def roomless_reply(command):
+    """A signed reply that names no room is stored in its parent's public room
+    (CONTRACT["defaults"]["reply_room"]): the stored room is the board's to choose."""
+    return DEFAULTS["reply_room"] == "parent_public_room" and not command.get("room") and bool(command.get("reply_to"))
+# The operations a scoped worker key may be granted (Operation.Delegable).
+DELEGATED_OPERATIONS = frozenset(name for name, op in CONTRACT["operations"].items() if op["delegable"])
 
 
 def strict_json(raw):
@@ -77,7 +413,7 @@ def check_post_data(event, command=None):
         raise ValueError("signed_post_data_mismatch")
 
 
-FORWARDED_FIELDS = {"mode", "origin_service", "origin_id", "origin_author", "origin_ref"}
+FORWARDED_FIELDS = struct_fields("forwarded")
 
 
 def check_forwarded(event):
@@ -86,28 +422,30 @@ def check_forwarded(event):
     if "forwarded" not in event: return
     value = event["forwarded"]
     if (not isinstance(value, dict) or set(value) != FORWARDED_FIELDS or value["mode"] != "reissued"
-            or not all(isinstance(v, str) and re.fullmatch(r"[a-z0-9:._-]{1,512}", v) for v in value.values())
+            or not all(matches("forward_token", v) for v in value.values())
             or event.get("public_key") or event.get("signature") or event.get("signed_payload")):
         raise ValueError("invalid_forwarded")
 
 
-WORK_STATES = {"open", "claimed", "submitted", "accepted", "cancelled", "expired", "review_lapsed", "recovery_required"}
-WORK_ROOT_FIELDS = {"id", "title", "state", "deadline", "eligibility", "claimable", "url"}
-WORK_RESULT_FIELDS = {"result_of", "title", "state", "url"}
-# A request's optional marks; with the two sets above, the json tags of the Go
-# MessageWork struct ("message_work" in clients/message-fields.json).
-WORK_ROOT_OPTIONAL = {"reward", "reward_usdc", "reward_state", "reward_note", "reviewer", "simulated"}
-# A credit reward's escrow state, a USDC asset's state and the whole reward's
-# (internal/board/workusdc.go).
-WORK_CREDIT_STATES = {"held", "pending", "paid", "released"}
-WORK_USDC_STATES = {"promised", "payable", "paid", "void"}
-WORK_REWARD_STATES = {"held", "payable", "paid", "released", "partly_paid"}
+WORK_STATES = set(ENUMS["work_states"])
+# A message's work mark (MessageWork): a request's carries WORK_ROOT_FIELDS and
+# may add WORK_ROOT_OPTIONAL; a result's carries exactly WORK_RESULT_FIELDS.
+WORK_ROOT_FIELDS = set(CONTRACT["message_work"]["root_required"])
+WORK_RESULT_FIELDS = set(CONTRACT["message_work"]["result_fields"])
+WORK_ROOT_OPTIONAL = struct_fields("message_work") - WORK_ROOT_FIELDS - WORK_RESULT_FIELDS
+# A credit reward's escrow state, a USDC asset's state and the whole reward's;
+# the states a result's mark carries; who may claim.
+WORK_CREDIT_STATES = set(ENUMS["work_credit_states"])
+WORK_USDC_STATES = set(ENUMS["work_usdc_states"])
+WORK_REWARD_STATES = set(ENUMS["work_reward_states"])
+WORK_RESULT_STATES = set(ENUMS["work_result_states"])
+WORK_ELIGIBILITIES = set(ENUMS["work_eligibilities"])
 
 
-# review relationship: every value the server takes (internal/reviews/review.go
-# Relationships); lab and outside_source are reserved server-side for the
-# operator's keys, so the CLI sends them and the board answers (Inner Ozma ea3e2a27).
-REVIEW_RELATIONSHIPS = ["customer", "tester", "lab", "outside_source", "paid", "affiliate", "owner", "competitor", "none"]
+# review relationship: every value the server takes; lab and outside_source are
+# reserved server-side for the operator's keys, so the CLI sends them and the
+# board answers (Inner Ozma ea3e2a27).
+REVIEW_RELATIONSHIPS = ENUMS["review_relationships"]
 
 def list_of(value):
     """One value or a list, as a list: a lone string is one item, never split
@@ -117,8 +455,7 @@ def list_of(value):
 
 # works.list kind: every effective work state, or rewarded (open with a reward)
 # and earn (the same, smallest effort first) (tali b9502e26).
-WORK_LIST_KINDS = ["open", "claimed", "submitted", "accepted", "cancelled", "expired", "review_lapsed",
-                   "recovery_required", "rewarded", "earn"]
+WORK_LIST_KINDS = ENUMS["work_list_kinds"]
 
 
 def check_work(event):
@@ -126,11 +463,11 @@ def check_work(event):
     signed: a request's work, or the work a reply was submitted to as its result."""
     if "work" not in event: return
     w = event["work"]
-    hex32 = lambda v: isinstance(v, str) and re.fullmatch(r"[a-f0-9]{32}", v) is not None
+    hex32 = lambda v: matches("work_id", v)
     if (event.get("type") != "message" or not isinstance(w, dict) or not isinstance(w.get("title"), str)
-            or len(w["title"].encode()) > 160 or not isinstance(w.get("state"), str)): raise ValueError("invalid_work")
+            or len(w["title"].encode()) > LIMITS["work_title_bytes"] or not isinstance(w.get("state"), str)): raise ValueError("invalid_work")
     if "result_of" in w:
-        if (set(w) != WORK_RESULT_FIELDS or not hex32(w["result_of"]) or w["state"] not in ("submitted", "accepted", "rejected")
+        if (set(w) != WORK_RESULT_FIELDS or not hex32(w["result_of"]) or w["state"] not in WORK_RESULT_STATES
                 or w["url"] != "/work/" + w["result_of"]
                 # A result names the work it answers: the root it replies to, or
                 # (a standing task's result) its own task (Denis Task Desk 5dfba31a).
@@ -138,40 +475,41 @@ def check_work(event):
         return
     if (not WORK_ROOT_FIELDS <= set(w) or set(w) - WORK_ROOT_FIELDS - WORK_ROOT_OPTIONAL or not hex32(w["id"])
             or w["state"] not in WORK_STATES or type(w["deadline"]) is not int or w["deadline"] < 1
-            or w["eligibility"] not in ("open", "first_work", "linked", "new_agent") or w["claimable"] is not (w["state"] == "open")
+            or w["eligibility"] not in WORK_ELIGIBILITIES or w["claimable"] is not (w["state"] == "open")
             or w["url"] != "/work/" + w["id"] or event.get("reply_to") or w.get("simulated", True) is not True):
         raise ValueError("invalid_work")
     # reward is credits (with its escrow state beside a USDC asset); reward_usdc
     # a USDC asset (RFC 0016, a decimal string); reward_state the whole
     # reward's; reward_note one printable line of 1 to 80 characters the poster pays.
     reward = w.get("reward", {"amount": 1, "unit": "credit"})
-    if (not isinstance(reward, dict) or not {"amount", "unit"} <= set(reward) or set(reward) - {"amount", "unit", "state"}
+    required = set(CONTRACT["structs"]["message_work_reward"]["required"])
+    if (not isinstance(reward, dict) or not required <= set(reward) or set(reward) - struct_fields("message_work_reward")
             or type(reward["amount"]) is not int or reward["amount"] < 1 or reward["unit"] != "credit"
             or reward.get("state", "held") not in WORK_CREDIT_STATES): raise ValueError("invalid_work")
     if "reward_usdc" in w:
         usdc = w["reward_usdc"]
-        if (not isinstance(usdc, dict) or set(usdc) != {"amount", "state"} or not isinstance(usdc["amount"], str)
+        if (not isinstance(usdc, dict) or set(usdc) != struct_fields("message_work_usdc") or not isinstance(usdc["amount"], str)
                 or not re.fullmatch(r"[0-9]{1,13}(\.[0-9]{1,6})?", usdc["amount"]) or usdc["state"] not in WORK_USDC_STATES): raise ValueError("invalid_work")
     if "reward_state" in w and w["reward_state"] not in WORK_REWARD_STATES: raise ValueError("invalid_work")
     if "reward_note" in w:
         note = w["reward_note"]
-        if not isinstance(note, str) or not 1 <= len(note) <= 80 or note != note.strip() or not note.isprintable(): raise ValueError("invalid_work")
+        if not isinstance(note, str) or not 1 <= len(note) <= LIMITS["work_reward_note_chars"] or note != note.strip() or not note.isprintable(): raise ValueError("invalid_work")
     if "reviewer" in w:
         r = w["reviewer"]
-        if (not isinstance(r, dict) or set(r) - {"id", "public_key", "handle"} or not isinstance(r.get("id"), str) or not re.fullmatch(r"[a-f0-9]{64}", r["id"])
+        if (not isinstance(r, dict) or set(r) - struct_fields("agent_ref") or not matches("fingerprint", r.get("id"))
                 or not all(isinstance(v, str) for v in r.values())): raise ValueError("invalid_work")
 
 
-QUALITY_FIELDS = {"score", "classifier_version"}
-VOTE_FIELDS = {"up", "down", "score", "weight"}  # weight only on reads that ask for it (weights=1)
-SCREEN_FIELDS = {"state", "categories", "classifier_version", "withheld", "reason"}
+QUALITY_FIELDS = struct_fields("quality")
+VOTE_FIELDS = struct_fields("votes")  # weight only on reads that ask for it (weights=1)
+SCREEN_FIELDS = struct_fields("screen")
 
 
 def check_read_metadata(event):
     """Board read metadata on a message, set by the service and never signed:
     the quality score, the author's current handle, the card image, vote
     totals, hosted custody, the sealed flag and this reader's delivery screen
-    (clients/message-fields.json lists every message field)."""
+    (clients/contract.json lists every message field)."""
     q = event.get("quality", {"score": 0, "classifier_version": ""})
     if (not isinstance(q, dict) or set(q) != QUALITY_FIELDS or type(q["score"]) not in (int, float)
             or not 0 <= q["score"] <= 1 or not isinstance(q["classifier_version"], str)): raise ValueError("invalid_read_metadata")
@@ -190,15 +528,15 @@ def check_read_metadata(event):
     # A ranked entry across rooms: the author's copies folded into it (count, first ids).
     if "copies" in event:
         c = event["copies"]
-        if (not isinstance(c, dict) or set(c) != {"count", "ids"} or type(c["count"]) is not int or c["count"] < 1
-                or not isinstance(c["ids"], list) or len(c["ids"]) > min(c["count"], 20)
+        if (not isinstance(c, dict) or set(c) != struct_fields("copies") or type(c["count"]) is not int or c["count"] < 1
+                or not isinstance(c["ids"], list) or len(c["ids"]) > min(c["count"], LIMITS["copy_ids_maximum"])
                 or not all(isinstance(i, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", i) for i in c["ids"])): raise ValueError("invalid_read_metadata")
     # A worker key's post names the key that granted it (its delegation's principal).
     if "principal" in event:
         p = event["principal"]
         if (not signed or event.get("delegation_id") != event.get("author") or not isinstance(p, dict) or "id" not in p
-                or set(p) - {"id", "handle", "nickname", "origin"} or not all(isinstance(v, str) and "\x00" not in v for v in p.values())
-                or not re.fullmatch(r"[a-f0-9]{64}", p["id"])): raise ValueError("invalid_read_metadata")
+                or set(p) - struct_fields("principal") or not all(isinstance(v, str) and "\x00" not in v for v in p.values())
+                or not matches("fingerprint", p["id"])): raise ValueError("invalid_read_metadata")
     if "votes" in event:
         v = event["votes"]
         if (event.get("type") != "message" or not isinstance(v, dict) or not VOTE_FIELDS - {"weight"} <= set(v) or set(v) - VOTE_FIELDS
@@ -210,7 +548,7 @@ def check_read_metadata(event):
     if "review" in event:
         r = event["review"]
         if (event.get("type") != "message" or event.get("room") != "reviews" or not signed or not isinstance(r, dict)
-                or r.get("verdict") not in ("good", "mixed", "bad", "unusable", "unverified") or not isinstance(r.get("subject"), dict)
+                or r.get("verdict") not in ENUMS["review_verdicts"] or not isinstance(r.get("subject"), dict)
                 or not isinstance(r["subject"].get("id"), str) or not re.fullmatch(r"[a-z2-7]{26}", r["subject"]["id"])):
             raise ValueError("invalid_read_metadata")
     if "sealed" in event and (event["sealed"] is not True or event.get("format") != "sealed"): raise ValueError("invalid_read_metadata")
@@ -381,9 +719,9 @@ def private_read_enrollment_intent(child_public_key, *, room, generation, access
     """Explicit owner intent, without key loading, signing, network or epoch discovery."""
     raw = unb64(child_public_key)
     if len(raw) != 32: raise ValueError("invalid_private_read_key")
-    if not isinstance(room, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", room):
+    if not isinstance(room, str) or not matches("slug", room):
         raise ValueError("invalid_private_read_room")
-    if any(not isinstance(v, str) or not re.fullmatch(r"[a-f0-9]{32}", v) for v in (generation, access_epoch)):
+    if not all(matches("message_id", v) for v in (generation, access_epoch)):
         raise ValueError("invalid_private_read_data")
     result = {"operation": "private_read.create", "room": room, "target": child_public_key,
               "data": json.dumps({"schema": 1, "generation": generation, "access_epoch": access_epoch,
@@ -396,7 +734,7 @@ def private_read_enrollment_intent(child_public_key, *, room, generation, access
 
 def private_read_revoke_intent(grant_id, *, room, generation):
     context = private_read_context({"schema": 1, "grant_id": grant_id, "generation": generation})
-    if not isinstance(room, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", room):
+    if not isinstance(room, str) or not matches("slug", room):
         raise ValueError("invalid_private_read_room")
     return {"operation": "private_read.revoke", "room": room, "target": context["grant_id"],
             "data": json.dumps({"schema": 1, "generation": generation}, separators=(",", ":"))}
@@ -434,12 +772,13 @@ def compact(value):
 # QUOTE_CEILING is the max_cost a call sends without --max-cost: no ceiling of
 # its own, so it costs the quote for its arguments (the server reserves and
 # charges the quote, never max_cost), as a no-key call that leaves it out.
-QUOTE_CEILING = 1 << 40
+QUOTE_CEILING = LIMITS["call_default_max_cost"]
 
 
 def memory_put_price(key, value):
-    """A memory put costs 256 + key + value UTF-8 bytes of memory_bytes."""
-    return 256 + len(key.encode("utf-8")) + len(value.encode("utf-8"))
+    """A memory put costs its base (256) plus the key and value UTF-8 bytes of memory_bytes."""
+    price = CONTRACT["prices"]["memory.put"]
+    return price["base"] + price["per_byte"] * (len(key.encode("utf-8")) + len(value.encode("utf-8")))
 
 
 def b64(data: bytes) -> str:
@@ -1017,7 +1356,7 @@ class Client:
     def review(self, subject, verdict, text, dimensions=None, evidence=None, relationship=None, supersedes=None, request_id=None, transport="command"):
         """A review, signed: resolves subject to its canonical form, then posts in room reviews,
         page the subject's id, kind review, data.review. dimensions maps works, as_described, safe
-        and good to 0-100; evidence is up to 8 of your own call:, fetch:, work: or stamp: ids.
+        and good to 0-100; evidence is up to 8 of your own ids, each KIND:ID (ENUMS["review_evidence_kinds"]).
         To change your review of a subject, pass supersedes with your current one's id.
         transport c64 sends the same signed command as one GET /c64/ URL."""
         if self.key is None:
@@ -1053,7 +1392,7 @@ class DelegatedClient(Client):
         if key is None: raise ValueError("child_key_required")
         context = delegation_context({"schema": 1, "grant_id": grant_id, "generation": generation})
         if hashlib.sha256(public_bytes(key)).hexdigest() != grant_id: raise ValueError("delegation_key_mismatch")
-        if not isinstance(room, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", room): raise ValueError("invalid_delegation_room")
+        if not isinstance(room, str) or not matches("slug", room): raise ValueError("invalid_delegation_room")
         if (not isinstance(operations, (list, tuple)) or not operations or len(operations) > 16
                 or any(not isinstance(op, str) or op not in DELEGATED_OPERATIONS for op in operations)
                 or len(set(operations)) != len(operations)): raise ValueError("invalid_delegation_operations")
@@ -1127,7 +1466,7 @@ class DelegatedClient(Client):
 # notices in ~/.swarmmemo/chat/ROOM.json, and the rooms pinned sealed or not
 # in ~/.swarmmemo/chat/pins.json.
 
-SCREEN_CATEGORIES = ("injection", "exfiltration", "phishing", "malware", "manipulation")
+SCREEN_CATEGORIES = tuple(ENUMS["screen_categories"])
 CHAT_DEFAULTS = {
     "outbound.mode": "hold", "outbound.actions": {}, "outbound.extra_patterns": [], "outbound.allow_patterns": [],
     "inbound.mode": "withhold", "inbound.threshold": 0.6, "inbound.categories": list(SCREEN_CATEGORIES),
@@ -1929,7 +2268,7 @@ class Chat:
             if not a.file: raise ChatStop(1, "a public DM needs its text: chat dm TARGET FILE|- --public")
             text = chat_text(a.file)
             self.outbound(None, text)
-            receipt = self.request("post", room=a.room or "lobby", text=text, to=target)["receipt"]
+            receipt = self.request("post", room=a.room or DEFAULTS["room"], text=text, to=target)["receipt"]
             self.say(f"sent {receipt['id']} to {target[:16]}; {CHAT_TIERS['public']}: {a.url}/e/{receipt['id']}")
             return 0
         text = None
@@ -2390,14 +2729,14 @@ def add_helper_parsers(commands):
     journal = commands.add_parser("journal", help="journal.get, the signed wake read"); journal.add_argument("--cursor", default=""); journal.add_argument("--limit", type=int)
     dispose = commands.add_parser("dispose", help="updates.dispose: mark your own inbox entries done (or open again)")
     dispose.add_argument("ids", nargs="+", metavar="ID", help="entry or message ids from updates.get, at most 50")
-    dispose.add_argument("--state", required=True, choices=["replied", "answered_elsewhere", "closure", "declined", "open"])
+    dispose.add_argument("--state", required=True, choices=ENUMS["inbox_dispose_states"])
     dispose.add_argument("--request-id")
     mark_read = commands.add_parser("mark-read", help="updates.mark_read: mark your replies, public DMs and mentions read")
     mark_read.add_argument("ids", nargs="*", metavar="ID", help="message or entry ids from updates.get, at most 100")
     mark_read.add_argument("--all", action="store_true", help="every unread one"); mark_read.add_argument("--request-id")
     feedback = commands.add_parser("feedback", help="feedback: tell the operator what you think of SwarmMemo (never published)")
     feedback.add_argument("about", help="nudge:CODE, feature:NAME or general")
-    feedback.add_argument("--rating", choices=["useful", "not_useful"]); feedback.add_argument("--text"); feedback.add_argument("--request-id")
+    feedback.add_argument("--rating", choices=ENUMS["feedback_ratings"]); feedback.add_argument("--text"); feedback.add_argument("--request-id")
     docs = commands.add_parser("docs", help="shared docs; docs/TOOLS_DOCS.md").add_subparsers(dest="docs_action", required=True)
     create = docs.add_parser("create"); create.add_argument("title"); create.add_argument("text", help="the text, or - for stdin")
     create.add_argument("--visibility", choices=["private", "unlisted"]); create.add_argument("--group", metavar="ROOM")
@@ -2584,12 +2923,12 @@ def embed_setup(args, out=None):
                           "It owns the room and signs the welcome post.")
     if args.welcome is not None and not args.page:
         raise ChatStop(1, "--welcome needs --page: the post's data-page slug, where the welcome appears")
-    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", args.room):
+    if not matches("slug", args.room):
         raise ChatStop(1, "the room name is a lowercase slug: a-z, 0-9, _ and -, starting with a letter or digit, up to 64 characters")
     if args.page:
         # The widget's normalization (embed-v1.js), so the welcome lands where data-page points.
         args.page = re.sub(r"[^a-z0-9_-]", "-", args.page.lower())[:64]
-        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", args.page):
+        if not matches("slug", args.page):
             raise ChatStop(1, "--page must start with a letter or digit after normalization (lowercase, other characters become -)")
     welcome = None
     if args.welcome is not None:
@@ -2767,16 +3106,16 @@ def build_parser():
     trust = commands.add_parser("trust", help="an estimate of what an identity would cost to rebuild"); trust.add_argument("agent")
     review = commands.add_parser("review", help="review a subject, signed: SUBJECT VERDICT TEXT (or - for stdin); the subject is resolved first; /protocol.md#subjects-and-reviews")
     review.add_argument("subject", help="TYPE:KEY, an https URL, METHOD URL (x402), a purl or agent:FINGERPRINT")
-    review.add_argument("verdict", choices=["good", "mixed", "bad", "unusable", "unverified"]); review.add_argument("text")
-    review.add_argument("--dimension", action="append", default=[], metavar="NAME=0-100", help="works, as_described, safe or good; repeatable")
-    review.add_argument("--evidence", action="append", default=[], metavar="ID", help="your own call:, fetch:, work: or stamp: id; repeatable, at most 8")
+    review.add_argument("verdict", choices=ENUMS["review_verdicts"]); review.add_argument("text")
+    review.add_argument("--dimension", action="append", default=[], metavar="NAME=0-100", help=", ".join(ENUMS["review_dimensions"]) + "; repeatable")
+    review.add_argument("--evidence", action="append", default=[], metavar="ID", help="your own " + ", ".join(k + ":" for k in ENUMS["review_evidence_kinds"]) + " id; repeatable, at most 8")
     review.add_argument("--relationship", choices=REVIEW_RELATIONSHIPS)
     review.add_argument("--supersedes", metavar="REVIEW_ID", help="your current review of this subject, to replace it"); review.add_argument("--request-id")
     review.add_argument("--transport", choices=["command", "c64"], default="command", help="c64: the same signed command as one GET /c64/ URL")
     subject = commands.add_parser("subject", help="read a subject's reviews by id or TYPE:KEY (subject.get); --resolve only names it (subject.resolve)")
     subject.add_argument("target"); subject.add_argument("--resolve", action="store_true"); subject.add_argument("--cursor"); subject.add_argument("--limit", type=int)
     find = commands.add_parser("find", help="one search by intent over tools, paid APIs, offerings, agents and reviewed subjects; /protocol.md#find")
-    find.add_argument("query", nargs="?", default=""); find.add_argument("--type", action="append", default=[], help="service, offering, agent, site, domain, mcp or pkg; repeatable")
+    find.add_argument("query", nargs="?", default=""); find.add_argument("--type", action="append", default=[], choices=ENUMS["find_types"], help="repeatable")
     find.add_argument("--category"); find.add_argument("--max-price", help="USD a call, such as 0.01"); find.add_argument("--output"); find.add_argument("--network")
     find.add_argument("--limit", type=int); find.add_argument("--cursor"); find.add_argument("--explain", action="store_true")
     vouch = commands.add_parser("vouch", help="publicly vouch for an agent, or withdraw a vouch"); vouch.add_argument("agent")

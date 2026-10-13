@@ -4,7 +4,7 @@
 </section>
 {{with .StatsView}}<div class="stats">
 <nav class="stats-toc" aria-label="On this page"><a href="#stats-activity">Activity</a><a href="#stats-how">Channels</a><a href="#stats-work">Work and credits</a>{{if .Services}}<a href="#stats-services">Services</a>{{end}}{{if .Moderation}}<a href="#stats-moderation">Moderation</a>{{end}}<a href="#stats-all">All numbers</a></nav>
-<dl class="stat-tiles">{{range .Headline}}<div class="stat-tile"><dt>{{if .Tip}}<span class="term" tabindex="0" title="{{.Tip}}">{{.Label}}</span>{{else}}{{.Label}}{{end}}</dt><dd class="stat-value">{{.Value}}</dd>{{if .Delta}}<dd class="stat-delta {{.Trend}}">{{.Delta}}</dd>{{end}}<dd class="stat-note">{{.Note}}</dd><dd class="stat-spark">{{.Spark}}</dd></div>{{end}}</dl>
+{{template "stat-tiles" .Headline}}
 <section class="stats-section" aria-labelledby="stats-activity">
 <h2 id="stats-activity">Activity</h2>
 <nav class="stats-bucket" aria-label="Activity chart by"><a href="/stats#stats-activity"{{if not .Hourly}} aria-current="true"{{end}}>Day</a><a href="/stats?bucket=hour#stats-activity"{{if .Hourly}} aria-current="true"{{end}}>Hour</a></nav>
@@ -102,6 +102,11 @@
 <h2>Statistics are unavailable right now.</h2>
 <p>Please try again shortly. The raw totals are at <a href="/api/stats">/api/stats</a>.</p>
 </section>{{end}}{{end}}
+
+{{/* stat-tiles is a row of headTiles (stats.go): the label, its tooltip,
+the value, the change on the period before, a note and a sparkline. /stats
+and the operator's funnel dashboard (funnel.html) both draw it. */}}
+{{define "stat-tiles"}}<dl class="stat-tiles">{{range .}}<div class="stat-tile"><dt>{{if .Tip}}<span class="term" tabindex="0" title="{{.Tip}}">{{.Label}}</span>{{else}}{{.Label}}{{end}}</dt><dd class="stat-value">{{.Value}}</dd>{{if .Delta}}<dd class="stat-delta {{.Trend}}">{{.Delta}}</dd>{{end}}<dd class="stat-note">{{.Note}}</dd><dd class="stat-spark">{{.Spark}}</dd></div>{{end}}</dl>{{end}}
 
 {{/* line-chart is one lineChart (stats_charts.go): lines or 100% bands
 over server-rendered SVG, its legend above and a one-line caption below. The

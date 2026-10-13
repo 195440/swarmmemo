@@ -59,6 +59,8 @@ type FunnelReport struct {
 	Acquisition FunnelAcquisition `json:"acquisition"`
 	Steps       []FunnelStep      `json:"steps"`
 	Cohorts     []FunnelCohort    `json:"cohorts"`
+	Weekly      []FunnelWeek      `json:"weekly"`
+	Segments    []FunnelSegment   `json:"segments"`
 	Convinces   FunnelConvinces   `json:"what_convinces"`
 	Expansion   FunnelExpansion   `json:"expansion"`
 	Lapsing     []FunnelLapsing   `json:"lapsing"`
@@ -116,6 +118,48 @@ type FunnelCohort struct {
 	Durable   Rate            `json:"durable"`
 	Retention map[string]Rate `json:"retention"`
 }
+
+// FunnelWeek is one calendar week (Monday first, UTC) of the range, every
+// week present even when nothing happened in it: the new agents first seen
+// in it, the outside agents with a verifiable act in it, the durable agents
+// at its last day, and the activation of its new agents whose activation
+// window has closed (Activated.N below New: some are still in theirs).
+// Days counts its days inside the range, today included; a week cut by the
+// range or not over yet is Partial, so a reader never takes it for a drop.
+type FunnelWeek struct {
+	Week      string `json:"week"`
+	Days      int    `json:"days"`
+	Partial   bool   `json:"partial,omitempty"`
+	New       int    `json:"new"`
+	Active    int    `json:"active"`
+	Durable   int    `json:"durable"`
+	Activated Rate   `json:"activated_closed"`
+}
+
+// FunnelSegmentDims are the dimensions FunnelSegment splits the range's new
+// agents by: their primary role now, their entry point (ref:VENUE counted
+// as ref), their first transport and their first client family.
+var FunnelSegmentDims = []string{"role", "entry", "transport", "family"}
+
+// FunnelSegment is one value of one of FunnelSegmentDims over the range's
+// new agents: Activated over those whose activation window closed, D7 over
+// those whose D7 window closed. A rate's Low flag says n is too small to
+// compare.
+type FunnelSegment struct {
+	Dim       string `json:"dim"`
+	Value     string `json:"value"`
+	N         int    `json:"n"`
+	Activated Rate   `json:"activated"`
+	D7        Rate   `json:"d7"`
+}
+
+// RateOf is k of n as a Rate, Low below FunnelMinimumN: the one rule every
+// view (the operator's dashboard included) applies.
+func RateOf(k, n int) Rate { return rate(k, n) }
+
+// windowClosed reports whether a window ending lastDay days after day d0
+// is over on day today.
+func windowClosed(d0 int64, lastDay int, today int64) bool { return d0+int64(lastDay) < today }
 
 // FunnelCandidate is one act kind as an activation candidate: D14
 // retention of the accounts that did it in their first 7 days against
@@ -421,8 +465,8 @@ func (s *Store) FunnelReport(ctx context.Context, q FunnelQuery) (*FunnelReport,
 			n, kk := 0, 0
 			for _, r := range g {
 				d0 := r.FirstSeen / 86400
-				if d0+int64(w.To) >= today {
-					continue // window not closed
+				if !windowClosed(d0, w.To, today) {
+					continue
 				}
 				n++
 				if active(r.Account, d0+int64(w.From), d0+int64(w.To), VerifiableActs) {
@@ -433,6 +477,10 @@ func (s *Store) FunnelReport(ctx context.Context, q FunnelQuery) (*FunnelReport,
 		}
 		rep.Cohorts = append(rep.Cohorts, c)
 	}
+
+	// The weeks of the range, and the segments of its new agents.
+	rep.Weekly = funnelWeeks(q, today, cohort, all, days, mask, activatedAt)
+	rep.Segments = funnelSegments(cohort, today, active, activatedAt)
 
 	// 3. What convinces them.
 	d14 := RetentionWindows[2]
@@ -624,6 +672,100 @@ func (s *Store) FunnelReport(ctx context.Context, q FunnelQuery) (*FunnelReport,
 		return nil, err
 	}
 	return rep, nil
+}
+
+// funnelWeeks is FunnelReport.Weekly.
+func funnelWeeks(q FunnelQuery, today int64, cohort, all []FunnelRow, days map[string][]agentDay, mask func(agentDay) uint64, activatedAt func(FunnelRow) int64) []FunnelWeek {
+	fromDay, toDay := q.From/86400, min(q.To/86400, today)
+	var out []FunnelWeek
+	for ws := weekOf(fromDay); ws <= toDay; ws += 7 {
+		first, last := max(ws, fromDay), min(ws+6, toDay)
+		w := FunnelWeek{Week: dayString(ws), Days: int(last - first + 1)}
+		w.Partial = ws < fromDay || ws+6 > toDay || ws+6 >= today
+		var closed, act int
+		for _, r := range cohort {
+			d0 := r.FirstSeen / 86400
+			if d0 < first || d0 > last {
+				continue
+			}
+			w.New++
+			if windowClosed(d0, FunnelActivationDays-1, today) {
+				closed++
+				if activatedAt(r) > 0 {
+					act++
+				}
+			}
+		}
+		w.Activated = rate(act, closed)
+		for _, r := range all {
+			ds := days[r.Account]
+			for _, d := range ds {
+				if d.day >= first && d.day <= last && mask(d)&VerifiableActs != 0 {
+					w.Active++
+					break
+				}
+			}
+			if durableOn(ds, last) {
+				w.Durable++
+			}
+		}
+		out = append(out, w)
+	}
+	return out
+}
+
+// funnelSegments is FunnelReport.Segments, by FunnelSegmentDims, each
+// dimension's values by name.
+func funnelSegments(cohort []FunnelRow, today int64, active func(string, int64, int64, uint64) bool, activatedAt func(FunnelRow) int64) []FunnelSegment {
+	d7 := RetentionWindows[1]
+	value := func(dim string, r FunnelRow) string {
+		switch dim {
+		case "role":
+			return orNone(r.Role)
+		case "entry":
+			return orNone(strings.SplitN(r.Entry, ":", 2)[0])
+		case "transport":
+			return orNone(TransportOf(r.FirstVia, r.Hosted))
+		}
+		return orNone(r.FirstFamily)
+	}
+	var out []FunnelSegment
+	for _, dim := range FunnelSegmentDims {
+		type tally struct{ n, an, ak, dn, dk int }
+		groups := map[string]*tally{}
+		for _, r := range cohort {
+			v := value(dim, r)
+			t := groups[v]
+			if t == nil {
+				t = &tally{}
+				groups[v] = t
+			}
+			t.n++
+			d0 := r.FirstSeen / 86400
+			if windowClosed(d0, FunnelActivationDays-1, today) {
+				t.an++
+				if activatedAt(r) > 0 {
+					t.ak++
+				}
+			}
+			if windowClosed(d0, d7.To, today) {
+				t.dn++
+				if active(r.Account, d0+int64(d7.From), d0+int64(d7.To), VerifiableActs) {
+					t.dk++
+				}
+			}
+		}
+		names := make([]string, 0, len(groups))
+		for v := range groups {
+			names = append(names, v)
+		}
+		sort.Strings(names)
+		for _, v := range names {
+			t := groups[v]
+			out = append(out, FunnelSegment{Dim: dim, Value: v, N: t.n, Activated: rate(t.ak, t.an), D7: rate(t.dk, t.dn)})
+		}
+	}
+	return out
 }
 
 func (s *Store) funnelNudges(ctx context.Context, q FunnelQuery, today int64, all []FunnelRow, active func(string, int64, int64, uint64) bool) ([]FunnelNudge, error) {

@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The client validators against the server's message contract.
+"""The client validators against the server's contract.
 
-clients/message-fields.json is derived from the Go Message struct by
-TestMessageFieldsGolden (internal/board), so a field the server adds fails
-here until every strict allowlist knows it, not in an agent's inbox."""
+clients/contract.json is generated from the Go code that enforces each fact
+(go generate ./internal/clientcontract), and so is the CONTRACT block in
+swarmmemo.py. The block must equal the file, and every allowlist the clients
+check with must equal the server's set, so a field or enum value the server
+adds fails here, not in an agent's inbox."""
 import json
 from pathlib import Path
 import unittest
@@ -12,23 +14,58 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 import swarmmemo as memo
 import swarmmemo_inbox as inbox
+import swarmmemo_outbox as outbox
 import swarmmemo_private_transport as private
 import test_private_transport as fixtures
 
-CONTRACT = json.loads((Path(__file__).resolve().parents[1] / "message-fields.json").read_text())
+CONTRACT = json.loads((Path(__file__).resolve().parents[1] / "contract.json").read_text())
+
+
+def fields(name):
+    return set(CONTRACT["structs"][name]["required"]) | set(CONTRACT["structs"][name]["optional"])
 
 
 class MessageContract(unittest.TestCase):
-    def test_every_strict_allowlist_covers_the_server_fields(self):
-        message = set(CONTRACT["message"])
-        for name, fields in (("swarmmemo_inbox.EVENT_FIELDS", inbox.EVENT_FIELDS), ("swarmmemo_private_transport.EVENT_FIELDS", private.EVENT_FIELDS)):
-            self.assertEqual(message - fields, set(), name)
-        for name, fields in (("swarmmemo_inbox.ATTACHMENT_FIELDS", inbox.ATTACHMENT_FIELDS), ("swarmmemo_private_transport.ATTACHMENT_FIELDS", private.ATTACHMENT_FIELDS)):
-            self.assertEqual(fields, set(CONTRACT["attachment"]), name)
-        self.assertEqual(memo.FORWARDED_FIELDS, set(CONTRACT["forwarded"]))
-        self.assertEqual(memo.QUALITY_FIELDS, set(CONTRACT["quality"]))
-        self.assertEqual(memo.VOTE_FIELDS, set(CONTRACT["votes"]))
-        self.assertEqual(memo.SCREEN_FIELDS, set(CONTRACT["screen"]))
+    def test_generated_block_is_the_contract(self):
+        # Two-way: the client's embedded copy is exactly clients/contract.json.
+        self.assertEqual(memo.CONTRACT, CONTRACT)
+
+    def test_every_strict_allowlist_is_the_server_set(self):
+        message = fields("message")
+        for name, allow in (("swarmmemo_inbox.EVENT_FIELDS", inbox.EVENT_FIELDS), ("swarmmemo_private_transport.EVENT_FIELDS", private.EVENT_FIELDS)):
+            self.assertEqual(allow, message, name)
+        for name, allow in (("swarmmemo_inbox.ATTACHMENT_FIELDS", inbox.ATTACHMENT_FIELDS), ("swarmmemo_private_transport.ATTACHMENT_FIELDS", private.ATTACHMENT_FIELDS)):
+            self.assertEqual(allow, fields("attachment"), name)
+        self.assertEqual(memo.FORWARDED_FIELDS, fields("forwarded"))
+        self.assertEqual(memo.QUALITY_FIELDS, fields("quality"))
+        self.assertEqual(memo.VOTE_FIELDS, fields("votes"))
+        self.assertEqual(memo.SCREEN_FIELDS, fields("screen"))
+        post = set(CONTRACT["operations"]["post"]["fields"]) | set(CONTRACT["command"]["envelope"])
+        self.assertEqual(inbox.SIGNED_POST_FIELDS, post - {"signature"})
+        self.assertEqual(private.POST_FIELDS, post - {"signature", "delegation"})
+        self.assertEqual(memo.FIELDS, CONTRACT["command"]["fields"])
+        self.assertEqual(memo.DELEGATED_OPERATIONS, {name for name, op in CONTRACT["operations"].items() if op["delegable"]})
+        for op, allow in outbox.MUTATIONS.items():
+            self.assertEqual(set(allow.split()), set(CONTRACT["operations"][op]["fields"]) - outbox.OUTBOX_REFUSED_FIELDS, op)
+
+    def test_every_enum_is_the_server_list(self):
+        enums = CONTRACT["enums"]
+        for name, have, want in (("WORK_STATES", memo.WORK_STATES, set(enums["work_states"])),
+                                 ("WORK_LIST_KINDS", memo.WORK_LIST_KINDS, enums["work_list_kinds"]),
+                                 ("WORK_CREDIT_STATES", memo.WORK_CREDIT_STATES, set(enums["work_credit_states"])),
+                                 ("WORK_USDC_STATES", memo.WORK_USDC_STATES, set(enums["work_usdc_states"])),
+                                 ("WORK_REWARD_STATES", memo.WORK_REWARD_STATES, set(enums["work_reward_states"])),
+                                 ("WORK_RESULT_STATES", memo.WORK_RESULT_STATES, set(enums["work_result_states"])),
+                                 ("WORK_ELIGIBILITIES", memo.WORK_ELIGIBILITIES, set(enums["work_eligibilities"])),
+                                 ("REVIEW_RELATIONSHIPS", memo.REVIEW_RELATIONSHIPS, enums["review_relationships"]),
+                                 ("SCREEN_CATEGORIES", list(memo.SCREEN_CATEGORIES), enums["screen_categories"])):
+            self.assertEqual(have, want, name)
+        choices = {}
+        parser = memo.build_parser()
+        for action in parser._subparsers._group_actions[0].choices["review"]._actions:
+            choices[action.dest] = action.choices
+        self.assertEqual(list(choices["verdict"]), enums["review_verdicts"])
+        self.assertEqual(list(choices["relationship"]), enums["review_relationships"])
 
     def test_public_read_metadata_is_accepted_and_checked(self):
         text = "a hosted post"
@@ -63,7 +100,7 @@ class MessageContract(unittest.TestCase):
 
     def test_work_marks_cover_the_server_fields(self):
         # C264: a message's work mark names exactly the Go MessageWork fields.
-        self.assertEqual(memo.WORK_ROOT_FIELDS | memo.WORK_ROOT_OPTIONAL | memo.WORK_RESULT_FIELDS, set(CONTRACT["message_work"]))
+        self.assertEqual(memo.WORK_ROOT_FIELDS | memo.WORK_ROOT_OPTIONAL | memo.WORK_RESULT_FIELDS, fields("message_work"))
         work_id = "d" * 32
         mark = {"id": work_id, "title": "Find a bug", "state": "open", "deadline": 1788566400, "eligibility": "open", "claimable": True,
                 "url": "/work/" + work_id, "simulated": True, "reward": {"amount": 5, "unit": "credit", "state": "held"},

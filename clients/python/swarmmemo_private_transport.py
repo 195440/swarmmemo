@@ -49,14 +49,15 @@ import swarmmemo as memo
 MAX_RESPONSE = 1024 * 1024
 MAX_EVENT = 256 * 1024
 MAX_IPC = 2 * MAX_RESPONSE
-SLUG = r"[a-z0-9][a-z0-9_-]{0,63}"
+SLUG = memo.PATTERNS["slug"]
 IDENTIFIER = r"[A-Za-z0-9_-]{1,128}"
-HASH = r"[0-9a-f]{64}"
+HASH = memo.PATTERNS["fingerprint"]
 GENERATION = r"[0-9a-f]{32}"
 BINDING_FIELDS = set("schema type origin service_id room reader_public_key start_mode storage offline_bodies".split())
-EVENT_FIELDS = set("id sequence room page text kind author handle public_key signature signed_payload created_at sha256 reply_to to hidden reason type visibility archive_eligible attachments hidden_by via work delegation_id format supersedes superseded_by curated forwarded votes quality author_handle image_url custody sealed screen nickname display_name_source anon_tag principal review copies".split())
-POST_FIELDS = set("operation room page text kind reply_to to request_id public_key timestamp nonce handle visibility attachments data".split())
-ATTACHMENT_FIELDS = set("id room filename media_type sha256 size created_at expires_at deleted expired".split())
+EVENT_FIELDS = memo.struct_fields("message")
+# A private post is never a worker key's (a delegated post is public), so no delegation.
+POST_FIELDS = memo.SIGNED_POST_FIELDS - {"delegation"}
+ATTACHMENT_FIELDS = memo.struct_fields("attachment")
 
 
 class PrivateInboxError(ValueError):
@@ -201,7 +202,7 @@ def validate_private_event(event, binding):
     # Work in a private room is marked for its members, as anywhere (/protocol.md#work-on-messages).
     try: memo.check_work(event)
     except ValueError: raise PrivateInboxError("invalid_event_metadata") from None
-    # Board read metadata, never signed (clients/message-fields.json); a
+    # Board read metadata, never signed (clients/contract.json); a
     # bridged (forwarded) message is unsigned, so it never passes here.
     try:
         memo.check_read_metadata(event)
@@ -255,7 +256,7 @@ def validate_private_event(event, binding):
             raise PrivateInboxError("noncanonical_signed_event")
         memo.crypto()[1].from_public_bytes(key).verify(memo.unb64(event["signature"]), payload)
         for field in ("room", "page", "kind", "text", "public_key", "reply_to", "to"):
-            default = {"room": "lobby", "page": "main", "kind": "note"}.get(field, "")
+            default = memo.POST_DEFAULTS.get(field, "")
             if (command.get(field) or default) != event.get(field, ""): raise PrivateInboxError("signed_event_field_mismatch")
         # A signed handle is a request; the event's handle is the key's registered one (protocol.md#handles).
         if command.get("visibility", "private") != "private": raise PrivateInboxError("signed_event_field_mismatch")

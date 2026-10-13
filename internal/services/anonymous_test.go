@@ -399,7 +399,8 @@ func TestPythonClientQuoteCeiling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if services.CallDefaultMaxCost != 1<<40 || !strings.Contains(string(raw), "\nQUOTE_CEILING = 1 << 40\n") {
+	// The value reaches the client through its generated CONTRACT block (internal/clientcontract).
+	if services.CallDefaultMaxCost != 1<<40 || !strings.Contains(string(raw), "\nQUOTE_CEILING = LIMITS[\"call_default_max_cost\"]\n") {
 		t.Fatalf("clients/python QUOTE_CEILING must equal services.CallDefaultMaxCost (%d)", services.CallDefaultMaxCost)
 	}
 	if _, err := services.ParseData(`{"schema":1,"method":"put","args":{},"max_cost":1099511627776}`, true); err != nil {

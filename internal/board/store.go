@@ -721,7 +721,7 @@ func validateCommandFields(c Command) error {
 		return problem(400, "unknown_operation", "Unknown operation. The supported operations are listed at /capabilities.")
 	}
 	allowed := map[string]bool{}
-	for _, field := range strings.Fields("operation public_key signature timestamp nonce request_id delegation " + op.Fields) {
+	for _, field := range append(CommandEnvelopeFields(), strings.Fields(op.Fields)...) {
 		allowed[field] = true
 	}
 	encoded, _ := json.Marshal(c)

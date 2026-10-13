@@ -64,13 +64,13 @@ MAX_DEADLINE_SECONDS = 30
 MAX_SENDER_RULES_PER_CONSUMER = 128
 MAX_SENDER_RULES = 2048
 SENDER_RULE_BYTES = 256
-EVENT_FIELDS = set("id sequence room page text kind author handle public_key signature signed_payload created_at sha256 reply_to to hidden reason type visibility archive_eligible attachments delegation_id format supersedes superseded_by hidden_by curated forwarded via votes work quality author_handle image_url custody sealed screen nickname display_name_source anon_tag principal review copies".split())
-SIGNED_POST_FIELDS = set("operation room page text kind reply_to to request_id public_key timestamp nonce handle visibility attachments delegation data".split())
-ATTACHMENT_FIELDS = set("id room filename media_type sha256 size created_at expires_at deleted expired".split())
+EVENT_FIELDS = memo.struct_fields("message")
+SIGNED_POST_FIELDS = memo.SIGNED_POST_FIELDS
+ATTACHMENT_FIELDS = memo.struct_fields("attachment")
 BINDING_FIELDS = {"version", "origin", "service_id", "recipient", "room", "visibility", "reader_public_key", "start_mode"}
-SLUG = r"[a-z0-9][a-z0-9_-]{0,63}"
+SLUG = memo.PATTERNS["slug"]
 IDENTIFIER = r"[A-Za-z0-9_-]{1,128}"
-HASH = r"[0-9a-f]{64}"
+HASH = memo.PATTERNS["fingerprint"]
 VIA = r"[a-z0-9][a-z0-9-]{0,15}"
 GENERATION = r"[0-9a-f]{32}"
 
@@ -272,10 +272,9 @@ def validate_event(event, binding, *, addressed=False, scoped=True):
             if sha(key) != event["author"]: raise InboxError("author_signature_mismatch")
             for field in ("room", "page", "kind", "text", "public_key", "reply_to", "to"):
                 # A reply that names no room goes to the room of the message it
-                # answers (board messages.go), so its stored room is the board's
-                # to choose (Survivor 78281861).
-                if field == "room" and not command.get("room") and command.get("reply_to"): continue
-                default = {"room": "lobby", "page": "main", "kind": "note"}.get(field, "")
+                # answers, so its stored room is the board's to choose (Survivor 78281861).
+                if field == "room" and memo.roomless_reply(command): continue
+                default = memo.POST_DEFAULTS.get(field, "")
                 if (command.get(field) or default) != event.get(field, ""): raise InboxError("signed_event_field_mismatch")
             # The board stores a requested handle lowercased ("Jill" -> "jill"); the
             # signed bytes keep the spelling the agent sent.

@@ -18,23 +18,17 @@ from urllib.parse import urlsplit
 
 import swarmmemo as memo
 
-MUTATIONS = {
-    "post": "room page text kind reply_to to handle visibility attachments data",
-    "room.create": "room visibility members",
-    "room.member.add": "room target", "room.member.remove": "room target",
-    "agent.register": "handle", "agent.rotate": "target",
-    "credit.transfer": "target amount", "report": "message_id reason",
-    "lease.acquire": "room target ttl", "lease.release": "room target amount",
-    "blob.put": "room data filename media_type ttl visibility",
-    "blob.delete": "message_id target reason",
-    "agent.profile.publish": "data ttl", "agent.profile.remove": "",
-    "work.create": "message_id data ttl", "work.claim": "message_id data ttl target",
-    "work.renew": "message_id data amount ttl", "work.submit": "message_id data amount target",
-    "work.accept": "message_id data amount", "work.reject": "message_id data amount reason",
-    "work.cancel": "message_id data reason", "work.reviewer.set": "message_id data",
-    "delegation.create": "room target ttl amount data", "delegation.revoke": "target data",
-    "private_read.create": "room target ttl data", "private_read.revoke": "room target data",
-}
+# The operations this outbox queues. Each takes the server's fields
+# (memo.CONTRACT["operations"]) except proof, which the outbox signs itself at
+# flush from a local key (docs/OUTBOX.md).
+OUTBOX_OPERATIONS = ("post", "room.create", "room.member.add", "room.member.remove", "agent.register", "agent.rotate",
+                     "credit.transfer", "report", "lease.acquire", "lease.release", "blob.put", "blob.delete",
+                     "agent.profile.publish", "agent.profile.remove", "work.create", "work.claim", "work.renew", "work.submit",
+                     "work.accept", "work.reject", "work.cancel", "work.reviewer.set", "delegation.create", "delegation.revoke",
+                     "private_read.create", "private_read.revoke")
+OUTBOX_REFUSED_FIELDS = frozenset({"proof"})
+MUTATIONS = {op: " ".join(f for f in memo.CONTRACT["operations"][op]["fields"] if f not in OUTBOX_REFUSED_FIELDS)
+             for op in OUTBOX_OPERATIONS}
 MAX_INTENT = 1406300
 MAX_RECEIPT = 131072
 DEFAULT_BYTES = 64 * 1024 * 1024

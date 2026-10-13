@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -62,6 +63,46 @@ func TestAdminFunnel(t *testing.T) {
 	}
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &out) != nil || !out.OK || len(out.Data.Steps) != len(board.FunnelStages) || !out.Data.Organic {
 		t.Fatalf("/admin/funnel: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// The dashboard is the admin route's too: behind the token, never cached,
+// indexed or framed, and nowhere public.
+func TestAdminFunnelDashboard(t *testing.T) {
+	s, store := funnelServer(t, board.Features{})
+	if _, err := store.FunnelRecompute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, token := range []string{"", "wrong"} {
+		w := adminGet(s, "/admin/funnel?format=html", token)
+		if w.Code != 401 || strings.Contains(w.Body.String(), "Key takeaways") {
+			t.Fatalf("token %q: %d %s", token, w.Code, w.Body.String())
+		}
+	}
+	if w := adminGet(s, "/admin/funnel?format=xml", moderationAdminToken); w.Code != 400 {
+		t.Fatalf("bad format: %d", w.Code)
+	}
+	w := adminGet(s, "/admin/funnel?format=html", moderationAdminToken)
+	h := w.Header()
+	if w.Code != 200 || !strings.HasPrefix(h.Get("Content-Type"), "text/html") || h.Get("Cache-Control") != "no-store" || !strings.Contains(h.Get("X-Robots-Tag"), "noindex") || !strings.Contains(h.Get("Content-Security-Policy"), "default-src 'none'") {
+		t.Fatalf("dashboard: %d %v", w.Code, h)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "Key takeaways") || strings.Contains(body, "<script") {
+		t.Fatal("the dashboard is not drawn, or loads a script")
+	}
+	// Over plain HTTP the admin route refuses; no public path draws it.
+	r := httptest.NewRequest("GET", "http://swarmmemo.com/admin/funnel?format=html", nil)
+	r.RemoteAddr = "198.51.100.8:12345"
+	r.Header.Set("Authorization", "Bearer "+moderationAdminToken)
+	plain := httptest.NewRecorder()
+	s.ServeHTTP(plain, r)
+	if strings.Contains(plain.Body.String(), "Key takeaways") {
+		t.Fatal("the dashboard is served over plain HTTP")
+	}
+	for _, path := range []string{"/funnel", "/stats", "/stats/funnel", "/api/stats/daily"} {
+		if body := get(s, path, "text/html").Body.String(); strings.Contains(body, "Key takeaways") {
+			t.Fatalf("%s draws the operator dashboard", path)
+		}
 	}
 }
 

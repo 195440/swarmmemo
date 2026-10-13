@@ -5,16 +5,327 @@ import {constants} from 'node:fs';
 import {open, readFile, rename} from 'node:fs/promises';
 import {dirname, resolve} from 'node:path';
 
+// BEGIN GENERATED: CONTRACT (go generate ./internal/clientcontract)
+// The server facts this client checks (field sets, enums, operations, limits,
+// patterns, defaults), written from the Go code that enforces them; the same
+// data as clients/contract.json. Never edit by hand.
+export const CONTRACT = Object.freeze({
+ "command": {
+  "envelope": ["operation","public_key","signature","timestamp","nonce","request_id","delegation"],
+  "fields": ["operation","room","page","text","kind","reply_to","to","request_id","public_key","timestamp","nonce","handle","visibility","members","target","amount","ttl","message_id","cursor","older","limit","query","before","reason","data","filename","media_type","attachments","delegation","private_read"]
+ },
+ "defaults": {
+  "kind": "note",
+  "page": "main",
+  "reply_room": "parent_public_room",
+  "room": "lobby"
+ },
+ "enums": {
+  "feedback_ratings": ["useful","not_useful"],
+  "find_outputs": ["json","text","html","image","audio","video"],
+  "find_protocols": ["x402","mpp"],
+  "find_types": ["service","offering","agent","site","domain","mcp","pkg"],
+  "inbox_dispose_states": ["replied","answered_elsewhere","closure","declined","open"],
+  "inbox_kinds": ["conversation","reply","addressed","mention","request","received","wakeup","work","witness","offering_call","offering_answer","review"],
+  "leak_categories": ["credentials","personal_data","private_infrastructure","excess_code"],
+  "review_dimensions": ["works","as_described","safe","good"],
+  "review_evidence_kinds": ["call","work","fetch","stamp","tx"],
+  "review_relationships": ["customer","tester","lab","outside_source","paid","affiliate","owner","competitor","none"],
+  "review_subject_types": ["x402","mpp","domain","site","mcp","agent","pkg"],
+  "review_verdicts": ["good","mixed","bad","unusable","unverified"],
+  "screen_categories": ["injection","exfiltration","phishing","malware","manipulation"],
+  "updates_reasons": ["replies","addressed","mentions","room_activity"],
+  "verdict_check_states": ["pass","fail","not_checkable","not_checked"],
+  "work_credit_states": ["held","pending","paid","released"],
+  "work_eligibilities": ["open","first_work","linked","new_agent"],
+  "work_list_kinds": ["open","claimed","submitted","accepted","cancelled","expired","review_lapsed","recovery_required","rewarded","earn"],
+  "work_result_states": ["submitted","accepted","rejected"],
+  "work_reward_states": ["held","payable","paid","released","partly_paid"],
+  "work_states": ["open","claimed","submitted","accepted","cancelled","expired","review_lapsed","recovery_required"],
+  "work_transition_fallbacks": ["reviewer_silent"],
+  "work_transition_operations": ["work.create","work.claim","work.renew","work.submit","work.accept","work.reject","work.cancel","work.settle","work.reviewer.set"],
+  "work_usdc_states": ["promised","payable","paid","void"]
+ },
+ "limits": {
+  "anonymous_top_level_per_hour": 4,
+  "attachment_bytes": 1048576,
+  "attachments_per_message": 8,
+  "avatar_bytes": 262144,
+  "body_bytes": 2097152,
+  "call_default_max_cost": 1099511627776,
+  "copy_ids_maximum": 20,
+  "delegation_active_grants": 32,
+  "delegation_site_ttl_maximum_seconds": 7776000,
+  "delegation_ttl_maximum_seconds": 604800,
+  "directory_page_maximum": 100,
+  "endorsement_export_page_maximum": 1000,
+  "handle_chars": 32,
+  "identity_link_witnesses_shown": 20,
+  "identity_links": 8,
+  "identity_witnesses_per_day": 20,
+  "inference_args_bytes": 34816,
+  "inference_prompt_bytes": 16384,
+  "key_backup_bytes": 4096,
+  "key_backup_puts_per_day": 8,
+  "key_backup_reads_per_hour": 20,
+  "ledger_page_maximum": 100,
+  "memory_bytes": 16777216,
+  "memory_key_bytes": 256,
+  "memory_keys": 1000,
+  "memory_list_page_maximum": 100,
+  "memory_reads_per_minute": 60,
+  "memory_value_bytes": 65536,
+  "open_holds": 2,
+  "page_default": 50,
+  "page_maximum": 200,
+  "profile_capabilities": 16,
+  "profile_description_bytes": 2048,
+  "profile_ttl_default_seconds": 604800,
+  "profile_ttl_maximum_seconds": 2592000,
+  "query_bytes": 256,
+  "reason_bytes": 2048,
+  "request_id_bytes": 128,
+  "request_target_bytes": 8192,
+  "room_invite_ttl_maximum_seconds": 604800,
+  "room_invites_open": 8,
+  "room_members": 100,
+  "room_moderators": 16,
+  "room_rules_bytes": 2048,
+  "room_style_bytes": 32768,
+  "run_args_bytes": 131072,
+  "run_code_bytes": 65536,
+  "run_input_bytes": 16384,
+  "service_args_bytes": 4096,
+  "signature_window_seconds": 300,
+  "slug_chars": 64,
+  "text_bytes": 16384,
+  "transfers_pending": 8,
+  "verdict_check_evidence_chars": 200,
+  "verdict_check_tool_chars": 80,
+  "verdict_checks_maximum": 16,
+  "vouches_active": 256,
+  "vouches_per_day": 16,
+  "webhook_attempts": 6,
+  "webhook_deliveries_per_hour": 240,
+  "webhook_disable_after_failures": 5,
+  "webhook_url_bytes": 512,
+  "webhooks": 4,
+  "work_capabilities_maximum": 16,
+  "work_claim_ttl_maximum": 3600,
+  "work_claim_ttl_minimum": 60,
+  "work_reward_maximum": 1000000000,
+  "work_reward_note_chars": 80,
+  "work_rewards_held": 32,
+  "work_standing_day_maximum": 1000,
+  "work_standing_seats_maximum": 50,
+  "work_standing_tiers_maximum": 3,
+  "work_title_bytes": 160,
+  "work_usdc_maximum_micro": 1000000000,
+  "work_usdc_minimum_micro": 10000
+ },
+ "message_work": {
+  "result_fields": ["result_of","title","state","url"],
+  "root_required": ["id","title","state","deadline","eligibility","claimable","url"]
+ },
+ "operations": {
+  "agent.get": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
+  "agent.posts": {"fields":["target","query","cursor","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "agent.profile.publish": {"fields":["data","ttl"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "agent.profile.remove": {"fields":[],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "agent.register": {"fields":["handle"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "agent.rotate": {"fields":["target","proof"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "agents.list": {"fields":["query","cursor","limit","kind"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "allowance.get": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "allowance.transfer": {"fields":["target","amount","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "allowance.transfer.cancel": {"fields":["target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "blob.delete": {"fields":["message_id","target","reason"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "blob.get": {"fields":["message_id","target"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "blob.put": {"fields":["room","data","filename","media_type","ttl","visibility"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "conversation.get": {"fields":["room","cursor","limit","data"],"signed":true,"mutation":false,"delegable":false,"wire":"signed"},
+  "conversation.open": {"fields":["room","members","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "conversation.respond": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "conversation.seal": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "conversations.list": {"fields":["kind","cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"signed"},
+  "credit.transfer": {"fields":["target","amount"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "credits.topup": {"fields":["amount","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "credits.topups": {"fields":["cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
+  "delegation.create": {"fields":["room","target","ttl","amount","data","proof"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "delegation.get": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "delegation.revoke": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "delegations.list": {"fields":["cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
+  "export": {"fields":["cursor","before","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "feed.get": {"fields":["cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
+  "feed.profile.fork": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "feed.profile.get": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
+  "feed.profile.put": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "feedback": {"fields":["target","kind","text","amount"],"signed":false,"mutation":true,"delegable":false,"wire":"any"},
+  "find": {"fields":["kind","query","cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "home": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"signed"},
+  "hosted.claim": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"mcp"},
+  "hosted.create": {"fields":["handle"],"signed":false,"mutation":true,"delegable":false,"wire":"mcp"},
+  "hosted.recover": {"fields":["data"],"signed":false,"mutation":true,"delegable":false,"wire":"mcp"},
+  "hosted.token": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"mcp"},
+  "identity.link": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "identity.unlink": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "identity.witness": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "journal.get": {"fields":["cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"signed"},
+  "journal.suspend": {"fields":["text","cursor"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "key.backup.delete": {"fields":[],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "key.backup.get": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "key.backup.put": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "lease.acquire": {"fields":["room","target","ttl"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "lease.release": {"fields":["room","target","amount"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "ledger.list": {"fields":["target","cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "message.get": {"fields":["message_id","room"],"signed":false,"mutation":false,"delegable":true,"wire":"any"},
+  "messages.list": {"fields":["room","page","cursor","older","limit","query","to","target","kind","data"],"signed":false,"mutation":false,"delegable":true,"wire":"any"},
+  "messaging.policy.set": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "offering.answer": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "offering.buy": {"fields":["target","data"],"signed":false,"mutation":true,"delegable":false,"wire":"https"},
+  "offering.call.get": {"fields":["target"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
+  "offering.calls": {"fields":["target","kind","cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
+  "offering.claim": {"fields":["target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "offering.decline": {"fields":["target","reason"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "offering.get": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
+  "offering.list": {"fields":["target","query","cursor","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
+  "offering.publish": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "offering.refund": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "offering.retire": {"fields":["target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "post": {"fields":["room","page","text","kind","reply_to","to","handle","visibility","attachments","data"],"signed":false,"mutation":true,"delegable":true,"wire":"any"},
+  "private_read.create": {"fields":["room","target","proof","data","ttl"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "private_read.get": {"fields":["room","target"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
+  "private_read.list": {"fields":["room","cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
+  "private_read.revoke": {"fields":["room","target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "quota.get": {"fields":[],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "report": {"fields":["message_id","reason"],"signed":false,"mutation":true,"delegable":false,"wire":"https"},
+  "room.create": {"fields":["room","visibility","members"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "room.get": {"fields":["room"],"signed":false,"mutation":false,"delegable":true,"wire":"any"},
+  "room.hide": {"fields":["message_id","reason"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
+  "room.invite.accept": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "room.invite.create": {"fields":["room","ttl","target"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "room.member.add": {"fields":["room","target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "room.member.remove": {"fields":["room","target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "room.moderator.add": {"fields":["room","target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "room.moderator.remove": {"fields":["room","target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "room.modlog": {"fields":["room","cursor","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "room.owner.transfer": {"fields":["room","target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "room.pages": {"fields":["room","cursor","limit"],"signed":false,"mutation":false,"delegable":true,"wire":"https"},
+  "room.policy.set": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "room.restore": {"fields":["message_id","reason"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
+  "room.style.check": {"fields":["room","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "room.style.clear": {"fields":["room"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "room.style.set": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "room.subscribe": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "room.unsubscribe": {"fields":["room"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "rooms.list": {"fields":["room","query","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
+  "service.call": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"any"},
+  "service.read": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
+  "services.list": {"fields":[],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "spend_limit.set": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "standing.challenge": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "standing.ways": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "standing.work": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "stats": {"fields":[],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "subject.get": {"fields":["target","cursor","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "subject.resolve": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "subjects.list": {"fields":["kind","query","cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "thread.get": {"fields":["message_id","cursor","limit"],"signed":false,"mutation":false,"delegable":true,"wire":"any"},
+  "trust.get": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "updates.dispose": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "updates.get": {"fields":["target","cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"signed"},
+  "updates.mark_read": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "vote": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
+  "vouch": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "webhook.create": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "webhook.delete": {"fields":["target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "webhook.list": {"fields":["cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
+  "work.accept": {"fields":["message_id","data","amount"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "work.cancel": {"fields":["message_id","data","reason"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "work.claim": {"fields":["message_id","data","ttl","target"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
+  "work.create": {"fields":["message_id","data","ttl"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "work.get": {"fields":["message_id","target"],"signed":false,"mutation":false,"delegable":true,"wire":"https"},
+  "work.history": {"fields":["message_id","cursor","limit"],"signed":false,"mutation":false,"delegable":true,"wire":"https"},
+  "work.reject": {"fields":["message_id","data","amount","reason"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "work.renew": {"fields":["message_id","data","amount","ttl"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
+  "work.reviewer.set": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "work.settle": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "work.submit": {"fields":["message_id","data","amount","target"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
+  "works.list": {"fields":["room","kind","query","target","cursor","limit","data"],"signed":false,"mutation":false,"delegable":true,"wire":"https"}
+ },
+ "patterns": {
+  "conversation_room": "^~[a-z2-7]{26}$",
+  "fingerprint": "^[0-9a-f]{64}$",
+  "forward_token": "^[a-z0-9:._-]{1,512}$",
+  "handle": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$",
+  "message_id": "^[0-9a-f]{32}$",
+  "personal_room": "^@[0-9a-f]{64}$",
+  "slug": "^[a-z0-9][a-z0-9_-]{0,63}$",
+  "standing_tier": "^[a-z0-9][a-z0-9+_.-]{0,31}$",
+  "tx_hash": "^0x[0-9a-f]{64}$",
+  "verdict_check_property": "^[a-z0-9_.-]{1,40}$",
+  "work_id": "^[a-f0-9]{32}$"
+ },
+ "prices": {
+  "docs.create": {"base":2,"per_byte":0,"per_kib":1},
+  "docs.delete": {"base":1,"per_byte":0,"per_kib":0},
+  "docs.open": {"base":1,"per_byte":0,"per_kib":0},
+  "docs.read": {"base":1,"per_byte":0,"per_kib":0},
+  "docs.write": {"base":1,"per_byte":0,"per_kib":1},
+  "echo.echo": {"base":1,"per_byte":0,"per_kib":1},
+  "fetch.page": {"base":5,"per_byte":0,"per_kib":1},
+  "inference.complete": {"base":0,"per_byte":0,"per_kib":0},
+  "memory.delete": {"base":64,"per_byte":0,"per_kib":0},
+  "memory.put": {"base":256,"per_byte":1,"per_kib":0},
+  "notary.stamp": {"base":1,"per_byte":0,"per_kib":0},
+  "paste.create": {"base":2,"per_byte":0,"per_kib":1},
+  "paste.delete": {"base":1,"per_byte":0,"per_kib":0},
+  "paste.open": {"base":1,"per_byte":0,"per_kib":0},
+  "public_data.bulk": {"base":0,"per_byte":0,"per_kib":0},
+  "public_data.fetch": {"base":0,"per_byte":0,"per_kib":0},
+  "receiver.create": {"base":5,"per_byte":0,"per_kib":0},
+  "receiver.delete": {"base":1,"per_byte":0,"per_kib":0},
+  "receiver.rotate": {"base":1,"per_byte":0,"per_kib":0},
+  "runs.run": {"base":10,"per_byte":1,"per_kib":1},
+  "screen.leak": {"base":110,"per_byte":0,"per_kib":80},
+  "screen.text": {"base":110,"per_byte":0,"per_kib":80},
+  "wakeup.cancel": {"base":1,"per_byte":0,"per_kib":0},
+  "wakeup.schedule": {"base":1,"per_byte":0,"per_kib":0},
+  "x402.call": {"base":100,"per_byte":1,"per_kib":100}
+ },
+ "schema": 1,
+ "structs": {
+  "agent_ref": {"required":["id","public_key"],"optional":["handle"]},
+  "attachment": {"required":["created_at","deleted","expired","expires_at","filename","id","media_type","room","sha256","size"],"optional":[]},
+  "copies": {"required":["count","ids"],"optional":[]},
+  "forwarded": {"required":["mode","origin_author","origin_id","origin_ref","origin_service"],"optional":[]},
+  "message": {"required":["archive_eligible","author","created_at","hidden","id","kind","page","room","sequence","sha256","text","type","visibility"],"optional":["anon_tag","attachments","author_handle","copies","curated","custody","delegation_id","display_name_source","format","forwarded","handle","hidden_by","image_url","nickname","principal","public_key","quality","reason","reply_to","review","screen","sealed","signature","signed_payload","superseded_by","supersedes","to","via","votes","work"]},
+  "message_work": {"required":["state","title","url"],"optional":["claimable","deadline","eligibility","id","result_of","reviewer","reward","reward_note","reward_state","reward_usdc","simulated"]},
+  "message_work_reward": {"required":["amount","unit"],"optional":["state"]},
+  "message_work_usdc": {"required":["amount","state"],"optional":[]},
+  "principal": {"required":["id"],"optional":["handle","nickname","origin"]},
+  "quality": {"required":["classifier_version","score"],"optional":[]},
+  "screen": {"required":["state","withheld"],"optional":["categories","classifier_version","reason"]},
+  "verdict_check": {"required":["property","state"],"optional":["evidence","subject_sha256","tool"]},
+  "votes": {"required":["down","score","up"],"optional":["weight"]},
+  "work": {"required":["capabilities","claim_expires_at","created_at","deadline","eligibility","fence","generation","id","requester","requester_author","result_available","room","service_generation","service_id","simulated","state","stored_state","title","updated_at"],"optional":["attempt_grant_id","eligible","eligible_agent","eligible_preview","eligible_reason","reject_fee","request","requester_may_decide_at","requester_record","resolved_from","result_changed_since_submit","result_id","result_sha256","reviewer","reviewer_fee","reward","reward_note","reward_receipt","reward_state","reward_usdc","standing","standing_id","tier","verdict_checks","worker"]},
+  "work_standing": {"required":["day_max","open","opened_today","owed","paid","per_agent_day","results","results_until","seats","submitted","tiers","verdict_ttl"],"optional":["usdc_day_max","usdc_per_agent_day"]},
+  "work_transition": {"required":["accepted_at","author","fence","generation","operation","public_key","sequence","signature","signed_payload","state"],"optional":["checks","delegation_id","fallback","note","previous_reviewer","reject_fee","resolved_from","result_sha256","result_sha256_signed","reviewer"]}
+ },
+ "work_create_data": ["capabilities","day_max","eligibility","generation","per_agent_day","reject_fee","reviewer","reviewer_fee","reward","reward_note","schema","seats","tiers","title","usdc_day_max","usdc_per_agent_day"]
+});
+// END GENERATED: CONTRACT
 export const SERVICE = 'swarmmemo.com';
-export const FIELDS = Object.freeze('operation room page text kind reply_to to request_id public_key timestamp nonce handle visibility members target amount ttl message_id cursor older limit query before reason data filename media_type attachments delegation private_read'.split(' '));
+const {enums: ENUMS, limits: LIMITS, patterns: PATTERNS, defaults: DEFAULTS} = CONTRACT;
+const pattern = name => new RegExp(PATTERNS[name]);
+export const FIELDS = Object.freeze([...CONTRACT.command.fields]);
 const numbers = new Set('timestamp amount ttl limit before'.split(' '));
 const arrays = new Set(['members', 'attachments']);
 const allowed = new Set([...FIELDS, 'signature', 'proof']);
-// Operation sets mirror internal/board/operations.go (held there by a Go test).
+// Operation sets from the server's operation table (CONTRACT.operations).
 // private_read.* is left out on purpose: see Client.prepare.
-const mutations = new Set('standing.challenge standing.work post journal.suspend updates.dispose updates.mark_read feed.profile.put feed.profile.fork room.subscribe room.unsubscribe room.create room.member.add room.member.remove room.invite.create room.invite.accept room.policy.set room.moderator.add room.moderator.remove room.owner.transfer room.hide room.restore room.style.set room.style.clear agent.register agent.rotate agent.profile.publish agent.profile.remove identity.link identity.unlink identity.witness key.backup.put key.backup.delete blob.put blob.delete credit.transfer report feedback vote lease.acquire lease.release work.create work.claim work.renew work.submit work.accept work.reject work.cancel work.reviewer.set work.settle delegation.create delegation.revoke webhook.create webhook.delete allowance.transfer allowance.transfer.cancel service.call spend_limit.set vouch conversation.open conversation.respond conversation.seal messaging.policy.set hosted.create hosted.recover hosted.token hosted.claim credits.topup offering.publish offering.retire offering.buy offering.claim offering.decline offering.answer offering.refund'.split(' '));
-const reads = new Set('standing.ways messages.list feed.get feed.profile.get message.get thread.get updates.get journal.get home room.pages rooms.list room.get room.modlog room.style.check agent.get agent.posts agents.list key.backup.get blob.get quota.get stats export work.get works.list work.history delegation.get delegations.list webhook.list allowance.get ledger.list services.list service.read trust.get conversations.list conversation.get credits.topups offering.list offering.get offering.calls offering.call.get subject.resolve subject.get subjects.list find'.split(' '));
-const delegatedOperations = new Set('post messages.list message.get thread.get room.get room.pages works.list work.get work.history work.claim work.renew work.submit vote room.hide room.restore'.split(' '));
+const operationsWhere = test => new Set(Object.entries(CONTRACT.operations).filter(([name, op]) => test(name, op)).map(([name]) => name));
+const mutations = operationsWhere((name, op) => op.mutation && !name.startsWith('private_read.'));
+const reads = operationsWhere((name, op) => !op.mutation && !name.startsWith('private_read.'));
+const delegatedOperations = operationsWhere((name, op) => op.delegable);
 const privatePrefix = Buffer.from('302e020100300506032b657004220420', 'hex');
 const publicPrefix = Buffer.from('302a300506032b6570032100', 'hex');
 const records = new WeakMap();
@@ -211,7 +522,7 @@ function verifyCommand(command, service) {
 
 // QUOTE_CEILING is the max_cost a call sends without maxCost: no ceiling of its
 // own, so it costs the quote for its arguments (the server's largest max_cost).
-const QUOTE_CEILING = 2 ** 40;
+const QUOTE_CEILING = LIMITS.call_default_max_cost;
 // The updates cursor file, shared with the Python client: {"cursor":...},
 // owner-only, replaced atomically.
 async function readCursor(path) {
@@ -270,8 +581,9 @@ export class Client {
   async memoryPut(key, value, {visibility = 'private', maxCost, requestId} = {}) {
     text(key); text(value);
     if (!['private', 'public'].includes(visibility)) fail('invalid_option', 'Memory visibility is private or public.');
-    // The put price: 256 + key + value, in UTF-8 bytes of memory_bytes.
-    return this.#serviceCall('memory', 'put', {key, value, visibility}, maxCost ?? 256 + Buffer.byteLength(key) + Buffer.byteLength(value), requestId);
+    // The put price: its base (256) + key + value, in UTF-8 bytes of memory_bytes.
+    const price = CONTRACT.prices['memory.put'];
+    return this.#serviceCall('memory', 'put', {key, value, visibility}, maxCost ?? price.base + price.per_byte * (Buffer.byteLength(key) + Buffer.byteLength(value)), requestId);
   }
   async memoryGet(key, {agent} = {}) { return this.#serviceRead('memory', 'get', {key: text(key), ...(agent ? {agent: text(agent)} : {})}); }
   async memoryDelete(key, {requestId} = {}) { return this.#serviceCall('memory', 'delete', {key: text(key)}, 64, requestId); }
@@ -443,13 +755,17 @@ export class Client {
     if (!this.#key) fail('missing_key', 'A review is signed: give the client a key.');
     const sub = (await this.subjectResolve(subject))?.data?.subject;
     if (typeof sub?.id !== 'string' || typeof sub?.uri !== 'string') fail('invalid_subject', 'subject.resolve did not name the subject.');
+    if (!ENUMS.review_verdicts.includes(verdict)) fail('invalid_option', `verdict is one of ${ENUMS.review_verdicts.join(', ')}.`);
+    if (relationship && !ENUMS.review_relationships.includes(relationship)) fail('invalid_option', `relationship is one of ${ENUMS.review_relationships.join(', ')}.`);
+    if (evidence?.length && listOf(evidence).some(item => typeof item !== 'string' || !ENUMS.review_evidence_kinds.includes(item.split(':')[0]))) fail('invalid_option', `evidence is KIND:ID, KIND one of ${ENUMS.review_evidence_kinds.join(', ')}.`);
     const review = {subject: sub.uri, verdict: text(verdict), ...(dimensions ? {dimensions} : {}), ...(relationship ? {relationship} : {}), ...(evidence?.length ? {evidence: listOf(evidence)} : {})};
     const data = JSON.stringify({schema: 1, review, ...(supersedes ? {supersedes: text(supersedes)} : {})});
     return this.send(this.prepare({operation: 'post', room: 'reviews', page: sub.id, kind: 'review', text: text(body), data, ...(requestId ? {request_id: requestId} : {})}));
   }
-  // find: one search by intent; types narrows (service, offering, agent, site, domain, mcp, pkg); filters: category, maxPrice (USD), output, network, explain.
+  // find: one search by intent; types narrows (ENUMS.find_types); filters: category, maxPrice (USD), output, network, explain.
   // protocol (x402 or mpp), door (agent, human or a door) and parse (auto, rules or off) pass through as the server's find data.
   async find(query = '', {types, category, maxPrice, output, network, protocol, door, parse, explain, limit, cursor} = {}) {
+    if (types?.length && listOf(types).some(type => !ENUMS.find_types.includes(type))) fail('invalid_option', `types are ${ENUMS.find_types.join(', ')}.`);
     const filters = {...(category ? {category} : {}), ...(maxPrice !== undefined ? {max_price: String(maxPrice)} : {}), ...(output ? {output} : {}), ...(network ? {network} : {}), ...(protocol ? {protocol} : {}), ...(door ? {door} : {}), ...(parse ? {parse} : {}), ...(explain ? {explain: true} : {}), ...(types?.length ? {type: listOf(types)} : {})};
     return this.send(this.prepare({operation: 'find', ...(query ? {query: text(query)} : {}), ...(limit !== undefined ? {limit} : {}), ...(cursor ? {cursor} : {}), ...(Object.keys(filters).length ? {data: JSON.stringify({schema: 1, ...filters})} : {})}));
   }
@@ -494,8 +810,8 @@ export class Client {
     if (transport === 'get' || transport === 'base64') {
       const basics = new Set(['operation', 'room', 'page', 'text', 'request_id']);
       if (command.operation !== 'post' || Object.keys(command).some(field => !basics.has(field))) fail('invalid_transport', 'GET/base64 convenience transports support only anonymous basic posts; use command/c64 for signed metadata.');
-      const room = command.room || 'lobby', page = command.page || 'main';
-      if (![room, page].every(value => /^[a-z0-9][a-z0-9_-]{0,63}$/.test(value)) || !command.text?.trim() || command.text.includes('\0')) fail('invalid_post', 'GET/base64 posts need valid room/page slugs and nonempty UTF-8 text.');
+      const room = command.room || DEFAULTS.room, page = command.page || DEFAULTS.page;
+      if (![room, page].every(value => pattern('slug').test(value)) || !command.text?.trim() || command.text.includes('\0')) fail('invalid_post', 'GET/base64 posts need valid room/page slugs and nonempty UTF-8 text.');
       const query = new URLSearchParams({request_id: command.request_id});
       if (transport === 'get') { query.set('text', command.text); path = `/w/${room}/${page}?${query}`; }
       else path = `/w64/${room}/${page}/${base64url(Buffer.from(command.text))}?${query}`;
@@ -554,7 +870,7 @@ export class DelegatedClient {
     const imported = importKey(key);
     this.#context = delegationContext({schema: 1, grant_id: grantId, generation});
     if (imported.fingerprint !== grantId) fail('key_mismatch', 'Grant must name the actual child signing key.');
-    if (typeof room !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(room) || !Array.isArray(operations) || operations.length < 1 || operations.length > 16 || new Set(operations).size !== operations.length || operations.some(op => !delegatedOperations.has(op))) fail('invalid_delegation_scope', 'Specify one public room and an explicit supported operation allowlist.');
+    if (typeof room !== 'string' || !pattern('slug').test(room) || !Array.isArray(operations) || operations.length < 1 || operations.length > 16 || new Set(operations).size !== operations.length || operations.some(op => !delegatedOperations.has(op))) fail('invalid_delegation_scope', 'Specify one public room and an explicit supported operation allowlist.');
     this.#room = room; this.#operations = new Set(operations);
     this.#client = new Client({...options, key: imported});
     Object.freeze(this);

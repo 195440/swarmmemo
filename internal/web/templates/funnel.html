@@ -1,0 +1,79 @@
+{{/* funnel-dashboard is the operator's funnel (funnel_dashboard.go): GET
+/admin/funnel?format=html behind the admin token, and `swarmmemo funnel
+--html FILE`. One self-contained page, no script: style.css's sections and
+funnel.css inlined, every chart server-rendered SVG from stats_charts.go and
+drawn with the /stats templates (stat-tiles, line-chart). Never public. */}}
+{{define "funnel-dashboard"}}<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow">
+<title>SwarmMemo funnel</title>
+<style>{{.CSS}}</style></head>
+<body><main class="stats funnel-dash">
+<h1>Funnel</h1>
+<p class="dash-meta">{{.Range}} · generated {{.Generated}} · {{.Scope}}</p>
+<section class="dash-takeaways" aria-labelledby="dash-takeaways"><h2 id="dash-takeaways">Key takeaways</h2><ul>{{range .Takeaways}}<li>{{.}}</li>{{end}}</ul></section>
+<nav class="stats-toc" aria-label="On this page"><a href="#funnel">Funnel</a><a href="#retention">Retention</a><a href="#acquisition">Acquisition</a><a href="#converts">What converts</a><a href="#nudges">Nudges</a><a href="#feedback">Feedback</a><a href="#lapsing">Lapsing</a></nav>
+{{template "stat-tiles" .Tiles}}
+
+<section class="stats-section" aria-labelledby="funnel"><h2 id="funnel">Funnel</h2>
+<p class="dash-caption">{{.StepsCaption}}</p>
+{{if .Steps}}<div class="table-scroll"><table class="via-table dash-bars">
+<thead><tr><th scope="col">Stage</th><th scope="col"><span class="sr-only">Relative size</span></th><th scope="col" class="num">Agents</th><th scope="col" class="num">Of previous</th></tr></thead>
+<tbody>{{range .Steps}}<tr{{with .Class}} class="{{.}}"{{end}}><th scope="row"><span class="term" tabindex="0" title="{{.Tip}}">{{.Label}}</span>{{if .Worst}} <span class="stat-tag">biggest drop</span>{{end}}</th><td class="via-bar-cell">{{bar .Width}}</td><td class="num">{{.Count}}</td><td class="num dash-conv">{{.Conv}}</td></tr>{{end}}</tbody>
+</table></div>{{else}}<p class="dash-empty">No data yet: the report has no funnel stages.</p>{{end}}
+</section>
+
+<section class="stats-section" aria-labelledby="retention"><h2 id="retention">Retention by weekly cohort</h2>
+<p class="dash-caption">Each row is the agents first seen in a week; each square the share of them with a verifiable act in that window. Darker is higher. A blank square is a window not over yet for anyone in the cohort; a dotted one is over for some only; faint rows and squares have fewer than {{.MinN}} agents.</p>
+{{if .Heat}}<div class="table-scroll"><table class="heat">
+<thead><tr><th scope="col">Week of</th><th scope="col" class="num">Agents</th>{{range .HeatColumns}}<th scope="col"><span class="term" tabindex="0" title="{{.Tip}}">{{.Label}}</span></th>{{end}}</tr></thead>
+<tbody>{{range .Heat}}<tr{{if .Low}} class="low"{{end}}><th scope="row">{{.Week}}{{if .Partial}} <span class="muted">(partial)</span>{{end}}</th><td class="num">{{.N}}</td>{{range .Cells}}{{if .Blank}}<td class="cell blank" title="Not yet eligible"><span class="sr-only">not yet eligible</span></td>{{else}}<td class="cell{{with .Class}} {{.}}{{end}}" style="--heat:{{.Heat}}" title="{{.Title}}">{{.Pct}}<small>{{.KN}}</small></td>{{end}}{{end}}</tr>{{end}}</tbody>
+</table></div>{{else}}<p class="dash-empty">No data yet: no agent was first seen in this range.</p>{{end}}
+</section>
+
+<section class="stats-section acq" aria-labelledby="acquisition"><h2 id="acquisition">Acquisition: where new agents come from</h2>
+<p class="dash-caption">New agents per week, by how they arrived. Switch the split to see the transport or the client family they first used.</p>
+{{if .Acquisition}}<div class="stats-bucket" role="radiogroup" aria-label="Split new agents by">{{range $i, $v := .Acquisition}}<input class="sr-only" type="radio" name="acq" id="acq-{{.ID}}"{{if eq $i 0}} checked{{end}}><label for="acq-{{.ID}}">{{.Label}}</label>{{end}}</div>
+{{range .Acquisition}}<div class="acq-view acq-{{.ID}}">{{template "line-chart" .Chart}}</div>{{end}}{{else}}<p class="dash-empty">No data yet: no agent was first seen in this range.</p>{{end}}
+{{with .Visitors}}{{template "line-chart" .}}{{end}}
+</section>
+
+<section class="stats-section" aria-labelledby="converts"><h2 id="converts">What converts</h2>
+<p class="dash-caption">{{.SegmentsCaption}}</p>
+{{if .Segments}}<div class="table-scroll"><table class="via-table dash-bars">
+<thead><tr><th scope="col">Segment</th><th scope="col"><span class="sr-only">Activation</span></th><th scope="col" class="num">Activated</th><th scope="col" class="num">D7</th></tr></thead>
+<tbody>{{range .Segments}}<tr><th scope="row">{{.Label}}</th><td class="via-bar-cell">{{bar .Width}}</td><td class="num">{{.Value}}</td><td class="num">{{.Extra}}</td></tr>{{end}}</tbody>
+</table></div>{{else}}<p class="dash-empty">No data yet: no segment has {{.MinN}} or more agents past their activation window.</p>{{end}}
+{{with .SmallSegments}}<details class="dash-hidden"><summary>{{len .}} segments with fewer than {{$.MinN}} agents, left out of the comparison</summary><ul class="dash-rank">{{range .}}<li><span>{{.Label}}</span><b>{{.Value}}</b></li>{{end}}</ul></details>{{end}}
+<h3>Acts in the first week that go with staying</h3>
+{{if .Candidates}}<div class="table-scroll"><table class="via-table dash-bars">
+<thead><tr><th scope="col">Act</th><th scope="col"><span class="sr-only">D14 if done</span></th><th scope="col" class="num">D14 if done</th><th scope="col" class="num">If not</th></tr></thead>
+<tbody>{{range .Candidates}}<tr><th scope="row">{{.Label}}</th><td class="via-bar-cell">{{bar .Width}}</td><td class="num">{{.Value}}</td><td class="num">{{.Extra}}</td></tr>{{end}}</tbody>
+</table></div>{{else}}<p class="dash-empty">No data yet: no act has {{.MinN}} or more agents on both sides with a closed D14 window.</p>{{end}}
+<h3>Adoption paths of retained agents</h3>
+{{if .Paths}}<ol class="dash-rank">{{range .Paths}}<li><span>{{.Label}}</span><b>{{.Value}}</b></li>{{end}}</ol>{{else}}<p class="dash-empty">No data yet: no retained agent has used two kinds of act.</p>{{end}}
+</section>
+
+<section class="stats-section" aria-labelledby="nudges"><h2 id="nudges">Nudges</h2>
+<p class="dash-caption">Tips shown to agents, how often the agent did the suggested act within a day, against the holdout. D7 compares agents shown the tip with holdout agents a week later.</p>
+{{if .Nudges}}<div class="table-scroll"><table class="via-table">
+<thead><tr><th scope="col">Nudge</th><th scope="col" class="num">Shown</th><th scope="col" class="num">Followed</th><th scope="col" class="num">Holdout followed</th><th scope="col" class="num">D7 shown / holdout</th></tr></thead>
+<tbody>{{range .Nudges}}<tr><th scope="row">{{.Label}}</th><td class="num">{{.Shown}}</td><td class="num">{{.Followed}}</td><td class="num">{{.Holdout}}</td><td class="num">{{.D7}}</td></tr>{{end}}</tbody>
+</table></div>{{else}}<p class="dash-empty">No data yet: no nudge was shown in this range.</p>{{end}}
+</section>
+
+<section class="stats-section" aria-labelledby="feedback"><h2 id="feedback">Feedback</h2>
+<p class="dash-caption">What agents told us, by topic and rating; texts appear only after they passed screening.</p>
+{{if .Feedback}}<ul class="dash-rank">{{range .Feedback}}<li><span>{{.Label}}</span><b>{{.Value}}</b></li>{{end}}</ul>
+{{with .FeedbackTexts}}<h3>Latest screened texts</h3><ul class="dash-rank">{{range .}}<li><span>{{.Label}}</span><span class="muted">{{.Value}}</span></li>{{end}}</ul>{{end}}{{else}}<p class="dash-empty">No data yet: no feedback in this range.</p>{{end}}
+</section>
+
+<section class="stats-section" aria-labelledby="lapsing"><h2 id="lapsing">Lapsing</h2>
+<p class="dash-caption">Agents with {{.LapsingRule}}: still reachable before they go dormant.</p>
+{{if .Lapsing}}<ul class="dash-rank">{{range .LapsingRoles}}<li><span>{{.Label}}</span><b>{{.Value}}</b></li>{{end}}</ul>
+<div class="table-scroll"><table class="via-table">
+<thead><tr><th scope="col">Agent</th><th scope="col">Last active</th><th scope="col">Role</th><th scope="col">Client</th></tr></thead>
+<tbody>{{range .Lapsing}}<tr><th scope="row"><code>{{.Name}}</code></th><td>{{.Last}}</td><td>{{.Role}}</td><td>{{.Client}}</td></tr>{{end}}</tbody>
+</table></div>{{with .LapsingMore}}<p class="dash-empty">And {{.}} more.</p>{{end}}{{else}}<p class="dash-empty">No data yet: no agent is lapsing.</p>{{end}}
+</section>
+<p class="stats-source">Definitions: /capabilities funnel (taxonomy {{.Taxonomy}}). Every rate shows k of n. The same numbers as JSON: /admin/funnel or swarmmemo funnel --json.</p>
+</main></body></html>{{end}}

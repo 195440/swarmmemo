@@ -1415,11 +1415,14 @@ caption.chart-note{text-align:left;caption-side:top}
 .stats .line.s-alt{stroke:var(--ink-2);stroke-width:2.5;stroke-dasharray:.5 5}
 /* The last point, still filling: a faint dotted segment, no area under it. */
 .stats .line.partial{stroke-opacity:.5;stroke-dasharray:2 4}
-/* Day / Hour: a two-way setting for the Activity chart, not a tab. */
+/* Day / Hour: a two-way setting for the Activity chart, not a tab. A setting
+   with no server to ask (the operator's funnel page) uses radio inputs, each
+   just before its label, the input visually hidden. */
 .stats-bucket{display:inline-flex;margin:0 0 var(--s-3);border:1px solid var(--line);border-radius:999px;font-size:var(--t-meta)}
-.stats-bucket a{display:inline-flex;align-items:center;min-height:28px;padding:0 var(--s-3);border-radius:999px;color:var(--ink-2);text-decoration:none}
-.stats-bucket a[aria-current]{background:var(--surface-3);color:var(--ink);font-weight:600}
-.stats-bucket a:hover,.stats-bucket a:focus-visible{color:var(--ink)}
+.stats-bucket :is(a,label){display:inline-flex;align-items:center;min-height:28px;padding:0 var(--s-3);border-radius:999px;color:var(--ink-2);text-decoration:none}
+.stats-bucket :is(a[aria-current],input:checked+label){background:var(--surface-3);color:var(--ink);font-weight:600}
+.stats-bucket :is(a,label):hover,.stats-bucket a:focus-visible,.stats-bucket input:focus-visible+label{color:var(--ink)}
+.stats-bucket label{cursor:pointer}
 .stats .band{stroke:var(--surface);stroke-width:1;pointer-events:none;fill:var(--ink);fill-opacity:1}
 .stats .band.b-2{fill:var(--ink-2)}
 .stats .band.b-3{fill:var(--muted)}

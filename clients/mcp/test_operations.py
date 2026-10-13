@@ -31,9 +31,9 @@ class OperationTests(unittest.TestCase):
 
     def test_message_validator_covers_the_server_fields(self):
         # Thread reads validate each message with swarmmemo_inbox.validate_event;
-        # clients/message-fields.json is derived from the Go Message struct.
-        contract = json.loads((Path(__file__).resolve().parents[1] / "message-fields.json").read_text())
-        self.assertEqual(set(contract["message"]) - op.inbox.EVENT_FIELDS, set())
+        # clients/contract.json is generated from the Go Message struct.
+        message = json.loads((Path(__file__).resolve().parents[1] / "contract.json").read_text())["structs"]["message"]
+        self.assertEqual(set(message["required"]) | set(message["optional"]), op.inbox.EVENT_FIELDS)
 
     def test_draft_staging_offline_exact_id_digest_and_discovery_no_creation(self):
         with patch.object(op, "_request", side_effect=AssertionError("network")), patch.object(op.memo, "load_key", side_effect=AssertionError("key")):
@@ -72,7 +72,7 @@ class OperationTests(unittest.TestCase):
         record = {"results": 3, "paid": 1, "rejected": 1, "unpaid_lapsed": 1, "cancelled_after_submit": 0, "median_hours_to_verdict": 9.5, "distinct_workers": 2, "since": 1700000000}
         work = {"id": "b" * 32, "room": "lab", "title": "t", "capabilities": [], "simulated": False, "state": "open", "stored_state": "open", "generation": "a" * 32,
                 "service_generation": "a" * 32, "service_id": self.profile.service_id, "created_at": 1, "updated_at": 1, "deadline": 2, "fence": 0, "claim_expires_at": 0,
-                "requester_author": fingerprint, "requester": {"id": fingerprint, "public_key": self.public}, "result_available": False, "requester_record": record}
+                "requester_author": fingerprint, "requester": {"id": fingerprint, "public_key": self.public}, "result_available": False, "eligibility": "open", "requester_record": record}
         self.assertEqual(op._work(self.profile, dict(work))["requester_record"], record)
         self.assertIsNotNone(op._work(self.profile, {**work, "requester_record": {**record, "median_hours_to_verdict": None}}))
         for bad in ({**record, "paid": "1"}, {**record, "extra": 1}, {k: v for k, v in record.items() if k != "paid"}, {**record, "median_hours_to_verdict": "9"}, [], {**record, "unpaid_lapsed": -1}):
@@ -80,12 +80,12 @@ class OperationTests(unittest.TestCase):
                 op._work(self.profile, {**work, "requester_record": bad})
 
     def test_work_validator_covers_the_server_fields(self):
-        # clients/message-fields.json "work" is derived from the Go Work struct's
-        # json tags (internal/board/message_fields_test.go): a work item carrying
-        # every one of them must read, or find_work/read_work fail on every item
-        # (C259: reward_usdc, reward_state and reward_note did).
-        contract = set(json.loads((Path(__file__).resolve().parents[1] / "message-fields.json").read_text())["work"])
-        self.assertEqual(contract, op.WORK_REQUIRED | op.WORK_OPTIONAL)
+        # clients/contract.json "work" is generated from the Go Work struct's
+        # json tags (internal/clientcontract): a work item carrying every one of
+        # them must read, or find_work/read_work fail on every item (C259:
+        # reward_usdc, reward_state and reward_note did).
+        work = json.loads((Path(__file__).resolve().parents[1] / "contract.json").read_text())["structs"]["work"]
+        self.assertEqual((set(work["required"]), set(work["optional"])), (op.WORK_REQUIRED, op.WORK_OPTIONAL))
         fingerprint = hashlib.sha256(op.memo.unb64(self.public)).hexdigest()
         agent = {"id": fingerprint, "public_key": self.public, "handle": "w"}
         credit = {"amount": 5, "unit": "credits", "state": "held"}
@@ -106,7 +106,7 @@ class OperationTests(unittest.TestCase):
                              "tiers": [{"name": "bug", "credits": 2000, "usdc": "0.2"}, {"name": "bug+fix", "credits": 2000}], "usdc_day_max": "2",
                              "verdict_ttl": 259200, "results_until": 9},
                 "standing_id": "9" * 32, "tier": "bug+fix"}
-        self.assertEqual(set(work), contract, "add a sample for the new work field, then teach _work to validate it")
+        self.assertEqual(set(work), op.WORK_REQUIRED | op.WORK_OPTIONAL, "add a sample for the new work field, then teach _work to validate it")
         self.assertEqual(op._work(self.profile, dict(work), "e" * 32), work)
         for state in op.REWARD_STATES: self.assertIsNotNone(op._work(self.profile, {**work, "reward_state": state}))
         for state in op.USDC_STATES: self.assertIsNotNone(op._work(self.profile, {**work, "reward_usdc": {**work["reward_usdc"], "state": state}}))
@@ -280,7 +280,7 @@ class OperationTests(unittest.TestCase):
         # options (reward, reviewer, reviewer_fee, reject_fee, eligibility,
         # reward_note) must verify in read_work history, each checked as the
         # server checks it.
-        contract = set(json.loads((Path(__file__).resolve().parents[1] / "message-fields.json").read_text())["work_create_data"])
+        contract = set(json.loads((Path(__file__).resolve().parents[1] / "contract.json").read_text())["work_create_data"])
         self.assertEqual(contract, {"schema", "generation", "title", "capabilities"} | op.WORK_CREATE_OPTIONAL)
         def transition(options):
             data = {"schema": 1, "generation": "a" * 32, "title": "Standing bounty", "capabilities": ["review"], **options}
@@ -347,7 +347,7 @@ class OperationTests(unittest.TestCase):
             with self.subTest(item=item), self.assertRaisesRegex(BridgeError, "invalid_response"): op._transition(self.profile, item, "b" * 32)
         work = {"id": "b" * 32, "room": "lab", "title": "t", "capabilities": [], "simulated": False, "state": "accepted", "stored_state": "accepted", "generation": "a" * 32,
                 "service_generation": "a" * 32, "service_id": self.profile.service_id, "created_at": 1, "updated_at": 1, "deadline": 2, "fence": 7, "claim_expires_at": 0,
-                "requester_author": fingerprint, "requester": {"id": fingerprint, "public_key": self.public}, "result_available": False}
+                "requester_author": fingerprint, "requester": {"id": fingerprint, "public_key": self.public}, "result_available": False, "eligibility": "open"}
         verdict = {"operation": "work.accept", "sequence": 3, "author": fingerprint, "at": 5, "checks": checks}
         self.assertEqual(op._work(self.profile, {**work, "verdict_checks": verdict})["verdict_checks"], verdict)
         for bad in ({**verdict, "operation": "work.submit"}, {**verdict, "checks": []}, {**verdict, "checks": [{"property": "A", "state": "pass"}]},
@@ -428,15 +428,13 @@ class OperationTests(unittest.TestCase):
 
 class TransitionFieldsTest(unittest.TestCase):
     def test_transition_fields_match_the_server(self):
-        # Every optional field of the server's WorkTransition is known to the
-        # history validator, so a new one can't fail read_work history again
-        # (note and fallback did: Inner Ozma 29b5fbe9).
-        import pathlib, re
-        go = (pathlib.Path(__file__).resolve().parents[2] / "internal/board/work.go").read_text()
-        body = re.search(r"type WorkTransition struct \{(.*?)\n\}", go, re.S).group(1)
-        tags = set(re.findall(r'json:"([a-z_0-9]+)', body))
-        required = set("sequence operation author public_key signature signed_payload accepted_at fence generation state".split())
-        self.assertEqual(tags - required, op.WORK_TRANSITION_OPTIONAL)
+        # The history validator knows exactly the server's WorkTransition
+        # fields, so a new one can't fail read_work history again (note and
+        # fallback did: Inner Ozma 29b5fbe9).
+        contract = json.loads((Path(__file__).resolve().parents[1] / "contract.json").read_text())
+        transition = contract["structs"]["work_transition"]
+        self.assertEqual((set(transition["required"]), set(transition["optional"])), (op.WORK_TRANSITION_REQUIRED, op.WORK_TRANSITION_OPTIONAL))
+        self.assertEqual(op.WORK_TRANSITION_OPERATIONS, {name for name, o in contract["operations"].items() if o["mutation"] and name.startswith("work.")})
 
 
 if __name__ == "__main__": unittest.main()
