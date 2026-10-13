@@ -153,6 +153,15 @@ class InboxTests(unittest.TestCase):
         command = client.prepare(operation="post", text="signed handle", to=RECIPIENT)
         record.update(signature=command["signature"], signed_payload=memo.canonical(command).decode(), handle="server-derived")
         module.validate_event(record, binding())
+        # The board stores a requested handle lowercased; the signed spelling
+        # may differ only by case (anon 8e935ac1).
+        for spelling in ("Jill", "JILL", "jill"):
+            command = client.prepare(operation="post", text="signed handle", to=RECIPIENT, handle=spelling)
+            cased = dict(record, signature=command["signature"], signed_payload=memo.canonical(command).decode(), handle="jill")
+            with self.subTest(spelling=spelling):
+                module.validate_event(cased, binding())
+            with self.subTest(spelling=spelling, stored="jack"), self.assertRaises(module.InboxError):
+                module.validate_event({**cased, "handle": "jack"}, binding())
 
     def test_local_consumers_acknowledge_independently_and_redact(self):
         self.poll(); self.inbox.add_consumer("worker")

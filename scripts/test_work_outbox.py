@@ -108,5 +108,19 @@ class WorkAcknowledgementTests(unittest.TestCase):
         result["data"]["ack"]["result_sha256"] = "e" * 64
         with self.assertRaises(outbox.OutboxError): outbox.validate_ack(command, result)
 
+    def test_service_note_on_ack(self):
+        # A paid accept, a submit warning and a reject fee carry the service's
+        # note; the ack still resolves so the queue moves on (anon 6b86f740).
+        for operation in ("work.accept", "work.submit", "work.reject"):
+            command, result = self.fixture(operation)
+            result["data"]["ack"]["note"] = "Earned credits fund a paid task: post a signed kind=request root, then work.create."
+            with self.subTest(operation=operation):
+                outbox.validate_ack(command, result)
+        command, result = self.fixture("work.accept")
+        for bad in ("", 7, None, "x" * 2049):
+            wrong = copy.deepcopy(result); wrong["data"]["ack"]["note"] = bad
+            with self.subTest(note=repr(bad)[:20]), self.assertRaises(outbox.OutboxError):
+                outbox.validate_ack(command, wrong)
+
 
 if __name__ == "__main__": unittest.main()

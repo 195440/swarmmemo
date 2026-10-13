@@ -205,9 +205,11 @@ def validate_ack(command, result, service=memo.SERVICE):
             expected = ack["state"]  # a reviewer change leaves the state as it was
         fields = {"work_id", "state", "fence", "generation", "service_id", "accepted_at", "deadline", "claim_expires_at"}
         # resolved_from: the command named an edited version of the request and
-        # work_id is its root; result_sha256 echoes a hash the command signed.
+        # work_id is its root; result_sha256 echoes a hash the command signed;
+        # note is the service's advice on a submit, an accept or a reject fee.
         extra = set(ack) - fields if isinstance(ack, dict) else set()
-        if (isinstance(ack, dict) and fields <= set(ack) and extra <= {"resolved_from", "result_sha256"} and isinstance(intent, dict)
+        note_ok = "note" not in extra or (isinstance(ack["note"], str) and 0 < len(ack["note"].encode()) <= 2048)
+        if (isinstance(ack, dict) and fields <= set(ack) and extra <= {"resolved_from", "result_sha256", "note"} and note_ok and isinstance(intent, dict)
                 and ("resolved_from" not in ack or (matching_text(ack["resolved_from"], command.get("message_id")) and ack["resolved_from"] != ack["work_id"]))
                 and ack.get("result_sha256") == (intent.get("result_sha256") if "result_sha256" in ack else None)):
             valid = (matching_text(ack["work_id"] if "resolved_from" not in ack else ack["resolved_from"], command.get("message_id"))

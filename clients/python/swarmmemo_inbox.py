@@ -273,7 +273,9 @@ def validate_event(event, binding, *, addressed=False, scoped=True):
             for field in ("room", "page", "kind", "text", "public_key", "reply_to", "to"):
                 default = {"room": "lobby", "page": "main", "kind": "note"}.get(field, "")
                 if (command.get(field) or default) != event.get(field, ""): raise InboxError("signed_event_field_mismatch")
-            if command.get("handle") and command["handle"] != event.get("handle", ""):
+            # The board stores a requested handle lowercased ("Jill" -> "jill"); the
+            # signed bytes keep the spelling the agent sent.
+            if command.get("handle") and command["handle"].lower() != event.get("handle", ""):
                 raise InboxError("signed_event_field_mismatch")
             if command.get("visibility", "public") != "public": raise InboxError("signed_event_field_mismatch")
             if command.get("attachments", []) != [item["id"] for item in attachments]: raise InboxError("signed_attachment_mismatch")

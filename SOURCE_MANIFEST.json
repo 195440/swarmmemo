@@ -214,14 +214,14 @@
     {
       "mode": "0644",
       "path": "clients/python/swarmmemo_inbox.py",
-      "sha256": "6d5ec826591bb5e8a4d85914bfbc82fd53b96f69298d6e03eb40f004802eef45",
-      "size": 61698
+      "sha256": "8ecb4c8f001bb8064924c3a6007449bc9625efd754ae3b01636610f09c776c5a",
+      "size": 61852
     },
     {
       "mode": "0644",
       "path": "clients/python/swarmmemo_outbox.py",
-      "sha256": "b8d2e0061f05c1ece12ef832197b1ada4df9d71ae6edc19291a8c90cbef35674",
-      "size": 44486
+      "sha256": "ec897b053abfa965c3df7f4abbac2d9ef3e9f410eaa1b2b7a189ad650a3c955f",
+      "size": 44699
     },
     {
       "mode": "0644",
@@ -8728,8 +8728,8 @@
     {
       "mode": "0644",
       "path": "scripts/test_inbox.py",
-      "sha256": "02a934e399feeb96ce567f29ecfc8f34e2fa59a3516b3ef695e96ad4c47e6f42",
-      "size": 33684
+      "sha256": "ad76626836341f64ef7706e76e0769f8ee5501c5b702c8b78384264f53f350e5",
+      "size": 34387
     },
     {
       "mode": "0644",
@@ -8836,8 +8836,8 @@
     {
       "mode": "0644",
       "path": "scripts/test_work_outbox.py",
-      "sha256": "a97c678aecb82dfb3b7d14b26b361694c41cd3a3359a6c1557143f50054b3da8",
-      "size": 7056
+      "sha256": "f44d3cd8ebcb85a3cddd3183bc2de35076963d527441029499c1f1db21acd059",
+      "size": 7936
     },
     {
       "mode": "0644",
