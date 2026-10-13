@@ -15,10 +15,13 @@ import (
 )
 
 // Category is one category and the words that name it (services'
-// x402Categories, the one list).
+// x402Categories, the one list). Weak words name it only when no
+// category's word is in the text: "price" is in many descriptions only as
+// what a call costs, so a "btc" or a "search" elsewhere says more.
 type Category struct {
 	Name  string
 	Words []string
+	Weak  []string
 }
 
 // Vocab is what parsing and matching know about categories.
@@ -30,30 +33,129 @@ func (v Vocab) has(name string) bool {
 	return slices.ContainsFunc(v.Categories, func(c Category) bool { return c.Name == name })
 }
 
-// Categorize is the first category one of whose words text contains, as
-// the catalogue categorizes; "other" when none does.
+// Categorize is the first category one of whose words is a word of text,
+// then the first one of whose weak words is; "other" when none is. This is
+// the catalogue's categorizer (services.Categorize), the one
+// implementation. A word matches whole words only, or its plural ("coin"
+// is in "coins", not in "coingecko"; "price" in "prices", not in
+// "priced"): another form of a word ("pricing", "scraping") says something
+// else often enough ("priced per row" is what a call costs) that it names
+// a category only when listed itself. A phrase ("adult content") matches
+// its words in a row. Text splits at anything not a letter or digit and at
+// camelCase ("getBTCPrice" is get, btc, price).
 func (v Vocab) Categorize(text string) string {
-	t := strings.ToLower(text)
-	for _, c := range v.Categories {
-		for _, w := range c.Words {
-			if strings.Contains(t, w) {
-				return c.Name
+	toks := CategoryTokens(text)
+	for _, weak := range []bool{false, true} {
+		for _, c := range v.Categories {
+			words := c.Words
+			if weak {
+				words = c.Weak
+			}
+			for _, w := range words {
+				if hasPhrase(toks, w) {
+					return c.Name
+				}
 			}
 		}
 	}
 	return "other"
 }
 
-// synonyms are the category names a query word stands for: the word is
-// one of the category's words (or its name).
+// contradicts reports whether q has a word of a category other than cat
+// and none of cat's own (weak words aside): the model's "finance" for
+// "price of BTC" is its guess from "price", and btc says crypto. A
+// contradicted category is dropped, never swapped: the text and the
+// category synonyms still rank the query's category first.
+func (v Vocab) contradicts(cat, q string) bool {
+	if cat == "" {
+		return false
+	}
+	toks := CategoryTokens(q)
+	own, other := false, false
+	for _, c := range v.Categories {
+		if c.Name == "data" {
+			continue
+		}
+		for _, w := range c.Words {
+			if hasPhrase(toks, w) {
+				if c.Name == cat {
+					own = true
+				} else {
+					other = true
+				}
+				break
+			}
+		}
+	}
+	return other && !own
+}
+
+// CategoryTokens are text's words as Categorize matches them: lower case,
+// split at anything not a letter or digit and at camelCase boundaries.
+func CategoryTokens(text string) []string {
+	var out []string
+	var cur []rune
+	rs := []rune(text)
+	flush := func() {
+		if len(cur) > 0 {
+			out = append(out, strings.ToLower(string(cur)))
+			cur = cur[:0]
+		}
+	}
+	for i, r := range rs {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			flush()
+			continue
+		}
+		if len(cur) > 0 && unicode.IsUpper(r) {
+			// "getBtc" splits before B; "BTCPrice" before P.
+			if prev := rs[i-1]; unicode.IsLower(prev) || unicode.IsUpper(prev) && i+1 < len(rs) && unicode.IsLower(rs[i+1]) {
+				flush()
+			}
+		}
+		cur = append(cur, r)
+	}
+	flush()
+	return out
+}
+
+// hasPhrase reports whether toks has phrase's words in a row, its last
+// word whole or as a plural.
+func hasPhrase(toks []string, phrase string) bool {
+	ws := CategoryTokens(phrase)
+	if len(ws) == 0 {
+		return false
+	}
+	for i := 0; i+len(ws) <= len(toks); i++ {
+		ok := true
+		for j, w := range ws {
+			if t := toks[i+j]; t != w && (j < len(ws)-1 || !isPlural(t, w)) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
+}
+
+// isPlural reports whether t is w's plural: w and "s" or "es".
+func isPlural(t, w string) bool {
+	return len(t) > len(w) && (t == w+"s" || t == w+"es")
+}
+
+// synonyms are the category names a query word stands for: the word, or
+// its plural, is one of the category's words, weak ones too (or its name).
 func (v Vocab) synonyms(word string) []string {
 	var out []string
 	for _, c := range v.Categories {
 		if c.Name == word || c.Name == "data" || c.Name == "other" {
 			continue
 		}
-		for _, w := range c.Words {
-			if strings.TrimSpace(w) == word {
+		for _, w := range slices.Concat(c.Words, c.Weak) {
+			if w = strings.TrimSpace(w); w == word || isPlural(word, w) {
 				out = append(out, c.Name)
 				break
 			}

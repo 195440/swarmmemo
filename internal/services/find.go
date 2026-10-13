@@ -13,21 +13,20 @@ import (
 	"strings"
 
 	"swarmmemo/internal/allowance"
+	"swarmmemo/internal/find"
 	"swarmmemo/internal/reviews"
 )
 
-// CategoryWords is one category and the words that name it.
-type CategoryWords struct {
-	Name  string
-	Words []string
-}
+// CategoryWords is one category and the words (and weak words) that name
+// it, as Find matches them.
+type CategoryWords = find.Category
 
 // Categories are the x402 catalogue's categories, in the order they are
 // tried (x402Categorize), each with its words.
 func Categories() []CategoryWords {
-	out := make([]CategoryWords, 0, len(x402Categories)+1)
+	out := make([]CategoryWords, 0, len(x402Categories))
 	for _, c := range x402Categories {
-		out = append(out, CategoryWords{Name: c.name, Words: slices.Clone(c.words)})
+		out = append(out, CategoryWords{Name: c.Name, Words: slices.Clone(c.Words), Weak: slices.Clone(c.Weak)})
 	}
 	return out
 }

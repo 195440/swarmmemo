@@ -123,4 +123,19 @@ class WorkAcknowledgementTests(unittest.TestCase):
                 outbox.validate_ack(command, wrong)
 
 
+class MutationFieldsTest(unittest.TestCase):
+    def test_outbox_takes_the_server_mutation_fields(self):
+        # Each outbox operation takes the fields the server's operation table
+        # lists, except the ones OUTBOX.md refuses on purpose (proof); post.data
+        # and work.claim.target were missing (Inner Ozma 645cdef2).
+        import pathlib, re
+        go = (pathlib.Path(__file__).resolve().parents[1] / "internal/board/operations.go").read_text()
+        server = {m.group(1): set(m.group(2).split()) for m in re.finditer(r'\{Name: "([a-z_.]+)"[^}]*?Fields: "([^"]*)"', go)}
+        for op, fields in outbox.MUTATIONS.items():
+            if op not in server:
+                continue
+            with self.subTest(operation=op):
+                self.assertEqual(server[op] - set(fields.split()) - {"proof"}, set())
+
+
 if __name__ == "__main__": unittest.main()

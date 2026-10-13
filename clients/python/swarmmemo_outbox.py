@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 import swarmmemo as memo
 
 MUTATIONS = {
-    "post": "room page text kind reply_to to handle visibility attachments",
+    "post": "room page text kind reply_to to handle visibility attachments data",
     "room.create": "room visibility members",
     "room.member.add": "room target", "room.member.remove": "room target",
     "agent.register": "handle", "agent.rotate": "target",
@@ -28,7 +28,7 @@ MUTATIONS = {
     "blob.put": "room data filename media_type ttl visibility",
     "blob.delete": "message_id target reason",
     "agent.profile.publish": "data ttl", "agent.profile.remove": "",
-    "work.create": "message_id data ttl", "work.claim": "message_id data ttl",
+    "work.create": "message_id data ttl", "work.claim": "message_id data ttl target",
     "work.renew": "message_id data amount ttl", "work.submit": "message_id data amount target",
     "work.accept": "message_id data amount", "work.reject": "message_id data amount reason",
     "work.cancel": "message_id data reason", "work.reviewer.set": "message_id data",

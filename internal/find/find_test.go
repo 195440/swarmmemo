@@ -14,14 +14,14 @@ import (
 
 // testVocab is a slice of the catalogue's categories, in its order.
 var testVocab = Vocab{Categories: []Category{
-	{"adult", []string{"nsfw", "adult content"}},
-	{"search", []string{"search", "serp", "lookup"}},
-	{"crypto", []string{"crypto", "token", "coin", "defi"}},
-	{"ai", []string{"llm", "inference", "translate", "model"}},
-	{"media", []string{"image", "video", "audio"}},
-	{"news", []string{"news", "headline"}},
-	{"weather", []string{"weather", "forecast"}},
-	{"data", []string{"data", "api"}},
+	{"adult", []string{"nsfw", "adult content"}, nil},
+	{"search", []string{"search", "serp", "lookup"}, nil},
+	{"crypto", []string{"crypto", "token", "coin", "defi"}, nil},
+	{"ai", []string{"llm", "inference", "translate", "model"}, nil},
+	{"media", []string{"image", "video", "audio"}, nil},
+	{"news", []string{"news", "headline"}, nil},
+	{"weather", []string{"weather", "forecast"}, nil},
+	{"data", []string{"data", "api"}, nil},
 }}
 
 // seedDocs is the seeded test catalogue.
@@ -487,9 +487,9 @@ func TestFindRelaxesHiddenBetterMatch(t *testing.T) {
 // too). The description is still a full signal when it has the word.
 func TestFindLooseFormInDescriptionWeighsLess(t *testing.T) {
 	vocab := Vocab{Categories: []Category{
-		{"crypto", []string{"crypto", "token", "coin"}},
-		{"finance", []string{"stock", "market", "price"}},
-		{"data", []string{"data", "api"}},
+		{"crypto", []string{"crypto", "token", "coin"}, nil},
+		{"finance", []string{"stock", "market", "price"}, nil},
+		{"data", []string{"data", "api"}, nil},
 	}}
 	docs := []Doc{
 		{Type: TypeService, Kind: KindX402, ID: "x402:ctx", Name: "hyperx · GET /v1/asset_ctx/BTC/latest", Category: "finance",
@@ -552,6 +552,100 @@ func TestFindLooseFormInDescriptionWeighsLess(t *testing.T) {
 	// A loose word is never hidden: alone, "price" still finds the fax.
 	if a, _ = e.Find(ctx, Request{Query: "price", Parse: ModeOff}); !slices.Contains(ids(a), "x402:fax") {
 		t.Fatalf("loose hidden: %v", ids(a))
+	}
+}
+
+// The catalogue's categories, read by whole words with "price" weak, put
+// the C289 listings where they belong (the funding-rows tool and the BTC
+// feeds crypto, a stock quote finance), and "price of BTC" finds a BTC
+// feed first whether the rules parse it or the model guesses finance.
+func TestFindPriceOfBTCCategories(t *testing.T) {
+	vocab := Vocab{Categories: []Category{
+		{Name: "crypto", Words: []string{"crypto", "token", "coin", "bitcoin", "btc", "eth", "usdc", "funding rate"}},
+		{Name: "finance", Words: []string{"stock", "forex", "market"}, Weak: []string{"price"}},
+		{Name: "weather", Words: []string{"weather", "forecast"}},
+		{Name: "data", Words: []string{"data", "api"}},
+	}}
+	docs := []Doc{
+		{Type: TypeService, Kind: KindX402, ID: "x402:ctx", Name: "hyperx · GET /v1/asset_ctx/BTC/latest",
+			Description: "The most-recent N open-interest / funding / ctx rows (≤5000). Priced per row ($0.000025 premium); served live (no lag).",
+			URL:         "/s/ctx", Terms: "api hyperx example v1 asset ctx btc latest"},
+		{Type: TypeService, Kind: KindX402, ID: "x402:feed1", Name: "springs · GET /api/price/btc-usd",
+			Description: "Real-time BTC/USD price feed oracle. Retrieves live spot rate, 24h high/low, and volume across exchanges for agents that need a quote.",
+			URL:         "/s/feed1", Terms: "springs example api price btc usd"},
+		{Type: TypeService, Kind: KindX402, ID: "x402:feed2", Name: "ochin · GET /api/btc-price",
+			Description: "BTC price / Bitcoin spot price in USD, live. Use when you need to answer: what is BTC worth right now, in dollars, from several venues?",
+			URL:         "/s/feed2", Terms: "ochin example api btc price"},
+		{Type: TypeService, Kind: KindX402, ID: "x402:stock", Name: "stockly · GET /v1/quote",
+			Description: "Delayed stock price quotes for NYSE and NASDAQ tickers.", URL: "/s/stock", Terms: "stockly example v1 quote"},
+		{Type: TypeService, Kind: KindX402, ID: "x402:fax", Name: "faxer · POST /v1/fax",
+			Description: "Send a fax to any phone number, priced per page.", URL: "/s/fax", Terms: "faxer example v1 fax"},
+	}
+	for i, w := range []string{"weather", "news", "translate", "image", "search", "email", "maps", "sports", "jobs", "recipes", "flights", "books", "music", "films", "health", "law", "chess", "poetry", "games", "dns"} {
+		docs = append(docs, Doc{Type: TypeService, Kind: KindX402, ID: "x402:other" + strconv.Itoa(i), Name: "other · GET /v1/" + w,
+			Description: "Live " + w + " data for agents.", URL: "/s/other", Terms: "other example v1 " + w})
+	}
+	want := map[string]string{"x402:ctx": "crypto", "x402:feed1": "crypto", "x402:feed2": "crypto", "x402:stock": "finance", "x402:fax": "other"}
+	for i := range docs {
+		d := &docs[i]
+		d.Price, d.Quality = 1000, Quality{LabLower: -1}
+		d.Category = vocab.Categorize(d.Name + " " + d.Description)
+		if w, ok := want[d.ID]; ok && d.Category != w {
+			t.Fatalf("%s: category %s, want %s", d.ID, d.Category, w)
+		}
+	}
+	ctx := context.Background()
+	newEngine := func(m Model) *Engine {
+		e := NewEngine(Config{Source: func(context.Context) ([]Doc, error) { return docs, nil }, Model: m, Vocab: vocab})
+		t.Cleanup(e.Close)
+		return e
+	}
+	feedFirst := func(a Answer) bool {
+		got := ids(a)
+		return len(got) >= 2 && (got[0] == "x402:feed1" || got[0] == "x402:feed2") && slices.Contains(got[:2], "x402:feed1") && slices.Contains(got[:2], "x402:feed2")
+	}
+	// The rules parse sets no category.
+	a, err := newEngine(nil).Find(ctx, Request{Query: "price of BTC", Parse: ModeRules})
+	if err != nil || !feedFirst(a) || a.Filters.Category != "" {
+		t.Fatalf("rules: %v filters %+v %v", ids(a), a.Filters, err)
+	}
+	// The model's "finance" from "price" is contradicted by btc and dropped.
+	m := &fakeModel{answer: `{"text":"price BTC","type":[],"category":"finance","max_price":"","output":"","network":"","door":""}`}
+	if a, err = newEngine(m).Find(ctx, Request{Query: "price of BTC"}); err != nil || a.ParsedBy != "model" || a.Filters.Category != "" || !feedFirst(a) {
+		t.Fatalf("model finance: %v by %s filters %+v %v", ids(a), a.ParsedBy, a.Filters, err)
+	}
+	// Its "crypto" holds, and finds the feeds.
+	m = &fakeModel{answer: `{"text":"price BTC","type":[],"category":"crypto","max_price":"","output":"","network":"","door":""}`}
+	if a, err = newEngine(m).Find(ctx, Request{Query: "price of BTC"}); err != nil || a.Filters.Category != "crypto" || !feedFirst(a) {
+		t.Fatalf("model crypto: %v filters %+v %v", ids(a), a.Filters, err)
+	}
+	// Control: a stock price is finance, by rules and by the model.
+	if a, _ = newEngine(nil).Find(ctx, Request{Query: "stock price quotes", Parse: ModeRules}); len(a.Results) == 0 || a.Results[0].ID != "x402:stock" {
+		t.Fatalf("stock rules: %v", ids(a))
+	}
+	m = &fakeModel{answer: `{"text":"stock price quotes","type":[],"category":"finance","max_price":"","output":"","network":"","door":""}`}
+	if a, _ = newEngine(m).Find(ctx, Request{Query: "stock price quotes"}); a.Filters.Category != "finance" || !slices.Equal(ids(a), []string{"x402:stock"}) {
+		t.Fatalf("stock model: %v filters %+v", ids(a), a.Filters)
+	}
+	// A query with no category's word keeps the model's category.
+	if vocab.contradicts("finance", "latest price") || !vocab.contradicts("finance", "price of BTC") || vocab.contradicts("crypto", "price of BTC") {
+		t.Fatal("contradicts")
+	}
+}
+
+func TestCategoryTokens(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		want []string
+	}{
+		{"getBTCPrice", []string{"get", "btc", "price"}},
+		{"/api/price/btc-usd", []string{"api", "price", "btc", "usd"}},
+		{"open-interest, ERC20", []string{"open", "interest", "erc20"}},
+		{"x.com", []string{"x", "com"}},
+	} {
+		if got := CategoryTokens(c.in); !slices.Equal(got, c.want) {
+			t.Errorf("%q: %v, want %v", c.in, got, c.want)
+		}
 	}
 }
 

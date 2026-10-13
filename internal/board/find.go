@@ -81,11 +81,7 @@ func (s *Store) findChanged(c Command) {
 
 // findVocab is the catalogue's categories, the one list.
 func findVocab() find.Vocab {
-	var v find.Vocab
-	for _, c := range services.Categories() {
-		v.Categories = append(v.Categories, find.Category{Name: c.Name, Words: c.Words})
-	}
-	return v
+	return find.Vocab{Categories: services.Categories()}
 }
 
 // findModel is find.Model on the inference service's small model, billed

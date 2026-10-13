@@ -231,7 +231,7 @@ func (in *Intent) read(raw, q string) (Filters, string, string) {
 	if !doorCue(q) {
 		f.Door = "" // a door only when the query is about signing up
 	}
-	if f.Category == "other" {
+	if f.Category == "other" || in.vocab.contradicts(f.Category, q) {
 		f.Category = ""
 	}
 	if f.Types == nil {
@@ -254,9 +254,11 @@ func (in *Intent) read(raw, q string) (Filters, string, string) {
 // intentSystem is the system prompt: the schema and the closed lists.
 func intentSystem(v Vocab) string {
 	cats := make([]string, 0, len(v.Categories))
+	var words []string
 	for _, c := range v.Categories {
 		if c.Name != "other" {
 			cats = append(cats, c.Name)
+			words = append(words, c.Name+": "+strings.Join(c.Words, ", "))
 		}
 	}
 	nets := []string{"base", "polygon", "ethereum", "optimism", "arbitrum", "solana"}
@@ -265,7 +267,8 @@ func intentSystem(v Vocab) string {
 		`{"text": string, "type": [string], "category": string, "max_price": string, "output": string, "network": string, "door": string}. ` +
 		"text: the request's own words that say what is wanted (keep topic, place and task words; drop price, type, output and network words and filler). " +
 		"type: the types the request asks for, from " + marshalCompact(Types) + ", or [] when it does not say. " +
-		"category: one of " + marshalCompact(cats) + " when the request clearly is about it, else \"\". " +
+		"category: one of " + marshalCompact(cats) + " when the request clearly is about it, else \"\"; the catalogue files an entry under the first category one of whose words it has (" + strings.Join(words, "; ") + "). " +
+		"A price names no category by itself: a coin's or token's price (BTC, ETH, SOL, USDC) is crypto, a stock's or a currency's is finance. " +
 		"max_price: the most it may cost per call in US dollars as a decimal string (\"0.01\" for a cent, \"0\" for free), or \"\" when no price is stated. " +
 		"output: one of " + marshalCompact(Outputs) + " when the request names what it should return, else \"\". " +
 		"network: one of " + marshalCompact(nets) + " when the request names a payment network, else \"\". " +

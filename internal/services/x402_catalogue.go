@@ -70,6 +70,7 @@ import (
 	"time"
 
 	"swarmmemo/internal/allowance"
+	"swarmmemo/internal/find"
 	"swarmmemo/internal/trust"
 )
 
@@ -628,38 +629,34 @@ func (c *X402Config) admitOpenWith(r *X402Resource, d *x402DenyIndex) bool {
 }
 
 // x402Categories are the categories, in the order they are tried: the
-// first whose word appears in a resource's URL or description names it.
-var x402Categories = []struct {
-	name  string
-	words []string
-}{
-	{"adult", []string{"nsfw", "porn", "xxx", "adult content", "onlyfans"}},
-	{"gambling", []string{"casino", "gambling", "betting", "sportsbook", "lottery"}},
-	{"search", []string{"search", "serp", "lookup", "find "}},
-	{"scraping", []string{"scrape", "crawl", "extract", "contents", "webpage", "browser", "screenshot", "fetch"}},
-	{"crypto", []string{"crypto", "token", "coin", "defi", "wallet", "onchain", "on-chain", "dex", "swap", "nft", "solana", "ethereum", "blockchain", "erc20", "memecoin"}},
-	{"finance", []string{"stock", "forex", "finance", "market", "price", "equity", "earnings"}},
-	{"ai", []string{"llm", "gpt", "inference", "completion", "chat", "model", "generate", "agent", "openrouter", "embedding"}},
-	{"media", []string{"image", "video", "audio", "speech", "tts", "music", "photo"}},
-	{"news", []string{"news", "headline"}},
-	{"weather", []string{"weather", "forecast"}},
-	{"social", []string{"twitter", "tweet", "x.com", "reddit", "farcaster", "social", "linkedin"}},
-	{"people", []string{"email", "contact", "person", "company", "enrich"}},
-	{"data", []string{"data", "api"}},
+// first one of whose words is a whole word (or its plural) of a resource's
+// URL or description names it, then the first one of whose weak words is
+// (find.Vocab.Categorize). Other forms of a word are listed when they name
+// the category ("scraping", "crawler"); one that need not ("priced",
+// "pricing": what a call costs) is not. "price" is weak: a price feed is
+// crypto when it says btc or token, finance when it says stock or forex.
+var x402Categories = []find.Category{
+	{Name: "adult", Words: []string{"nsfw", "porn", "porno", "pornography", "pornographic", "xxx", "adult content", "onlyfans"}},
+	{Name: "gambling", Words: []string{"casino", "gambling", "betting", "sportsbook", "lottery", "lotteries"}},
+	{Name: "search", Words: []string{"search", "searching", "serp", "lookup", "look up", "find"}},
+	{Name: "scraping", Words: []string{"scrape", "scraper", "scraping", "crawl", "crawler", "crawling", "extract", "extraction", "extractor", "contents", "webpage", "web page", "browser", "screenshot", "fetch", "fetcher", "fetching"}},
+	{Name: "crypto", Words: []string{"crypto", "cryptocurrency", "cryptocurrencies", "token", "coin", "altcoin", "memecoin", "stablecoin", "defi", "wallet", "onchain", "on chain", "dex", "swap", "nft",
+		"blockchain", "erc20", "bitcoin", "btc", "ethereum", "eth", "solana", "coingecko", "coinmarketcap", "binance", "uniswap", "hyperliquid", "perp", "perpetual", "funding rate"}},
+	{Name: "finance", Words: []string{"stock", "forex", "finance", "financial", "market", "equity", "equities", "earnings", "ticker", "exchange rate", "currency", "currencies"}, Weak: []string{"price"}},
+	{Name: "ai", Words: []string{"llm", "gpt", "chatgpt", "inference", "completion", "chat", "chatbot", "model", "generate", "generation", "generative", "agent", "openrouter", "embedding"}},
+	{Name: "media", Words: []string{"image", "video", "audio", "speech", "tts", "music", "photo"}},
+	{Name: "news", Words: []string{"news", "headline"}},
+	{Name: "weather", Words: []string{"weather", "forecast"}},
+	{Name: "social", Words: []string{"twitter", "tweet", "x.com", "reddit", "farcaster", "social", "linkedin"}},
+	{Name: "people", Words: []string{"email", "contact", "person", "people", "company", "companies", "enrich", "enrichment"}},
+	{Name: "data", Words: []string{"data", "dataset", "database", "api"}},
 }
 
+// x402Vocab is x402Categories as find matches them.
+var x402Vocab = find.Vocab{Categories: x402Categories}
+
 // x402Categorize names text's category; "other" when no word matches.
-func x402Categorize(text string) string {
-	t := strings.ToLower(text)
-	for _, c := range x402Categories {
-		for _, w := range c.words {
-			if strings.Contains(t, w) {
-				return c.name
-			}
-		}
-	}
-	return "other"
-}
+func x402Categorize(text string) string { return x402Vocab.Categorize(text) }
 
 // Snapshot and state.
 
