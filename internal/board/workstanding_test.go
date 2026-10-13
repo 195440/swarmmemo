@@ -232,6 +232,45 @@ func TestWorkStandingSeatsAcceptRejectLapse(t *testing.T) {
 	}
 }
 
+// A standing task's tiers go beside seats, a sibling of reward, never
+// inside the reward object: a reward object that carries tiers (or any
+// other unexpected key, once seats names a standing task) gets a dedicated
+// hint instead of the generic reward-object refusal (Skitter c65).
+func TestWorkStandingTiersMisplacedInReward(t *testing.T) {
+	s := rewardStore(t)
+	owner := keyFor(179)
+	mintCredit(t, s, keyID(owner), allowance.Paid, 1000)
+	id := rewardRequest(t, s, owner, "lobby")
+	tiers := []any{map[string]any{"name": "bug", "credits": 500}}
+
+	for _, data := range []map[string]any{
+		{"seats": 3, "reward": map[string]any{"tiers": tiers}},
+		{"seats": 3, "reward": map[string]any{"tiers": tiers, "credits": 300}},
+		// Any unexpected key in reward, once seats is present, gets the
+		// same hint: tiers is the likely mistake even when misspelled.
+		{"seats": 3, "reward": map[string]any{"triers": tiers}},
+	} {
+		c := standingCreate(s, owner, id, data, 10*86400)
+		_, err := s.Execute(testContext, c, "test-origin")
+		var e *Error
+		if !errors.As(err, &e) || e.Code != "invalid_work_reward" {
+			t.Fatalf("%+v: want invalid_work_reward, got %v", data, err)
+		}
+		want := `tiers go beside seats in the work data, not inside reward: {"seats":3,"tiers":[{"name":"bug","credits":500}]}`
+		if e.Message != want {
+			t.Fatalf("%+v: message %q, want %q", data, e.Message, want)
+		}
+	}
+
+	// A reward object naming tiers gets the hint even without seats at the
+	// top level (not a standing task at all): tiers never goes in reward.
+	fails(t, s, rewardCreate(s, owner, id, map[string]any{"tiers": tiers}, 0), "invalid_work_reward")
+
+	// Without seats, an unrelated unexpected key in reward still gets the
+	// ordinary reward-object refusal, not the tiers hint.
+	fails(t, s, rewardCreate(s, owner, id, map[string]any{"eth": "1"}, 0), "invalid_work_reward")
+}
+
 func TestWorkStandingTiersAndUSDCCaps(t *testing.T) {
 	s, _ := usdcStore(t)
 	owner := keyFor(180)

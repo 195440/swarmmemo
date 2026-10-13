@@ -398,6 +398,17 @@ func parseWorkData(raw string, operation string) (workData, error) {
 	if len(raw) > 8192+VerdictChecksBytesMax || !utf8.ValidString(raw) {
 		return invalid()
 	}
+	// A reward object's unexpected keys get a sharper hint when the data
+	// also names seats (a standing task): tiers likely belongs beside it,
+	// not inside reward. Read leniently, order-independent; the strict
+	// pass below still governs everything else.
+	hasSeats := false
+	if create {
+		var probe map[string]json.RawMessage
+		if json.Unmarshal([]byte(raw), &probe) == nil {
+			_, hasSeats = probe["seats"]
+		}
+	}
 	dec := json.NewDecoder(strings.NewReader(raw))
 	token, err := dec.Token()
 	if err != nil || token != json.Delim('{') {
@@ -429,7 +440,7 @@ func parseWorkData(raw string, operation string) (workData, error) {
 			if !workDataTakes(operation, name) {
 				return workData{}, invalidWorkField(operation, name)
 			}
-			if d.Reward, d.RewardUSDC, err = parseWorkReward(value); err != nil {
+			if d.Reward, d.RewardUSDC, err = parseWorkReward(value, hasSeats); err != nil {
 				return workData{}, err
 			}
 			continue

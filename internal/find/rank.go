@@ -1,7 +1,9 @@
 package find
 
 // Ranking. Relevance is BM25 over the best candidate's, so the best match
-// is 1. Quality q, from -1 to 1, adds q × QualityShift: it can only
+// is 1; a query word a doc has only as another form of it in its
+// description ("priced" for "price") first takes LooseCut of that word's
+// share off the doc's BM25 (looseWords). Quality q, from -1 to 1, adds q × QualityShift: it can only
 // reorder results within 2 × QualityShift of each other. Down (our calls
 // fail, or the lab says down) and the lab's avoid set q to -1: they sink
 // within their band, and are never hidden.
@@ -91,6 +93,8 @@ type scored struct {
 	parts   map[string]any
 	matched []string
 	fields  []string
+	loose   []string // words found only as another form in the description
+	factor  float64  // what loose leaves of the BM25: 1 - LooseCut × loose/words
 	now     time.Time
 }
 
@@ -100,16 +104,22 @@ type scored struct {
 // entries whose door is only a SwarmMemo method's come after the places to
 // sign up, whatever their score (signupQuestion).
 func (ix *Index) rank(cands []match, words []string, door, signup bool) []scored {
+	out := make([]scored, 0, len(cands))
 	best := 0.0
 	for _, m := range cands {
-		best = math.Max(best, -m.bm25)
-	}
-	out := make([]scored, 0, len(cands))
-	for _, m := range cands {
 		d := &ix.docs[m.doc]
-		s := scored{doc: d, bm25: m.bm25, rel: 1, now: ix.BuiltAt}
+		s := scored{doc: d, bm25: m.bm25, rel: 1, factor: 1, now: ix.BuiltAt}
+		if s.loose = looseWords(d, words); len(s.loose) > 0 {
+			s.factor = 1 - LooseCut*float64(len(s.loose))/float64(len(words))
+		}
+		best = math.Max(best, -m.bm25*s.factor)
+		out = append(out, s)
+	}
+	for i := range out {
+		s := &out[i]
+		d := s.doc
 		if best > 0 {
-			s.rel = -m.bm25 / best
+			s.rel = -s.bm25 * s.factor / best
 		}
 		s.q, s.parts = quality(d, door, ix.BuiltAt)
 		if signup && methodDoor(d) {
@@ -118,7 +128,6 @@ func (ix *Index) rank(cands []match, words []string, door, signup bool) []scored
 		}
 		s.score = s.rel + QualityShift*s.q
 		s.matched, s.fields = matchedWords(d, words, ix.vocab)
-		out = append(out, s)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		a, b := out[i], out[j]
@@ -172,6 +181,82 @@ func matchedWords(d *Doc, words []string, v Vocab) ([]string, []string) {
 	return matched, in
 }
 
+// LooseCut is how much of its share of the match a query word loses when a
+// doc has it only as another form of it in its description: "priced per
+// row" stems to "price", yet says nothing of what the endpoint returns, and
+// the "finance" category the catalogue read from that same word stands for
+// "price" too. The word's exact form (or its plural) anywhere, or any form
+// in the name, category or URL words, counts in full. A doc's BM25 is
+// multiplied by 1 - LooseCut × loose words / query words before relevance
+// is taken: a loose word counts half. It reorders, never hides.
+const LooseCut = 0.5
+
+// looseWords are the query words d has only as another form of them in its
+// description: no exact form (the word, its plural or singular) in any
+// field, no form at all in the name, category or URL words, and a form
+// sharing its stem in the description. A word d has nowhere in its text (a
+// category synonym, say) is not loose: BM25 weighs it as it is.
+func looseWords(d *Doc, words []string) []string {
+	if len(words) == 0 {
+		return nil
+	}
+	strong := slices.Concat(Words(d.Name), Words(d.Category), Words(d.Terms))
+	desc := Words(d.Description)
+	var out []string
+	for _, w := range words {
+		if nonLatin(w) || len([]rune(w)) < 4 {
+			continue
+		}
+		if slices.ContainsFunc(strong, func(t string) bool { return sameForm(t, w) || sameStem(t, w) }) {
+			continue
+		}
+		exact, other := false, false
+		for _, t := range desc {
+			switch {
+			case sameForm(t, w):
+				exact = true
+			case sameStem(t, w):
+				other = true
+			}
+		}
+		if other && !exact {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// sameForm reports whether t is w, or one is the other's plural (price,
+// prices; query, queries).
+func sameForm(t, w string) bool {
+	plural := func(a, b string) bool {
+		return a == b+"s" || a == b+"es" || strings.HasSuffix(b, "y") && a == b[:len(b)-1]+"ies"
+	}
+	return t == w || plural(t, w) || plural(w, t)
+}
+
+// sameStem reports whether t and w share a stem of four letters or more,
+// as the index's prefix and porter matches find one for the other
+// ("priced", "pricing" for "price"; "funded" for "funding"): one, less a
+// common ending, begins the other.
+func sameStem(t, w string) bool {
+	a, b := crudeStem(t), crudeStem(w)
+	if len(a) > len(b) {
+		a, b = b, a
+	}
+	return len([]rune(a)) >= 4 && strings.HasPrefix(b, a)
+}
+
+// crudeStem is s less one common English ending, when four letters stay.
+func crudeStem(s string) string {
+	for _, end := range []string{"ings", "ing", "ers", "ed", "es", "er", "s", "e"} {
+		if r := strings.TrimSuffix(s, end); r != s && len([]rune(r)) >= 4 {
+			return r
+		}
+	}
+	return s
+}
+
 // hit is s as the wire shows it.
 func (s scored) hit(explain bool) Hit {
 	d := s.doc
@@ -203,8 +288,11 @@ func (s scored) hit(explain bool) Hit {
 	h.Door = doorMark(d, s.now)
 	h.Why = s.why()
 	if explain {
-		h.Explain = &Explain{BM25: s.bm25, Relevance: round4(s.rel), Matched: s.matched, Fields: s.fields, Quality: s.parts,
+		h.Explain = &Explain{BM25: s.bm25, Relevance: round4(s.rel), Matched: s.matched, Fields: s.fields, Loose: s.loose, Quality: s.parts,
 			Q: round4(s.q), Shift: round4(QualityShift * s.q), Score: round4(s.score), Rule: "score = relevance + 0.1 × q"}
+		if len(s.loose) > 0 {
+			h.Explain.LooseFactor = round4(s.factor)
+		}
 	}
 	return h
 }

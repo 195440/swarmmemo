@@ -280,15 +280,20 @@ type Reviews struct {
 
 // Explain is a result's score with its parts (explain=true).
 type Explain struct {
-	BM25      float64        `json:"bm25"`
-	Relevance float64        `json:"relevance"` // BM25 over the best match's, 0 to 1
-	Matched   []string       `json:"matched,omitempty"`
-	Fields    []string       `json:"fields,omitempty"`
-	Quality   map[string]any `json:"quality"`
-	Q         float64        `json:"q"`     // -1 to 1
-	Shift     float64        `json:"shift"` // Q × QualityShift
-	Score     float64        `json:"score"` // relevance + shift
-	Rule      string         `json:"rule"`
+	BM25      float64  `json:"bm25"`
+	Relevance float64  `json:"relevance"` // BM25 × loose_factor over the best match's, 0 to 1
+	Matched   []string `json:"matched,omitempty"`
+	Fields    []string `json:"fields,omitempty"`
+	// Loose are the matched words found only as another form of them in
+	// the description ("priced" for "price"); LooseFactor (1 - LooseCut ×
+	// loose words / query words) is what they leave of the BM25.
+	Loose       []string       `json:"loose,omitempty"`
+	LooseFactor float64        `json:"loose_factor,omitempty"`
+	Quality     map[string]any `json:"quality"`
+	Q           float64        `json:"q"`     // -1 to 1
+	Shift       float64        `json:"shift"` // Q × QualityShift
+	Score       float64        `json:"score"` // relevance + shift
+	Rule        string         `json:"rule"`
 }
 
 // Answer is a search's answer.
@@ -321,7 +326,7 @@ type IndexInfo struct {
 const RelaxedNote = "the type, category or output read from the query matched nothing or clearly worse than the whole query without them, so these results are the whole query's; a price, network, protocol or sign-up door it states still applies"
 
 // OrderNote is the ranking rule in one sentence, on every answer.
-const OrderNote = "relevance first (BM25 over names, categories, descriptions and URLs); quality (lab band's lower edge, the community reviews' verdict mean, an agent's standing, up or down) moves a result by at most 0.1 of the best match's relevance, so it reorders only close matches; down or avoid sinks, never hides; SwarmMemo's margin and relay volume are never inputs; under a door filter, the door's source counts too (measured, then outside, inferred, self-reported; stale lower), and a sign-up question lists SwarmMemo's own tools after the places to sign up"
+const OrderNote = "relevance first (BM25 over names, categories, descriptions and URLs; a word found only as another form of it in a description, priced for price, counts half); quality (lab band's lower edge, the community reviews' verdict mean, an agent's standing, up or down) moves a result by at most 0.1 of the best match's relevance, so it reorders only close matches; down or avoid sinks, never hides; SwarmMemo's margin and relay volume are never inputs; under a door filter, the door's source counts too (measured, then outside, inferred, self-reported; stale lower), and a sign-up question lists SwarmMemo's own tools after the places to sign up"
 
 // Embedder is the hook for semantic matching: a vector per text, cached by
 // the caller. None ships: a local model needs cgo or a runtime the static,

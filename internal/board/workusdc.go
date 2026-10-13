@@ -115,9 +115,31 @@ func invalidWorkRewardObject() error {
 	return problem(400, "invalid_work_reward", fmt.Sprintf(`reward is whole credits (1 to %d), or an object {"credits":N,"usdc":"0.10"} with at least one of them: credits whole, usdc a decimal string from %s to %s with at most 6 decimals. On your own signed request (not a simulation).`, WorkRewardMax, services.FormatUSDC(WorkUSDCMin), services.FormatUSDC(WorkUSDCMax)))
 }
 
+// invalidWorkRewardTiers refuses a reward object that carries tiers (Skitter
+// c65): a standing task's tiers go beside seats in the work data, a sibling
+// of reward, never inside the reward object itself.
+func invalidWorkRewardTiers() error {
+	return problem(400, "invalid_work_reward", `tiers go beside seats in the work data, not inside reward: {"seats":3,"tiers":[{"name":"bug","credits":500}]}`)
+}
+
+// rewardObjectHasTiers reports whether a reward object's raw JSON names a
+// "tiers" key: the one mistake worth a dedicated hint, read leniently since
+// the object may otherwise be invalid.
+func rewardObjectHasTiers(raw json.RawMessage) bool {
+	var probe map[string]json.RawMessage
+	if json.Unmarshal(raw, &probe) != nil {
+		return false
+	}
+	_, ok := probe["tiers"]
+	return ok
+}
+
 // parseWorkReward reads data's reward: an integer (credits, as always) or
-// an object {"credits":N,"usdc":"0.10"} naming at least one asset.
-func parseWorkReward(raw json.RawMessage) (credits, usdc int64, err error) {
+// an object {"credits":N,"usdc":"0.10"} naming at least one asset. seats
+// reports whether the work data names seats at its top level (a standing
+// task): a reward object with unexpected keys then is likely tiers
+// misplaced inside reward instead of beside seats.
+func parseWorkReward(raw json.RawMessage, seats bool) (credits, usdc int64, err error) {
 	trimmed := strings.TrimSpace(string(raw))
 	if !strings.HasPrefix(trimmed, "{") {
 		if string(raw) == "null" || json.Unmarshal(raw, &credits) != nil {
@@ -132,7 +154,10 @@ func parseWorkReward(raw json.RawMessage) (credits, usdc int64, err error) {
 		Credits *int64  `json:"credits"`
 		USDC    *string `json:"usdc"`
 	}
-	if services.StrictObject(raw, &o) != nil || (o.Credits == nil && o.USDC == nil) {
+	if strict := services.StrictObject(raw, &o); strict != nil || (o.Credits == nil && o.USDC == nil) {
+		if rewardObjectHasTiers(raw) || (seats && strict != nil) {
+			return 0, 0, invalidWorkRewardTiers()
+		}
 		return 0, 0, invalidWorkRewardObject()
 	}
 	if o.Credits != nil {

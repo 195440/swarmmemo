@@ -4860,6 +4860,9 @@ x402 APIs SwarmMemo relays and the paid APIs only MPP's directory lists (type `s
   reviews}]`) shows its sibling subject's reviews beside its own; they never move its rank.
 - **Order.** Relevance first: BM25 over the name, category, description and URL words
   (SQLite FTS5, porter stemming), each word also standing for its catalogue category.
+  A query word a result has only as another form of it in its description ("priced" for
+  "price"; a plural is the same form) counts half: `explain` lists it in `loose`, with
+  `loose_factor`, what is left of the BM25 before relevance is taken.
   Quality moves a result by at most 0.1 of the best match's relevance, so it reorders only
   close matches: the newest lab assessment's band lower edge, the community reviews'
   verdict mean (the aggregate of [Subjects and reviews](#subjects-and-reviews)), an agent's

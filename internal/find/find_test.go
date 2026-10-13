@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -476,5 +477,98 @@ func TestFindRelaxesHiddenBetterMatch(t *testing.T) {
 	// The joined name reads as a name: no type is inferred at all.
 	if a, _ = e.Find(ctx, Request{Query: "agent-exec-attest", Parse: ModeRules}); len(a.Results) == 0 || a.Results[0].ID != "ax/agent-exec-attest" || len(a.Filters.Types) != 0 || strings.Contains(a.ParseNote, RelaxedNote) {
 		t.Fatalf("joined: %v filters %+v note %q", ids(a), a.Filters, a.ParseNote)
+	}
+}
+
+// A query word a listing has only as another form of it in its description
+// weighs less than the word itself in a name, URL or description (Inner
+// Ozma 140b4ed2: "price of BTC" put a funding-rows tool "Priced per row"
+// above two BTC price feeds, its "finance" category standing for "price"
+// too). The description is still a full signal when it has the word.
+func TestFindLooseFormInDescriptionWeighsLess(t *testing.T) {
+	vocab := Vocab{Categories: []Category{
+		{"crypto", []string{"crypto", "token", "coin"}},
+		{"finance", []string{"stock", "market", "price"}},
+		{"data", []string{"data", "api"}},
+	}}
+	docs := []Doc{
+		{Type: TypeService, Kind: KindX402, ID: "x402:ctx", Name: "hyperx · GET /v1/asset_ctx/BTC/latest", Category: "finance",
+			Description: "The most-recent N open-interest / funding / ctx rows (≤5000). Priced per row ($0.000025 premium); served live (no lag).",
+			URL:         "/s/ctx", Terms: "api hyperx example v1 asset ctx btc latest", Price: 1000, Quality: Quality{LabLower: -1}},
+		{Type: TypeService, Kind: KindX402, ID: "x402:feed1", Name: "springs · GET /api/price/btc-usd", Category: "crypto",
+			Description: "Real-time BTC/USD price feed oracle. Retrieves live spot rate, 24h high/low, and volume across exchanges for agents that need a quote.",
+			URL:         "/s/feed1", Terms: "springs example api price btc usd", Price: 1000, Quality: Quality{LabLower: -1}},
+		{Type: TypeService, Kind: KindX402, ID: "x402:feed2", Name: "ochin · GET /api/btc-price", Category: "crypto",
+			Description: "BTC price / Bitcoin spot price in USD, live. Use when you need to answer: what is BTC worth right now, in dollars, from several venues?",
+			URL:         "/s/feed2", Terms: "ochin example api btc price", Price: 1000, Quality: Quality{LabLower: -1}},
+		{Type: TypeService, Kind: KindX402, ID: "x402:fax", Name: "faxer · POST /v1/fax", Category: "data",
+			Description: "Send a fax to any phone number, priced per page.", URL: "/s/fax", Terms: "faxer example v1 fax", Price: 1000, Quality: Quality{LabLower: -1}},
+	}
+	// A catalogue's worth of other listings, so the words are rare as they
+	// are in the real one (BM25's IDF).
+	for i, w := range []string{"weather", "news", "translate", "image", "search", "email", "maps", "sports", "jobs", "recipes", "flights", "books", "music", "films", "health", "law", "chess", "poetry", "games", "dns"} {
+		docs = append(docs, Doc{Type: TypeService, Kind: KindX402, ID: "x402:other" + strconv.Itoa(i), Name: "other · GET /v1/" + w, Category: "data",
+			Description: "Live " + w + " data for agents.", URL: "/s/other", Terms: "other example v1 " + w, Price: 1000, Quality: Quality{LabLower: -1}})
+	}
+	e := NewEngine(Config{Source: func(context.Context) ([]Doc, error) { return docs, nil }, Vocab: vocab})
+	t.Cleanup(e.Close)
+	ctx := context.Background()
+	a, err := e.Find(ctx, Request{Query: "price of BTC", Parse: ModeOff, Explain: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := ids(a)
+	if len(got) < 3 || got[0] == "x402:ctx" || !slices.Contains(got[:2], "x402:feed1") || !slices.Contains(got[:2], "x402:feed2") {
+		t.Fatalf("a BTC price feed should lead: %v", got)
+	}
+	for _, h := range a.Results {
+		x := h.Explain
+		switch h.ID {
+		case "x402:ctx", "x402:fax":
+			if !slices.Equal(x.Loose, []string{"price"}) || math.Abs(x.LooseFactor-(1-LooseCut/2)) > 1e-4 {
+				t.Fatalf("ctx explain: loose %v factor %v", x.Loose, x.LooseFactor)
+			}
+		default:
+			if len(x.Loose) > 0 || x.LooseFactor != 0 {
+				t.Fatalf("%s: price is literal, not loose: %v %v", h.ID, x.Loose, x.LooseFactor)
+			}
+		}
+	}
+	// Control: when the description has the word itself, it is the best
+	// signal and counts in full.
+	for _, q := range []string{"funding rows", "open interest funding"} {
+		a, err = e.Find(ctx, Request{Query: q, Parse: ModeOff, Explain: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got = ids(a); len(got) == 0 || got[0] != "x402:ctx" || len(a.Results[0].Explain.Loose) > 0 {
+			t.Fatalf("%q: description-only literal match should lead: %v", q, got)
+		}
+	}
+	// A plural is the word: "prices" finds the feeds' "price" in full.
+	if a, _ = e.Find(ctx, Request{Query: "btc prices", Parse: ModeOff, Explain: true}); len(a.Results) == 0 || a.Results[0].ID == "x402:ctx" {
+		t.Fatalf("plural: %v", ids(a))
+	}
+	// A loose word is never hidden: alone, "price" still finds the fax.
+	if a, _ = e.Find(ctx, Request{Query: "price", Parse: ModeOff}); !slices.Contains(ids(a), "x402:fax") {
+		t.Fatalf("loose hidden: %v", ids(a))
+	}
+}
+
+func TestLooseWordForms(t *testing.T) {
+	for _, c := range []struct {
+		t, w       string
+		form, stem bool
+	}{
+		{"price", "price", true, true}, {"prices", "price", true, true}, {"queries", "query", true, false},
+		{"priced", "price", false, true}, {"pricing", "price", false, true}, {"funded", "funding", false, true},
+		{"forecasting", "forecast", false, true}, {"bitcoin", "btc", false, false}, {"prize", "price", false, false},
+	} {
+		if f := sameForm(c.t, c.w); f != c.form {
+			t.Errorf("sameForm(%q, %q) = %v", c.t, c.w, f)
+		}
+		if s := sameStem(c.t, c.w); s != c.stem && !c.form {
+			t.Errorf("sameStem(%q, %q) = %v", c.t, c.w, s)
+		}
 	}
 }
