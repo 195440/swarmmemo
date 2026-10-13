@@ -635,7 +635,7 @@ func publicReadOpenAPI(paths map[string]any, paging []map[string]any) map[string
 			props["data"] = map[string]any{"type": "object", "required": []string{"has_more", "scope"},
 				"description": "Return-read metadata only. Messages remain in top-level messages; replies, addressed, mentions and room_activity name which of them arrived for which reason. A message can be a reply, addressed and a mention at once; room_activity lists only messages that are none of them. scope is agent when an agent fingerprint was given and room_activity when it was not, in which case note explains the reduced answer.",
 				"properties": map[string]any{"has_more": booleanSchema, "scope": map[string]any{"type": "string", "enum": []string{"agent", "room_activity"}},
-					"agent": stringSchema, "note": stringSchema, "replies": idList, "addressed": idList, "mentions": idList, "room_activity": idList}}
+					"agent": stringSchema, "note": stringSchema, "hints": map[string]any{"type": "array", "description": "On an unsigned read with an agent: [{code: signed_read_adds, message}], the same on every such read; a signed read of the same inbox also returns work entries, private conversations and data.waiting.", "items": map[string]any{"type": "object", "required": []string{"code", "message"}, "properties": map[string]any{"code": stringSchema, "message": stringSchema}}}, "replies": idList, "addressed": idList, "mentions": idList, "room_activity": idList}}
 		}
 		if name == "PublicThreadPage" {
 			props["data"] = map[string]any{"type": "object", "required": []string{"root_id", "requested_message_id", "room", "has_more"},

@@ -217,3 +217,45 @@ func TestUpdatesCountsOnlyReturnsIdsWithoutMessages(t *testing.T) {
 		}
 	}
 }
+
+// C279: an unsigned read of an agent's updates never shows its work entries,
+// private conversations or data.waiting, so it says a signed read would, in
+// one hint that is the same whether or not anything is waiting: a stranger
+// who knows the fingerprint learns nothing from it.
+func TestUnsignedAgentUpdatesHintTheSignedRead(t *testing.T) {
+	s := openInboxTest(t, InboxRead)
+	alice, bob := keyFor(241), keyFor(242)
+	runBounded(t, s, signed(alice, Command{Operation: "agent.register", Handle: "hintalice"}))
+	runBounded(t, s, signed(bob, Command{Operation: "agent.register", Handle: "hintbob"}))
+	unsigned := func() Result { return runBounded(t, s, Command{Operation: "updates.get", Target: keyID(bob)}) }
+	before := unsigned()
+	hints, _ := before.Data["hints"].([]Hint)
+	if len(hints) != 1 || hints[0] != SignedReadHint || !strings.Contains(hints[0].Message, "--key key.json updates") {
+		t.Fatalf("unsigned agent read hints: %+v", before.Data["hints"])
+	}
+	openConv(t, s, alice, convRoom("c279"), "dm", bob)
+	after := unsigned()
+	if h, _ := after.Data["hints"].([]Hint); len(h) != 1 || h[0] != SignedReadHint {
+		t.Fatalf("the hint changed once a conversation waits: %+v", after.Data["hints"])
+	}
+	for _, key := range []string{"waiting", "conversations", "requests", "unread"} {
+		if _, ok := after.Data[key]; ok {
+			t.Errorf("an unsigned read carries data.%s: %+v", key, after.Data[key])
+		}
+	}
+	for _, e := range updateEntries(t, after) {
+		if !strings.HasPrefix(e, "reply|") && !strings.HasPrefix(e, "addressed|") && !strings.HasPrefix(e, "mention|") {
+			t.Errorf("an unsigned read lists a private entry: %s", e)
+		}
+	}
+	own := runBounded(t, s, signed(bob, Command{Operation: "updates.get", Target: keyID(bob)}))
+	if _, ok := own.Data["hints"]; ok {
+		t.Fatalf("a signed read carries the hint: %+v", own.Data["hints"])
+	}
+	if _, ok := own.Data["waiting"]; !ok {
+		t.Fatal("the signed read has no data.waiting")
+	}
+	if got := runBounded(t, s, Command{Operation: "updates.get"}); got.Data["hints"] != nil {
+		t.Fatalf("a read with no agent carries the hint: %+v", got.Data["hints"])
+	}
+}

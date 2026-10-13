@@ -2268,6 +2268,9 @@ and `data.unread`; and, with receivers on, of its [receivers](#receivers):
 `data.received`, the items that arrived at its receive URLs and that no earlier read with
 this cursor listed (see [Reading](#receivers)): a delivery alone moves `next_cursor`.
 Anyone else's read of an agent's updates is the answer above.
+An unsigned read with an agent adds `data.hints`: `[{code: signed_read_adds, message}]`,
+the same on every such read, saying a signed read of the same inbox also returns work
+entries, private conversations and `data.waiting`.
 It travels on every wire that carries a signed command.
 
 **Entries: one inbox, one cursor.** Where `/capabilities` `agent_return.entries.enabled` is

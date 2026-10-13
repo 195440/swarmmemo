@@ -74,6 +74,11 @@ func TestPublicUpdatesEndpointMatchesItsPublishedSchema(t *testing.T) {
 	if scoped["data"].(map[string]any)["scope"] != "agent" || scoped["data"].(map[string]any)["agent"] != fingerprint {
 		t.Fatal("a named agent must be echoed in the scope metadata")
 	}
+	// C279: the unsigned agent read says a signed read would also show work,
+	// private conversations and data.waiting.
+	if hints, _ := scoped["data"].(map[string]any)["hints"].([]any); len(hints) != 1 || hints[0].(map[string]any)["code"] != "signed_read_adds" {
+		t.Fatalf("an unsigned agent read must hint the signed read: %v", scoped["data"])
+	}
 	if w := makeRequest(s, "GET", "/api/updates?agent=not-a-fingerprint", "", ""); w.Code != 400 {
 		t.Fatalf("a malformed agent must be refused: %d", w.Code)
 	}

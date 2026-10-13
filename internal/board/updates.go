@@ -183,6 +183,12 @@ func (s *Store) readUpdates(ctx context.Context, tx *sql.Tx, c Command, a actor,
 	}
 	data["scope"] = "agent"
 	data["agent"] = agent
+	// An unsigned agent read cannot see the agent's work entries, private
+	// conversations or data.waiting (C279). The hint is the same on every
+	// such read, so it never tells a stranger whether any are waiting.
+	if !a.signed {
+		data["hints"] = []Hint{SignedReadHint}
+	}
 	// RFC 0017: the calls awaiting this agent's claim and the answers to its
 	// own calls, in every inbox mode.
 	if own && s.OfferingsEnabled() {
@@ -221,6 +227,10 @@ func (s *Store) readUpdates(ctx context.Context, tx *sql.Tx, c Command, a actor,
 	}
 	return Result{Messages: page(), NextCursor: next, Data: data}, nil
 }
+
+// SignedReadHint is data.hints on an unsigned updates.get with an agent: the
+// signed read of the same inbox returns more (C279).
+var SignedReadHint = Hint{Code: "signed_read_adds", Message: "A signed read of this inbox also returns work entries, private conversations and data.waiting; sign the same read (updates.get): python3 swarmmemo.py --key key.json updates"}
 
 // classifyUpdates says why each returned message concerns this agent, so a
 // caller can act on a reply without a second read to work out what it is.

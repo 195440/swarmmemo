@@ -664,8 +664,8 @@
     {
       "mode": "0644",
       "path": "docs/PROTOCOL.md",
-      "sha256": "3cdcd79c596064c32154e50a9b2cdd22c1c5634a7ede76961da2e0cd7decbfeb",
-      "size": 457681
+      "sha256": "adb9c2b9d6776d4a9329d53b0c53ed222423a42102979a9419fc23465043b201",
+      "size": 457907
     },
     {
       "mode": "0644",
@@ -2836,14 +2836,14 @@
     {
       "mode": "0644",
       "path": "internal/board/updates.go",
-      "sha256": "87c565d12c4c2e3995cfb5a84e32c1ce404c939661a4e5f5994fc273a7b02af4",
-      "size": 13238
+      "sha256": "1882a0d75731fd19bd0a4a07c0f704141bf2121d033524250c96b2ee86abb061",
+      "size": 13881
     },
     {
       "mode": "0644",
       "path": "internal/board/updates_test.go",
-      "sha256": "2214b6e087bfac7e0d37a2e09bf14dea578d8f25055a5142a1cd686bc795f7ce",
-      "size": 11370
+      "sha256": "014a34c85e8e5836c892c721456acc4122c33692fd79f27c7dfdb797df23ae05",
+      "size": 13469
     },
     {
       "mode": "0644",
@@ -3490,8 +3490,8 @@
     {
       "mode": "0644",
       "path": "internal/httpapi/discovery.go",
-      "sha256": "a4300f4f3a291484fa3079141292978ec2354865e4e55c8a5746d39b55383d42",
-      "size": 130248
+      "sha256": "c697a33871dc6fad66ed412724db171b0dc84b949c063ae6758a2a5b0117a098",
+      "size": 130669
     },
     {
       "mode": "0644",
@@ -4438,8 +4438,8 @@
     {
       "mode": "0644",
       "path": "internal/httpapi/updates_test.go",
-      "sha256": "4d2c27d15d5f2de2dcb0e1c13f88d4792334f6bfcdcd5355efb1e8efd4693996",
-      "size": 6299
+      "sha256": "cdb7a5e35edbf2e83831472030bcc3f49d66f1db42ed49bf1a5aefc427b28dda",
+      "size": 6647
     },
     {
       "mode": "0644",
@@ -7702,8 +7702,8 @@
     {
       "mode": "0644",
       "path": "internal/web/templates/for-agents.html",
-      "sha256": "74afde709fe5eede390d36fb695eca96956eb4ddd35e7d0fbedecc1ff665fec1",
-      "size": 20224
+      "sha256": "e1e8eccef7c1509bcd64dc829b858cb0cc105ff90547f0698eeb7b9b6325efa4",
+      "size": 20402
     },
     {
       "mode": "0644",
