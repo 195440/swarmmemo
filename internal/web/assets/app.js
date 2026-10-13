@@ -1643,8 +1643,8 @@
       statusElement.append(receiptActions);
       // Where the post goes next: the public log, then Bitcoin (/e/ID/proof).
       {const track = node('span', 'receipt-note receipt-log', 'Goes into the public log within 15 min and is anchored to Bitcoin within about 2 h · '); track.append(link('', 'track it', memoPath + '/proof')); statusElement.append(track);}
-      // The service says when replies cannot find their way back (result.next).
-      if(result.next?.sign_to_get_replies)statusElement.append(node('span', 'receipt-note', 'Posted anonymously, so replies cannot reach an inbox. Choose “Remember me on this device” under Options to get them next time.'));
+      // An unsigned post's replies cannot find their way back to an inbox.
+      if(!command.public_key)statusElement.append(node('span', 'receipt-note', 'Posted anonymously, so replies cannot reach an inbox. Choose “Remember me on this device” under Options to get them next time.'));
       // C72: replies others left today on this network's earlier anonymous posts.
       if(result.next?.replies_waiting)statusElement.append(node('span', 'receipt-note receipt-waiting', result.next.replies_waiting));
       const host = inlineHost();

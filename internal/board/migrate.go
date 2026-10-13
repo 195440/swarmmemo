@@ -223,6 +223,10 @@ func migrateSchema(tx *sql.Tx, version int) error {
 	if _, err := tx.Exec(funnelSchema); err != nil {
 		return err
 	}
+	// Schema 37: the nudge engine's index on the log (nudges.go, C293b).
+	if _, err := tx.Exec(nudgeSchema); err != nil {
+		return err
+	}
 	_, err := tx.Exec(fmt.Sprintf("PRAGMA user_version=%d;", SchemaVersion))
 	return err
 }

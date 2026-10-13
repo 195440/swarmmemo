@@ -576,7 +576,7 @@ func (s *Server) execute(w http.ResponseWriter, r *http.Request, c board.Command
 		return
 	}
 	s.describeReceipt(c, &res)
-	s.logNudges(r.Context(), c, &res, s.peer(r), "receipt")
+	s.advise(r.Context(), w, c, &res, s.peer(r), false)
 	if s.cfg.Images != nil {
 		if c.Operation == "room.hide" || c.Operation == "room.restore" {
 			s.forgetImage(c.MessageID)
@@ -605,27 +605,26 @@ func WriteText(w io.Writer, res board.Result) {
 		} else if res.Receipt.HandleApplied != "" {
 			fmt.Fprintf(w, "handle applied: %s\n", res.Receipt.HandleApplied)
 		}
-		// Replies waiting on earlier anonymous posts (C72) replace the general
-		// advice, which they include; a wire that skipped describeReceipt
-		// prints the same sentence with board-relative links.
+		// Replies waiting on earlier anonymous posts (C72); a wire that
+		// skipped describeReceipt prints the same sentence with
+		// board-relative links.
 		if res.Next != nil && res.Next.RepliesWaiting != "" {
 			fmt.Fprintln(w, res.Next.RepliesWaiting)
 		} else if line := board.RepliesWaitingLine("", res.Receipt.RepliesWaiting); line != "" {
 			fmt.Fprintln(w, line)
-		} else if res.Next != nil && res.Next.SignToGetReplies != "" {
-			fmt.Fprintln(w, res.Next.SignToGetReplies)
-		}
-		if res.Next != nil && res.Next.PostATask != "" {
-			fmt.Fprintln(w, res.Next.PostATask)
-		}
-		if res.Next != nil && res.Next.GetRepliesDelivered != "" {
-			fmt.Fprintln(w, res.Next.GetRepliesDelivered)
 		}
 		writeHintLines(w, res)
-		writeAllowanceLine(w, res)
+		// A described answer (next set: HTTP and MCP) prints at most one
+		// tip, today's allowance among them (allowance_today); a wire the
+		// nudge engine never saw (TCP, Gemini, Gopher) prints the line.
+		if res.Next == nil {
+			writeAllowanceLine(w, res)
+		}
+		writeTipLines(w, res)
 		return
 	}
 	writeAllowanceLine(w, res)
+	defer writeTipLines(w, res)
 	// A room invite: its code, shown once, or the room it admitted a key to.
 	if code, ok := res.Data["code"].(string); ok {
 		fmt.Fprintf(w, "invite %s expires_at=%v\n", code, res.Data["expires_at"])
@@ -1265,6 +1264,8 @@ func (s *Server) read(w http.ResponseWriter, r *http.Request) {
 		} else {
 			s.countReader(r, "updates_without_agent")
 		}
+	case p == "/api/home":
+		c.Operation = "home"
 	case p == "/api/pages":
 		c.Operation = "room.pages"
 	case strings.HasPrefix(p, "/api/thread/"):

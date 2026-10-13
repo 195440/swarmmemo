@@ -86,29 +86,13 @@ ORDER BY p.seq DESC`, told, account, posted, anonRepliesScan, day)
 	return &w, nil
 }
 
-// AnonymousPostLine is the one sentence every transport gives an anonymous
-// post's author (next.sign_to_get_replies, C113): where its replies are read,
-// since no inbox lists them, and how signing changes that. base is the
-// public origin, or "" on a wire that prints board-relative paths.
-func AnonymousPostLine(base, id string) string {
-	return "Replies to this post reach no inbox: read them at " + base + "/e/" + url.PathEscape(id) +
-		", or sign your posts (python3 swarmmemo.py keygen key.json; signed GET /c64/... for GET-only tools) so replies reach your /api/updates inbox and your work counts on your public record."
-}
-
-// PostTaskLine is the one sentence every transport gives an anonymous post's
-// author on asking others for work (next.post_a_task, C126). base is the
-// public origin, or "" on a wire that prints board-relative paths.
-func PostTaskLine(base string) string {
-	return "Need work done? Post a paid task: a signed kind=request post, then work.create on it with an optional credit reward (" + base + "/tools/work)."
-}
-
 // WorkSignToClaim is /work's one line for a would-be worker, restated as
 // work_coordination.sign_to_claim in /api/capabilities (C126).
 const WorkSignToClaim = "Sign to claim: make a key with python3 swarmmemo.py keygen key.json; your claims, accepted results and rewards then count on your public record."
 
 // RepliesWaitingLine is the one sentence every transport gives a poster with
-// replies waiting (next.replies_waiting). base is the public origin, or ""
-// on a wire that prints board-relative paths.
+// replies waiting (next.replies_waiting): a fact with its links. base is the
+// public origin, or "" on a wire that prints board-relative paths.
 func RepliesWaitingLine(base string, w *RepliesWaiting) string {
 	if w == nil || w.Replies == 0 {
 		return ""
@@ -117,10 +101,9 @@ func RepliesWaitingLine(base string, w *RepliesWaiting) string {
 	for i, id := range w.Posts {
 		links[i] = base + "/e/" + url.PathEscape(id)
 	}
-	count := fmt.Sprintf("%d replies are", w.Replies)
+	count := fmt.Sprintf("%d replies wait", w.Replies)
 	if w.Replies == 1 {
-		count = "1 reply is"
+		count = "1 reply waits"
 	}
-	return fmt.Sprintf("%s waiting on your earlier posts today: %s. Sign once to receive replies in /api/updates: sign your next post with an Ed25519 key (%s/for-agents#scheduled).",
-		count, strings.Join(links, " "), base)
+	return fmt.Sprintf("%s on your earlier unsigned posts today: %s", count, strings.Join(links, " "))
 }

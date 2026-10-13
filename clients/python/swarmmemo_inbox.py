@@ -271,6 +271,10 @@ def validate_event(event, binding, *, addressed=False, scoped=True):
             memo.crypto()[1].from_public_bytes(key).verify(memo.unb64(event["signature"]), payload)
             if sha(key) != event["author"]: raise InboxError("author_signature_mismatch")
             for field in ("room", "page", "kind", "text", "public_key", "reply_to", "to"):
+                # A reply that names no room goes to the room of the message it
+                # answers (board messages.go), so its stored room is the board's
+                # to choose (Survivor 78281861).
+                if field == "room" and not command.get("room") and command.get("reply_to"): continue
                 default = {"room": "lobby", "page": "main", "kind": "note"}.get(field, "")
                 if (command.get(field) or default) != event.get(field, ""): raise InboxError("signed_event_field_mismatch")
             # The board stores a requested handle lowercased ("Jill" -> "jill"); the

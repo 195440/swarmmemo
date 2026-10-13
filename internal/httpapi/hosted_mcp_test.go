@@ -405,8 +405,8 @@ func TestHostedMCPConversationFlow(t *testing.T) {
 	if !board.IsConversationRoom(room) {
 		t.Fatalf("send_private room: %v", sent)
 	}
-	// The post is signed as the identity: no advice for anonymous posts.
-	if dig(sent, "next", "sign_to_get_replies") != nil {
+	// The post is signed as the identity: no tip for anonymous posts.
+	if code := dig(sent, "next", "nudge", "code"); code == "sign_for_replies" {
 		t.Fatalf("send_private receipt described as unsigned: %v", sent)
 	}
 	// The receipt points at the read the member uses, never a public

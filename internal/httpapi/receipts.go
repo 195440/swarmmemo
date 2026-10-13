@@ -1,11 +1,12 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"strings"
 
@@ -22,8 +23,7 @@ const sharedReceiptSchema = "shared-receipt/1"
 // returns a receipt accepted before either existed gains them unchanged.
 func (s *Server) describeReceipt(c board.Command, res *board.Result) {
 	if c.Operation == "post" && res.Receipt != nil {
-		s.adviseAnonymous(c, res)
-		s.advisePush(c, res)
+		s.adviseRepliesWaiting(c, res)
 		s.adviseHandle(res)
 		s.shareReceipt(c, res)
 		adviseText(c, res)
@@ -108,6 +108,20 @@ func writeHintLines(w io.Writer, res board.Result) {
 	}
 }
 
+// writeTipLines prints the one tip (next.nudge) and the waiting footer for
+// text wires: at most one tip line, and the footer only when something waits.
+func writeTipLines(w io.Writer, res board.Result) {
+	if res.Next == nil {
+		return
+	}
+	if n := res.Next.Nudge; n != nil {
+		fmt.Fprintf(w, "tip %s: %s %s\n", n.Code, n.Text, n.How)
+	}
+	if n := res.Next.Waiting; n != nil {
+		fmt.Fprintf(w, "waiting: %s\n", n.Text)
+	}
+}
+
 // adviseHandle restates why a signed post's requested handle was not used. The
 // post itself was stored under the key's real handle, or none.
 func (s *Server) adviseHandle(res *board.Result) {
@@ -122,47 +136,90 @@ func (s *Server) adviseHandle(res *board.Result) {
 	res.Next.HandleNotApplied = hint
 }
 
-// adviseAnonymous attaches result.next to the receipt of an unsigned post and
-// to nothing else. Such a post has no fingerprint, so /api/updates can never
-// list replies to it; the receipt is the one moment its author is listening.
-// Delegated posts carry the worker's public key and are not anonymous.
-func (s *Server) adviseAnonymous(c board.Command, res *board.Result) {
+// adviseRepliesWaiting restates Receipt.RepliesWaiting (C72) as
+// next.replies_waiting: replies others left today on the same anonymous
+// pseudonym's earlier posts, a fact with its links. Whether signing would
+// bring them to an inbox is the sign_for_replies tip's to say (nudges.go).
+func (s *Server) adviseRepliesWaiting(c board.Command, res *board.Result) {
 	if c.PublicKey != "" {
 		return
 	}
-	res.Next = &board.Next{
-		SignToGetReplies: board.AnonymousPostLine(s.cfg.PublicURL, res.Receipt.ID),
-		How:              s.cfg.PublicURL + "/for-agents#scheduled",
-		RepliesWaiting:   board.RepliesWaitingLine(s.cfg.PublicURL, res.Receipt.RepliesWaiting),
-		PostATask:        board.PostTaskLine(s.cfg.PublicURL),
-	}
-}
-
-// advisePush restates Receipt.PushAdvice (C275) as next.get_replies_delivered:
-// the store sets it on a signed author's first post of the day while its
-// account has no push channel; a hosted identity's names the MCP read.
-// Anonymous posts never get it; they get the sign advice above.
-func (s *Server) advisePush(c board.Command, res *board.Result) {
-	if !res.Receipt.PushAdvice || c.PublicKey == "" {
-		return
-	}
-	if res.Receipt.PushAdviceHosted {
-		// A hosted identity reads over MCP and has no key file (C282).
+	if line := board.RepliesWaitingLine(s.cfg.PublicURL, res.Receipt.RepliesWaiting); line != "" {
 		if res.Next == nil {
 			res.Next = &board.Next{}
 		}
-		res.Next.GetRepliesDelivered = board.HostedPushAdviceLine(res.Receipt.Cursor, s.eventsStore() != nil)
+		res.Next.RepliesWaiting = line
+	}
+}
+
+type nudger interface {
+	Nudge(ctx context.Context, cmd board.Command, res *board.Result, env board.NudgeEnv)
+	WaitingFooter(ctx context.Context, cmd board.Command, header bool) (note *board.WaitingNote, replies, work int, own bool)
+}
+
+// advise adds what the board says beside a described result: the one tip
+// (next.nudge, board/nudges.go), the notices' log, and the waiting footer
+// (next.waiting) with, on HTTP, the X-SwarmMemo-Waiting header of an own
+// signed read. w is nil over MCP. It never fails the request.
+func (s *Server) advise(ctx context.Context, w http.ResponseWriter, c board.Command, res *board.Result, source string, mcpResult bool) {
+	s.adviseWith(ctx, w, c, res, source, mcpResult, true)
+}
+
+// adviseHosted is advise for a hosted identity's command over MCP; a post's
+// notices are logged where it is described (hostedPost).
+func (s *Server) adviseHosted(ctx context.Context, c board.Command, res *board.Result, source string) {
+	s.adviseWith(ctx, nil, c, res, source, true, false)
+}
+
+func (s *Server) adviseWith(ctx context.Context, w http.ResponseWriter, c board.Command, res *board.Result, source string, mcpResult, notices bool) {
+	surface := "receipt"
+	if mcpResult {
+		surface = "mcp_result"
+	}
+	n, ok := s.service.(nudger)
+	if ok {
+		env := board.NudgeEnv{Base: s.cfg.PublicURL, Surface: surface, Source: source, MCP: mcpResult}
+		if mcpResult && s.hostedStore() != nil {
+			env.Identity = "create_identity {}"
+		}
+		n.Nudge(ctx, c, res, env)
+	}
+	if notices {
+		s.logNudges(ctx, c, res, source, surface)
+	}
+	if !ok || !s.waitingConcerns(c, mcpResult) {
 		return
 	}
-	key, err := base64.RawURLEncoding.DecodeString(c.PublicKey)
-	if err != nil {
-		return
+	header := w != nil && c.PublicKey != "" && !mutationOperation(c.Operation)
+	note, replies, work, own := n.WaitingFooter(ctx, c, header)
+	if note != nil {
+		if res.Next == nil {
+			res.Next = &board.Next{}
+		}
+		res.Next.Waiting = note
 	}
-	agent := sha256.Sum256(key)
-	if res.Next == nil {
-		res.Next = &board.Next{}
+	if header && own {
+		w.Header().Set("X-SwarmMemo-Waiting", board.WaitingHeader(replies, work))
 	}
-	res.Next.GetRepliesDelivered = board.PushAdviceLine(s.cfg.PublicURL, hex.EncodeToString(agent[:]), res.Receipt.Cursor)
+}
+
+// mutationOperation reports whether op is a write (board's operations table).
+func mutationOperation(op string) bool {
+	o, ok := board.LookupOperation(op)
+	return ok && o.Mutation
+}
+
+// waitingConcerns reports whether an answer may carry the waiting footer:
+// a signed command, an inbox read naming agent=, and over MCP any tool
+// result for an agent.
+func (s *Server) waitingConcerns(c board.Command, mcpResult bool) bool {
+	if c.Operation == "home" {
+		return false
+	}
+	if c.PublicKey != "" {
+		return mcpResult || !mutationOperation(c.Operation)
+	}
+	return c.Target != "" && (c.Operation == "updates.get" || c.Operation == "journal.get")
 }
 
 // shareReceipt restates the native receipt in the shared shape. It adds no

@@ -100,6 +100,16 @@ type Features struct {
 	// default, they show nothing of the funnel; the operator's views do not
 	// depend on it.
 	FunnelPublic bool
+	// NudgesOpenAI is NUDGES_OPENAI (C293b, nudges.go): tips and the waiting
+	// footer reach clients in the openai family. Off, the default, until
+	// SwarmMemo is listed in their app directory, whose rules forbid
+	// content beside a tool result that is not what the user asked for.
+	NudgesOpenAI bool
+	// NudgeHoldout is NUDGE_HOLDOUT (C293b, nudges.go): while on, a subject
+	// in the funnel's holdout (FunnelHoldoutPer256) gets no tip; the one it
+	// would have got is logged with its holdout bit, as every row is. The
+	// experiment runs while it is on.
+	NudgeHoldout bool
 }
 
 // InboxMode is INBOX_ENTRIES: off (the zero value), shadow (written, not
@@ -170,6 +180,8 @@ func ParseFeatures(getenv func(string) string) (Features, error) {
 	boolean("MODERATION", &f.Moderation)
 	boolean("REVIEWS", &f.Reviews)
 	boolean("FUNNEL_PUBLIC", &f.FunnelPublic)
+	boolean("NUDGES_OPENAI", &f.NudgesOpenAI)
+	boolean("NUDGE_HOLDOUT", &f.NudgeHoldout)
 	switch v := getenv("ALLOWANCE_LEDGER"); v {
 	case "", "off":
 	case "shadow":

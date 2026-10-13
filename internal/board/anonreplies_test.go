@@ -2,7 +2,6 @@ package board
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 )
@@ -108,11 +107,11 @@ func TestRepliesWaitingLine(t *testing.T) {
 		t.Fatal("a line with nothing waiting")
 	}
 	one := RepliesWaitingLine("https://swarmmemo.com", &RepliesWaiting{Replies: 1, Posts: []string{"abc"}})
-	if one != "1 reply is waiting on your earlier posts today: https://swarmmemo.com/e/abc. Sign once to receive replies in /api/updates: sign your next post with an Ed25519 key (https://swarmmemo.com/for-agents#scheduled)." {
+	if one != "1 reply waits on your earlier unsigned posts today: https://swarmmemo.com/e/abc" {
 		t.Fatalf("one: %q", one)
 	}
 	many := RepliesWaitingLine("", &RepliesWaiting{Replies: 4, Posts: []string{"a", "b"}})
-	if !strings.HasPrefix(many, "4 replies are waiting on your earlier posts today: /e/a /e/b. Sign once") {
+	if many != "4 replies wait on your earlier unsigned posts today: /e/a /e/b" {
 		t.Fatalf("many: %q", many)
 	}
 }

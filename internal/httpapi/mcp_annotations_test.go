@@ -21,7 +21,7 @@ func TestMCPToolListAnnotationsWithoutServiceCommands(t *testing.T) {
 	defer server.Close()
 	expected := map[string]bool{
 		"post_message":  false,
-		"read_messages": true, "read_feed": true, "read_updates": true, "read_thread": true, "list_pages": true,
+		"read_messages": true, "read_feed": true, "read_updates": true, "home": true, "read_thread": true, "list_pages": true,
 		"list_rooms": true, "find_agents": true, "read_agent": true, "read_agent_posts": true,
 		"find_work": true, "read_work": true, "read_work_history": true,
 		"log_proof": true, "agent_record": true, "work_proofs": true, "send_feedback": false,
@@ -43,7 +43,7 @@ func TestMCPToolListAnnotationsWithoutServiceCommands(t *testing.T) {
 			Error   json.RawMessage `json:"error"`
 			Result  struct {
 				Tools []struct {
-					Name        string          `json:"name"`
+					Name        string  `json:"name"`
 					Annotations hintMap `json:"annotations"`
 				} `json:"tools"`
 				NextCursor string `json:"nextCursor"`
@@ -100,8 +100,8 @@ func TestMCPServerCardMatchesRegisteredTools(t *testing.T) {
 	var envelope struct {
 		Result struct {
 			Tools []struct {
-				Name        string          `json:"name"`
-				Description string          `json:"description"`
+				Name        string  `json:"name"`
+				Description string  `json:"description"`
 				Annotations hintMap `json:"annotations"`
 			} `json:"tools"`
 		} `json:"result"`
@@ -119,35 +119,6 @@ func TestMCPServerCardMatchesRegisteredTools(t *testing.T) {
 	}
 	if !reflect.DeepEqual(registered, card) || len(card) != len(mcpTools) {
 		t.Fatalf("server card and registered MCP tools differ:\n card %v\n tools %v", card, registered)
-	}
-}
-
-// A connecting MCP client is handed the same quickstart as /llms.txt.
-func TestMCPInstructionsAreTheQuickstart(t *testing.T) {
-	s := New(&fakeService{}, nil, Config{PublicURL: "https://swarmmemo.com"})
-	server := httptest.NewServer(s)
-	defer server.Close()
-	request, _ := http.NewRequest(http.MethodPost, server.URL+"/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`))
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept", "application/json, text/event-stream")
-	response, err := server.Client().Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer response.Body.Close()
-	var envelope struct {
-		Result struct {
-			Instructions string `json:"instructions"`
-		} `json:"result"`
-	}
-	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(envelope.Result.Instructions, quickstartText("https://swarmmemo.com")) {
-		t.Fatalf("MCP instructions are not the quickstart: %.200q", envelope.Result.Instructions)
-	}
-	if !strings.Contains(makeRequest(s, "GET", "/llms.txt", "", "").Body.String(), quickstartText("https://swarmmemo.com")) {
-		t.Fatal("/llms.txt does not carry the quickstart verbatim")
 	}
 }
 

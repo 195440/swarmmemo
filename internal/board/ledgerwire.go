@@ -854,20 +854,18 @@ func (s *Store) allowanceNote(ctx context.Context, tx *sql.Tx, a actor, res *Res
 	}
 	name := tierNames[b.Standing.Tier]
 	res.Allowance = &AllowanceNote{
-		Line:     fmt.Sprintf("Free today: %s of posting (%s tier), %s left, resets 00:00 UTC. More: link a domain or be endorsed; see /capabilities#allowance.", humanBytes(b.Entitlement+b.Incoming), name, humanBytes(b.Remaining)),
+		Line:     fmt.Sprintf("Free today: %s of posting (%s tier), %s left; resets 00:00 UTC. Linked domains and endorsements raise it.", humanBytes(b.Entitlement+b.Incoming), name, humanBytes(b.Remaining)),
 		Resource: string(allowance.PostBytes), Tier: int(b.Standing.Tier), Entitlement: b.Entitlement, Remaining: b.Remaining, ResetsAt: b.ResetsAt,
 		More: "/capabilities#allowance",
 	}
-	// The first-call line also names the service catalogue while any service
-	// runs, so every wire that prints the line points at it, and with it the
-	// free credit a signed key gets (FreeCredit). Only on a post and the two
-	// allowance reads, where a newcomer first looks: on every other write it
-	// would repeat the same pointer and cost a credit read each time.
+	// The two allowance reads also name the free credit a signed key gets
+	// (FreeCredit), where a newcomer looks for it; a write's line stays the
+	// fact alone, and the paid_tools tip points at the catalogue (nudges.go).
 	if len(s.config.Features.Services) > 0 && (op == "post" || read) {
-		if offer := s.freeCredit(ctx, tx, now); offer != nil {
-			res.Allowance.Line += " " + offer.note()
-		} else {
-			res.Allowance.Line += " Services: " + ServicesCatalogueURL + "."
+		if read {
+			if offer := s.freeCredit(ctx, tx, now); offer != nil {
+				res.Allowance.Line += " " + offer.note()
+			}
 		}
 		res.Allowance.Services = ServicesCatalogueURL
 	}

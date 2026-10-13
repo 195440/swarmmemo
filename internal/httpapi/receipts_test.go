@@ -119,8 +119,8 @@ func TestSignedSharedReceiptBindsTheStoredCanonicalBytes(t *testing.T) {
 	}
 	result := postResult(t, handler, validator, "POST", "https://swarmmemo.com/v1/command", string(body))
 	shared := result.SharedReceipt
-	// The key's first post of the day carries only the push advice (C275).
-	if n := advice(result.Next); n == nil || n.GetRepliesDelivered == "" || n.SignToGetReplies != "" || n.HandleNotApplied != nil || shared.Agreement.Signature != "verified" || shared.Agreement.Spec != "swarmmemo-canonical/1" || shared.Agreement.Vector != "https://swarmmemo.com/clients/python/signing-vector.json" {
+	// The key's first post of the day carries only the replies_delivered tip (C275).
+	if n := advice(result.Next); n == nil || n.Nudge == nil || n.Nudge.Code != "replies_delivered" || n.HandleNotApplied != nil || shared.Agreement.Signature != "verified" || shared.Agreement.Spec != "swarmmemo-canonical/1" || shared.Agreement.Vector != "https://swarmmemo.com/clients/python/signing-vector.json" {
 		t.Fatalf("signed agreement: %+v next=%+v", shared.Agreement, result.Next)
 	}
 	if shared.Acceptance.RequestID != "signed-shared-1" || shared.Publication.Visibility != "public" {
@@ -144,24 +144,20 @@ func TestSignedPostHandleAdviceInNext(t *testing.T) {
 		body, _ := json.Marshal(sign(c))
 		return postResult(t, handler, validator, "POST", "https://swarmmemo.com/v1/command", string(body))
 	}
-	// The first post of the day carries only the push advice (C275).
-	if claimed := post(board.Command{Operation: "post", Text: "claim", Handle: "Fixture"}); advice(claimed.Next) == nil || claimed.Next.HandleNotApplied != nil || claimed.Next.SignToGetReplies != "" {
+	// The first post of the day carries only the replies_delivered tip (C275).
+	if claimed := post(board.Command{Operation: "post", Text: "claim", Handle: "Fixture"}); advice(claimed.Next) == nil || claimed.Next.HandleNotApplied != nil || claimed.Next.Nudge == nil || claimed.Next.Nudge.Code != "replies_delivered" {
 		t.Fatalf("first-use claim carried advice: %+v", claimed.Next)
 	}
 	other := post(board.Command{Operation: "post", Text: "rename?", Handle: "someone-else"})
 	h := other.Next
-	if h == nil || h.SignToGetReplies != "" || h.HandleNotApplied == nil || h.HandleNotApplied.Reason != "already_has_handle" || h.HandleNotApplied.Requested != "someone-else" || !strings.HasSuffix(h.HandleNotApplied.How, "/for-agents#handle") {
+	if h == nil || h.Nudge != nil || h.HandleNotApplied == nil || h.HandleNotApplied.Reason != "already_has_handle" || h.HandleNotApplied.Requested != "someone-else" || !strings.HasSuffix(h.HandleNotApplied.How, "/for-agents#handle") {
 		t.Fatalf("handle advice: %+v", h)
 	}
 	if stored := readBack(t, handler, other.SharedReceipt); stored.Handle != "fixture" {
 		t.Fatalf("stored under %q, not the key's handle", stored.Handle)
 	}
 	w := makeRequest(handler, "POST", "https://swarmmemo.com/w/lobby/main", mustJSON(t, sign(board.Command{Operation: "post", Room: "lobby", Page: "main", Text: "text", Handle: "third"})), "application/json")
-	// With the ledger on, a last line restates the free-today note.
 	lines := strings.Split(strings.TrimSpace(w.Body.String()), "\n")
-	if len(lines) == 3 && strings.HasPrefix(lines[2], "Free today: ") {
-		lines = lines[:2]
-	}
 	if w.Code != 200 || len(lines) != 2 || !strings.HasPrefix(lines[0], "ok ") || lines[1] != "handle not applied: requested=third reason=already_has_handle see /for-agents#handle" {
 		t.Fatalf("plain-text advice: %d %q", w.Code, w.Body.String())
 	}

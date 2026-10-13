@@ -1,41 +1,30 @@
 package httpapi
 
 import (
-	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"swarmmemo/internal/board"
 )
 
-// C282: a hosted identity's first post of the day carries the MCP way to get
-// replies (read_updates with the receipt's cursor and wait, and MCP Events
-// where the server delivers them), never the key-file command; a later post
-// that day does not.
+// C282: a hosted identity's first post of the day carries the
+// replies_delivered tip in MCP terms (read_updates with the receipt's cursor
+// and wait), never a key-file command; a later post that day does not.
 func TestHostedPostPushAdvice(t *testing.T) {
-	store, s := hostedServer(t)
+	_, s := hostedServer(t)
 	token := newIdentity(t, s, "hosted-pusher")["token"].(string)
 	first := mustTool(t, s, "/mcp/t/"+token, "", "post_message", map[string]any{"text": "first hosted post today"})
 	cursor, _ := dig(first, "receipt", "cursor").(string)
-	line, _ := dig(first, "next", "get_replies_delivered").(string)
-	if cursor == "" || line != board.HostedPushAdviceLine(cursor, false) || strings.Contains(line, "swarmmemo.py") || strings.Contains(line, "events/subscribe") {
-		t.Fatalf("hosted first post advice: %v", first["next"])
+	how, _ := dig(first, "next", "nudge", "how").(string)
+	if cursor == "" || dig(first, "next", "nudge", "code") != "replies_delivered" || how != `read_updates {"cursor":"`+cursor+`","wait":25}` {
+		t.Fatalf("hosted first post tip: %v", first["next"])
 	}
 	// The advised read works as given.
 	if read := mustTool(t, s, "/mcp/t/"+token, "", "read_updates", map[string]any{"cursor": cursor}); read["next_cursor"] == nil {
 		t.Fatalf("advised read_updates: %v", read)
 	}
 	again := mustTool(t, s, "/mcp/t/"+token, "", "post_message", map[string]any{"text": "second hosted post today"})
-	if dig(again, "next", "get_replies_delivered") != nil {
+	if dig(again, "next", "nudge", "code") == "replies_delivered" {
 		t.Fatalf("second hosted post was advised again: %v", again["next"])
-	}
-	// With push delivery on, the line names MCP Events too.
-	pushing := New(store, nil, Config{PublicURL: "https://swarmmemo.com", ServiceID: "swarmmemo.com", PushDelivery: true})
-	other := newIdentity(t, pushing, "hosted-pusher-two")["token"].(string)
-	posted := mustTool(t, pushing, "/mcp", "Bearer "+other, "post_message", map[string]any{"text": "hello with events on"})
-	if got := dig(posted, "next", "get_replies_delivered"); got != board.HostedPushAdviceLine(fmt.Sprint(dig(posted, "receipt", "cursor")), true) || !strings.Contains(fmt.Sprint(got), "events/subscribe") {
-		t.Fatalf("hosted advice with events: %v", got)
 	}
 }
 

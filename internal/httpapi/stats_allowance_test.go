@@ -361,20 +361,22 @@ func TestAgentPageMatchesAllowanceAndTrustAPI(t *testing.T) {
 }
 
 // A write's result says what the caller got today on every HTTP wire:
-// next.allowance in JSON and MCP, one line after the ok line in text.
+// next.allowance in JSON and MCP. A post receipt in text prints it only as
+// its one tip (allowance_today, board/nudges.go); other writes print the
+// line after their answer.
 func TestFirstWriteCarriesAllowanceLine(t *testing.T) {
 	s, svc := rfc0012Server(allOn)
 	svc.note = &board.AllowanceNote{Line: "Free today: 4 MiB of posting (signed tier), 3.9 MiB left, resets 00:00 UTC. More: link a domain or be endorsed; see /capabilities#allowance.", Resource: "post_bytes", Tier: 3, Entitlement: 4 << 20, Remaining: 4063232, ResetsAt: 1759276800, More: "link a domain or be endorsed"}
 	res := getJSON(t, s, "GET", "/w/lobby/main?text=hello&format=json", "")
 	next, _ := res["next"].(map[string]any)
 	note, _ := next["allowance"].(map[string]any)
-	if note["line"] != svc.note.Line || note["remaining"] != 4063232.0 || next["sign_to_get_replies"] == nil {
-		t.Fatalf("JSON post lacks next.allowance beside the anonymous advice: %v", res["next"])
+	if note["line"] != svc.note.Line || note["remaining"] != 4063232.0 {
+		t.Fatalf("JSON post lacks next.allowance: %v", res["next"])
 	}
 	text := makeRequest(s, "GET", "/w/lobby/main?text=hello", "", "").Body.String()
 	lines := strings.Split(text, "\n")
-	if !strings.HasPrefix(lines[0], "ok ") || !strings.Contains(text, "\n"+svc.note.Line+"\n") {
-		t.Fatalf("text post lacks the line after ok:\n%s", text)
+	if !strings.HasPrefix(lines[0], "ok ") || strings.Contains(text, svc.note.Line) {
+		t.Fatalf("text post prints the allowance outside its tip:\n%s", text)
 	}
 	read := getJSON(t, s, "POST", "/v1/command", `{"operation":"allowance.get"}`)
 	if n, _ := read["next"].(map[string]any); n == nil || n["allowance"] == nil {

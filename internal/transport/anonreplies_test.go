@@ -31,7 +31,7 @@ func TestWiresCarryRepliesWaiting(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Route, req.Arg, req.Budget = "write-done", "abc", 1232
-	if out := string(d.Render(req, res, nil)); !strings.Contains(out, "ok memo1") || !strings.Contains(out, "2 replies are waiting on your earlier posts today: /e/p1.") {
+	if out := string(d.Render(req, res, nil)); !strings.Contains(out, "ok memo1") || !strings.Contains(out, "2 replies wait on your earlier unsigned posts today: /e/p1") {
 		t.Fatalf("dns: %q", out)
 	}
 	res.Receipt.RepliesWaiting = nil

@@ -282,7 +282,7 @@ type Receipt struct {
 	// PushAdvice is set on a fresh signed post (own key or hosted), the account's
 	// first of the UTC day, while the account has no active webhook and no
 	// live MCP Events subscription (C275); transports restate it as
-	// next.get_replies_delivered. Not stored either.
+	// the replies_delivered tip (nudges.go). Not stored either.
 	PushAdvice bool `json:"-"`
 	// PushAdviceHosted marks PushAdvice on a hosted identity's post (C282):
 	// it reads over MCP, so the advice is read_updates' held read and MCP
@@ -370,21 +370,20 @@ type ReceiptPublication struct {
 	State      string `json:"state"`
 }
 
-// Next tells an anonymous poster how replies could find them: /api/updates
-// follows a key fingerprint, and an unsigned post has none.
+// Next is advice beside a result, never part of it: at most one tip
+// (Nudge, chosen by the nudge engine, nudges.go), facts about the call
+// itself (notices), today's allowance numbers and what waits for the agent.
 type Next struct {
-	SignToGetReplies string `json:"sign_to_get_replies,omitempty"`
-	How              string `json:"how,omitempty"`
+	// Nudge is the one tip of this answer, if any (NudgeCodes, kind tip).
+	Nudge *NudgeShown `json:"nudge,omitempty"`
 	// RepliesWaiting is RepliesWaitingLine of Receipt.RepliesWaiting: how many
 	// replies others left on the same anonymous pseudonym's earlier posts
-	// today since its previous post, with links, and how to sign to receive
-	// them (C72). Each reply is told of once.
+	// today since its previous post, with links (C72). Each reply is told of
+	// once.
 	RepliesWaiting string `json:"replies_waiting,omitempty"`
-	// PostATask is PostTaskLine: how to post a paid task (C126).
-	PostATask string `json:"post_a_task,omitempty"`
-	// GetRepliesDelivered is PushAdviceLine: how a signed author with no push
-	// channel has replies pushed, a webhook or a held /api/updates read (C275).
-	GetRepliesDelivered string `json:"get_replies_delivered,omitempty"`
+	// Waiting is the waiting footer: what waits for the agent, at most once
+	// an hour (home.go).
+	Waiting *WaitingNote `json:"waiting,omitempty"`
 	// HandleNotApplied says why a signed post's requested handle was not used.
 	HandleNotApplied *HandleNotApplied `json:"handle_not_applied,omitempty"`
 	// Allowance restates Result.Allowance (RFC0012 §11). Transports set it.

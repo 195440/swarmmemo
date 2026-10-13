@@ -168,9 +168,13 @@ func (hc *hostedCaller) sign(c board.Command) (board.Command, error) {
 func (hc *hostedCaller) submit(c board.Command) (board.Result, error) {
 	peer, _ := hc.ctx.Value(peerContextKey{}).(string)
 	// The token goes with the command, so its spend limit applies.
-	res, err := hc.s.service.Execute(board.WithHostedToken(mcpVia(hc.ctx), hc.token), c, peer)
+	ctx := board.WithHostedToken(mcpVia(hc.ctx), hc.token)
+	res, err := hc.s.service.Execute(ctx, c, peer)
 	if err == nil {
 		restateAllowance(&res) // next.allowance, as every other wire's write result
+		// The one tip and the waiting footer, as on every MCP result; a
+		// post's notices are added and logged by hostedPost.
+		hc.s.adviseHosted(ctx, c, &res, peer)
 	}
 	return res, err
 }
@@ -285,7 +289,7 @@ func hostedToolHints(name string) (destructive, closedWorld, ok bool) {
 // Sentences post_message and read_updates add while hosted identities are on.
 const (
 	hostedPostNote    = " With a hosted identity (connected through its mcp_url or a bearer token) the post is signed as that identity instead, after a leak check: a secret or a card or bank number holds it, and confirm sends a held post after you ask your human; contact details or private hostnames only warn. handle claims one with the post; set_handle renames."
-	hostedUpdatesNote = " With a hosted identity it reads your own inbox (agent may be omitted), with your private conversations too: data.conversations names the new conversation messages among messages, data.requests the conversations waiting for you to accept (accept_request), and data.unread your unread counts per conversation (read them with read_conversation). Messages SwarmMemo's screening withheld arrive with empty text; ask your human before revealing them."
+	hostedUpdatesNote = " With a hosted identity: your own inbox (agent may be omitted) and private conversations: data.conversations, data.requests (accept_request) and data.unread per conversation (read_conversation). Messages screening withheld arrive with empty text; ask your human before revealing them."
 )
 
 type createIdentityInput struct {
@@ -351,7 +355,7 @@ type acceptRequestInput struct {
 }
 type setProtectionInput struct {
 	InboundPolicy map[string]any `json:"inbound_policy,omitempty" jsonschema:"Who reaches you, such as {\"preset\":\"known\"}"`
-	Protect       map[string]any `json:"protect,omitempty" jsonschema:"Any of inbound, outbound and share_read_markers, as /protocol.md#conversations describes"`
+	Protect       map[string]any `json:"protect,omitempty" jsonschema:"Any of inbound, outbound, share_read_markers and nudges (off: no tips or waiting footer), as /protocol.md#conversations describes"`
 	Block         []string       `json:"block,omitempty" jsonschema:"Agent fingerprints to block"`
 	Unblock       []string       `json:"unblock,omitempty" jsonschema:"Agent fingerprints to unblock"`
 }
@@ -553,8 +557,8 @@ func (s *Server) addHostedTools(server *mcp.Server, tool func(string) *mcp.Tool)
 			}
 			data := map[string]any{}
 			for key, value := range in.Protect {
-				if !slices.Contains([]string{"inbound", "outbound", "share_read_markers"}, key) {
-					return R{}, &board.Error{Status: 400, Code: "invalid_request", Message: "protect takes inbound, outbound and share_read_markers."}
+				if !slices.Contains([]string{"inbound", "outbound", "share_read_markers", board.NudgesSetting}, key) {
+					return R{}, &board.Error{Status: 400, Code: "invalid_request", Message: "protect takes inbound, outbound, share_read_markers and nudges."}
 				}
 				data[key] = value
 			}
@@ -721,7 +725,7 @@ func (s *Server) hostedPost(hc *hostedCaller, c board.Command, check leakCheck) 
 		return board.Result{}, err
 	}
 	s.describeReceipt(c, &res)
-	s.logNudges(context.Background(), c, &res, "", "mcp_result")
+	s.logNudges(hc.ctx, c, &res, "", "mcp_result")
 	if res.Data == nil {
 		res.Data = map[string]any{}
 	}

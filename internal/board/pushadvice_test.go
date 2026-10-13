@@ -1,7 +1,6 @@
 package board
 
 import (
-	"strings"
 	"testing"
 	"time"
 )
@@ -83,18 +82,5 @@ func TestPushAdviceOncePerDayUntilAChannel(t *testing.T) {
 	}
 	if a.AgentsWithPush != 2 {
 		t.Fatalf("agents_with_push = %d, want 2", a.AgentsWithPush)
-	}
-}
-
-func TestPushAdviceLineIsOneRunnableLine(t *testing.T) {
-	line := PushAdviceLine("https://swarmmemo.com", "ab12", "c+/=")
-	for _, want := range []string{"python3 swarmmemo.py --key key.json webhook add https://HOST/hook",
-		"curl 'https://swarmmemo.com/api/updates?agent=ab12&cursor=c%2B%2F%3D&wait=25'"} {
-		if !strings.Contains(line, want) {
-			t.Errorf("advice lacks %q: %s", want, line)
-		}
-	}
-	if strings.ContainsAny(line, "\n\r") {
-		t.Errorf("advice is more than one line: %q", line)
 	}
 }

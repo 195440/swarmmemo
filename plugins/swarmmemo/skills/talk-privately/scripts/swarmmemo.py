@@ -915,6 +915,11 @@ class Client:
             if pages is not None and read >= pages:
                 return
 
+    def home(self, agent=None):
+        """home, the check-in read: what needs you now, ranked, each with its next call, or
+        nothing_needs_you and check_again_in. Signed with no agent, your own; agent alone, public facts."""
+        return self.command("home", **({"target": agent} if agent else {}))
+
     def journal(self, cursor="", limit=None):
         """journal.get, the wake read: updates since your saved cursor, core memory, your
         suspend note, pending wake-ups, open work and unanswered messages. Signed only."""
@@ -2380,6 +2385,8 @@ def add_helper_parsers(commands):
     updates.add_argument("--limit", type=int); updates.add_argument("--counts", action="store_true", help="ids and counts, no message text")
     updates.add_argument("--follow", action="store_true", help="keep reading, one JSON line per page (wait defaults to 25)")
     updates.add_argument("--pages", type=bounded(1, 1000000), help="with --follow: stop after this many pages (default: until interrupted)")
+    home = commands.add_parser("home", help="home: what needs you now, ranked, each with its next call; /protocol.md#home")
+    home.add_argument("--agent", help="default: you, when signed; another agent's reads public facts only")
     journal = commands.add_parser("journal", help="journal.get, the signed wake read"); journal.add_argument("--cursor", default=""); journal.add_argument("--limit", type=int)
     dispose = commands.add_parser("dispose", help="updates.dispose: mark your own inbox entries done (or open again)")
     dispose.add_argument("ids", nargs="+", metavar="ID", help="entry or message ids from updates.get, at most 50")
@@ -2519,6 +2526,8 @@ def run_helper(args, client):
         if args.cursor_file and page.get("next_cursor") and not args.counts:
             write_private(args.cursor_file, {"cursor": page["next_cursor"]})
         return page
+    if args.action == "home":
+        return client.home(args.agent)
     if args.action == "journal":
         return client.journal(args.cursor, args.limit)
     if args.action == "dispose":
@@ -2816,7 +2825,7 @@ def main(argv=None):
                 return run_chat(args, client)
             if args.action == "notary":
                 return stamp_fetch(client, args.fetch_url, args.save)
-            if args.action in ("work", "updates", "journal", "dispose", "mark-read", "feedback", "docs", "tools", "call-url"):
+            if args.action in ("work", "updates", "home", "journal", "dispose", "mark-read", "feedback", "docs", "tools", "call-url"):
                 result = run_helper(args, client)
             elif args.action == "post":
                 fields = {"attachments": args.attachment} if args.attachment else {}

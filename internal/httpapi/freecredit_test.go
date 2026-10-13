@@ -84,8 +84,10 @@ func TestFreeCreditLineOnEveryFirstContactSurface(t *testing.T) {
 		t.Errorf("agent card free_credit %v", p["free_credit"])
 	}
 
-	if got := mcpInitializeInstructions(t, s); !strings.HasPrefix(got, absolute+" "+board.SigningLine+"\n\n") {
-		t.Errorf("MCP instructions do not lead with the free credit line: %q", got[:min(len(got), 200)])
+	// The instructions are the workflow (TestMCPInstructionsAreTheShortWorkflow);
+	// the offer is in the tools that serve it.
+	if got := mcpInitializeInstructions(t, s); strings.Contains(got, absolute) {
+		t.Errorf("MCP instructions repeat the free credit line: %q", got[:min(len(got), 200)])
 	}
 }
 
@@ -97,13 +99,13 @@ func TestFreeCreditFollowsTheLiveParameter(t *testing.T) {
 	s, svc := freeCreditServer(100_000)
 	svc.credits.Store(200_000)
 	expireOffers(s)
-	if got := mcpInitializeInstructions(t, s); !strings.HasPrefix(got, "Free: every signed key gets up to 200,000 credits a day (about $0.20)") {
-		t.Errorf("MCP instructions after a change: %q", got[:min(len(got), 120)])
+	if got := mcpAllowanceDescription(t, s); !strings.Contains(got, "Free: every signed key gets up to 200,000 credits a day (about $0.20)") {
+		t.Errorf("MCP allowance tool after a change: %q", got)
 	}
 	svc.credits.Store(0)
 	expireOffers(s)
-	if got := mcpInitializeInstructions(t, s); strings.Contains(got, "Free: every signed key") {
-		t.Error("MCP instructions keep the offer after it ended")
+	if got := mcpAllowanceDescription(t, s); strings.Contains(got, "Free: every signed key") {
+		t.Error("MCP allowance tool keeps the offer after it ended")
 	}
 	for _, path := range []string{"/llms.txt", "/capabilities", "/.well-known/mcp/server-card.json", "/.well-known/agent-card.json", "/for-agents"} {
 		if body := makeRequest(s, "GET", path, "", "").Body.String(); strings.Contains(body, "every signed key gets") || strings.Contains(body, "free_credit") {
@@ -118,6 +120,20 @@ func expireOffers(s *Server) {
 	s.offerCache.mu.Lock()
 	defer s.offerCache.mu.Unlock()
 	s.offerCache.at = time.Time{}
+}
+
+// mcpAllowanceDescription is the allowance tool's description in /mcp's
+// tools/list now.
+func mcpAllowanceDescription(t *testing.T, s *Server) string {
+	t.Helper()
+	_, tools := toolsListAnswer(t, s, "/mcp")
+	for _, tool := range tools {
+		if tool["name"] == "allowance" {
+			return tool["description"].(string)
+		}
+	}
+	t.Fatal("no allowance tool")
+	return ""
 }
 
 func mcpInitializeInstructions(t *testing.T, s *Server) string {

@@ -233,7 +233,9 @@ func TestWorkRealHTTPMembershipRevocationAndExactEnvelope(t *testing.T) {
 	for _, c := range reads {
 		status, body := f.command("json", c)
 		otherStatus, other := f.command("c64", c)
-		if status != 200 || otherStatus != 200 || body != other || !strings.Contains(body, "PRIVATE_TITLE_SENTINEL") {
+		// The waiting footer (next.waiting) shows at most once an hour, so
+		// the two transports' answers agree without it.
+		if status != 200 || otherStatus != 200 || withoutNext(body) != withoutNext(other) || !strings.Contains(body, "PRIVATE_TITLE_SENTINEL") {
 			t.Fatalf("signed scoped read failed: %s %d %s", c.Operation, status, body)
 		}
 	}
@@ -273,4 +275,16 @@ func TestWorkRealHTTPMembershipRevocationAndExactEnvelope(t *testing.T) {
 	if len(history) != 4 || history[3].SignedPayload != string(board.Canonical("swarmmemo.com", claim)) || history[3].Signature != claim.Signature {
 		t.Fatal("transport changed canonical bytes or replay fabricated transitions")
 	}
+}
+
+// withoutNext is a JSON answer without its next object: advice beside the
+// result, never part of it.
+func withoutNext(body string) string {
+	var v map[string]any
+	if json.Unmarshal([]byte(body), &v) != nil {
+		return body
+	}
+	delete(v, "next")
+	b, _ := json.Marshal(v)
+	return string(b)
 }

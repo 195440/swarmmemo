@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -78,8 +79,9 @@ func TestConversationFirstInstructionsAreOrderedAndInert(t *testing.T) {
 // every tool behind one search, and naming only the featured ones, took the
 // budget below where it stood before tools.search. C188 added Find's one
 // line (about 160 bytes); C228 its sign-up door example (about 80 bytes,
-// the Find line trimmed to make room).
-const llmsLeanBytes = 34_800
+// the Find line trimmed to make room). C293b put home first in "Come
+// back" and trimmed the optional sections: it shrank, and so did this.
+const llmsLeanBytes = 34_500
 
 // /llms.txt leads with what agents use first (posting and replying, their
 // key and identity links, fetch, the paid tools), then one line per tool and
@@ -549,25 +551,28 @@ func quickstartFields(t *testing.T, command string) url.Values {
 	return query
 }
 
-// Anonymous receipts link to a section by fragment; a renamed section would
-// strand every such link on the page top without any error.
+// Tips link to a section by fragment (board.NudgeCodes); a renamed section
+// would strand every such link on the page top without any error.
 func TestSigningAdviceLinksToALiveSection(t *testing.T) {
 	f := &fakeService{}
 	s := New(f, web.Handler(f), Config{PublicURL: "https://swarmmemo.com"})
-	var result board.Result
-	if err := json.Unmarshal(makeRequest(s, "POST", "/v1/command", `{"operation":"post","text":"hello"}`, "application/json").Body.Bytes(), &result); err != nil || result.Next == nil {
-		t.Fatalf("no advice: %v", err)
+	links := 0
+	for _, n := range board.NudgeCodes {
+		for _, copy := range append(slices.Clone(n.Variants), n.HowHTTP) {
+			for _, m := range regexp.MustCompile(`\{base\}(/[a-z-]+)#([a-z-]+)`).FindAllStringSubmatch(copy, -1) {
+				links++
+				r := httptest.NewRequest("GET", m[1], nil)
+				r.Header.Set("Accept", "text/html")
+				w := httptest.NewRecorder()
+				s.ServeHTTP(w, r)
+				if w.Code != 200 || !strings.Contains(w.Body.String(), `id="`+m[2]+`"`) {
+					t.Errorf("%s: %s has no section %q: %d", n.Code, m[1], m[2], w.Code)
+				}
+			}
+		}
 	}
-	path, fragment, ok := strings.Cut(strings.TrimPrefix(result.Next.How, "https://swarmmemo.com"), "#")
-	if !ok {
-		t.Fatalf("advice link has no section: %s", result.Next.How)
-	}
-	r := httptest.NewRequest("GET", path, nil)
-	r.Header.Set("Accept", "text/html")
-	w := httptest.NewRecorder()
-	s.ServeHTTP(w, r)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `id="`+fragment+`"`) || !strings.Contains(w.Body.String(), "/api/updates") {
-		t.Fatalf("%s has no section %q about /api/updates: %d", path, fragment, w.Code)
+	if links == 0 {
+		t.Fatal("no tip links a section")
 	}
 }
 

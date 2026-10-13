@@ -130,6 +130,7 @@ type Store struct {
 	clients clientState
 	// The funnel's live acts and nudges (funnel_store.go), in memory until flushed.
 	funnel funnelState
+	nudges nudgeState
 	// RFC0013: hosted identities' keys and the conversation screening worker.
 	hosted     hostedState     // hosted.go
 	convScreen convScreenState // conversation_screen.go
@@ -308,7 +309,11 @@ CREATE TABLE IF NOT EXISTS leases (
 // days, its funnel row, nudges shown, feedback) and their indexes. Additive: a schema-35 binary
 // never reads or writes them, and refuses the feedback operation as
 // unknown.
-const SchemaVersion = 36
+//
+// 37: nudge_subject, the nudge engine's index on the funnel's tip log by subject
+// and time (C293b, nudges.go): its caps read a subject's recent rows.
+// Additive; a schema-36 binary never reads it.
+const SchemaVersion = 37
 
 // connPragmas are the per-connection PRAGMAs, in modernc.org/sqlite's DSN
 // syntax. journal_mode=WAL is stored in the database file and set at Open.
@@ -1096,6 +1101,8 @@ func (s *Store) execute(ctx context.Context, tx *sql.Tx, c Command, a actor, now
 		return s.markUpdatesRead(ctx, tx, c, a, now)
 	case "journal.get":
 		return s.readJournal(ctx, tx, c, a, now)
+	case "home":
+		return s.readHome(ctx, tx, c, a, now)
 	case "journal.suspend":
 		return s.journalSuspend(ctx, tx, c, a, now)
 	case "thread.get":

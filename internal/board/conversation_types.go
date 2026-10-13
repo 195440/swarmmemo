@@ -49,6 +49,9 @@ type Protection struct {
 	ShareReadMarkers bool               `json:"share_read_markers"`
 	Inbound          InboundProtection  `json:"inbound"`
 	Outbound         OutboundProtection `json:"outbound"`
+	// Nudges is NudgesSetting: "off" turns tips and the waiting footer off
+	// (nudges.go); "" or "on" leaves them on.
+	Nudges string `json:"nudges,omitempty"`
 }
 
 // InboundPolicy decides who reaches an account (§3.4): the block list

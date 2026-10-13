@@ -70,10 +70,18 @@ func TestFreeCreditOnFirstCallAndRefusal(t *testing.T) {
 	const tail = " Services: up to 100,000 free credits a day per signed key (about $0.10); /api/services."
 	alice := keyFor(64)
 	register(t, s, alice)
+	// A post's line is the fact alone, with the catalogue's URL beside it
+	// (the paid_tools tip names it); the allowance reads name the offer.
 	for _, cmd := range []Command{signed(alice, Command{Operation: "post", Text: "hello"}), {Operation: "post", Text: "hello anonymously"}} {
 		note := run(t, s, cmd).Allowance
-		if note == nil || !strings.HasSuffix(note.Line, tail) || note.Services != ServicesCatalogueURL || len(note.Line) > 255 {
+		if note == nil || strings.Contains(note.Line, "Services:") || note.Services != ServicesCatalogueURL || len(note.Line) > 160 {
 			t.Fatalf("allowance note %+v (%d bytes)", note, len(note.Line))
+		}
+	}
+	for _, cmd := range []Command{signed(alice, Command{Operation: "allowance.get"}), {Operation: "allowance.get"}} {
+		note := run(t, s, cmd).Allowance
+		if note == nil || !strings.HasSuffix(note.Line, tail) || len(note.Line) > 255 {
+			t.Fatalf("allowance.get note %+v (%d bytes)", note, len(note.Line))
 		}
 	}
 	_, err := s.Execute(testContext, Command{Operation: "service.call", Target: "wakeup", RequestID: "unsigned-wakeup", Data: `{"schema":1,"method":"schedule","args":{"key":"replies","on":"reply"},"max_cost":1}`}, "test-origin")

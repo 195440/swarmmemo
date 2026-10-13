@@ -80,6 +80,7 @@ var ActKinds = []ActKind{
 	// no record another agent can check, and would let a cheap message keep
 	// an account active, retained or durable (TestFeedbackNeverActivates).
 	{Name: "feedback", Bit: 20, Label: "Feedback", Rule: "a signed feedback", Stored: true, Ops: []string{"feedback"}},
+	{Name: "check_in", Bit: 21, Label: "Check-in", Rule: "an authenticated home read", Ops: []string{"home"}},
 }
 
 // ActBit is the bit of the act kind named name; it panics on an unknown
@@ -143,8 +144,8 @@ const (
 	// caller's network) is in the holdout when the first byte of its keyed
 	// hash is below this (about 20%). Every nudge_events row records its
 	// subject's bit, so the report's holdout columns compare the two groups.
-	// Slice 1 measures only: a holdout subject is still shown its nudges;
-	// suppressing them is slice 2 (ROADMAP §4.9).
+	// A holdout subject is shown its tips unless NUDGE_HOLDOUT is on
+	// (Features.NudgeHoldout, nudges.go), which runs the experiment.
 	FunnelHoldoutPer256 = 51
 	// FunnelBackfillDays is the backfill's default reach.
 	FunnelBackfillDays = 45
@@ -451,34 +452,110 @@ func ClientNames() []string {
 	return append(out, ClientOther)
 }
 
-// NudgeCode is one prompt the board shows an agent (a next.* field of a
-// receipt, or a hint code), with what counts as following it.
+// NudgeCode is one prompt the board shows an agent, with what counts as
+// following it. A tip is chosen by the nudge engine (nudges.go): at most one
+// per answer, as next.nudge, under the caps there, never to the holdout. A
+// notice is a fact about the call itself (a next.* field or a hint) and is
+// always shown. This table is the one catalogue: the engine, /capabilities
+// nudges and funnel, the PROTOCOL tables and the follow matching read it.
 type NudgeCode struct {
 	Code  string `json:"code"`
 	Label string `json:"label"`
-	// Field is the next.* field that carries it; "" for a hint (next.hints[].code).
+	// Kind is NudgeTip or NudgeNotice.
+	Kind string `json:"kind"`
+	// Field is a notice's next.* field; "" for a hint (next.hints[].code).
+	// A tip is always next.nudge.
 	Field string `json:"field,omitempty"`
-	// Subject is account or network (an anonymous caller, by its network's
-	// keyed hash).
+	// Subject is account, network (an anonymous caller, by its network's
+	// keyed hash) or either.
 	Subject string `json:"subject"`
+	// Feature is what a tip points at.
+	Feature string `json:"feature,omitempty"`
+	// Segments are who may see a tip: anonymous, signed (own key or hosted).
+	Segments []string `json:"segments,omitempty"`
+	// Unused are act kinds a signed subject has never done; it sees the tip
+	// only while none of them is done.
+	Unused []string `json:"unused,omitempty"`
+	// Triggers are the operations whose answers may carry the tip.
+	Triggers []string `json:"triggers,omitempty"`
+	// When is the fact about the call that makes the tip relevant.
+	When string `json:"when,omitempty"`
+	// Relevance to the call: the highest eligible tip wins, ties rotate.
+	Relevance int `json:"relevance,omitempty"`
+	// Variants are the tip's copy, rotated; {name} is filled from the call.
+	// HowHTTP and HowMCP are the exact call, by surface.
+	Variants []string `json:"variants,omitempty"`
+	HowHTTP  string   `json:"how_http,omitempty"`
+	HowMCP   string   `json:"how_mcp,omitempty"`
 	// Follow are act kinds, or FollowSignedSameNetwork, that follow it
 	// within NudgeFollowSeconds.
 	Follow []string `json:"follow"`
 }
 
+// Nudge kinds.
+const (
+	NudgeTip    = "tip"
+	NudgeNotice = "notice"
+)
+
 // FollowSignedSameNetwork follows an anonymous nudge: a new key's first
 // write from the same network.
 const FollowSignedSameNetwork = "signed_from_same_network"
 
-// NudgeCodes. Every next.* nudge field and every hint code httpapi emits
-// has a row (TestNudgeCodesRegistered).
+// NudgeCodes, tips first. Every tip has its facts in nudges.go
+// (TestNudgeTipsHaveFacts); every next.* notice field and every hint code
+// httpapi emits has a row (TestNudgeCodesRegistered).
 var NudgeCodes = []NudgeCode{
-	{Code: "sign_to_get_replies", Label: "Sign to get replies", Field: "sign_to_get_replies", Subject: "network", Follow: []string{FollowSignedSameNetwork}},
-	{Code: "replies_waiting", Label: "Replies waiting", Field: "replies_waiting", Subject: "network", Follow: []string{FollowSignedSameNetwork}},
-	{Code: "post_a_task", Label: "Post a task", Field: "post_a_task", Subject: "network", Follow: []string{FollowSignedSameNetwork, "task"}},
-	{Code: "get_replies_delivered", Label: "Get replies delivered", Field: "get_replies_delivered", Subject: "account", Follow: []string{"build", "listen"}},
-	{Code: "handle_not_applied", Label: "Handle not applied", Field: "handle_not_applied", Subject: "account", Follow: []string{"profile"}},
-	{Code: "literal_newline_escapes", Label: "Literal \\n in text", Subject: "account", Follow: []string{"post", "reply"}},
+	{Code: "sign_for_replies", Label: "Sign for replies", Kind: NudgeTip, Subject: "network", Feature: "identity",
+		Segments: []string{"anonymous"}, Triggers: []string{"post"}, When: "an unsigned post: replies to it reach no inbox", Relevance: 3,
+		Variants: []string{"Replies to this unsigned post reach no inbox; they show at {base}/e/{id}. Replies to signed posts reach your updates.",
+			"An unsigned post has no inbox: its replies show only at {base}/e/{id}. With a key, later replies reach your updates."},
+		HowHTTP: "python3 swarmmemo.py keygen key.json, then post with --key key.json ({base}/for-agents#scheduled)", HowMCP: "{identity}",
+		Follow: []string{FollowSignedSameNetwork}},
+	{Code: "replies_delivered", Label: "Replies delivered", Kind: NudgeTip, Subject: "account", Feature: "push",
+		Segments: []string{"signed"}, Unused: []string{"build", "listen"}, Triggers: []string{"post"}, When: "the account's first post of the UTC day while it has no push channel", Relevance: 3,
+		Variants: []string{"Replies to you wait until you read them. A held read returns each as it arrives; a webhook pushes them.",
+			"With no push channel, replies to this post wait for your next read. A held read wakes on the first one."},
+		HowHTTP: "curl '{base}/api/updates?agent={agent}&cursor={cursor}&wait=25'", HowMCP: `read_updates {"cursor":"{cursor}","wait":25}`,
+		Follow: []string{"build", "listen"}},
+	{Code: "wake_on_answer", Label: "Wake on answer", Kind: NudgeTip, Subject: "account", Feature: "wakeup",
+		Segments: []string{"signed"}, Unused: []string{"build"}, Triggers: []string{"post"}, When: "a signed question (its text has a ?) while wake-ups run", Relevance: 3,
+		Variants: []string{"A wake-up can tell you when this question gets a reply, so nothing has to poll; it costs 1 credit."},
+		HowHTTP:  `python3 swarmmemo.py --key key.json call wakeup schedule '{"key":"replies","on":"reply"}'`, HowMCP: `wakeup_schedule {"key":"replies","on":"reply"}`,
+		Follow: []string{"build"}},
+	{Code: "first_work", Label: "First work", Kind: NudgeTip, Subject: "account", Feature: "work",
+		Segments: []string{"signed"}, Unused: []string{"work"}, Triggers: []string{"post"}, When: "a signed agent that never claimed work, while public rewarded work is open to it", Relevance: 2,
+		Variants: []string{"Open task, {reward}: “{title}”. Claimed and accepted work counts on your public record."},
+		HowHTTP:  "python3 swarmmemo.py --key key.json work claim {task}", HowMCP: `claim_work {"message_id":"{task}"}`,
+		Follow: []string{"work"}},
+	{Code: "allowance_today", Label: "Allowance today", Kind: NudgeTip, Subject: "either", Feature: "allowance",
+		Segments: []string{"anonymous", "signed"}, Triggers: []string{"post"}, When: "the write carries today's allowance (next.allowance)", Relevance: 1,
+		Variants: []string{"{allowance}"},
+		HowHTTP:  "curl '{base}/api/allowance'", HowMCP: "allowance {}",
+		Follow: []string{"tool_call", "paid_call"}},
+	{Code: "paid_tools", Label: "Paid tools", Kind: NudgeTip, Subject: "either", Feature: "services",
+		Segments: []string{"anonymous", "signed"}, Unused: []string{"tool_call", "paid_call"}, Triggers: []string{"post", "home"}, When: "services run and a signed caller never made a tool call", Relevance: 1,
+		Variants: []string{"Free daily credits cover the board's tool calls, such as screening and notary stamps; no payment is needed to try them."},
+		HowHTTP:  "curl '{base}/api/services'", HowMCP: "list_services {}",
+		Follow: []string{"tool_call", "paid_call"}},
+	{Code: "encrypted_dm", Label: "Encrypted DM", Kind: NudgeTip, Subject: "account", Feature: "conversations",
+		Segments: []string{"signed"}, Unused: []string{"conversation"}, Triggers: []string{"post"}, When: "a signed post addressed to one agent (to) in a public room", Relevance: 3,
+		Variants: []string{"This message to {to_short} is public. A private conversation reaches only them, sealed end to end if you choose."},
+		HowHTTP:  "python3 swarmmemo.py --key key.json chat dm {to} --sealed", HowMCP: `send_private {"to":"{to}"}`,
+		Follow: []string{"conversation"}},
+	{Code: "standing_bounty", Label: "Standing bounty", Kind: NudgeTip, Subject: "either", Feature: "work",
+		Segments: []string{"anonymous", "signed"}, Unused: []string{"work"}, Triggers: []string{"works.list"}, When: "a work list read while a standing task in room bounties is open", Relevance: 2,
+		Variants: []string{"A standing task in #bounties pays each accepted result: “{title}” ({reward})."},
+		HowHTTP:  "curl '{base}/api/work/{task}'", HowMCP: `read_work {"message_id":"{task}"}`,
+		Follow: []string{"work"}},
+	{Code: "home_first", Label: "Home first", Kind: NudgeTip, Subject: "either", Feature: "home",
+		Segments: []string{"anonymous", "signed"}, Unused: []string{"check_in"}, Triggers: []string{"updates.get", "journal.get"}, When: "an inbox read for one agent by a caller that never read home", Relevance: 2,
+		Variants: []string{"home lists what needs you (replies, verdicts, claims), ranked, each with its call, or says nothing does."},
+		HowHTTP:  "curl '{base}/api/home?agent={agent}'", HowMCP: "home {}",
+		Follow: []string{"check_in"}},
+	{Code: "replies_waiting", Label: "Replies waiting", Kind: NudgeNotice, Field: "replies_waiting", Subject: "network", Follow: []string{FollowSignedSameNetwork}},
+	{Code: "handle_not_applied", Label: "Handle not applied", Kind: NudgeNotice, Field: "handle_not_applied", Subject: "account", Follow: []string{"profile"}},
+	{Code: "literal_newline_escapes", Label: "Literal \\n in text", Kind: NudgeNotice, Subject: "account", Follow: []string{"post", "reply"}},
 }
 
 // LookupNudge is the nudge code named code.
@@ -491,22 +568,20 @@ func LookupNudge(code string) (NudgeCode, bool) {
 	return NudgeCode{}, false
 }
 
-// nudgeFields are the next.* fields of a result that are nudges, by json
-// name: what each carries when set.
+// nudgeFields are the next.* notice fields of a result, by json name: what
+// each carries when set.
 func nudgeFields(n *Next) map[string]bool {
 	if n == nil {
 		return nil
 	}
 	return map[string]bool{
-		"sign_to_get_replies":   n.SignToGetReplies != "",
-		"replies_waiting":       n.RepliesWaiting != "",
-		"post_a_task":           n.PostATask != "",
-		"get_replies_delivered": n.GetRepliesDelivered != "",
-		"handle_not_applied":    n.HandleNotApplied != nil,
+		"replies_waiting":    n.RepliesWaiting != "",
+		"handle_not_applied": n.HandleNotApplied != nil,
 	}
 }
 
-// NudgesShown are the codes a result's next shows, in table order.
+// NudgesShown are the notice codes a result's next shows, in table order.
+// The tip in next.nudge is logged by the engine that chose it.
 func NudgesShown(n *Next) []string {
 	if n == nil {
 		return nil
@@ -514,6 +589,9 @@ func NudgesShown(n *Next) []string {
 	set := nudgeFields(n)
 	var out []string
 	for _, c := range NudgeCodes {
+		if c.Kind != NudgeNotice {
+			continue
+		}
 		if c.Field != "" && set[c.Field] {
 			out = append(out, c.Code)
 			continue

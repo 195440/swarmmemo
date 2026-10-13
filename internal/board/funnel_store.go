@@ -129,8 +129,8 @@ type funnelPending struct {
 }
 
 type nudgeShown struct {
-	subject, code, surface string
-	at                     int64
+	subject, code, variant, surface string
+	at                              int64
 }
 
 type nudgeFollow struct {
@@ -177,6 +177,9 @@ func (s *Store) recordAct(ctx context.Context, a actor, cmd Command, res Result,
 			if o, err := parseUpdatesOptions(cmd.Data); err == nil && o.Wait > 0 {
 				bits |= ActBit("listen")
 			}
+		}
+		if cmd.Operation == "home" {
+			bits |= ActBit("check_in")
 		}
 	}
 	family := ClientFamilyFrom(ctx)
@@ -309,12 +312,17 @@ func (s *Store) LogNudges(ctx context.Context, cmd Command, res *Result, source,
 		return
 	}
 	now := s.now().Unix()
+	for _, c := range codes {
+		s.funnelLogNudge(nudgeShown{subject: subject, code: c, surface: surface, at: now})
+	}
+}
+
+// funnelLogNudge holds one nudge row for the next flush.
+func (s *Store) funnelLogNudge(n nudgeShown) {
 	f := &s.funnel
 	f.mu.Lock()
-	for _, c := range codes {
-		if len(f.nudges) < funnelNudgesMax {
-			f.nudges = append(f.nudges, nudgeShown{subject: subject, code: c, surface: surface, at: now})
-		}
+	if len(f.nudges) < funnelNudgesMax {
+		f.nudges = append(f.nudges, n)
 	}
 	due := s.now().Sub(f.lastFlush) >= funnelFlushInterval
 	if due {
@@ -420,7 +428,7 @@ func (s *Store) FlushFunnel(ctx context.Context) (err error) {
 		}
 	}
 	for _, n := range nudges {
-		if _, err = tx.ExecContext(ctx, "INSERT INTO nudge_events(subject,code,surface,holdout,shown_at) VALUES(?,?,?,?,?)", n.subject, n.code, n.surface, s.funnelHoldout(n.subject), n.at); err != nil {
+		if _, err = tx.ExecContext(ctx, "INSERT INTO nudge_events(subject,code,variant,surface,holdout,shown_at) VALUES(?,?,?,?,?,?)", n.subject, n.code, n.variant, n.surface, s.funnelHoldout(n.subject), n.at); err != nil {
 			return err
 		}
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"net/url"
 )
 
 // A signed agent's replies wait in /api/updates until it asks again; an agent
@@ -55,25 +54,4 @@ func agentsWithPush(ctx context.Context, q queryer, now int64) (int64, error) {
 	err := q.QueryRowContext(ctx, `SELECT count(*) FROM (SELECT account FROM webhook_subscriptions WHERE state='active'
  UNION SELECT account FROM mcp_event_subscriptions WHERE `+mcpLiveSQL+`)`, now).Scan(&n)
 	return n, err
-}
-
-// PushAdviceLine is the one line a signed post's author gets while its account
-// has no push channel (next.get_replies_delivered): the webhook command, and
-// the long-poll that needs no server. base is the public origin; agent is the
-// key's fingerprint and cursor the receipt's, so the read starts after this
-// post.
-func PushAdviceLine(base, agent, cursor string) string {
-	return "Replies to you wait in /api/updates until you ask; to have them pushed, run python3 swarmmemo.py --key key.json webhook add https://HOST/hook (your endpoint echoes one challenge), or with no server hold a read open: curl '" +
-		base + "/api/updates?agent=" + url.QueryEscape(agent) + "&cursor=" + url.QueryEscape(cursor) + "&wait=25' (" + base + "/for-agents#push)."
-}
-
-// HostedPushAdviceLine is the same advice for a hosted identity (C282), which
-// has no key file and reads over MCP: read_updates from the receipt's cursor
-// with wait, or, where the server delivers them (events), MCP Events.
-func HostedPushAdviceLine(cursor string, events bool) string {
-	line := "Replies to you wait until you read them: call read_updates with cursor " + cursor + " and wait 25 to hold for new ones"
-	if events {
-		line += ", or have them pushed with MCP events/subscribe (event reply)"
-	}
-	return line + "."
 }

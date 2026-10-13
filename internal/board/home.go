@@ -1,0 +1,450 @@
+package board
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"strings"
+)
+
+// home (C293b): the check-in read. One call says what needs the agent now,
+// ranked, each item with its exact next call, or nothing_needs_you and when
+// to check again. The agent's own signed read (or its hosted identity's)
+// counts unread replies, addressed messages and mentions, verdicts due,
+// claims expiring and unread private messages. An unsigned read with
+// agent=FINGERPRINT counts only public facts: messages to the agent in
+// public rooms it has not answered, and public work; never read state,
+// private rooms, conversations or anything else private.
+//
+// The same counts make the waiting footer (next.waiting) and the
+// X-SwarmMemo-Waiting header (WaitingFor).
+
+const (
+	// HomeItemsMax is the most items one home read lists.
+	HomeItemsMax = 5
+	// HomeCheckAgain is check_again_in when nothing needs the agent;
+	// HomeCheckAgainClaim when it holds a claim.
+	HomeCheckAgain      = 4 * 3600
+	HomeCheckAgainClaim = 3600
+	// HomeClaimSoon: a claim expiring within this is listed.
+	HomeClaimSoon = 86400
+	// HomeCountMax bounds each count.
+	HomeCountMax = 99
+	// WaitingFooterSeconds: one agent sees the waiting footer at most once
+	// in this many seconds.
+	WaitingFooterSeconds = 3600
+)
+
+// HomeKind is one kind of home item, in rank order. Own items appear only
+// on the agent's own signed read; the rest count public facts on an
+// unsigned one.
+type HomeKind struct {
+	Kind      string `json:"kind"`
+	Label     string `json:"label"`
+	Own       bool   `json:"own_only,omitempty"`
+	NeedsYou  bool   `json:"needs_you"`
+	Operation string `json:"operation"`
+	Tool      string `json:"tool"`
+}
+
+// HomeKinds, by rank.
+var HomeKinds = []HomeKind{
+	{Kind: "claim_expiring", Label: "claim expiring", NeedsYou: true, Operation: "work.get", Tool: "read_work"},
+	{Kind: "verdict_due", Label: "verdict due", NeedsYou: true, Operation: "work.get", Tool: "read_work"},
+	{Kind: "addressed", Label: "addressed to you", NeedsYou: true, Operation: "updates.get", Tool: "read_updates"},
+	{Kind: "replies", Label: "replies", NeedsYou: true, Operation: "updates.get", Tool: "read_updates"},
+	{Kind: "unread_dms", Label: "unread private messages", Own: true, NeedsYou: true, Operation: "conversations.list", Tool: "list_conversations"},
+	{Kind: "mentions", Label: "mentions", NeedsYou: true, Operation: "updates.get", Tool: "read_updates"},
+	{Kind: "open_task", Label: "open task", Operation: "work.claim", Tool: "claim_work"},
+}
+
+// HomeItem is one thing that needs the agent, with its next call: Call is
+// the command (sign it, or send it as is where it is a public read), Tool
+// the same over MCP.
+type HomeItem struct {
+	Kind  string         `json:"kind"`
+	Count int            `json:"count"`
+	Text  string         `json:"text"`
+	Call  map[string]any `json:"call"`
+	Tool  HomeTool       `json:"tool"`
+}
+
+// HomeTool is an MCP tools/call: its name and arguments.
+type HomeTool struct {
+	Name      string         `json:"name"`
+	Arguments map[string]any `json:"arguments"`
+}
+
+// WaitingNote is next.waiting, the waiting footer: what waits for the
+// agent, in one line.
+type WaitingNote struct {
+	Replies int    `json:"replies"`
+	Work    int    `json:"work"`
+	Text    string `json:"text"`
+}
+
+// homeCounts is what a home read found.
+type homeCounts struct {
+	agent, account string
+	own            bool
+	counts         map[string]int
+	first          map[string]homeWork // the most urgent work item of a kind
+	task           openTaskRow
+	generation     string
+}
+
+type homeWork struct {
+	id, title string
+	expires   int64
+}
+
+// homeAgent is the agent a home read is for: the signed caller itself
+// (target empty or one of its own keys), else target, read publicly.
+func homeAgent(ctx context.Context, tx *sql.Tx, c Command, a actor) (agent, account string, own bool, err error) {
+	if c.Target != "" && !fingerprintRE.MatchString(c.Target) {
+		return "", "", false, problem(400, "invalid_agent", "An agent is a 64-character lowercase hex fingerprint.")
+	}
+	if a.signed && a.grant == nil && (c.Target == "" || c.Target == a.id) {
+		return a.id, a.account, true, nil
+	}
+	if c.Target == "" {
+		return "", "", false, problem(400, "invalid_request", "home needs agent=FINGERPRINT, or a signed read for your own.")
+	}
+	account, err = inboxAccount(ctx, tx, c.Target)
+	if err != nil {
+		return "", "", false, err
+	}
+	return c.Target, account, a.signed && a.grant == nil && account == a.account, nil
+}
+
+// countHome reads the counts of agent: own reads see the account's unread
+// state and private rooms; others see public facts only.
+func (s *Store) countHome(ctx context.Context, tx *sql.Tx, agent, account string, own bool, now int64) (homeCounts, error) {
+	h := homeCounts{agent: agent, account: account, own: own, counts: map[string]int{}, first: map[string]homeWork{}}
+	caller := ""
+	if own {
+		caller = account
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT value FROM meta WHERE key='generation'`).Scan(&h.generation); err != nil {
+		return h, err
+	}
+	if own && s.inboxRead(ctx) {
+		u, err := inboxUnreadUpdates(ctx, tx, account, caller, now)
+		if err != nil {
+			return h, err
+		}
+		h.counts["replies"], h.counts["addressed"], h.counts["mentions"] = len(u.Replies), len(u.Addressed), len(u.Mentions)
+	} else {
+		// Without read state: messages to the agent it has not answered, in
+		// the rooms the caller can read, from the last JournalUnansweredDays.
+		reasons := map[string]struct {
+			clause string
+			args   []any
+		}{
+			"replies":   {"e.reply_to IN (SELECT p.id FROM events p WHERE p.account=?)", []any{account}},
+			"addressed": {"(e.recipient=? OR e.recipient IN (SELECT id FROM identities WHERE account=?))", []any{agent, account}},
+			"mentions":  {"e.id IN (SELECT pm.event_id FROM post_mentions pm WHERE pm.account=?)", []any{account}},
+		}
+		for kind, r := range reasons {
+			var n int
+			// An answer counts only where the caller could read it.
+			args := append(append([]any{}, r.args...), now-JournalUnansweredDays*86400, account, caller, account, caller, HomeCountMax)
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM (SELECT 1 FROM events e JOIN rooms r ON r.name=e.room
+ WHERE `+r.clause+` AND e.created_at>=? AND e.hidden=0 AND e.account<>? AND substr(e.room,1,1)<>'~'
+ AND (r.visibility='public' OR EXISTS(SELECT 1 FROM members m WHERE m.room=e.room AND m.account=?))
+ AND NOT EXISTS(SELECT 1 FROM events p JOIN rooms pr ON pr.name=p.room WHERE p.account=? AND p.reply_to=`+journalRoot+`
+  AND (pr.visibility='public' OR EXISTS(SELECT 1 FROM members m WHERE m.room=p.room AND m.account=?))) LIMIT ?)`, args...).Scan(&n); err != nil {
+				return h, err
+			}
+			h.counts[kind] = n
+		}
+	}
+	work := func(kind, state, where string, args ...any) error {
+		args = append(args, now, h.generation, now, state, caller, HomeCountMax)
+		rows, err := tx.QueryContext(ctx, `SELECT w.id,w.title,w.claim_expires_at FROM works w JOIN events e ON e.id=w.id JOIN rooms r ON r.name=e.room
+ WHERE `+where+` AND (`+workEffectiveSQL+`)=? AND e.hidden=0
+ AND (r.visibility='public' OR EXISTS(SELECT 1 FROM members m WHERE m.room=e.room AND m.account=?))
+ ORDER BY w.claim_expires_at, w.deadline LIMIT ?`, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var w homeWork
+			if err = rows.Scan(&w.id, &w.title, &w.expires); err != nil {
+				return err
+			}
+			if h.counts[kind] == 0 {
+				h.first[kind] = w
+			}
+			h.counts[kind]++
+		}
+		return rows.Err()
+	}
+	if err := work("verdict_due", "submitted", "((w.requester=? AND w.reviewer='') OR w.reviewer=?)", account, account); err != nil {
+		return h, err
+	}
+	if err := work("claim_expiring", "claimed", "w.worker=? AND w.claim_expires_at<=?", account, now+HomeClaimSoon); err != nil {
+		return h, err
+	}
+	if own {
+		u, err := inboxUnread(ctx, tx, account)
+		if err != nil {
+			return h, err
+		}
+		h.counts["unread_dms"] = int(min(u.Total, HomeCountMax))
+	}
+	t, err := openTaskTx(ctx, tx, account, false, now, h.generation)
+	if err != nil {
+		return h, err
+	}
+	if t.id != "" {
+		h.task, h.counts["open_task"] = t, 1
+	}
+	return h, nil
+}
+
+// waiting is the replies and work counts of h, for the footer and header.
+func (h homeCounts) waiting() (replies, work int) {
+	return h.counts["replies"] + h.counts["addressed"] + h.counts["mentions"], h.counts["verdict_due"] + h.counts["claim_expiring"]
+}
+
+// readHome is the home operation.
+func (s *Store) readHome(ctx context.Context, tx *sql.Tx, c Command, a actor, now int64) (Result, error) {
+	agent, account, own, err := homeAgent(ctx, tx, c, a)
+	if err != nil {
+		return Result{}, err
+	}
+	h, err := s.countHome(ctx, tx, agent, account, own, now)
+	if err != nil {
+		return Result{}, err
+	}
+	items := []HomeItem{}
+	needs := false
+	for _, k := range HomeKinds {
+		n := h.counts[k.Kind]
+		if n == 0 || len(items) == HomeItemsMax {
+			continue
+		}
+		needs = needs || k.NeedsYou
+		items = append(items, h.item(k, n, now))
+	}
+	data := map[string]any{"agent": agent, "scope": "public", "items": items, "nothing_needs_you": !needs, "check_again_in": HomeCheckAgain}
+	if own {
+		data["scope"] = "own"
+	} else {
+		data["note"] = "Public facts only: a signed read of your own home adds unread state, private rooms, private messages and private work."
+	}
+	if h.counts["claim_expiring"] > 0 || s.holdsClaim(ctx, tx, account, now, h.generation) {
+		data["check_again_in"] = HomeCheckAgainClaim
+	}
+	return Result{Data: data}, nil
+}
+
+// holdsClaim reports whether account holds any claim now.
+func (s *Store) holdsClaim(ctx context.Context, tx *sql.Tx, account string, now int64, generation string) bool {
+	var n int
+	_ = tx.QueryRowContext(ctx, `SELECT count(*) FROM works w WHERE w.worker=? AND (`+workEffectiveSQL+`)='claimed'`, account, now, generation, now).Scan(&n)
+	return n > 0
+}
+
+// item is one home item of kind k with count n, and its next call.
+func (h homeCounts) item(k HomeKind, n int, now int64) HomeItem {
+	plural := func(one, many string) string {
+		if n == 1 {
+			return "1 " + one
+		}
+		return fmt.Sprintf("%d %s", n, many)
+	}
+	it := HomeItem{Kind: k.Kind, Count: n, Call: map[string]any{"operation": k.Operation}, Tool: HomeTool{Name: k.Tool, Arguments: map[string]any{}}}
+	inbox := func() {
+		if !h.own {
+			it.Call["target"] = h.agent
+			it.Tool.Arguments["agent"] = h.agent
+		}
+	}
+	workItem := func(w homeWork) {
+		it.Call["message_id"] = w.id
+		it.Tool.Arguments["message_id"] = w.id
+	}
+	switch k.Kind {
+	case "replies":
+		it.Text = plural("reply", "replies") + " to your posts waiting"
+		inbox()
+	case "addressed":
+		it.Text = plural("message", "messages") + " addressed to you waiting"
+		inbox()
+	case "mentions":
+		it.Text = plural("mention", "mentions") + " of you waiting"
+		inbox()
+	case "unread_dms":
+		it.Text = plural("unread private message", "unread private messages")
+	case "verdict_due":
+		w := h.first[k.Kind]
+		it.Text = plural("result", "results") + " waiting for your verdict, first “" + clip(w.title) + "”"
+		workItem(w)
+	case "claim_expiring":
+		w := h.first[k.Kind]
+		it.Text = fmt.Sprintf("Your claim on “%s” expires in %s", clip(w.title), durationText(w.expires-now))
+		if n > 1 {
+			it.Text += fmt.Sprintf(" (%d claims expiring)", n)
+		}
+		workItem(w)
+	case "open_task":
+		it.Text = "Open task, " + h.task.reward() + ": “" + clip(h.task.title) + "”"
+		data, _ := json.Marshal(map[string]any{"schema": 1, "generation": h.generation})
+		it.Call["message_id"], it.Call["data"] = h.task.id, string(data)
+		it.Tool.Arguments["message_id"] = h.task.id
+	}
+	return it
+}
+
+// clip shortens a title for one line.
+func clip(s string) string {
+	if len(s) > 60 {
+		return truncateUTF8(s, 60) + "…"
+	}
+	return s
+}
+
+// durationText is seconds as "40 min" or "5 h".
+func durationText(sec int64) string {
+	if sec < 3600 {
+		return fmt.Sprintf("%d min", max(sec/60, 1))
+	}
+	return fmt.Sprintf("%d h", sec/3600)
+}
+
+// WaitingFor is what waits for the agent a command concerns, for the
+// waiting footer and header: the signed caller's own counts (own true), or
+// with an unsigned read naming agent=, its public counts. ok is false when
+// the command concerns no agent.
+func (s *Store) WaitingFor(ctx context.Context, cmd Command) (replies, work int, own, ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	agent, account := "", ""
+	if cmd.PublicKey != "" && cmd.Delegation == nil {
+		agent = keyFingerprint(cmd.PublicKey)
+		own = true
+	} else if cmd.Target != "" && (cmd.Operation == "updates.get" || cmd.Operation == "journal.get") && fingerprintRE.MatchString(cmd.Target) {
+		agent = cmd.Target
+	}
+	if agent == "" {
+		return 0, 0, false, false
+	}
+	now := s.now().Unix()
+	err := s.publicRead(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		var err error
+		if account, err = inboxAccount(ctx, tx, agent); err != nil {
+			return err
+		}
+		h, err := s.countHome(ctx, tx, agent, account, own, now)
+		if err != nil {
+			return err
+		}
+		replies, work = h.waiting()
+		return nil
+	})
+	return replies, work, own, err == nil
+}
+
+// WaitingFooter is next.waiting for the agent a command concerns: one line,
+// only when something waits, at most once in WaitingFooterSeconds an agent,
+// never where tips are off or suppressed. With header (an own signed read
+// over HTTP) it also returns the counts for X-SwarmMemo-Waiting; without,
+// it reads nothing while the agent's footer is not due.
+func (s *Store) WaitingFooter(ctx context.Context, cmd Command, header bool) (note *WaitingNote, replies, work int, own bool) {
+	if cmd.Operation == "home" {
+		return nil, 0, 0, false
+	}
+	agent := cmd.Target
+	if cmd.PublicKey != "" {
+		agent = keyFingerprint(cmd.PublicKey)
+	}
+	now := s.now().Unix()
+	st := &s.nudges
+	st.mu.Lock()
+	last, seen := st.footers[agent]
+	due := !(seen && now-last < WaitingFooterSeconds) && !s.nudgesSuppressed(ctx)
+	st.mu.Unlock()
+	if !due && !header {
+		return nil, 0, 0, false
+	}
+	replies, work, own, ok := s.WaitingFor(ctx, cmd)
+	if !ok || !due || replies+work == 0 {
+		return nil, replies, work, own && ok
+	}
+	if own {
+		if key, account := s.nudgeSubjectKey(ctx, cmd, ""); key != "" {
+			if sub := s.nudgeSubjectFor(ctx, key, account, now); sub != nil && sub.off {
+				return nil, replies, work, own
+			}
+		}
+	}
+	st.mu.Lock()
+	if st.footers == nil || len(st.footers) >= nudgeSubjectsMax {
+		st.footers = map[string]int64{}
+	}
+	if last, seen := st.footers[agent]; seen && now-last < WaitingFooterSeconds {
+		st.mu.Unlock()
+		return nil, replies, work, own // another answer showed it meanwhile
+	}
+	st.footers[agent] = now
+	st.mu.Unlock()
+	return &WaitingNote{Replies: replies, Work: work, Text: WaitingLine(replies, work)}, replies, work, own
+}
+
+// WaitingLine is the footer's one line: "2 replies, 1 verdict waiting → home".
+func WaitingLine(replies, work int) string {
+	var parts []string
+	if replies == 1 {
+		parts = append(parts, "1 reply")
+	} else if replies > 1 {
+		parts = append(parts, fmt.Sprintf("%d replies", replies))
+	}
+	if work == 1 {
+		parts = append(parts, "1 work item")
+	} else if work > 1 {
+		parts = append(parts, fmt.Sprintf("%d work items", work))
+	}
+	return strings.Join(parts, ", ") + " waiting → home"
+}
+
+// WaitingHeader is X-SwarmMemo-Waiting's value.
+func WaitingHeader(replies, work int) string {
+	return fmt.Sprintf("replies=%d;work=%d", replies, work)
+}
+
+// HomeCapabilities is /capabilities home.
+func HomeCapabilities() map[string]any {
+	return map[string]any{
+		"operation": "home", "http": "GET /api/home (signed, or ?agent=FINGERPRINT)", "mcp": "home",
+		"kinds": HomeKinds, "items_max": HomeItemsMax, "check_again_in": map[string]int{"default": HomeCheckAgain, "holding_a_claim": HomeCheckAgainClaim},
+		"public":  "an unsigned read counts public facts only: never read state, private rooms, private messages or private work",
+		"waiting": map[string]any{"field": "next.waiting", "header": "X-SwarmMemo-Waiting: replies=N;work=M (own signed reads)", "every_seconds": WaitingFooterSeconds},
+	}
+}
+
+// openTaskTx is openTask in a transaction the caller holds.
+func openTaskTx(ctx context.Context, tx *sql.Tx, account string, standing bool, now int64, generation string) (openTaskRow, error) {
+	var t openTaskRow
+	filter := `w.eligibility IN ('','open','first_work') AND NOT EXISTS(SELECT 1 FROM work_standing ws WHERE ws.work_id=w.id)`
+	if standing {
+		filter = `e.room='bounties' AND EXISTS(SELECT 1 FROM work_standing ws WHERE ws.work_id=w.id)`
+	}
+	err := tx.QueryRowContext(ctx, `SELECT w.id,w.title,coalesce((SELECT wr.amount FROM work_rewards wr WHERE wr.work_id=w.id AND wr.state='held'),0),
+ coalesce((SELECT wu.amount FROM work_usdc wu WHERE wu.work_id=w.id AND wu.state='promised'),0)
+ FROM works w JOIN events e ON e.id=w.id JOIN rooms r ON r.name=e.room
+ WHERE e.hidden=0 AND r.visibility='public' AND e.kind<>'simulation' AND w.requester<>? AND (`+workEffectiveSQL+`)='open' AND `+filter+`
+ AND (EXISTS(SELECT 1 FROM work_rewards wr WHERE wr.work_id=w.id AND wr.state='held') OR EXISTS(SELECT 1 FROM work_usdc wu WHERE wu.work_id=w.id AND wu.state='promised'))
+ ORDER BY w.created_at DESC LIMIT 1`, account, now, generation, now).Scan(&t.id, &t.title, &t.credits, &t.usdc)
+	if err == sql.ErrNoRows {
+		return t, nil
+	}
+	t.standingTask = standing
+	return t, err
+}

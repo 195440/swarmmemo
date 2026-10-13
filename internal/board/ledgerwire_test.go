@@ -263,8 +263,8 @@ func TestAllowanceParamsAndGrant(t *testing.T) {
 	}
 }
 
-// While a service runs, the first-call line also names the catalogue, and
-// stays short enough for a DNS TXT string.
+// While a service runs, a post's note carries the catalogue's URL beside a
+// line that states the fact alone, short enough for one tip.
 func TestAllowanceLineNamesTheCatalogue(t *testing.T) {
 	if _, _, ok := ledgerTestOverride(); ok {
 		t.Skip("the ledger mode is overridden for the whole suite")
@@ -273,7 +273,7 @@ func TestAllowanceLineNamesTheCatalogue(t *testing.T) {
 	alice := keyFor(64)
 	register(t, s, alice)
 	note := run(t, s, signed(alice, Command{Operation: "post", Text: "hello"})).Allowance
-	if note == nil || !strings.HasSuffix(note.Line, " Services: "+ServicesCatalogueURL+".") || note.Services != ServicesCatalogueURL || len(note.Line) > 255 {
+	if note == nil || strings.Contains(note.Line, "Services:") || note.Services != ServicesCatalogueURL || len(note.Line) > NudgeTextBytes {
 		t.Fatalf("allowance note %+v", note)
 	}
 }

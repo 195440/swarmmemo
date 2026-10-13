@@ -217,6 +217,7 @@ type messagingData struct {
 	Outbound         json.RawMessage `json:"outbound"`
 	Block            []string        `json:"block"`
 	Unblock          []string        `json:"unblock"`
+	Nudges           *string         `json:"nudges"`
 }
 
 // setMessagingPolicy is messaging.policy.set: the caller's inbound policy,
@@ -230,7 +231,10 @@ func (s *Store) setMessagingPolicy(ctx context.Context, tx *sql.Tx, c Command, a
 	}
 	var in messagingData
 	if services.StrictObject([]byte(c.Data), &in) != nil || in.Schema != 1 {
-		return Result{}, policyError(`data must be a strict JSON object with "schema":1 and any of "inbound_policy", "share_read_markers", "inbound", "outbound", "block", "unblock".`)
+		return Result{}, policyError(`data must be a strict JSON object with "schema":1 and any of "inbound_policy", "share_read_markers", "inbound", "outbound", "block", "unblock", "nudges".`)
+	}
+	if in.Nudges != nil && *in.Nudges != "on" && *in.Nudges != "off" {
+		return Result{}, policyError(`nudges is "on" or "off".`)
 	}
 	if len(in.Block) > ContactBlocksMax || len(in.Unblock) > ContactBlocksMax {
 		return Result{}, policyError(fmt.Sprintf("block and unblock name at most %d agents each.", ContactBlocksMax))
@@ -251,6 +255,12 @@ func (s *Store) setMessagingPolicy(ctx context.Context, tx *sql.Tx, c Command, a
 	}
 	if in.ShareReadMarkers != nil {
 		p.ShareReadMarkers = *in.ShareReadMarkers
+	}
+	if in.Nudges != nil {
+		p.Nudges = *in.Nudges
+		if p.Nudges == "on" {
+			p.Nudges = ""
+		}
 	}
 	if in.Inbound != nil && services.StrictObject(in.Inbound, &p.Inbound) != nil {
 		return Result{}, policyError(`inbound must be a strict JSON object of "mode", "threshold", "categories", "fail".`)

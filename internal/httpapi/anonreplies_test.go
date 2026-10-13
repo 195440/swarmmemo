@@ -60,9 +60,14 @@ func TestAnonymousRepliesWaitingOnEveryWire(t *testing.T) {
 		result(send("203.0.113.9", "POST", "/v1/command", `{"operation":"post","text":"an answer","reply_to":"`+first.Receipt.ID+`"}`, false))
 	}
 	answer()
-	want := "1 reply is waiting on your earlier posts today: https://swarmmemo.com/e/" + first.Receipt.ID + ". Sign once to receive replies in /api/updates: sign your next post with an Ed25519 key (https://swarmmemo.com/for-agents#scheduled)."
+	want := "1 reply waits on your earlier unsigned posts today: https://swarmmemo.com/e/" + first.Receipt.ID
+	// The first post from the network carried the sign_for_replies tip; the
+	// same code waits a week before it is shown to that network again.
+	if first.Next.Nudge == nil || first.Next.Nudge.Code != "sign_for_replies" {
+		t.Fatalf("a first post's tip: %+v", first.Next)
+	}
 
-	if got := result(send("198.51.100.8", "POST", "/v1/command", `{"operation":"post","text":"again"}`, false)).Next; got == nil || got.RepliesWaiting != want || got.SignToGetReplies == "" {
+	if got := result(send("198.51.100.8", "POST", "/v1/command", `{"operation":"post","text":"again"}`, false)).Next; got == nil || got.RepliesWaiting != want || got.Nudge != nil {
 		t.Fatalf("JSON POST: %+v", got)
 	}
 	answer()
@@ -71,7 +76,7 @@ func TestAnonymousRepliesWaitingOnEveryWire(t *testing.T) {
 	}
 	answer()
 	text := send("198.51.100.10", "GET", "/w/lobby/main?text=again+as+text", "", false).Body.String()
-	if lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n"); len(lines) != 3 || lines[1] != want || lines[2] != board.PostTaskLine("https://swarmmemo.com") {
+	if lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n"); len(lines) != 2 || lines[1] != want {
 		t.Fatalf("text receipt: %q", text)
 	}
 	answer()
@@ -85,11 +90,11 @@ func TestAnonymousRepliesWaitingOnEveryWire(t *testing.T) {
 		t.Fatalf("MCP: %s %v", w.Body.String(), err)
 	}
 	// Told once: the next post from the same pseudonym hears nothing more.
-	if got := result(send("198.51.100.12", "POST", "/v1/command", `{"operation":"post","text":"told already"}`, false)).Next; got == nil || got.RepliesWaiting != "" || got.SignToGetReplies == "" {
+	if got := result(send("198.51.100.12", "POST", "/v1/command", `{"operation":"post","text":"told already"}`, false)).Next; got != nil && got.RepliesWaiting != "" {
 		t.Fatalf("a repeated nudge: %+v", got)
 	}
 	// The replier's network asked nothing that was answered.
-	if got := result(send("203.0.113.10", "POST", "/v1/command", `{"operation":"post","text":"mine"}`, false)).Next; got == nil || got.RepliesWaiting != "" {
+	if got := result(send("203.0.113.10", "POST", "/v1/command", `{"operation":"post","text":"mine"}`, false)).Next; got != nil && got.RepliesWaiting != "" {
 		t.Fatalf("another network: %+v", got)
 	}
 	if text = send("192.0.2.1", "GET", "/w/lobby/main?text=elsewhere", "", false).Body.String(); strings.Contains(text, "waiting") {
@@ -102,7 +107,7 @@ func TestAnonymousRepliesWaitingOnEveryWire(t *testing.T) {
 func TestWriteTextRepliesWaitingWithoutDescribe(t *testing.T) {
 	var b strings.Builder
 	WriteText(&b, board.Result{Receipt: &board.Receipt{ID: "m", Hash: "h", RepliesWaiting: &board.RepliesWaiting{Replies: 2, Posts: []string{"p1"}}}})
-	if !strings.Contains(b.String(), "\n2 replies are waiting on your earlier posts today: /e/p1. Sign once to receive replies in /api/updates: ") {
+	if !strings.Contains(b.String(), "\n2 replies wait on your earlier unsigned posts today: /e/p1\n") {
 		t.Fatalf("%q", b.String())
 	}
 }

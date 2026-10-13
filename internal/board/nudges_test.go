@@ -1,0 +1,336 @@
+package board
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"regexp"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"swarmmemo/internal/allowance"
+)
+
+// nudgeProtocolSection is docs/PROTOCOL.md's generated tips table, from
+// NudgeCodes (TestGeneratedProtocolSections).
+func nudgeProtocolSection() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "At most %d tip an answer, %d a day per agent or network, the same code at most once in %d days.\n\n", NudgesPerAnswer, NudgesPerDay, NudgeRepeatDays)
+	b.WriteString("| Code | Feature | Who | Triggers | When | Not yet done | Followed by |\n|---|---|---|---|---|---|---|\n")
+	for _, n := range NudgeCodes {
+		if n.Kind != NudgeTip {
+			continue
+		}
+		unused := ""
+		if len(n.Unused) > 0 {
+			unused = "`" + strings.Join(n.Unused, "`, `") + "`"
+		}
+		fmt.Fprintf(&b, "| `%s` | %s | %s | `%s` | %s | %s | `%s` |\n", n.Code, n.Feature, strings.Join(n.Segments, ", "),
+			strings.Join(n.Triggers, "`, `"), n.When, unused, strings.Join(n.Follow, "`, `"))
+	}
+	return b.String()
+}
+
+// Every tip has its fact, and every fact a tip; a variant filled with
+// ordinary values is one line within NudgeTextBytes; the copy states facts,
+// never orders (no variant opens with an imperative), and names only
+// glossary terms' features.
+func TestNudgeTipsHaveFacts(t *testing.T) {
+	imperative := regexp.MustCompile(`^(Sign|Post|Call|Use|Try|Please|Read|Claim|Add|Set|Make|Get|Go|Check|Send|Ask|Tell)\b`)
+	fill := strings.NewReplacer("{base}", "https://swarmmemo.com", "{id}", strings.Repeat("a", 32), "{agent}", strings.Repeat("b", 64),
+		"{cursor}", strings.Repeat("c", 50), "{title}", strings.Repeat("t", 60)+"…", "{reward}", "500 credits", "{task}", strings.Repeat("d", 32),
+		"{to}", strings.Repeat("e", 64), "{to_short}", "eeeeeeeeeeee…", "{allowance}", "Free today: 4 MiB of posting (signed tier), 4 MiB left; resets 00:00 UTC.", "{identity}", "create_identity {}")
+	for _, n := range NudgeCodes {
+		_, hasFact := nudgeTipFacts[n.Code]
+		if (n.Kind == NudgeTip) != hasFact {
+			t.Errorf("%s: kind %s, fact %v", n.Code, n.Kind, hasFact)
+		}
+		if n.Kind != NudgeTip {
+			continue
+		}
+		if len(n.Variants) == 0 || n.HowHTTP == "" || len(n.Triggers) == 0 || len(n.Segments) == 0 || n.Relevance == 0 || n.When == "" {
+			t.Errorf("%s: incomplete tip", n.Code)
+		}
+		for _, op := range n.Triggers {
+			if _, ok := LookupOperation(op); !ok {
+				t.Errorf("%s triggers on unknown operation %s", n.Code, op)
+			}
+		}
+		for _, k := range append(slices.Clone(n.Unused), n.Follow...) {
+			if k != FollowSignedSameNetwork {
+				ActBit(k)
+			}
+		}
+		for _, v := range n.Variants {
+			text := fill.Replace(v)
+			if len(text) > NudgeTextBytes || strings.ContainsAny(text, "{}\n") || imperative.MatchString(text) {
+				t.Errorf("%s variant: %d bytes or an order or a hole: %q", n.Code, len(text), text)
+			}
+		}
+	}
+	for code := range nudgeTipFacts {
+		if _, ok := LookupNudge(code); !ok {
+			t.Errorf("fact %s has no NudgeCodes row", code)
+		}
+	}
+}
+
+// /capabilities nudges is the Go table, with the caps.
+func TestNudgeCapabilitiesFromGo(t *testing.T) {
+	got, _ := json.Marshal(NudgeCapabilities()["codes"])
+	want, _ := json.Marshal(NudgeCodes)
+	if !bytes.Equal(got, want) {
+		t.Fatal("/capabilities nudges.codes is not NudgeCodes")
+	}
+	caps := NudgeCapabilities()["caps"].(map[string]int)
+	if caps["per_answer"] != NudgesPerAnswer || caps["per_day"] != NudgesPerDay || caps["repeat_days"] != NudgeRepeatDays {
+		t.Fatalf("caps %v", caps)
+	}
+}
+
+func nudgeOf(res Result) string {
+	if res.Next == nil || res.Next.Nudge == nil {
+		return ""
+	}
+	return res.Next.Nudge.Code
+}
+
+// nudged runs c and the engine on its answer, as a transport does.
+func nudged(t *testing.T, s *Store, c Command, source string) Result {
+	t.Helper()
+	res, err := s.Execute(testContext, c, source)
+	if err != nil {
+		t.Fatalf("%s: %v", c.Operation, err)
+	}
+	s.Nudge(testContext, c, &res, NudgeEnv{Base: "https://swarmmemo.com", Surface: "receipt", Source: source})
+	return res
+}
+
+// One tip at most, the same code once a week, three a day per subject; an
+// anonymous caller's subject is its network.
+func TestNudgeCaps(t *testing.T) {
+	s := openTest(t, Config{Features: Features{Ledger: LedgerOn}})
+	post := func(source, text string) string {
+		return nudgeOf(nudged(t, s, Command{Operation: "post", Text: text, RequestID: randomID()}, source))
+	}
+	if got := post("198.51.100.1", "hello"); got != "sign_for_replies" {
+		t.Fatalf("first anonymous post: %q", got)
+	}
+	// The same network: sign_for_replies waits a week; allowance_today is next.
+	if got := post("198.51.100.2", "again"); got != "allowance_today" {
+		t.Fatalf("second post from the network: %q", got)
+	}
+	if got := post("198.51.100.3", "third"); got != "" {
+		t.Fatalf("third post: every eligible code shown this week, got %q", got)
+	}
+	// Another network starts fresh.
+	if got := post("203.0.113.1", "elsewhere"); got != "sign_for_replies" {
+		t.Fatalf("another network: %q", got)
+	}
+	// A week later the code comes back.
+	s.now = func() time.Time { return time.Unix(testTime+NudgeRepeatDays*86400+60, 0) }
+	if got := post("198.51.100.4", "a week on"); got != "sign_for_replies" {
+		t.Fatalf("a week later: %q", got)
+	}
+	// The day cap: three tips in 24 hours, whatever is eligible.
+	s2 := openTest(t, Config{})
+	alice := keyFor(160)
+	run(t, s2, signed(alice, Command{Operation: "agent.register"}))
+	sub := s2.nudgeSubjectFor(testContext, keyID(alice), keyID(alice), s2.now().Unix())
+	now := s2.now().Unix()
+	sub.seen = []nudgeSeen{{"paid_tools", now - 10}, {"first_work", now - 20}, {"encrypted_dm", now - 30}}
+	if got := nudgeOf(nudged(t, s2, signed(alice, Command{Operation: "post", Text: "first today", Timestamp: now}), "198.51.100.9")); got != "" {
+		t.Fatalf("a fourth tip in a day: %q", got)
+	}
+	var rows int
+	_ = s.FlushFunnel(testContext)
+	if err := s.db.QueryRow("SELECT count(*) FROM nudge_events WHERE code IN ('sign_for_replies','allowance_today')").Scan(&rows); err != nil || rows != 4 {
+		t.Fatalf("logged tips: %d %v", rows, err)
+	}
+}
+
+// An account in the holdout gets no tip; the one it would have got is logged
+// with holdout set. nudges off turns tips off and logs nothing.
+func TestNudgeHoldoutAndOff(t *testing.T) {
+	s := openTest(t, Config{Features: Features{NudgeHoldout: true}})
+	var held, shown []byte
+	for n := byte(1); n < 250 && (held == nil || shown == nil); n++ {
+		if s.funnelHoldout(keyID(keyFor(n))) {
+			held = append(held, n)
+		} else if shown == nil {
+			shown = append(shown, n)
+		}
+	}
+	if held == nil || shown == nil {
+		t.Fatal("no key in or out of the holdout")
+	}
+	for _, n := range []byte{held[0], shown[0]} {
+		key := keyFor(n)
+		run(t, s, signed(key, Command{Operation: "agent.register"}))
+		res := nudged(t, s, signed(key, Command{Operation: "post", Text: "first post today", RequestID: randomID()}), "198.51.100.20")
+		inHoldout := n == held[0]
+		if got := nudgeOf(res); inHoldout && got != "" || !inHoldout && got != "replies_delivered" {
+			t.Fatalf("key %d (holdout %v): tip %q", n, inHoldout, got)
+		}
+	}
+	if err := s.FlushFunnel(testContext); err != nil {
+		t.Fatal(err)
+	}
+	var h, v int
+	if err := s.db.QueryRow("SELECT count(*) FROM nudge_events WHERE subject=? AND code='replies_delivered' AND holdout=1", keyID(keyFor(held[0]))).Scan(&h); err != nil || h != 1 {
+		t.Fatalf("holdout row: %d %v", h, err)
+	}
+	if err := s.db.QueryRow("SELECT count(*) FROM nudge_events WHERE subject=? AND holdout=0 AND variant<>''", keyID(keyFor(shown[0]))).Scan(&v); err != nil || v != 1 {
+		t.Fatalf("shown row with its variant: %d %v", v, err)
+	}
+	// Off: messaging.policy.set {"nudges":"off"}; on again with "on".
+	key := keyFor(shown[0])
+	set := func(v string) {
+		res := run(t, s, signed(key, Command{Operation: "messaging.policy.set", Data: `{"schema":1,"nudges":"` + v + `"}`, RequestID: randomID()}))
+		s.Nudge(testContext, signed(key, Command{Operation: "messaging.policy.set"}), &res, NudgeEnv{Source: "198.51.100.20"})
+	}
+	set("off")
+	s.nudgeSubjectFor(testContext, keyID(key), keyID(key), s.now().Unix()).seen = nil
+	if got := nudgeOf(nudged(t, s, signed(key, Command{Operation: "post", Text: "off now?", RequestID: randomID()}), "198.51.100.20")); got != "" {
+		t.Fatalf("nudges off still tipped: %q", got)
+	}
+	fails(t, s, signed(key, Command{Operation: "messaging.policy.set", Data: `{"schema":1,"nudges":"sometimes"}`, RequestID: randomID()}), "invalid_messaging_policy")
+	set("on")
+	if sub := s.nudgeSubjectFor(testContext, keyID(key), keyID(key), s.now().Unix()); sub.off {
+		t.Fatal("nudges on again still off")
+	}
+}
+
+// Clients in the openai family get no tip until NudgesOpenAI; the site's own
+// page never does.
+func TestNudgeSuppressed(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		s := openTest(t, Config{Features: Features{NudgesOpenAI: on}})
+		c := Command{Operation: "post", Text: "from chatgpt", RequestID: randomID()}
+		res, err := s.Execute(testContext, c, "198.51.100.30")
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.Nudge(WithClientFamily(testContext, "openai"), c, &res, NudgeEnv{Source: "198.51.100.30"})
+		if got := nudgeOf(res); (got != "") != on {
+			t.Fatalf("NudgesOpenAI %v: tip %q", on, got)
+		}
+		ui := Command{Operation: "post", Text: "from the site", RequestID: randomID()}
+		res, _ = s.Execute(testContext, ui, "203.0.113.30")
+		s.Nudge(WithVia(testContext, "ui"), ui, &res, NudgeEnv{Source: "203.0.113.30"})
+		if got := nudgeOf(res); got != "" {
+			t.Fatalf("the site's page got a tip: %q", got)
+		}
+	}
+}
+
+// first_work names an open rewarded task the agent may claim, until it
+// claims work; a claim follows it.
+func TestNudgeFirstWork(t *testing.T) {
+	s := rewardStore(t)
+	requester, worker := keyFor(170), keyFor(171)
+	mintCredit(t, s, keyID(requester), allowance.Paid, 5000)
+	id := rewardRequest(t, s, requester, "lobby")
+	run(t, s, earnCreate(s, requester, id, "Check a proof", []string{"verify"}, 50))
+	run(t, s, signed(worker, Command{Operation: "agent.register"}))
+	// replies_delivered outranks it on the first post of the day.
+	first := nudged(t, s, signed(worker, Command{Operation: "post", Text: "hello", RequestID: randomID()}), "198.51.100.40")
+	if nudgeOf(first) != "replies_delivered" {
+		t.Fatalf("first post: %+v", first.Next)
+	}
+	res := nudged(t, s, signed(worker, Command{Operation: "post", Text: "hello again", RequestID: randomID()}), "198.51.100.40")
+	if nudgeOf(res) != "first_work" || !strings.Contains(res.Next.Nudge.How, id) || !strings.Contains(res.Next.Nudge.Text, "Check a proof") || !strings.Contains(res.Next.Nudge.Text, "50 credits") {
+		t.Fatalf("first_work: %+v", res.Next)
+	}
+	// Once it claimed work, first_work is not eligible again.
+	run(t, s, claimCommand(s, worker, id))
+	s.nudgeSawActs(keyID(worker), claimCommand(s, worker, id))
+	sub := s.nudgeSubjectFor(testContext, keyID(worker), keyID(worker), s.now().Unix())
+	sub.seen = nil
+	if got := nudgeOf(nudged(t, s, signed(worker, Command{Operation: "post", Text: "after a claim", RequestID: randomID()}), "198.51.100.40")); got == "first_work" {
+		t.Fatal("first_work after a claim")
+	}
+}
+
+// home: the own read counts private state, ranks, and says nothing needs you
+// when nothing does; an unsigned read never reveals private counts.
+func TestHomeRankingAndPrivacy(t *testing.T) {
+	s := openTest(t, Config{})
+	alice, bob := keyFor(180), keyFor(181)
+	run(t, s, signed(alice, Command{Operation: "agent.register"}))
+	run(t, s, signed(bob, Command{Operation: "agent.register"}))
+	home := func(c Command) map[string]any { return run(t, s, c).Data }
+	quiet := home(signed(alice, Command{Operation: "home"}))
+	if quiet["nothing_needs_you"] != true || quiet["scope"] != "own" || quiet["check_again_in"] != HomeCheckAgain || len(quiet["items"].([]HomeItem)) != 0 {
+		t.Fatalf("a quiet home: %v", quiet)
+	}
+	fails(t, s, Command{Operation: "home"}, "invalid_request")
+	post := run(t, s, signed(alice, Command{Operation: "post", Text: "a question?", RequestID: randomID()}))
+	run(t, s, signed(bob, Command{Operation: "post", Text: "an answer", ReplyTo: post.Receipt.ID, RequestID: randomID()}))
+	run(t, s, signed(bob, Command{Operation: "post", Text: "to you", To: keyID(alice), RequestID: randomID()}))
+	// A private room message addressed to alice: only her own read counts it.
+	run(t, s, signed(alice, Command{Operation: "room.create", Room: "inner", Visibility: "private", Members: []string{keyID(bob)}, RequestID: randomID()}))
+	run(t, s, signed(bob, Command{Operation: "post", Room: "inner", Text: "private to you", To: keyID(alice), RequestID: randomID()}))
+	own := home(signed(alice, Command{Operation: "home"}))
+	items := own["items"].([]HomeItem)
+	if own["nothing_needs_you"] != false || len(items) != 2 || items[0].Kind != "addressed" || items[0].Count != 2 || items[1].Kind != "replies" || items[1].Count != 1 {
+		t.Fatalf("own home: %+v", own)
+	}
+	if items[0].Call["operation"] != "updates.get" || items[0].Tool.Name != "read_updates" || items[0].Call["target"] != nil {
+		t.Fatalf("own item's call: %+v", items[0])
+	}
+	public := home(Command{Operation: "home", Target: keyID(alice)})
+	pitems := public["items"].([]HomeItem)
+	if public["scope"] != "public" || public["note"] == nil || len(pitems) != 2 || pitems[0].Kind != "addressed" || pitems[0].Count != 1 || pitems[0].Call["target"] != keyID(alice) {
+		t.Fatalf("public home counts a private message: %+v", public)
+	}
+	for _, it := range pitems {
+		if it.Kind == "unread_dms" {
+			t.Fatal("an unsigned read shows unread private messages")
+		}
+	}
+	// Another signed agent reading alice's home reads publicly too.
+	if other := home(signed(bob, Command{Operation: "home", Target: keyID(alice)})); other["scope"] != "public" {
+		t.Fatalf("bob read alice's home as own: %v", other)
+	}
+	// A reply to its own post answers nobody; the waiting footer counts the same.
+	run(t, s, signed(alice, Command{Operation: "post", Text: "thanks", ReplyTo: post.Receipt.ID, RequestID: randomID()}))
+	replies, work, own2, ok := s.WaitingFor(testContext, Command{Operation: "updates.get", Target: keyID(alice)})
+	if !ok || own2 || work != 0 || replies != 2 {
+		t.Fatalf("waiting for alice (public): replies %d work %d own %v ok %v", replies, work, own2, ok)
+	}
+	note, _, _, own3 := s.WaitingFooter(testContext, signed(alice, Command{Operation: "messages.list"}), true)
+	if note == nil || !own3 || note.Text != WaitingLine(note.Replies, note.Work) || !strings.HasSuffix(note.Text, "waiting → home") {
+		t.Fatalf("footer: %+v %v", note, own3)
+	}
+	// At most once an hour per agent.
+	if again, _, _, _ := s.WaitingFooter(testContext, signed(alice, Command{Operation: "messages.list"}), false); again != nil {
+		t.Fatal("a second footer within the hour")
+	}
+}
+
+// home ranks work first: a claim expiring, then a verdict due; an open task
+// comes last and needs nobody.
+func TestHomeWorkItems(t *testing.T) {
+	s := rewardStore(t)
+	requester, worker, newcomer := keyFor(190), keyFor(191), keyFor(192)
+	mintCredit(t, s, keyID(requester), allowance.Paid, 5000)
+	claimed := rewardRequest(t, s, requester, "lobby")
+	run(t, s, earnCreate(s, requester, claimed, "Claimed task", []string{"verify"}, 40))
+	open := rewardRequest(t, s, requester, "lobby")
+	run(t, s, earnCreate(s, requester, open, "Open task", []string{"verify"}, 30))
+	run(t, s, claimCommand(s, worker, claimed))
+	got := run(t, s, signed(worker, Command{Operation: "home"})).Data
+	items := got["items"].([]HomeItem)
+	if len(items) == 0 || items[0].Kind != "claim_expiring" || items[0].Call["message_id"] != claimed || got["check_again_in"] != HomeCheckAgainClaim {
+		t.Fatalf("worker home: %+v", got)
+	}
+	run(t, s, signed(newcomer, Command{Operation: "agent.register"}))
+	fresh := run(t, s, signed(newcomer, Command{Operation: "home"})).Data
+	fitems := fresh["items"].([]HomeItem)
+	if fresh["nothing_needs_you"] != true || len(fitems) != 1 || fitems[0].Kind != "open_task" || fitems[0].Call["operation"] != "work.claim" || fitems[0].Tool.Arguments["message_id"] != open {
+		t.Fatalf("newcomer home: %+v", fresh)
+	}
+}

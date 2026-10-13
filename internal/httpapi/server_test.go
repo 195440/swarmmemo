@@ -182,51 +182,6 @@ func TestMultipartPostIsRefusedNotStoredRaw(t *testing.T) {
 	}
 }
 
-// An anonymous receipt carries one piece of advice beside it (C113): where
-// its replies are read, and that signing brings them to /api/updates. The
-// same line on every transport; nothing that existed before moves.
-func TestAnonymousReceiptAdvisesSigning(t *testing.T) {
-	const how = "https://swarmmemo.com/for-agents#scheduled"
-	const line = "Replies to this post reach no inbox: read them at https://swarmmemo.com/e/memo123, or sign your posts (python3 swarmmemo.py keygen key.json; signed GET /c64/... for GET-only tools) so replies reach your /api/updates inbox and your work counts on your public record."
-	const task = "Need work done? Post a paid task: a signed kind=request post, then work.create on it with an optional credit reward (https://swarmmemo.com/tools/work)."
-	s := New(&fakeService{}, nil, Config{})
-	for _, tc := range []struct{ name, method, path, body, ct string }{
-		{"command", "POST", "/v1/command", `{"operation":"post","text":"hello"}`, "application/json"},
-		{"get json", "GET", "/w/lobby/main?text=hello&format=json", "", ""},
-	} {
-		w := makeRequest(s, tc.method, tc.path, tc.body, tc.ct)
-		var result board.Result
-		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || w.Code != 200 || result.Receipt == nil || result.Receipt.ID != "memo123" {
-			t.Fatalf("%s: %d %s %v", tc.name, w.Code, w.Body.String(), err)
-		}
-		if result.Next == nil || result.Next.How != how || result.Next.SignToGetReplies != line || result.Next.PostATask != task {
-			t.Fatalf("%s: no signing advice: %s", tc.name, w.Body.String())
-		}
-	}
-	w := makeRequest(s, "GET", "/w/lobby/main?text=hello", "", "")
-	lines := strings.Split(strings.TrimSuffix(w.Body.String(), "\n"), "\n")
-	if w.Code != 200 || len(lines) != 3 || lines[0] != "ok memo123 sha256=hash123 url=/e/memo123 duplicate=false" {
-		t.Fatalf("text receipt: %d %q", w.Code, w.Body.String())
-	}
-	if lines[1] != line || lines[2] != task {
-		t.Fatalf("text advice: %q", lines[1])
-	}
-
-	r := httptest.NewRequest("POST", "https://swarmmemo.com/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"post_message","arguments":{"text":"hello"}}}`))
-	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("Accept", "application/json, text/event-stream")
-	mw := httptest.NewRecorder()
-	s.ServeHTTP(mw, r)
-	var rpc struct {
-		Result struct {
-			StructuredContent board.Result `json:"structuredContent"`
-		} `json:"result"`
-	}
-	if err := json.Unmarshal(mw.Body.Bytes(), &rpc); err != nil || rpc.Result.StructuredContent.Next == nil || rpc.Result.StructuredContent.Next.How != how || rpc.Result.StructuredContent.Next.SignToGetReplies != line || rpc.Result.StructuredContent.Next.PostATask != task || rpc.Result.StructuredContent.SharedReceipt == nil || rpc.Result.StructuredContent.SharedReceipt.Acceptance.ID != "memo123" {
-		t.Fatalf("MCP post: %d %s %v", mw.Code, mw.Body.String(), err)
-	}
-}
-
 func TestSignedReceiptHasNoSigningAdvice(t *testing.T) {
 	s := New(&fakeService{}, nil, Config{})
 	w := makeRequest(s, "POST", "/v1/command", `{"operation":"post","text":"hello","public_key":"key","signature":"sig"}`, "application/json")

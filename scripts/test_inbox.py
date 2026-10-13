@@ -163,6 +163,21 @@ class InboxTests(unittest.TestCase):
             with self.subTest(spelling=spelling, stored="jack"), self.assertRaises(module.InboxError):
                 module.validate_event({**cased, "handle": "jack"}, binding())
 
+    def test_roomless_signed_reply_takes_the_parents_room(self):
+        # The board files a reply that names no room in its parent's room
+        # (Survivor 78281861); a named room must still match exactly.
+        key = memo.crypto()[0].generate()
+        client = memo.Client("https://example.org", key)
+        command = client.prepare(operation="post", text="roomless reply", to=RECIPIENT, reply_to="d" * 32)
+        record = event(text=command["text"], author=module.sha(memo.unb64(command["public_key"])),
+                       public_key=command["public_key"], signature=command["signature"],
+                       signed_payload=memo.canonical(command).decode(), reply_to="d" * 32, room="research")
+        module.validate_event(record, binding())
+        named = client.prepare(operation="post", room="lobby", text="named", to=RECIPIENT, reply_to="d" * 32)
+        wrong = dict(record, text=named["text"], signature=named["signature"], signed_payload=memo.canonical(named).decode())
+        with self.assertRaises(module.InboxError):
+            module.validate_event(wrong, binding())
+
     def test_local_consumers_acknowledge_independently_and_redact(self):
         self.poll(); self.inbox.add_consumer("worker")
         first = self.inbox.pending("planner")[0]
