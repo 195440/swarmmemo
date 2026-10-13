@@ -1,5 +1,5 @@
 {{define "review-facts"}}{{with .}}<div class="review-facts">
-<p class="review-verdict"><span class="review-verdict-word verdict-{{.Verdict}}">{{.Verdict}}</span>{{if .Lab}}{{with .LabVerdict}} <span class="muted">({{.}})</span>{{end}}{{if .Score}} <strong class="review-score">{{with .Grade}}{{.}} {{end}}{{.Score}}</strong>{{with .Band}} <span class="muted">({{index . 0}}–{{index . 1}})</span>{{end}}{{end}}{{if not .Recomputed}} <span class="badge" title="Its full record has not recomputed to this result, so it is the lab's claim only.">self-reported</span>{{end}}{{end}}{{range .Flags}} <span class="badge review-flag">{{.}}</span>{{end}}
+<p class="review-verdict"><span class="review-verdict-word verdict-{{.Verdict}}">{{.Verdict}}</span>{{if .Lab}}{{with .LabVerdict}} <span class="muted">({{.}})</span>{{end}}{{if .Score}} <strong class="review-score">{{with .Grade}}{{.}} {{end}}{{.Score}}</strong>{{with .Band}} <span class="muted">({{index . 0}}–{{index . 1}})</span>{{end}}{{end}}{{if not .Recomputed}} <span class="badge" title="Its full record has not recomputed to this result, so it is the lab's claim only.">self-reported</span>{{end}}{{end}}{{range .Flags}} <span class="badge review-flag">{{.}}</span>{{end}}{{with .VersionNote}} <span class="badge review-version" title="The offering changed its title or input after this review; it is listed but not counted.">{{.}}</span>{{end}}
 <span class="review-relationship small muted">{{if .Raised}}{{.Raised}} <span class="sr-only">(raised from {{.Relationship}})</span>{{else}}{{.Relationship}}{{end}}</span></p>
 {{with .Dims}}<dl class="review-dims">{{range .}}<div><dt>{{.Name}}</dt><dd><meter min="0" max="100" value="{{.Value}}" aria-label="{{.Name}}: {{.Value}} of 100">{{.Value}}</meter> <span>{{.Value}}</span></dd></div>{{end}}</dl>{{end}}
 {{with .Evidence}}<ul class="review-evidence">{{range .}}<li class="evidence-{{.State}}"><code>{{.ID}}</code> <span class="badge">{{.State}}</span> <span class="small muted">{{.Class}}{{with .Note}}: {{.}}{{end}}</span></li>{{end}}</ul>{{else}}{{if not .Lab}}<p class="small muted">No evidence cited: weighs as opinion.</p>{{end}}{{end}}
@@ -39,8 +39,11 @@
 <p class="small muted">Republished as given, with attribution and a link; weight 0, never in the lab score or the community order.</p>{{end}}
 <h2>Community reviews</h2>
 {{with .Reward}}<p class="review-reward">{{.Text}} <a href="{{.How}}">How review rewards work</a></p>{{end}}
-{{range .Reviews}}{{template "review-card" .}}{{else}}<p class="empty-note">No community reviews yet.</p>{{end}}
+{{range .Reviews}}{{template "review-card" .}}{{else}}<p class="empty-note">{{if .Earlier}}No reviews of this version yet.{{else}}No community reviews yet.{{end}}</p>{{end}}
 {{with .NextCursor}}<div class="pagination"><span></span><a rel="nofollow" href="{{$.SubjectView.Info.URL}}?cursor={{.}}">More reviews →</a></div>{{end}}
+{{with .Earlier}}<h2>About an earlier version</h2>
+<p class="small muted">The offering changed its title or input after these reviews (it is at version {{$.SubjectView.Info.Version}}), so they are listed here and not counted above.</p>
+{{range .}}{{template "review-card" .}}{{end}}{{end}}
 <details class="detail-section"><summary>How reviews are ordered</summary><p class="small">Each review weighs its best verified evidence (paid use or work 1, observed 0.4, free use 0.3, opinion 0.2) × its author's standing (1 for an account with a public post a day old) × its relationship (owner, affiliate or paid 0, competitor 0.5) × a 180-day half-life, and fresh reviews add at most 3 a day. Lab assessments and other raters are shown apart. Every input is in <a href="/api/subjects/{{path .Info.ID}}">/api/subjects/{{.Info.ID}}</a>.</p></details>
 <h2>Review it</h2>
 {{template "review-how" .Info}}

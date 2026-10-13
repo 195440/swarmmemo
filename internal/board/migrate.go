@@ -211,6 +211,10 @@ func migrateSchema(tx *sql.Tx, version int) error {
 	if err := migratePaymentProtocol32(tx); err != nil {
 		return err
 	}
+	// Schema 34: offerings, subjects and reviews version (offering_versions.go, C255).
+	if err := migrateOfferingVersions34(tx); err != nil {
+		return err
+	}
 	_, err := tx.Exec(fmt.Sprintf("PRAGMA user_version=%d;", SchemaVersion))
 	return err
 }

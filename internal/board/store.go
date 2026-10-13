@@ -290,7 +290,12 @@ CREATE TABLE IF NOT EXISTS leases (
 // 33: mpp_catalogue, the MPP directory's endpoints the x402 catalogue lists
 // beside its own (services/mpp_catalogue.go, C202c). Additive: a schema-32
 // binary would leave the table alone, but it is a new table, so a new version.
-const SchemaVersion = 33
+//
+// 34: offerings.version, subjects.version and reviews.version, an
+// offering's version and the version each review is about (C255,
+// offering_versions.go). The upgrade replays every offering's revisions.
+// A schema-33 binary would count reviews of an earlier version.
+const SchemaVersion = 34
 
 // connPragmas are the per-connection PRAGMAs, in modernc.org/sqlite's DSN
 // syntax. journal_mode=WAL is stored in the database file and set at Open.
@@ -397,6 +402,12 @@ func Open(path string, config Config) (*Store, error) {
 	if version < SchemaVersion {
 		if err = migrateSchema(migration, version); err != nil {
 			return fail(err)
+		}
+		// Schema 34 (C255): versions from each offering's revision history.
+		if version > 0 && version < 34 {
+			if err = backfillOfferingVersions(context.Background(), migration, subjectOptionsFor(config.ServiceID)); err != nil {
+				return fail(err)
+			}
 		}
 	}
 	// Every start: data upkeep that is idempotent and keyed on the data

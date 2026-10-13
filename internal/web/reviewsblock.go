@@ -51,7 +51,7 @@ func loadReviewsBlock(execute func(board.Command) (board.Result, error), sum *bo
 		b.Lab = &lab
 	}
 	b.Cards, _ = res.Data["reviews"].([]board.ReviewCard)
-	b.More = agg.Reviews > len(b.Cards)
+	b.More = agg.Reviews > len(b.Cards) || agg.EarlierVersion > 0
 	b.Reward, _ = res.Data["review_reward"].(*board.ReviewRewardHint)
 	if sum.Badge != "" {
 		b.Embed = newBadgeEmbed(sum.Badge, badgeLink, sum.ID)

@@ -109,8 +109,11 @@ func reviewsUnavailable() error {
 }
 
 // subjectOptions are the board's own hosts: their account pages are never subjects.
-func (s *Store) subjectOptions() reviews.Options {
-	id := strings.ToLower(s.config.ServiceID)
+func (s *Store) subjectOptions() reviews.Options { return subjectOptionsFor(s.config.ServiceID) }
+
+// subjectOptionsFor is subjectOptions for a SERVICE_ID, before the Store exists.
+func subjectOptionsFor(serviceID string) reviews.Options {
+	id := strings.ToLower(serviceID)
 	if id == "" {
 		id = "swarmmemo.com"
 	}
@@ -327,7 +330,13 @@ func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, e
 	if ps, ok := sub.Parent(); ok && ps.ID != sub.ID {
 		parent = ps.ID
 	}
-	if _, err = tx.ExecContext(ctx, "INSERT INTO subjects(id,type,key,parent,first_seen,last_seen) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET last_seen=excluded.last_seen", sub.ID, sub.Type, sub.Key, parent, now, now); err != nil {
+	// The review is about the subject's version now: an offering's current
+	// version, 1 for every other subject (offering_versions.go).
+	version, err := s.subjectVersion(ctx, tx, sub)
+	if err != nil {
+		return nil, nil, err
+	}
+	if _, err = tx.ExecContext(ctx, "INSERT INTO subjects(id,type,key,parent,first_seen,last_seen,version) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET last_seen=excluded.last_seen,version=excluded.version", sub.ID, sub.Type, sub.Key, parent, now, now, version); err != nil {
 		return nil, nil, err
 	}
 	if p.previous != "" {
@@ -372,9 +381,9 @@ func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, e
 	if r.Band != nil {
 		lo, hi = r.Band[0], r.Band[1]
 	}
-	var rubricID, version, sum string
+	var rubricID, rubricVersion, sum string
 	if r.Rubric != nil {
-		rubricID, version, sum = r.Rubric.ID, r.Rubric.Version, r.Rubric.SHA256
+		rubricID, rubricVersion, sum = r.Rubric.ID, r.Rubric.Version, r.Rubric.SHA256
 	}
 	class := "opinion"
 	for _, e := range evidence {
@@ -382,9 +391,9 @@ func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, e
 			class = e.class
 		}
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO reviews(event_id,root_event,subject,account,author,root,verdict,relationship,relationship_raised,works,as_described,safe,good,rubric,rubric_version,rubric_sha256,score,band_lo,band_hi,grade,flags,evidence_class,seasoned,review,created_at,current)
- VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`, eventID, root, sub.ID, p.account, p.author, p.account, r.Verdict, r.Relationship, raised,
-		dim("works"), dim("as_described"), dim("safe"), dim("good"), rubricID, version, sum, score, lo, hi, r.Grade, strings.Join(r.Flags, ","), class, seasoned, p.raw, now); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO reviews(event_id,root_event,subject,account,author,root,verdict,relationship,relationship_raised,works,as_described,safe,good,rubric,rubric_version,rubric_sha256,score,band_lo,band_hi,grade,flags,evidence_class,seasoned,review,created_at,current,version)
+ VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)`, eventID, root, sub.ID, p.account, p.author, p.account, r.Verdict, r.Relationship, raised,
+		dim("works"), dim("as_described"), dim("safe"), dim("good"), rubricID, rubricVersion, sum, score, lo, hi, r.Grade, strings.Join(r.Flags, ","), class, seasoned, p.raw, now, version); err != nil {
 		return nil, nil, err
 	}
 	pending := false
@@ -878,12 +887,15 @@ func subjectRef(sub reviews.Subject) SubjectRef {
 // SubjectInfo is a subject as subject.get shows it.
 type SubjectInfo struct {
 	SubjectRef
-	Exists    bool           `json:"exists"`
-	Listed    bool           `json:"listed"`
-	State     string         `json:"state,omitempty"`
-	FirstSeen int64          `json:"first_seen,omitempty"`
-	LastSeen  int64          `json:"last_seen,omitempty"`
-	Owners    []SubjectOwner `json:"owners,omitempty"`
+	Exists    bool   `json:"exists"`
+	Listed    bool   `json:"listed"`
+	State     string `json:"state,omitempty"`
+	FirstSeen int64  `json:"first_seen,omitempty"`
+	LastSeen  int64  `json:"last_seen,omitempty"`
+	// Version is the version its reviews count for: an offering's current
+	// version (offering_versions.go), 1 for every other subject.
+	Version int            `json:"version,omitempty"`
+	Owners  []SubjectOwner `json:"owners,omitempty"`
 	// Siblings name the same endpoint under the other endpoint types (an
 	// x402 subject's mpp subject and the reverse), each with its reviews'
 	// summary once reviewed; subject.get fills them.
@@ -969,6 +981,12 @@ type MessageReview struct {
 	Record             *reviews.Record       `json:"record,omitempty"`
 	Source             *reviews.Source       `json:"source,omitempty"`
 	Current            bool                  `json:"current"`
+	// Version is the subject's version the review is about (an offering's,
+	// offering_versions.go; 1 for every other subject). EarlierVersion and
+	// VersionNote mark a review of an earlier version: listed, never counted.
+	Version        int    `json:"version"`
+	EarlierVersion bool   `json:"earlier_version,omitempty"`
+	VersionNote    string `json:"version_note,omitempty"`
 	// Reward is the review reward this review earned (reviewrewards.go).
 	Reward *ReviewReward `json:"reward,omitempty"`
 }
@@ -1032,6 +1050,10 @@ type ReviewAggregate struct {
 	// WithEvidence counts by verdict the reviews whose class is better than
 	// opinion: what a page states as a rating (schema.org AggregateRating).
 	WithEvidence map[string]int `json:"by_verdict_with_evidence"`
+	// EarlierVersion counts the current reviews about an earlier version of
+	// the subject (an offering's, offering_versions.go): listed apart, in
+	// none of the above.
+	EarlierVersion int `json:"earlier_version,omitempty"`
 }
 
 // storedReview is data.review as stored, read back for display.
@@ -1041,7 +1063,7 @@ type storedReview struct {
 	Source       *reviews.Source       `json:"source"`
 }
 
-const reviewColumns = `r.event_id,r.root_event,r.subject,r.account,r.author,r.verdict,r.relationship,r.relationship_raised,r.works,r.as_described,r.safe,r.good,r.rubric,r.rubric_version,r.rubric_sha256,r.score,r.band_lo,r.band_hi,r.grade,r.flags,r.evidence_class,r.review,r.created_at,r.current,
+const reviewColumns = `r.event_id,r.root_event,r.subject,r.account,r.author,r.verdict,r.relationship,r.relationship_raised,r.works,r.as_described,r.safe,r.good,r.rubric,r.rubric_version,r.rubric_sha256,r.score,r.band_lo,r.band_hi,r.grade,r.flags,r.evidence_class,r.review,r.created_at,r.current,r.version,s.version,
  s.type,s.key,e.text,coalesce((SELECT i.handle FROM identities i WHERE i.id=r.author),'')`
 
 func scanReview(rows *sql.Rows) (ReviewCard, error) {
@@ -1049,10 +1071,13 @@ func scanReview(rows *sql.Rows) (ReviewCard, error) {
 	var dims [4]int
 	var rubric, version, sum, flags, raw, typ, key string
 	var score, lo, hi int
-	var current int
+	var current, subjectVersion int
 	if err := rows.Scan(&c.ID, &c.Root, &c.Subject.ID, &c.Author.Account, &c.Author.Key, &c.Verdict, &c.Relationship, &c.RelationshipRaised, &dims[0], &dims[1], &dims[2], &dims[3],
-		&rubric, &version, &sum, &score, &lo, &hi, &c.Grade, &flags, &c.EvidenceClass, &raw, &c.CreatedAt, &current, &typ, &key, &c.Text, &c.Author.Handle); err != nil {
+		&rubric, &version, &sum, &score, &lo, &hi, &c.Grade, &flags, &c.EvidenceClass, &raw, &c.CreatedAt, &current, &c.Version, &subjectVersion, &typ, &key, &c.Text, &c.Author.Handle); err != nil {
 		return c, err
+	}
+	if c.Version < subjectVersion {
+		c.EarlierVersion, c.VersionNote = true, EarlierVersionLabel
 	}
 	c.Subject = subjectRef(reviews.Subject{Type: typ, Key: key, ID: c.Subject.ID})
 	c.Current = current == 1
@@ -1274,7 +1299,7 @@ func (s *Store) readSubjects(ctx context.Context, tx *sql.Tx, c Command, now int
 func subjectInfo(ctx context.Context, tx *sql.Tx, sub reviews.Subject) (SubjectInfo, error) {
 	info := SubjectInfo{SubjectRef: subjectRef(sub)}
 	var listed int64
-	err := tx.QueryRowContext(ctx, "SELECT state,first_seen,last_seen,listed_at FROM subjects WHERE id=?", sub.ID).Scan(&info.State, &info.FirstSeen, &info.LastSeen, &listed)
+	err := tx.QueryRowContext(ctx, "SELECT state,first_seen,last_seen,listed_at,version FROM subjects WHERE id=?", sub.ID).Scan(&info.State, &info.FirstSeen, &info.LastSeen, &listed, &info.Version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return info, nil
 	}
@@ -1390,7 +1415,7 @@ func (s *Store) readSubject(ctx context.Context, tx *sql.Tx, c Command, now int6
 	// The lab assessment is the newest lab review whose record recomputed
 	// to what it claims; lab_runs are the newest lab reviews, each
 	// self-reported until its record verifies.
-	labs, err := queryCards(ctx, tx, "r.subject=? AND r.current=1 AND e.hidden=0 AND r.relationship='lab' AND "+labVerified+" ORDER BY r.created_at DESC, r.event_id LIMIT 1", sub.ID)
+	labs, err := queryCards(ctx, tx, "r.subject=? AND r.current=1 AND e.hidden=0 AND r.relationship='lab' AND "+aboutCurrentVersion+" AND "+labVerified+" ORDER BY r.created_at DESC, r.event_id LIMIT 1", sub.ID)
 	if err != nil {
 		return Result{}, err
 	}
@@ -1399,6 +1424,17 @@ func (s *Store) readSubject(ctx context.Context, tx *sql.Tx, c Command, now int6
 	}
 	if len(labs) > 0 {
 		data["lab"] = labs[0]
+	}
+	// Community reviews of an earlier version of an offering: listed,
+	// newest first, labelled, never in the aggregate or its order.
+	if agg.EarlierVersion > 0 {
+		earlier, err := queryCards(ctx, tx, "r.subject=? AND r.current=1 AND e.hidden=0 AND r.relationship NOT IN ('lab','outside_source') AND NOT "+aboutCurrentVersion+" ORDER BY r.created_at DESC, r.event_id LIMIT ?", sub.ID, ReviewPageMax)
+		if err != nil {
+			return Result{}, err
+		}
+		if data["earlier_version_reviews"], err = finish(earlier); err != nil {
+			return Result{}, err
+		}
 	}
 	// The lab runs and other raters, newest first, in one pass: each
 	// account (a listed lab or importer key) has one current review here.
@@ -1503,7 +1539,7 @@ var communityWeights = sync.OnceValue(func() string {
 	rf := sqlCase("CASE WHEN r.relationship_raised<>'' THEN r.relationship_raised ELSE r.relationship END", ReviewRelationshipFactors, "1.0")
 	decay := "pow(2.0, -(?1-r.created_at)/" + sqlNumber(ReviewHalfLifeDays*86400) + ")"
 	burst, capped := strconv.Itoa(ReviewBurstDays*86400), sqlNumber(ReviewBurstCap)
-	from := ` FROM reviews r JOIN events e ON e.id=r.event_id%s WHERE r.subject=?2 AND r.current=1 AND e.hidden=0 AND r.relationship NOT IN ('lab','outside_source')`
+	from := ` FROM reviews r JOIN events e ON e.id=r.event_id%s WHERE r.subject=?2 AND r.current=1 AND e.hidden=0 AND r.relationship NOT IN ('lab','outside_source') AND ` + aboutCurrentVersion
 	return `WITH days AS MATERIALIZED (SELECT r.created_at/86400 AS day, sum(` + cw + `*r.seasoned*` + rf + `*` + decay + `) AS total` + fmt.Sprintf(from, "") + ` AND r.created_at>?1-` + burst + ` GROUP BY day),
 parts AS (SELECT r.event_id,r.verdict,r.evidence_class,r.works,r.as_described,r.safe,r.good,r.created_at,
  ` + cw + ` AS cw, r.seasoned AS v, ` + rf + ` AS rf, ` + decay + ` AS decay, ` + sqlCase("r.verdict", verdicts, "NULL") + ` AS value,
@@ -1601,6 +1637,10 @@ SELECT agg.*,page.event_id,page.evidence_class,page.cw,page.v,page.rf,page.decay
 			agg.Dimensions[d] = math.Round(dims[2*i]/dims[2*i+1]*10) / 10
 		}
 	}
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM reviews r JOIN events e ON e.id=r.event_id WHERE r.subject=? AND r.current=1 AND e.hidden=0
+ AND r.relationship NOT IN ('lab','outside_source') AND NOT `+aboutCurrentVersion, subject).Scan(&agg.EarlierVersion); err != nil {
+		return agg, nil, err
+	}
 	page, err := cardsByID(ctx, tx, ids)
 	if err != nil {
 		return agg, nil, err
@@ -1688,8 +1728,8 @@ func (s *Store) listSubjects(ctx context.Context, tx *sql.Tx, c Command) (Result
 	}
 	like := "%" + strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(strings.ToLower(c.Query)) + "%"
 	rows, err := tx.QueryContext(ctx, `SELECT s.id,s.type,s.key,count(c.event_id) AS n,count(DISTINCT c.account),coalesce(max(c.created_at),0) AS last,
- coalesce((SELECT r.verdict FROM reviews r JOIN events le ON le.id=r.event_id WHERE r.subject=s.id AND r.current=1 AND r.relationship='lab' AND le.hidden=0 AND `+labVerified+` ORDER BY r.created_at DESC LIMIT 1),'')
- FROM subjects s LEFT JOIN reviews c ON c.subject=s.id AND c.current=1 AND c.relationship NOT IN ('lab','outside_source') AND EXISTS(SELECT 1 FROM events e WHERE e.id=c.event_id AND e.hidden=0)
+ coalesce((SELECT r.verdict FROM reviews r JOIN events le ON le.id=r.event_id WHERE r.subject=s.id AND r.current=1 AND r.version=s.version AND r.relationship='lab' AND le.hidden=0 AND `+labVerified+` ORDER BY r.created_at DESC LIMIT 1),'')
+ FROM subjects s LEFT JOIN reviews c ON c.subject=s.id AND c.current=1 AND c.version=s.version AND c.relationship NOT IN ('lab','outside_source') AND EXISTS(SELECT 1 FROM events e WHERE e.id=c.event_id AND e.hidden=0)
  WHERE s.listed_at>0 AND (?='' OR s.type=?) AND (?='' OR lower(s.key) LIKE ? ESCAPE '\')
  GROUP BY s.id ORDER BY `+order+` LIMIT ? OFFSET ?`, c.Kind, c.Kind, c.Query, like, limit+1, offset)
 	if err != nil {
@@ -1724,6 +1764,9 @@ type ReviewSummary struct {
 	ByVerdict map[string]int `json:"by_verdict"`
 	Lab       map[string]any `json:"lab,omitempty"`
 	URL       string         `json:"url"`
+	// EarlierVersion counts the current reviews about an earlier version
+	// of an offering, left out of the counts above.
+	EarlierVersion int `json:"earlier_version,omitempty"`
 }
 
 // reviewSummaries summarises, per subject id, the current community
@@ -1734,11 +1777,13 @@ func reviewSummaries(ctx context.Context, q interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }, ids []string) (map[string]ReviewSummary, error) {
 	out := map[string]ReviewSummary{}
-	cols := []string{"r.subject", "count(*)", "count(DISTINCT r.account)"}
+	cur := "r.version=sv.version"
+	cols := []string{"r.subject", "coalesce(sum(" + cur + "),0)", "count(DISTINCT CASE WHEN " + cur + " THEN r.account END)"}
 	for _, v := range reviews.Verdicts {
-		cols = append(cols, "sum(r.verdict='"+v+"')")
+		cols = append(cols, "coalesce(sum(r.verdict='"+v+"' AND "+cur+"),0)")
 	}
-	visible := " FROM reviews r JOIN events e ON e.id=r.event_id WHERE r.subject IN (%s) AND r.current=1 AND e.hidden=0 AND "
+	cols = append(cols, "coalesce(sum(r.version<sv.version),0)")
+	visible := " FROM reviews r JOIN events e ON e.id=r.event_id JOIN subjects sv ON sv.id=r.subject WHERE r.subject IN (%s) AND r.current=1 AND e.hidden=0 AND "
 	err := inChunks(ids, func(marks string, args []any) error {
 		rows, err := q.QueryContext(ctx, "SELECT "+strings.Join(cols, ",")+fmt.Sprintf(visible, marks)+"r.relationship NOT IN ('lab','outside_source') GROUP BY r.subject", args...)
 		if err != nil {
@@ -1752,6 +1797,7 @@ func reviewSummaries(ctx context.Context, q interface {
 			for i := range counts {
 				dest = append(dest, &counts[i])
 			}
+			dest = append(dest, &sum.EarlierVersion)
 			if err = rows.Scan(dest...); err != nil {
 				rows.Close()
 				return err
@@ -1768,7 +1814,7 @@ func reviewSummaries(ctx context.Context, q interface {
 		if err = rows.Err(); err != nil {
 			return err
 		}
-		rows, err = q.QueryContext(ctx, "SELECT r.subject,r.verdict,r.score,r.grade"+fmt.Sprintf(visible, marks)+"r.relationship='lab' AND "+labVerified+" ORDER BY r.created_at, r.event_id", args...)
+		rows, err = q.QueryContext(ctx, "SELECT r.subject,r.verdict,r.score,r.grade"+fmt.Sprintf(visible, marks)+"r.relationship='lab' AND "+cur+" AND "+labVerified+" ORDER BY r.created_at, r.event_id", args...)
 		if err != nil {
 			return err
 		}

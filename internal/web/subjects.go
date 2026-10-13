@@ -27,11 +27,14 @@ type subjectPage struct {
 	LabRuns      int
 	Others       []board.ReviewCard
 	Reviews      []board.ReviewCard
-	Aggregate    board.ReviewAggregate
-	Counts       string
-	Verdicts     string
-	NextCursor   string
-	Relay        bool
+	// Earlier are the current reviews of an earlier version of an
+	// offering: listed, labelled, never counted.
+	Earlier    []board.ReviewCard
+	Aggregate  board.ReviewAggregate
+	Counts     string
+	Verdicts   string
+	NextCursor string
+	Relay      bool
 	// Reward is the standing review reward offer while slots are left.
 	Reward *board.ReviewRewardHint
 	// Embed is the subject's "Rated on SwarmMemo" badge to copy.
@@ -62,6 +65,8 @@ type reviewFacts struct {
 	Record          *evidenceFact
 	Source          *reviews.Source
 	Observations    int
+	// VersionNote labels a review of an earlier version of an offering.
+	VersionNote string
 }
 
 type dimFact struct {
@@ -92,6 +97,9 @@ func reviewFactsOf(v any) *reviewFacts {
 	}
 	f := &reviewFacts{Verdict: m.Verdict, LabVerdict: m.LabVerdict, Relationship: m.Relationship, Raised: m.RelationshipRaised, Lab: m.Relationship == "lab",
 		Score: m.Score, Band: m.Band, Grade: m.Grade, Flags: m.Flags, Rubric: m.Rubric, Source: m.Source, Observations: len(m.Observations)}
+	if m.EarlierVersion {
+		f.VersionNote = m.VersionNote
+	}
 	for _, d := range reviews.Dimensions {
 		if v, ok := m.Dimensions[d]; ok {
 			f.Dims = append(f.Dims, dimFact{dimensionLabels[d], v})
@@ -121,7 +129,16 @@ func reviewFactsOf(v any) *reviewFacts {
 
 // countsLine leads a subject's community reviews with counts (RFC 0015 §5.4).
 func countsLine(a board.ReviewAggregate) (string, string) {
+	earlier := ""
+	if a.EarlierVersion == 1 {
+		earlier = " 1 more review is about an earlier version and not counted."
+	} else if a.EarlierVersion > 1 {
+		earlier = fmt.Sprintf(" %d more reviews are about an earlier version and not counted.", a.EarlierVersion)
+	}
 	if a.Reviews == 0 {
+		if earlier != "" {
+			return "No reviews of this version yet." + earlier, ""
+		}
 		return "", ""
 	}
 	plural := func(n int, one, many string) string {
@@ -146,7 +163,7 @@ func countsLine(a board.ReviewAggregate) (string, string) {
 			verdicts = append(verdicts, fmt.Sprintf("%d %s", n, v))
 		}
 	}
-	return line + ".", strings.Join(verdicts, " · ")
+	return line + "." + earlier, strings.Join(verdicts, " · ")
 }
 
 // loadSubject fills p from subject.get; the status is the page's.
@@ -179,6 +196,7 @@ func loadSubject(r *http.Request, p *page, execute func(board.Command) (board.Re
 	}
 	v.Others, _ = res.Data["other_raters"].([]board.ReviewCard)
 	v.Reviews, _ = res.Data["reviews"].([]board.ReviewCard)
+	v.Earlier, _ = res.Data["earlier_version_reviews"].([]board.ReviewCard)
 	v.Aggregate, _ = res.Data["aggregate"].(board.ReviewAggregate)
 	v.NextCursor, _ = res.Data["next_cursor"].(string)
 	v.Reward, _ = res.Data["review_reward"].(*board.ReviewRewardHint)

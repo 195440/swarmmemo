@@ -20,7 +20,7 @@ type offeringPage struct {
 	Path, Name, Title, Description, Price, PayTo, Network, Refund, State string
 	Handle, Fingerprint, Input, PublicKey, Signature, SignedPayload      string
 	Example                                                              string // an input the schema takes, for the curl line
-	Rev, ClaimWindow, SLA                                                int64
+	Rev, Version, ClaimWindow, SLA                                       int64
 	ScreenAnswer                                                         bool
 	Record                                                               map[string]any
 	// Responsiveness is the record's seller line: answered of paid, the
@@ -63,7 +63,7 @@ func loadOffering(r *http.Request, p *page, execute func(board.Command) (board.R
 		return 0
 	}
 	v := &offeringPage{Path: str(o, "path"), Name: str(o, "name"), Title: str(o, "title"), Description: str(o, "description"), Price: str(o, "price"),
-		PayTo: str(o, "pay_to"), Network: str(o, "network"), Refund: str(o, "refund"), State: str(o, "state"), Rev: num("rev"), ClaimWindow: num("claim_window"), SLA: num("sla")}
+		PayTo: str(o, "pay_to"), Network: str(o, "network"), Refund: str(o, "refund"), State: str(o, "state"), Rev: num("rev"), Version: num("version"), ClaimWindow: num("claim_window"), SLA: num("sla")}
 	v.ScreenAnswer, _ = o["screen_answer"].(bool)
 	if pr, ok := o["provider"].(map[string]any); ok {
 		v.Handle, v.Fingerprint = str(pr, "handle"), str(pr, "fingerprint")

@@ -401,13 +401,36 @@ func (s *Store) changeOffering(ctx context.Context, tx *sql.Tx, c Command, a act
 	if err != nil {
 		return Result{}, err
 	}
-	var rev int64
-	if err = tx.QueryRowContext(ctx, `INSERT INTO offerings(account,name,rev,agent,listing,price,pay_to,claim_window,sla,state,screen,created_at,updated_at)
-VALUES(?,?,1,?,?,?,?,?,?,'active',?,?,?)
-ON CONFLICT(account,name) DO UPDATE SET rev=offerings.rev+1,agent=excluded.agent,listing=excluded.listing,price=excluded.price,pay_to=excluded.pay_to,
- claim_window=excluded.claim_window,sla=excluded.sla,state='active',screen=excluded.screen,updated_at=excluded.updated_at
-RETURNING rev`, a.account, l.Name, a.id, string(listing), price, l.PayTo, l.ClaimWindow, l.SLA, screen, now, now).Scan(&rev); err != nil {
+	// A new title or an incompatible input starts a new version: reviews
+	// of the earlier one stay listed, out of the counts (offering_versions.go).
+	version, change := int64(1), ""
+	var prevListing string
+	switch err = tx.QueryRowContext(ctx, "SELECT listing,version FROM offerings WHERE account=? AND name=?", a.account, l.Name).Scan(&prevListing, &version); {
+	case errors.Is(err, sql.ErrNoRows):
+		version = 1
+	case err != nil:
 		return Result{}, err
+	default:
+		var prev offeringListing
+		if json.Unmarshal([]byte(prevListing), &prev) == nil {
+			if change = offeringChange(prev, l); change != "" {
+				version++
+			}
+		}
+	}
+	var rev int64
+	if err = tx.QueryRowContext(ctx, `INSERT INTO offerings(account,name,rev,agent,listing,price,pay_to,claim_window,sla,state,screen,created_at,updated_at,version)
+VALUES(?,?,1,?,?,?,?,?,?,'active',?,?,?,?)
+ON CONFLICT(account,name) DO UPDATE SET rev=offerings.rev+1,agent=excluded.agent,listing=excluded.listing,price=excluded.price,pay_to=excluded.pay_to,
+ claim_window=excluded.claim_window,sla=excluded.sla,state='active',screen=excluded.screen,updated_at=excluded.updated_at,version=excluded.version
+RETURNING rev`, a.account, l.Name, a.id, string(listing), price, l.PayTo, l.ClaimWindow, l.SLA, screen, now, now, version).Scan(&rev); err != nil {
+		return Result{}, err
+	}
+	earlier := 0
+	if change != "" {
+		if earlier, err = s.setOfferingSubjectsVersion(ctx, tx, a.account, l.Name, version); err != nil {
+			return Result{}, err
+		}
 	}
 	if _, err = tx.ExecContext(ctx, "INSERT INTO offering_revisions(account,name,rev,agent,public_key,signature,signed_payload,listing,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
 		a.account, l.Name, rev, a.id, a.publicKey, c.Signature, string(a.canonical), string(listing), now); err != nil {
@@ -421,7 +444,12 @@ RETURNING rev`, a.account, l.Name, a.id, string(listing), price, l.PayTo, l.Clai
 	if err != nil {
 		return Result{}, err
 	}
-	return Result{Data: map[string]any{"offering": v}}, nil
+	data := map[string]any{"offering": v}
+	if change != "" {
+		data["new_version"] = map[string]any{"version": version, "because": change, "earlier_reviews": earlier,
+			"note": fmt.Sprintf("This publish started version %d of the offering, because %s. Reviews written before it are now marked as %s: they stay listed on its page but no longer count in its reviews' counts or score. A description, price or timing edit keeps the version.", version, change, EarlierVersionLabel)}
+	}
+	return Result{Data: data}, nil
 }
 
 // offeringScreenObservation is the screen preflightOfferingScreen ran for
@@ -470,16 +498,19 @@ func accountWallets(ctx context.Context, tx *sql.Tx, account string) (map[servic
 type offeringRow struct {
 	Account, Name, Agent, PayTo, State, Screen string
 	Rev, Price, ClaimWindow, SLA               int64
-	Created, Updated                           int64
-	Listing                                    offeringListing
+	// Version counts the publishes that changed what is reviewed
+	// (offering_versions.go); Rev counts every publish.
+	Version          int64
+	Created, Updated int64
+	Listing          offeringListing
 }
 
-const offeringCols = "account,name,rev,agent,listing,price,pay_to,claim_window,sla,state,screen,created_at,updated_at"
+const offeringCols = "account,name,rev,agent,listing,price,pay_to,claim_window,sla,state,screen,created_at,updated_at,version"
 
 func scanOffering(scan func(...any) error) (offeringRow, error) {
 	var o offeringRow
 	var listing string
-	if err := scan(&o.Account, &o.Name, &o.Rev, &o.Agent, &listing, &o.Price, &o.PayTo, &o.ClaimWindow, &o.SLA, &o.State, &o.Screen, &o.Created, &o.Updated); err != nil {
+	if err := scan(&o.Account, &o.Name, &o.Rev, &o.Agent, &listing, &o.Price, &o.PayTo, &o.ClaimWindow, &o.SLA, &o.State, &o.Screen, &o.Created, &o.Updated, &o.Version); err != nil {
 		return o, err
 	}
 	return o, json.Unmarshal([]byte(listing), &o.Listing)
@@ -686,7 +717,7 @@ func (s *Store) offeringView(ctx context.Context, tx *sql.Tx, o offeringRow, rec
 	l := o.Listing
 	v := map[string]any{
 		"provider": map[string]any{"fingerprint": agent, "handle": handle, "account": o.Account},
-		"name":     o.Name, "rev": o.Rev, "state": o.State, "title": l.Title, "description": l.Description,
+		"name":     o.Name, "rev": o.Rev, "version": o.Version, "state": o.State, "title": l.Title, "description": l.Description,
 		"description_is_untrusted": true,
 		"price":                    l.Price, "units": o.Price, "unit": "USDC",
 		"pay_to": l.PayTo, "claim_window": s.effectiveClaimWindow(o.ClaimWindow), "sla": o.SLA, "refund": l.Refund,

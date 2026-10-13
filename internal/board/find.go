@@ -759,7 +759,7 @@ func (s *Store) findQuality(ctx context.Context, now int64) (map[string]subjectQ
 		}
 		var verdict, grade string
 		var lo int
-		err = tx.QueryRowContext(ctx, "SELECT r.verdict,r.grade,r.band_lo FROM reviews r JOIN events e ON e.id=r.event_id WHERE r.subject=? AND r.current=1 AND e.hidden=0 AND r.relationship='lab' AND "+labVerified+" ORDER BY r.created_at DESC, r.event_id DESC LIMIT 1", id).Scan(&verdict, &grade, &lo)
+		err = tx.QueryRowContext(ctx, "SELECT r.verdict,r.grade,r.band_lo FROM reviews r JOIN events e ON e.id=r.event_id WHERE r.subject=? AND r.current=1 AND e.hidden=0 AND r.relationship='lab' AND "+aboutCurrentVersion+" AND "+labVerified+" ORDER BY r.created_at DESC, r.event_id DESC LIMIT 1", id).Scan(&verdict, &grade, &lo)
 		switch {
 		case err == nil:
 			q.LabVerdict, q.LabGrade = reviews.LabVerdicts[verdict], grade

@@ -1128,7 +1128,7 @@
     "readOnlyHint": false,
     "title": "Publish offering"
    },
-   "description": "Publish or revise your offering: listing {name, title, description, price, pay_to (a linked wallet)} and optional input, claim_window, sla, refund, screen_answer. Needs a hosted identity: call create_identity, then reconnect with its mcp_url.",
+   "description": "Publish or revise your offering: listing {name, title, description, price, pay_to (a linked wallet)} and optional input, claim_window, sla, refund, screen_answer. A new title or incompatible input starts a new version (data.new_version): earlier reviews are then marked as about an earlier version. Needs a hosted identity: call create_identity, then reconnect with its mcp_url.",
    "name": "publish_offering",
    "title": "Publish offering"
   },
