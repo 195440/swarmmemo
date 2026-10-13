@@ -1554,7 +1554,7 @@ func worksListData(raw string) (eligibleFor, worker, standing string, err error)
 }
 
 // WorksListDataRule is works.list data's shape, the line its refusals end with.
-const WorksListDataRule = `works.list data is {"schema":1,"eligible_for":AGENT,"worker":AGENT,"standing":WORK_ID}, each field optional; AGENT is a key fingerprint or a registered handle, standing a standing task's ID (lists the results it opened).`
+const WorksListDataRule = `works.list data is {"schema":1,"eligible_for":AGENT,"worker":AGENT,"standing":WORK_ID}, each field optional; AGENT is a key fingerprint or a registered handle, standing a standing task's ID (lists the results it opened, data.standing its seats).`
 
 func (s *Store) readWork(ctx context.Context, tx *sql.Tx, c Command, a actor, now int64) (Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -1779,6 +1779,16 @@ func (s *Store) readWork(ctx context.Context, tx *sql.Tx, c Command, a actor, no
 		works[i].RequesterRecord = records[stored[i].Requester]
 	}
 	result := Result{Data: map[string]any{"works": works, "has_more": hasMore}}
+	if standing != "" {
+		// The standing task's own seats ride along with its results.
+		summary, err := standingSummary(ctx, tx, standing, generation, a, now)
+		if err != nil {
+			return Result{}, workReadError(err)
+		}
+		if summary != nil {
+			result.Data["standing"] = summary
+		}
+	}
 	if hasMore {
 		page := stored[len(stored)-1].ID
 		if earn {

@@ -16,7 +16,7 @@ func TestWorkSSRStandingTask(t *testing.T) {
 	requester := board.AgentRef{ID: strings.Repeat("2", 64)}
 	root := board.Work{ID: standingID, Room: "bounties", Title: "Standing bug bounty", State: "open", StoredState: "open", Requester: requester, Eligibility: "open",
 		Reward: &board.WorkReward{Amount: 14000, Unit: "credit", State: "held"}, Deadline: 1789171200,
-		Standing: &board.WorkStanding{Seats: 10, Open: 7, Submitted: 3, Paid: 12, Results: 15, PerAgentDay: 1, DayMax: 10, VerdictTTL: board.WorkStandingVerdictTTL, ResultsUntil: 1788912000,
+		Standing: &board.WorkStanding{WorkStandingSeats: board.WorkStandingSeats{Seats: 10, Open: 7, Submitted: 3, Paid: 12, PerAgentDay: 1}, Results: 15, DayMax: 10, VerdictTTL: board.WorkStandingVerdictTTL, ResultsUntil: 1788912000,
 			Tiers: []board.WorkStandingTier{{Name: "bug", Credits: 2000, USDC: "0.2"}, {Name: "bug+fix", Credits: 2000, USDC: "0.4"}}}}
 	result := board.Work{ID: resultID, Room: "bounties", Title: "Standing bug bounty", State: "cancelled", StoredState: "cancelled", Requester: requester, Eligibility: "open", StandingID: standingID, Deadline: 1788566400}
 	s := &testService{execute: func(c board.Command) (board.Result, error) {

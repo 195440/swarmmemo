@@ -190,6 +190,8 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(self.last(False), {"operation": "works.list", "kind": "rewarded", "limit": 5})
         self.signed.works(kind="earn", eligible_for=AGENT)
         self.assertEqual(self.last(), {"operation": "works.list", "kind": "earn", "data": f'{{"schema":1,"eligible_for":"{AGENT}"}}'})
+        self.anonymous.works(standing=MESSAGE)
+        self.assertEqual(self.last(False), {"operation": "works.list", "data": f'{{"schema":1,"standing":"{MESSAGE}"}}'})
         self.anonymous.work(MESSAGE, agent=AGENT)
         self.assertEqual(self.last(False), {"operation": "work.get", "message_id": MESSAGE, "target": AGENT})
         self.signed.work_claim(MESSAGE, generation=GENERATION, request_id="c-1")

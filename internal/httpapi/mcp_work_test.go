@@ -3,6 +3,7 @@ package httpapi
 import (
 	"crypto/ed25519"
 	"encoding/json"
+	"maps"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
@@ -307,11 +308,99 @@ func TestMCPFindWorkCompactByDefault(t *testing.T) {
 	if len(detailed) != 12 || dig(detailed[0], "request", "text") == nil || dig(detailed[0], "requester") == nil {
 		t.Fatalf("detail rows %v", detailed[0])
 	}
+	// standing filters to a standing task's results: a plain task has none,
+	// and no seats to carry.
+	plain := mustTool(t, s, "/mcp", "", "find_work", map[string]any{"standing": rows[0].(map[string]any)["id"]})
+	if len(works(plain)) != 0 || dig(plain, "data", "standing") != nil {
+		t.Fatalf("find_work standing on a plain task: %v", plain["data"])
+	}
 	var api map[string]any
 	if err := json.Unmarshal(makeRequest(s, "GET", "/api/works", "", "").Body.Bytes(), &api); err != nil {
 		t.Fatal(err)
 	}
 	if rows := dig(api, "data", "works").([]any); len(rows) != 12 || dig(rows[0], "request", "text") == nil {
 		t.Fatalf("/api/works changed: %d rows, %v", len(rows), rows[0])
+	}
+}
+
+// C302: a standing task's open seats have one name on every surface,
+// standing.open, read from the Go fields that carry it (board.Work.Standing,
+// board.WorkStandingSeats.Open): the find_work compact row and description,
+// the docs and the clients. seats_open survives only as the documented
+// deprecated alias for one release.
+func TestStandingOpenSeatsOneName(t *testing.T) {
+	tag := func(v any, field string) string {
+		t.Helper()
+		f, ok := reflect.TypeOf(v).FieldByName(field)
+		if !ok {
+			t.Fatalf("%T has no %s", v, field)
+		}
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		return name
+	}
+	standing, open := tag(board.Work{}, "Standing"), tag(board.WorkStandingSeats{}, "Open")
+	canonical := standing + "." + open
+	if canonical != "standing.open" || tag(compactWork{}, "Standing") != standing {
+		t.Fatalf("canonical name %q, compact row %q", canonical, tag(compactWork{}, "Standing"))
+	}
+
+	// The compact row carries the seat summary under read_work's names,
+	// plus the deprecated alias with the same number.
+	full := &board.WorkStanding{WorkStandingSeats: board.WorkStandingSeats{Seats: 10, Open: 3, Submitted: 4, Owed: 1, Paid: 2, PerAgentDay: 1}, Results: 9, DayMax: 10}
+	result := board.Result{Data: map[string]any{"works": []board.Work{{ID: strings.Repeat("a", 32), Standing: full}}, "has_more": false, "standing": full}}
+	if err := compactWorks(&result, "https://swarmmemo.com"); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(result.Data)
+	var got struct {
+		Works    []map[string]any `json:"works"`
+		Standing map[string]any   `json:"standing"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	row := got.Works[0]
+	seats, _ := row[standing].(map[string]any)
+	keys := slices.Sorted(maps.Keys(seats))
+	want := slices.Sorted(slices.Values(board.WorkStandingSeatNames()))
+	if !slices.Equal(keys, want) || seats[open] != float64(3) || row["seats_open"] != float64(3) {
+		t.Fatalf("compact row %v, want standing keys %v", row, want)
+	}
+	// The list's own summary passes through compaction whole: the
+	// standing task's standing object, every field read_work shows.
+	if got.Standing[open] != float64(3) || got.Standing["results"] != float64(9) {
+		t.Fatalf("data.standing %v", got.Standing)
+	}
+
+	// The description names the summary from the same struct.
+	var description string
+	for _, spec := range mcpTools {
+		if spec.Name == "find_work" {
+			description = spec.Desc
+		}
+	}
+	if !strings.Contains(description, mcpStandingSeats) || !strings.Contains(mcpStandingSeats, standing+" {") || !strings.Contains(mcpStandingSeats, open) || strings.Contains(description, "seats_open") {
+		t.Fatalf("find_work description: %q", description)
+	}
+
+	// Docs and clients say standing.open; seats_open appears once, as the
+	// deprecated alias, in PROTOCOL.md, and nowhere else.
+	for _, path := range []string{"../../docs/PROTOCOL.md", "../../docs/TOOLS_WORK.md", "../../clients/python/swarmmemo.py", "../../clients/javascript/swarmmemo.mjs", "../../clients/mcp/operations.py"} {
+		src, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(src)
+		aliases := strings.Count(text, "seats_open")
+		if path == "../../docs/PROTOCOL.md" {
+			if aliases != 1 || !strings.Contains(text, "`seats_open` is a deprecated alias of `"+canonical+"`") {
+				t.Errorf("%s: seats_open must appear once, as the deprecated alias of %s", path, canonical)
+			}
+		} else if aliases != 0 {
+			t.Errorf("%s names seats_open; the name is %s", path, canonical)
+		}
+		if !strings.HasSuffix(path, ".mjs") && !strings.HasSuffix(path, "operations.py") && !strings.Contains(text, canonical) {
+			t.Errorf("%s does not name %s", path, canonical)
+		}
 	}
 }

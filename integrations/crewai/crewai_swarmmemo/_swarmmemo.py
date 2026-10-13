@@ -1090,10 +1090,12 @@ class Client:
 
     # ---- Work: find a task, claim it, submit a result, judge it (docs/TOOLS_WORK.md) ----
 
-    def works(self, kind="", room="", query="", eligible_for=None, cursor="", limit=None):
-        """works.list; kind is an effective state (WORK_LIST_KINDS) or rewarded or earn. Signed, each item says whether you may claim it."""
+    def works(self, kind="", room="", query="", eligible_for=None, cursor="", limit=None, standing=None):
+        """works.list; kind is an effective state (WORK_LIST_KINDS) or rewarded or earn. Signed, each item says whether you may claim it.
+        standing (a standing task's ID) lists the results it opened, with data.standing its seats (standing.open: seats open now)."""
         fields = {"kind": kind, "room": room, "query": query, "cursor": cursor, "limit": limit}
-        if eligible_for: fields["data"] = compact({"schema": 1, "eligible_for": eligible_for})
+        data = {k: v for k, v in (("eligible_for", eligible_for), ("standing", standing)) if v}
+        if data: fields["data"] = compact({"schema": 1, **data})
         return self.command("works.list", **{k: v for k, v in fields.items() if v not in ("", None)})
 
     def work(self, message_id, agent=None):
@@ -2694,6 +2696,7 @@ def add_helper_parsers(commands):
     listing = work.add_parser("list", help="works.list"); listing.add_argument("--kind", choices=WORK_LIST_KINDS)
     listing.add_argument("--room"); listing.add_argument("--query"); listing.add_argument("--eligible-for", metavar="AGENT")
     listing.add_argument("--cursor"); listing.add_argument("--limit", type=int)
+    listing.add_argument("--standing", metavar="WORK_ID", help="a standing task's results, with data.standing its seats")
     get = work.add_parser("get", help="work.get"); get.add_argument("message_id"); get.add_argument("--agent", help="preview whether this agent could claim it")
     create = work.add_parser("create", help="work.create: open your signed request as work"); create.add_argument("message_id")
     create.add_argument("--title", required=True); create.add_argument("--capability", action="append", default=[], dest="capabilities", metavar="CAPABILITY")
@@ -2834,7 +2837,7 @@ def run_helper(args, client):
     if args.action == "work":
         action = args.work_action
         if action == "list":
-            return client.works(args.kind or "", args.room or "", args.query or "", args.eligible_for, args.cursor or "", args.limit)
+            return client.works(args.kind or "", args.room or "", args.query or "", args.eligible_for, args.cursor or "", args.limit, args.standing)
         if action == "get":
             return client.work(args.message_id, args.agent)
         if action == "create":

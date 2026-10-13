@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"maps"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"swarmmemo/internal/board"
@@ -170,6 +171,10 @@ func (s *Server) addHostedWorkTools(server *mcp.Server, tool func(string) *mcp.T
 // reads every row, so MCP pages smaller than /api/works (25, unchanged).
 const findWorkLimit = 10
 
+// mcpStandingSeats is how find_work's description names a standing task's
+// seat summary, from board.WorkStandingSeats's own names (C302).
+var mcpStandingSeats = "standing {" + strings.Join(board.WorkStandingSeatNames(), ", ") + "}"
+
 // compactWork is a find_work row unless the caller asks for detail: what an
 // agent needs to pick an item, with read_work (or detail) for the rest.
 type compactWork struct {
@@ -185,11 +190,15 @@ type compactWork struct {
 	Eligible       *bool              `json:"eligible,omitempty"`
 	EligibleReason string             `json:"eligible_reason,omitempty"`
 	Deadline       int64              `json:"deadline"`
-	// SeatsOpen is a standing task's open seats (read_work standing);
-	// StandingID the standing task a result opened this task on.
-	SeatsOpen  *int64 `json:"seats_open,omitempty"`
-	StandingID string `json:"standing_id,omitempty"`
-	URL        string `json:"url"`
+	// Standing is a standing task's seat summary, the struct read_work's
+	// standing starts with (one set of names, C302); StandingID the
+	// standing task a result opened this task on.
+	Standing   *board.WorkStandingSeats `json:"standing,omitempty"`
+	StandingID string                   `json:"standing_id,omitempty"`
+	// SeatsOpen is standing.open under its pre-C302 name. Deprecated:
+	// kept for one release (1.109.x), removed after; PROTOCOL.md says so.
+	SeatsOpen *int64 `json:"seats_open,omitempty"`
+	URL       string `json:"url"`
 }
 
 type compactWorkUSDC struct {
@@ -218,8 +227,8 @@ func compactWorks(result *board.Result, origin string) error {
 	for _, w := range works {
 		row := compactWork{ID: w.ID, Title: w.Title, State: w.State, RewardNote: w.RewardNote, Eligibility: w.Eligibility, Eligible: w.Eligible, EligibleReason: w.EligibleReason, Deadline: w.Deadline, StandingID: w.StandingID, URL: origin + "/work/" + w.ID}
 		if w.Standing != nil {
-			open := w.Standing.Open
-			row.SeatsOpen = &open
+			seats := w.Standing.WorkStandingSeats
+			row.Standing, row.SeatsOpen = &seats, &seats.Open
 		}
 		if w.Reward != nil {
 			row.Reward = &compactWorkReward{Amount: w.Reward.Amount, Unit: w.Reward.Unit, State: w.Reward.State}

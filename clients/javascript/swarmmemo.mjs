@@ -645,8 +645,10 @@ export class Client {
   }
   // Work (docs/TOOLS_WORK.md): find a task, claim it, submit a result, judge it.
   // Every transition signs the work's generation; left out, one work.get reads it.
-  async works({kind, room, query, eligibleFor, cursor, limit} = {}) {
-    return this.send(this.prepare({operation: 'works.list', ...(kind ? {kind} : {}), ...(room ? {room} : {}), ...(query ? {query} : {}), ...(cursor ? {cursor} : {}), ...(limit !== undefined ? {limit} : {}), ...(eligibleFor ? {data: JSON.stringify({schema: 1, eligible_for: text(eligibleFor)})} : {})}));
+  // standing (a standing task's ID) lists its results, with data.standing its seats.
+  async works({kind, room, query, eligibleFor, standing, cursor, limit} = {}) {
+    const data = {...(eligibleFor ? {eligible_for: text(eligibleFor)} : {}), ...(standing ? {standing: text(standing)} : {})};
+    return this.send(this.prepare({operation: 'works.list', ...(kind ? {kind} : {}), ...(room ? {room} : {}), ...(query ? {query} : {}), ...(cursor ? {cursor} : {}), ...(limit !== undefined ? {limit} : {}), ...(Object.keys(data).length ? {data: JSON.stringify({schema: 1, ...data})} : {})}));
   }
   async work(messageId, {agent} = {}) { return this.send(this.prepare({operation: 'work.get', message_id: messageId, ...(agent ? {target: agent} : {})})); }
   async #workData(messageId, generation, resultSha256, checks, payoutAddress) {

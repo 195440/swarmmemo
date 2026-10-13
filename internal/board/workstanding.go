@@ -38,6 +38,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -117,18 +118,38 @@ func (st *workStanding) maxUSDC() int64 {
 	return m
 }
 
-// WorkStanding is a standing root's seats as reads show them. Open is the
-// seats a result can take now; Submitted the results waiting for a verdict;
-// Owed the accepted results whose USDC is not yet settled; Paid the other
-// accepted results; Results every result it opened.
+// WorkStandingSeats is a standing root's seat summary and the one source of
+// its names (C302): work.get standing, works.list data standing
+// (?standing=ID) and MCP find_work's compact rows all carry this struct.
+// Open is the seats a result can take now; Submitted the results waiting for
+// a verdict; Owed the accepted results whose USDC is not yet settled; Paid
+// the other accepted results; PerAgentDay the results one agent may open a
+// day.
+type WorkStandingSeats struct {
+	Seats       int64 `json:"seats"`
+	Open        int64 `json:"open"`
+	Submitted   int64 `json:"submitted"`
+	Owed        int64 `json:"owed"`
+	Paid        int64 `json:"paid"`
+	PerAgentDay int64 `json:"per_agent_day"`
+}
+
+// WorkStandingSeatNames is WorkStandingSeats's wire names in order, read
+// from its json tags, for the descriptions that list them.
+func WorkStandingSeatNames() []string {
+	kind := reflect.TypeFor[WorkStandingSeats]()
+	names := make([]string, kind.NumField())
+	for i := range names {
+		names[i], _, _ = strings.Cut(kind.Field(i).Tag.Get("json"), ",")
+	}
+	return names
+}
+
+// WorkStanding is a standing root's seats as reads show them: the seat
+// summary, flattened, and the rest. Results is every result it opened.
 type WorkStanding struct {
-	Seats           int64              `json:"seats"`
-	Open            int64              `json:"open"`
-	Submitted       int64              `json:"submitted"`
-	Owed            int64              `json:"owed"`
-	Paid            int64              `json:"paid"`
+	WorkStandingSeats
 	Results         int64              `json:"results"`
-	PerAgentDay     int64              `json:"per_agent_day"`
 	DayMax          int64              `json:"day_max"`
 	OpenedToday     int64              `json:"opened_today"`
 	Tiers           []WorkStandingTier `json:"tiers"`
@@ -694,7 +715,7 @@ func projectWorkStanding(ctx context.Context, tx *sql.Tx, w workRow, effective s
 	if err != nil {
 		return nil, err
 	}
-	p := &WorkStanding{Seats: st.Seats, Submitted: n.waiting, Owed: n.owed, Paid: n.accepted - n.owed, Results: n.results, PerAgentDay: st.PerAgentDay, DayMax: st.DayMax,
+	p := &WorkStanding{WorkStandingSeats: WorkStandingSeats{Seats: st.Seats, Submitted: n.waiting, Owed: n.owed, Paid: n.accepted - n.owed, PerAgentDay: st.PerAgentDay}, Results: n.results, DayMax: st.DayMax,
 		OpenedToday: n.today, Tiers: st.Tiers, VerdictTTL: st.VerdictTTL, ResultsUntil: w.Deadline - st.VerdictTTL}
 	if st.USDCPerAgentDay > 0 {
 		p.USDCPerAgentDay = services.FormatUSDC(st.USDCPerAgentDay)
@@ -708,6 +729,32 @@ func projectWorkStanding(ctx context.Context, tx *sql.Tx, w workRow, effective s
 	return p, nil
 }
 
+// standingSummary is works.list data standing: the seats of the standing
+// task a ?standing=ID list names, built by projectWorkStanding as work.get
+// builds its own, so an agent reading the results needs no second read.
+// Nil when that task is not visible to the reader or is not standing.
+func standingSummary(ctx context.Context, tx *sql.Tx, id, generation string, a actor, now int64) (*WorkStanding, error) {
+	if _, err := visibleWorkRoot(ctx, tx, id, a); err != nil {
+		var failure *Error
+		if errors.As(err, &failure) && failure.Status == 404 {
+			return nil, nil
+		}
+		return nil, err
+	}
+	w, err := scanWork(tx.QueryRowContext(ctx, `SELECT `+workColumns+` FROM works w WHERE id=?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil || w.StandingID != "" {
+		return nil, err
+	}
+	state, err := effectiveWork(ctx, tx, id, generation, now)
+	if err != nil {
+		return nil, err
+	}
+	return projectWorkStanding(ctx, tx, w, state, now)
+}
+
 // WorkStandingCapabilities is /capabilities work_coordination.standing.
 func WorkStandingCapabilities() map[string]any {
 	return map[string]any{"field": "work.create data seats", "seats_max": WorkStandingSeatsMax, "per_agent_day_default": 1, "day_max_default": "seats", "day_max_max": WorkStandingDayMax,
@@ -717,7 +764,7 @@ func WorkStandingCapabilities() map[string]any {
 		"pool":        "the largest tier's credits times seats, held at create; each result takes one reward from it, a reject or lapse returns it, an accept's next reward refills it from the requester's credits",
 		"verdict_ttl": WorkStandingVerdictTTL, "verdict": "each result has its own deadline, verdict_ttl after it opens; undecided by then it counts as unpaid_lapsed and its seat returns",
 		"results_until": "the standing task's deadline minus verdict_ttl", "reject": "terminal for that task (stored cancelled); the seat reopens", "cancel": "only the standing task itself, not a result",
-		"read":         map[string]any{"standing_task": "work.get standing {seats, open, submitted, owed, paid, results, ...}", "result": "work.get standing_id, and tier once accepted", "list": "/api/works?standing=ID"},
+		"read":         map[string]any{"standing_task": "work.get standing {seats, open, submitted, owed, paid, results, ...}", "result": "work.get standing_id, and tier once accepted", "list": "/api/works?standing=ID, data.standing the same seats"},
 		"refusals":     []string{"standing_needs_result", "seats_full", "seat_limit", "result_in_use"},
 		"instructions": "/protocol.md#standing-tasks"}
 }

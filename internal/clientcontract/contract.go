@@ -41,12 +41,11 @@ type Operation struct {
 	Wire      string   `json:"wire"`
 }
 
-// StructFields reads value's wire fields from its json tags.
+// StructFields reads value's wire fields from its json tags; an untagged
+// embedded struct's fields are flattened, as encoding/json writes them.
 func StructFields(value any) Fields {
 	f := Fields{Required: []string{}, Optional: []string{}}
-	kind := reflect.TypeOf(value)
-	for i := 0; i < kind.NumField(); i++ {
-		field := kind.Field(i)
+	for _, field := range reflect.VisibleFields(reflect.TypeOf(value)) {
 		name, opts, _ := strings.Cut(field.Tag.Get("json"), ",")
 		if !field.IsExported() || name == "" || name == "-" {
 			continue

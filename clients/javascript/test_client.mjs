@@ -406,6 +406,7 @@ test('work, updates, journal, docs, tools and /call helpers send the documented 
   const cases = [
     [() => anonymous.works({kind: 'rewarded', limit: 5}), {operation: 'works.list', kind: 'rewarded', limit: 5}],
     [() => signed.works({kind: 'earn', eligibleFor: agent}), {operation: 'works.list', kind: 'earn', data: `{"schema":1,"eligible_for":"${agent}"}`}],
+    [() => anonymous.works({standing: id}), {operation: 'works.list', data: `{"schema":1,"standing":"${id}"}`}],
     [() => anonymous.work(id, {agent}), {operation: 'work.get', message_id: id, target: agent}],
     [() => signed.claimWork(id, {generation, requestId: 'c-1'}), work({operation: 'work.claim', message_id: id, ttl: 3600, request_id: 'c-1'})],
     [() => signed.claimWork(id, {result: 'r1', generation, resultSha256: 'f'.repeat(64), requestId: 'c-2'}), work({operation: 'work.claim', message_id: id, target: 'r1', request_id: 'c-2'}, `,"result_sha256":"${'f'.repeat(64)}"`)],

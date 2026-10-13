@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -214,9 +215,19 @@ func TestWorkStandingSeatsAcceptRejectLapse(t *testing.T) {
 	if n := sqlCount(t, s, "SELECT count(*) FROM works WHERE standing_id=?", id); n != 7 {
 		t.Fatalf("%d results opened, want 7", n)
 	}
+	listPage := run(t, s, Command{Operation: "works.list", Data: `{"schema":1,"standing":"` + id + `"}`, Limit: 2})
 	listed := run(t, s, Command{Operation: "works.list", Data: `{"schema":1,"standing":"` + id + `"}`}).Data["works"].([]Work)
 	if len(listed) != 7 {
 		t.Fatalf("works.list standing lists %d", len(listed))
+	}
+	// C302: the list carries the standing task's seats, the very object
+	// work.get shows, on every page; a result's ID (not a standing task)
+	// lists nothing and carries none.
+	if got, ok := listPage.Data["standing"].(*WorkStanding); !ok || !reflect.DeepEqual(*got, *standingAt(t, s, id)) {
+		t.Fatalf("works.list standing summary %+v, want work.get's %+v", listPage.Data["standing"], standingAt(t, s, id))
+	}
+	if other := run(t, s, Command{Operation: "works.list", Data: `{"schema":1,"standing":"` + listed[0].ID + `"}`}); len(other.Data["works"].([]Work)) != 0 || other.Data["standing"] != nil {
+		t.Fatalf("a result's ID as standing: %+v", other.Data)
 	}
 	if err := s.Integrity(testContext); err != nil {
 		t.Fatal(err)
