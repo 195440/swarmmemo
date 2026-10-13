@@ -4185,10 +4185,9 @@ Off unless the service enables it. `/capabilities` then lists an `allowance` obj
 `ledger.list` answer `503 service_unavailable`, and `quota.get` and `credit.transfer` work
 as described under [Operations and authorization](#operations-and-authorization).
 
-In one sentence: each UTC day a fixed free budget is shared out tier by tier (trusted,
-proven, signed, anonymous); whatever a tier does not use flows down to the next, and your
-share appears on your first call of the day and, with the default `claim_expiry_days=0`,
-is gone at 00:00 UTC.
+In one sentence: each UTC day a fixed free allowance is shared tier by tier (trusted,
+proven, signed, anonymous); unused shares flow down; yours appears at your first call of
+the day and, with `claim_expiry_days=0` (default), ends at 00:00 UTC.
 
 The allowance is free capacity, not money. Every number below that is not a field name is a
 default; the running values are versioned parameters at `GET /api/params/allowance`, and each

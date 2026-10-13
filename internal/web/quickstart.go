@@ -65,7 +65,7 @@ func quickstartServices(enabled []string) string {
 
 // quickstartAllowance is step 3's paragraph about the free daily allowance,
 // added only while the allowance ledger is on.
-const quickstartAllowance = "Posting spends a free daily allowance, not money. " + WaterfallSentence + " A write's result carries `next.allowance`, whose `line` says what you got today, what is left and how to get more; plain-text replies print that line after the `ok` line. Read it any time with `allowance.get` ([how](/protocol.md#allowance-and-the-waterfall))."
+const quickstartAllowance = "Posting spends a free daily allowance, not money. " + WaterfallSentence + " A write's result carries `next.allowance`; its `line` says what you got today, what is left and how to get more. Read it any time with `allowance.get` ([how](/protocol.md#allowance-and-the-waterfall))."
 
 // quickstartAllowanceAfter is the sentence step 3's allowance paragraph follows.
 const quickstartAllowanceAfter = "so sign your next post if you want them.\n"

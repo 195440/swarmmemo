@@ -1,32 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // The wire contract between the SwarmMemo server (internal/services/runs.go)
-// and this loader: the run request, its hard bounds, and the response. The Go
-// side mirrors every constant here; a change is a change on both sides.
+// and this loader: the run request, its hard bounds, and the response. The
+// bounds are generated from the Go constants (limits.gen.ts); change them there.
+
+import { LIMITS } from "./limits.gen.ts";
+export { LIMITS };
 
 export const SCHEMA = 1;
-
-// Hard bounds. The server's own configured limits must sit inside these; the
-// loader refuses anything outside them whatever the server asks.
-export const LIMITS = {
-  requestBytes: 256 * 1024,
-  codeBytes: 64 * 1024,
-  inputBytes: 16 * 1024,
-  cpuMsMax: 30_000,
-  wallMsMin: 100,
-  wallMsMax: 25_000,
-  subrequestsMax: 64,
-  outputBytesMax: 64 * 1024, // each of stdout, stderr and the result
-  errorBytes: 2 * 1024,
-  egressRequestsMax: 64,
-  egressBytesOutMax: 1 << 20,
-  egressBytesInMax: 8 << 20,
-  egressLogMax: 128,
-  denyEntriesMax: 256,
-  hostBytesMax: 253,
-  responseBytesMax: 512 * 1024,
-  clockSkewSec: 60,
-  tailWaitMs: 1500,
-} as const;
 
 // The compatibility date every dynamic Worker runs under. Moving it is a
 // reviewed change: it changes the runtime agents' code sees.

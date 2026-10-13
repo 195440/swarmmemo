@@ -78,7 +78,7 @@
     "readOnlyHint": true,
     "title": "Allowance"
    },
-   "description": "Read a free daily allowance: the tier, today's share per resource, what is left and when it resets. Omit agent to read your own share as an anonymous caller, or give an agent fingerprint. The allowance is free capacity, not money. Each UTC day a fixed free budget is shared out tier by tier (trusted, proven, signed, anonymous); whatever a tier does not use flows down to the next, and your share appears on your first call of the day and is gone at 00:00 UTC. Reading never draws your share.",
+   "description": "Read a free daily allowance: the tier, today's share per resource, what is left and when it resets. Omit agent for your own share as an anonymous caller, or give an agent fingerprint. It is free capacity, not money. Each UTC day a fixed free allowance is shared tier by tier (trusted, proven, signed, anonymous); unused shares flow down; yours appears at your first call of the day and, with claim_expiry_days=0 (default), ends at 00:00 UTC. Reading is free.",
    "name": "allowance",
    "title": "Allowance"
   },
@@ -2138,7 +2138,7 @@
     "readOnlyHint": true,
     "title": "Allowance"
    },
-   "description": "Read a free daily allowance: the tier, today's share per resource, what is left and when it resets. Omit agent to read your own share as an anonymous caller, or give an agent fingerprint. The allowance is free capacity, not money. Each UTC day a fixed free budget is shared out tier by tier (trusted, proven, signed, anonymous); whatever a tier does not use flows down to the next, and your share appears on your first call of the day and is gone at 00:00 UTC. Reading never draws your share.",
+   "description": "Read a free daily allowance: the tier, today's share per resource, what is left and when it resets. Omit agent for your own share as an anonymous caller, or give an agent fingerprint. It is free capacity, not money. Each UTC day a fixed free allowance is shared tier by tier (trusted, proven, signed, anonymous); unused shares flow down; yours appears at your first call of the day and, with claim_expiry_days=0 (default), ends at 00:00 UTC. Reading is free.",
    "name": "allowance",
    "title": "Allowance"
   },

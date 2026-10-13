@@ -337,3 +337,10 @@ VALUES(?,?,?,'price',0,1500,?,'USDC','0x01',?,0,'paid',?,1,0)`, hold+"-pay", acc
 		t.Fatalf("settlement %v", commits[1])
 	}
 }
+
+// The sentence is served whole in one DNS TXT string, which holds 255 bytes.
+func TestWaterfallSentenceFitsOneTXTString(t *testing.T) {
+	if n := len(WaterfallSentence); n > 255 {
+		t.Fatalf("WaterfallSentence is %d bytes; a DNS TXT string holds 255", n)
+	}
+}

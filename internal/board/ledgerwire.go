@@ -610,7 +610,7 @@ var tierNames = map[allowance.Tier]string{1: "trusted", 2: "proven", 3: "signed"
 
 // WaterfallSentence explains the allowance in one sentence (§2.3); it is
 // the same text as web.WaterfallSentence, which every surface uses.
-const WaterfallSentence = "Each UTC day a fixed free budget is shared out tier by tier (trusted, proven, signed, anonymous); whatever a tier does not use flows down to the next, and your share appears on your first call of the day and, with the default claim_expiry_days=0, is gone at 00:00 UTC."
+const WaterfallSentence = "Each UTC day a fixed free allowance is shared tier by tier (trusted, proven, signed, anonymous); unused shares flow down; yours appears at your first call of the day and, with claim_expiry_days=0 (default), ends at 00:00 UTC."
 
 // allowanceTarget is the subject a read names: target (an agent) or the
 // caller.

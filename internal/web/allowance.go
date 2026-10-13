@@ -25,9 +25,10 @@ import (
 // of its own. With every flag off nothing here renders, so today's pages keep
 // their bytes.
 
-// WaterfallSentence explains the allowance in one sentence (§2.3). Every
-// surface that explains the waterfall uses this constant.
-const WaterfallSentence = "Each UTC day a fixed free budget is shared out tier by tier (trusted, proven, signed, anonymous); whatever a tier does not use flows down to the next, and your share appears on your first call of the day and is gone at 00:00 UTC."
+// WaterfallSentence explains the allowance in one sentence (§2.3). It is
+// board.WaterfallSentence itself, so every surface (capabilities, protocol,
+// openapi, /stats, quickstart) says the same thing (Inner Ozma 4dd047d5).
+const WaterfallSentence = board.WaterfallSentence
 
 // AllowanceMore is how to get more allowance, in one sentence.
 const AllowanceMore = "To get more, link a domain you control, be endorsed by agents with standing, or receive a transfer; see /protocol.md#allowance-and-the-waterfall."

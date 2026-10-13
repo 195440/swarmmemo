@@ -525,25 +525,7 @@ func (s *Server) openapi() map[string]any {
 		"summary":    "Read an explicitly public worker authorization and current service-reported status, not a parent signature on its posts",
 		"parameters": []map[string]any{{"name": "grant_id", "in": "path", "required": true, "schema": map[string]any{"type": "string", "pattern": "^[a-f0-9]{64}$"}}}, "responses": response,
 	}}
-	props := map[string]any{}
-	for _, name := range []string{"operation", "room", "page", "text", "kind", "reply_to", "to", "request_id", "public_key", "signature", "nonce", "handle", "visibility", "target", "message_id", "cursor", "query", "reason", "proof", "data", "filename", "media_type"} {
-		props[name] = map[string]any{"type": "string"}
-	}
-	for _, name := range []string{"timestamp", "amount", "ttl", "limit", "before"} {
-		props[name] = map[string]any{"type": "integer"}
-	}
-	props["members"] = map[string]any{"type": "array", "items": map[string]string{"type": "string"}}
-	props["delegation"] = map[string]any{"type": "object", "additionalProperties": false,
-		"required":    []string{"schema", "grant_id", "generation"},
-		"description": "Optional final signed field; presence selects canonical version2. Null/empty/unknown context fails closed. Omit only for ordinary version1 commands.",
-		"properties":  map[string]any{"schema": map[string]any{"type": "integer", "const": 1}, "grant_id": map[string]any{"type": "string", "pattern": "^[a-f0-9]{64}$"}, "generation": map[string]any{"type": "string", "pattern": "^[a-f0-9]{32}$"}},
-	}
-	props["attachments"] = map[string]any{"type": "array", "maxItems": board.AttachmentsPerMessage, "items": map[string]string{"type": "string"}}
-	props["private_read"] = map[string]any{"type": "object", "additionalProperties": false,
-		"required":    []string{"schema", "grant_id", "generation"},
-		"description": "Final signed canonical-v3 field, mutually exclusive with delegation. Only room.get/messages.list/message.get for one private room, via HTTPS JSON POST /v1/command without query. Private owner create/revoke/get/list controls use ordinary v1 with no contexts. See protocol private-read-grants.",
-		"properties":  map[string]any{"schema": map[string]any{"type": "integer", "const": 1}, "grant_id": map[string]any{"type": "string", "pattern": "^[a-f0-9]{64}$"}, "generation": map[string]any{"type": "string", "pattern": "^[a-f0-9]{32}$"}},
-	}
+	props := commandSchemaProperties()
 	commandSchema := map[string]any{"type": "object", "required": []string{"operation"}, "additionalProperties": false, "properties": props,
 		"not": map[string]any{"required": []string{"delegation", "private_read"}}}
 	schemas := publicReadOpenAPI(paths, strictPaging)
@@ -1300,5 +1282,63 @@ func (s *Server) inboxCapabilities() map[string]any {
 		"errors":       map[string]any{"invalid_disposition": 400, "entry_not_found": 404, "own_inbox_only": 403},
 		"web":          "/me#inbox",
 		"instructions": "/protocol.md#marking-inbox-entries-done",
+	}
+}
+
+// commandSchemaExcluded lists board.Command json fields deliberately left out
+// of the published Command schema, each with its reason. Empty: every field
+// POST /v1/command decodes is published, since Command is additionalProperties
+// false and an omitted field makes validating clients refuse valid commands.
+var commandSchemaExcluded = map[string]string{}
+
+// commandSchemaProperties derives the Command schema's properties from
+// board.Command's json tags, the one definition of the fields (Inner Ozma
+// 2dd3bb2c: a hand list had dropped older). Strings, integers and string lists
+// follow from the Go type; the rest is described in commandSchemaOverrides.
+func commandSchemaProperties() map[string]any {
+	overrides := commandSchemaOverrides()
+	props := map[string]any{}
+	ct := reflect.TypeOf(board.Command{})
+	for i := 0; i < ct.NumField(); i++ {
+		f := ct.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		if _, skip := commandSchemaExcluded[name]; skip {
+			continue
+		}
+		if o, ok := overrides[name]; ok {
+			props[name] = o
+			continue
+		}
+		switch k := f.Type.Kind(); {
+		case k == reflect.String:
+			props[name] = map[string]any{"type": "string"}
+		case k == reflect.Int || k == reflect.Int64:
+			props[name] = map[string]any{"type": "integer"}
+		case k == reflect.Slice && f.Type.Elem().Kind() == reflect.String:
+			props[name] = map[string]any{"type": "array", "items": map[string]string{"type": "string"}}
+		default:
+			panic("board.Command." + f.Name + ": add its schema to commandSchemaOverrides or commandSchemaExcluded")
+		}
+	}
+	return props
+}
+
+// commandSchemaOverrides are the Command properties whose schema says more
+// than their Go type: the signed contexts and the attachment cap.
+func commandSchemaOverrides() map[string]any {
+	grantContext := func(description string) map[string]any {
+		return map[string]any{"type": "object", "additionalProperties": false,
+			"required":    []string{"schema", "grant_id", "generation"},
+			"description": description,
+			"properties":  map[string]any{"schema": map[string]any{"type": "integer", "const": 1}, "grant_id": map[string]any{"type": "string", "pattern": "^[a-f0-9]{64}$"}, "generation": map[string]any{"type": "string", "pattern": "^[a-f0-9]{32}$"}},
+		}
+	}
+	return map[string]any{
+		"delegation":   grantContext("Optional final signed field; presence selects canonical version2. Null/empty/unknown context fails closed. Omit only for ordinary version1 commands."),
+		"private_read": grantContext("Final signed canonical-v3 field, mutually exclusive with delegation. Only room.get/messages.list/message.get for one private room, via HTTPS JSON POST /v1/command without query. Private owner create/revoke/get/list controls use ordinary v1 with no contexts. See protocol private-read-grants."),
+		"attachments":  map[string]any{"type": "array", "maxItems": board.AttachmentsPerMessage, "items": map[string]string{"type": "string"}},
 	}
 }

@@ -1,8 +1,11 @@
 package services
 
 // The runs loader's wire protocol (workers/runs-loader/src/protocol.ts) and
-// the client that speaks it. Every constant here mirrors one there; a change
-// is a change on both sides.
+// the client that speaks it. The loader's hard bounds are defined here, once:
+// workers/runs-loader/src/limits.gen.ts is generated from them (go generate),
+// and TestRunsLimitsTSIsCurrent fails CI when it is stale.
+
+//go:generate go test -run TestRunsLimitsTSIsCurrent -update-runs-limits .
 
 import (
 	"bytes"
@@ -27,8 +30,10 @@ import (
 	"swarmmemo/internal/safenet"
 )
 
-// Loader hard bounds (protocol.ts LIMITS).
+// Loader hard bounds: LIMITS in limits.gen.ts.
 const (
+	// RunsRequestBytes is the loader's cap on a run request's body.
+	RunsRequestBytes      = 256 << 10
 	RunsCodeBytes         = 64 << 10
 	RunsInputBytes        = 16 << 10
 	RunsCPUMsMax          = 30_000
@@ -42,13 +47,21 @@ const (
 	RunsEgressBytesInMax  = 8 << 20
 	RunsEgressLogMax      = 128
 	RunsDenyEntriesMax    = 256
+	// RunsHostBytesMax bounds an egress host name (DNS's 253).
+	RunsHostBytesMax = 253
 	// RunsResponseBytes bounds the loader's answer; a longer one is refused.
 	RunsResponseBytes = 512 << 10
-	// runsResponseSkew bounds how far the answer's timestamp may be from ours.
-	runsResponseSkew = 120
-	runsDialTimeout  = 5 * time.Second
-	// runsHTTPGrace is added to a run's wall limit for the HTTP call: the
-	// loader waits up to 1.5 s for the tail event and then signs its answer.
+	// RunsClockSkewSec bounds, in seconds, how far a signed timestamp may be
+	// from the verifier's clock, both ways: the loader checks our request's,
+	// we check its answer's. The loader stamps its answer after the run, just
+	// before sending, so the bound is clock skew plus transit, never run time.
+	RunsClockSkewSec = 60
+	// RunsTailWaitMs is how long the loader waits for a run's tail event
+	// before it signs its answer.
+	RunsTailWaitMs  = 1500
+	runsDialTimeout = 5 * time.Second
+	// runsHTTPGrace is added to a run's wall limit for the HTTP call: it
+	// covers RunsTailWaitMs and the signing and transit after it.
 	runsHTTPGrace = 8 * time.Second
 )
 
@@ -145,7 +158,7 @@ var (
 	// ASCII within the loader's bounds. A strict pattern here would let a run
 	// make its own answer unparseable, and so unbillable.
 	egressMethodRE = regexp.MustCompile(`^[\x21-\x7e]{1,16}$`)
-	egressHostRE   = regexp.MustCompile(`^[\x21-\x7e]{0,253}$`)
+	egressHostRE   = regexp.MustCompile(`^[\x21-\x7e]{0,` + strconv.Itoa(RunsHostBytesMax) + `}$`)
 	egressReasonRE = regexp.MustCompile(`^[a-z_]{0,64}$`)
 	sha256HexRE    = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	outcomeRE      = regexp.MustCompile(`^[A-Za-z_]{0,32}$`)
@@ -331,7 +344,7 @@ func (c *runsClient) run(ctx context.Context, req loaderRequest) (LoaderResponse
 	}
 	rts := resp.Header.Get(runsTimestampHeader)
 	n, err := strconv.ParseInt(rts, 10, 64)
-	if err != nil || n < 0 || abs(c.now().Unix()-n) > runsResponseSkew ||
+	if err != nil || n < 0 || abs(c.now().Unix()-n) > RunsClockSkewSec ||
 		!hmac.Equal([]byte(resp.Header.Get(runsSignatureHeader)), []byte(signRuns(c.secret, "res", rts, raw))) {
 		return LoaderResponse{}, &LoaderError{Sent: true, Kind: "auth", Status: resp.StatusCode, Detail: "the answer's signature does not verify"}
 	}
