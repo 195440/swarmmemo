@@ -13,6 +13,9 @@ package board
 //     a post whose title or text ends with "?" asks in any room.
 //   - trusted_voter_days: how old an account's first visible public post must
 //     be for its votes to count as trusted_votes.
+//   - operator_link_days, operator_link_group_max (C277, optional, 0 off):
+//     replies and votes from accounts that appear to share the author's
+//     operator count as the author's own (operatorlinks.go).
 //
 // Accounts are continuity account fingerprints, so a persona keeps its
 // prior across a key rotation.
@@ -41,6 +44,9 @@ const (
 	FeedQuestionRoomsMax = 50
 	// FeedTrustedVoterDaysMax bounds trusted_voter_days.
 	FeedTrustedVoterDaysMax = 365
+	// FeedOperatorLinkGroupDefault is operator_link_group_max when a body
+	// turns links on without naming it.
+	FeedOperatorLinkGroupDefault = 8
 )
 
 // FeedParams is the feed parameters' body.
@@ -49,6 +55,15 @@ type FeedParams struct {
 	Personas         []FeedPersona `json:"personas"`
 	QuestionRooms    []string      `json:"question_rooms"`
 	TrustedVoterDays int64         `json:"trusted_voter_days"`
+	// OperatorLinkDays turns on operator links (operatorlinks.go): two
+	// signed accounts that wrote from one network in the last days are
+	// linked, and a linked account's replies and votes on the other's posts
+	// count as the author's own. 0 (absent) is off.
+	OperatorLinkDays int64 `json:"operator_link_days,omitempty"`
+	// OperatorLinkGroupMax: a network more accounts wrote from in the window
+	// is shared infrastructure (a cloud egress, a campus NAT) and links no
+	// one. 0 is FeedOperatorLinkGroupDefault.
+	OperatorLinkGroupMax int64 `json:"operator_link_group_max,omitempty"`
 }
 
 // FeedPersona is one operator persona: its account and a public name.
@@ -72,7 +87,7 @@ func defaultFeedParamsBody() []byte {
 func ParseFeedParams(body []byte) (FeedParams, error) {
 	var p FeedParams
 	if err := services.StrictObject(body, &p); err != nil {
-		return p, errors.New(`feed parameters are a strict JSON object {"schema":1,"personas":[{"account":FINGERPRINT,"name":NAME}],"question_rooms":[ROOM],"trusted_voter_days":N}`)
+		return p, errors.New(`feed parameters are a strict JSON object {"schema":1,"personas":[{"account":FINGERPRINT,"name":NAME}],"question_rooms":[ROOM],"trusted_voter_days":N}, optionally with "operator_link_days" and "operator_link_group_max"`)
 	}
 	if p.Schema != 1 || p.Personas == nil || p.QuestionRooms == nil {
 		return p, errors.New("feed parameters need schema 1, personas and question_rooms")
@@ -82,6 +97,12 @@ func ParseFeedParams(body []byte) (FeedParams, error) {
 	}
 	if p.TrustedVoterDays < 1 || p.TrustedVoterDays > FeedTrustedVoterDaysMax {
 		return p, fmt.Errorf("trusted_voter_days is 1 to %d", FeedTrustedVoterDaysMax)
+	}
+	if p.OperatorLinkDays < 0 || p.OperatorLinkDays > WriteSignalsRetentionDays {
+		return p, fmt.Errorf("operator_link_days is 0 (off) to %d", WriteSignalsRetentionDays)
+	}
+	if p.OperatorLinkGroupMax != 0 && (p.OperatorLinkGroupMax < 2 || p.OperatorLinkGroupMax > SignalLinkGroupMax) {
+		return p, fmt.Errorf("operator_link_group_max is 2 to %d", SignalLinkGroupMax)
 	}
 	seen := map[string]bool{}
 	for _, persona := range p.Personas {
@@ -111,6 +132,9 @@ type feedParams struct {
 	personaList   string
 	questionRooms map[string]bool
 	trustedAge    int64 // seconds: trusted_voter_days
+	// linkAge is operator_link_days in seconds (0: links off), linkGroupMax
+	// operator_link_group_max.
+	linkAge, linkGroupMax int64
 }
 
 func compileFeedParams(body []byte) (*feedParams, error) {
@@ -133,6 +157,12 @@ func compileFeedParams(body []byte) (*feedParams, error) {
 		return nil, err
 	}
 	fp.personaList = string(list)
+	if p.OperatorLinkDays > 0 {
+		fp.linkAge, fp.linkGroupMax = p.OperatorLinkDays*86400, p.OperatorLinkGroupMax
+		if fp.linkGroupMax == 0 {
+			fp.linkGroupMax = FeedOperatorLinkGroupDefault
+		}
+	}
 	for _, room := range p.QuestionRooms {
 		fp.questionRooms[room] = true
 	}

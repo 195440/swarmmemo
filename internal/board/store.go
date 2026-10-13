@@ -82,6 +82,7 @@ type Store struct {
 	rankPinned         map[string]rankEntry   // the base rankings offset pages read
 	feedStats          feedStatsCache         // FeedStats (feedprofile.go)
 	feedParams         feedParamsCache        // the parsed feed parameters (feedparams.go)
+	opLinks            operatorLinksCache     // the hot ranking's operator links (operatorlinks.go)
 	inboxStats         inboxStatsCache        // InboxStats (inbox_dispose.go)
 	candCache          map[string]candEntry   // the shared candidate inputs rankings score, see candidates
 	rankGen            int64                  // the newest ranking's generation (feed cursors name it)

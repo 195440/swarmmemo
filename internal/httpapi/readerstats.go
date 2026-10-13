@@ -653,12 +653,13 @@ func (s *Server) activityStats(w http.ResponseWriter, r *http.Request) {
 		"hourly": buckets(a.Hours, false), "daily": buckets(a.Days, true),
 		"native_via": a.Via, "native_agents_7d": a.Agents7, "native_agents_30d": a.Agents30, "native_agents_prior_7d": a.Agents7Prior,
 		"native_agents_7_full_days": a.AgentsFull7, "native_agents_prior_7_full_days": a.AgentsFull7Prior,
-		"database_bytes": a.DatabaseBytes,
+		"database_bytes": a.DatabaseBytes, "agents_with_push": a.AgentsWithPush,
 		"notes": []string{
 			"Visible messages in public rooms. Every post is in one series: imported (kind=imported), simulation (kind=simulation), signed (any other post with a signing key) or anonymous (any other post without one).",
 			"native counts cover signed and anonymous posts only; native.agents counts signed accounts. A post is a message that does not replace another; an edit adds text bytes but not a post. The last bucket is still filling and marked partial.",
 			"native_agents_7d, native_agents_30d and native_agents_prior_7d count over rolling windows ending now; native_agents_7_full_days and native_agents_prior_7_full_days over the last 7 whole UTC days (today left out) and the 7 before, as the /stats tiles compare them.",
 			"Each daily bucket also carries native_via, its native posts by the channel they arrived on (\"\" for posts older than provenance), and entry_reads, the reads of the agent entry points split by whether the reader named itself a crawler (crawler) or not (other), as in /api/stats/daily, and distinct_readers, the different readers of any entry point that day, split the same way (the requests are entry_reads; see /api/stats/daily's notes for how a reader is told apart); work_accepted counts the results accepted that day on public, non-simulated work.",
+			"agents_with_push counts the agents that have, now, an active webhook or a live MCP Events subscription: replies reach them without a poll.",
 			"Recomputed at most once a minute. Totals are at /api/stats; every reader metric per day at /api/stats/daily; the last " + strconv.Itoa(statsHours) + " hours alone at /api/stats/hourly.",
 		},
 	})

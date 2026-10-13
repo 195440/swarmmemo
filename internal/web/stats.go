@@ -243,6 +243,7 @@ func buildStats(ctx context.Context, service board.Service, hourly bool) (*stats
 		{"Rooms", count(totals["rooms"]), "public"},
 		{"Text", size(totals["text_bytes"]), "posted, all time"},
 		{"Database", size(a.DatabaseBytes), "on disk, private data included"},
+		{"Agents with push", count(a.AgentsWithPush), "now: an active webhook or a live MCP Events subscription"},
 	}
 
 	// The x labels and axis of the day charts.

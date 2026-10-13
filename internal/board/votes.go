@@ -514,15 +514,22 @@ func seqAtOrBefore(ctx context.Context, tx *sql.Tx, t, top int64) (int64, error)
 // the sequence of that age), or the author itself; never an operator
 // persona's (the feed parameters, args: their JSON list after the thread's),
 // whose replies are moderation and support: they lift no post, nor take an
-// anonymous one out of the quiet group.
+// anonymous one out of the quiet group. For an author with operator links
+// (operatorlinks.go; args: their JSON list before the thread's, and again
+// before the voters' with the trusted bound and VoteScanRows), the thread column carries, after a space, each
+// counted replier with its reply count, and one more column its seasoned
+// voters with value and trusted flag, for operatorLinks.collapse.
 var rankInputs = `SELECT e.id,e.seq,e.created_at,coalesce(v.score,0),q.quality,
  (SELECT eq.quality FROM events ev JOIN event_quality eq ON eq.event_id=ev.id WHERE ev.origin=e.id AND ev.origin<>'' ORDER BY ev.seq DESC LIMIT 1),
  EXISTS(SELECT 1 FROM event_flags f WHERE f.root=e.id),
- (SELECT coalesce(sum(t.account<>e.account),0)*` + strconv.Itoa(threadStride) + `+coalesce(sum(t.n>=2),0) FROM
+ (SELECT (coalesce(sum(t.account<>e.account),0)*` + strconv.Itoa(threadStride) + `+coalesce(sum(t.n>=2),0))
+   ||CASE WHEN e.account IN (SELECT value FROM json_each(?)) THEN ' '||coalesce(group_concat(t.account||'='||t.n,','),'') ELSE '' END FROM
   (SELECT x.account,count(*) n FROM (` + threadSample + `) x WHERE x.hidden=0 AND x.public_key<>'' AND x.account NOT IN (SELECT value FROM json_each(?)) GROUP BY x.account) t
   WHERE t.account=e.account OR ` + publicPostBefore("t.account") + `),
  (SELECT coalesce(sum(tv.value),0) FROM (SELECT account,value,seasoned FROM votes WHERE event_id=e.id LIMIT ?) tv
   WHERE tv.seasoned=1 AND ` + publicPostBefore("tv.account") + `),
+ CASE WHEN e.account IN (SELECT value FROM json_each(?)) THEN (SELECT group_concat(tv.account||'='||tv.value||'='||` + publicPostBefore("tv.account") + `,',')
+  FROM (SELECT account,value,seasoned FROM votes WHERE event_id=e.id LIMIT ?) tv WHERE tv.seasoned=1) END,
  e.room,e.account,e.public_key<>'',
  CASE WHEN e.kind IN ('question','request') THEN e.kind ELSE '' END,
  substr(rtrim(e.text,' '||char(9,10,13)),-1)='?' OR substr(rtrim(` + firstLineSQL + `,' '||char(9,13)),-1)='?',
@@ -591,6 +598,7 @@ type rankRead struct {
 	haveTrusted           bool
 	weights               map[string]int64
 	haveWeights           bool
+	links                 *operatorLinks // the operator links (operatorlinks.go), once read
 }
 
 func (rd *rankRead) trustedBound(ctx context.Context, tx *sql.Tx) (int64, int64, error) {
@@ -652,8 +660,15 @@ const (
 // costs one short walk, not a new read of every candidate. cold false leaves
 // a view with no fresh inputs unread (candSkipped). It reads only tx.
 func (s *Store) candidates(ctx context.Context, tx *sql.Tx, v rankView, rd *rankRead, cold bool) (candEntry, int, error) {
-	// The trusted voter bound and the personas are inputs too.
-	key := v.key() + "\x00" + strconv.FormatInt(rd.params.trustedAge, 10) + "\x00" + rd.params.personaList
+	if rd.links == nil {
+		links, err := s.operatorLinks(ctx, tx, rd.params, rd.now)
+		if err != nil {
+			return candEntry{}, 0, err
+		}
+		rd.links = links
+	}
+	// The trusted voter bound, the personas and the operator links are inputs too.
+	key := v.key() + "\x00" + strconv.FormatInt(rd.params.trustedAge, 10) + "\x00" + rd.params.personaList + "\x00" + rd.links.key
 	clock := s.now()
 	s.rankMu.Lock()
 	cached, ok := s.candCache[key]
@@ -687,7 +702,9 @@ func (s *Store) candidates(ctx context.Context, tx *sql.Tx, v rankView, rd *rank
 		return candEntry{}, 0, err
 	}
 	found := map[string]rankedPost{}
-	inputArgs := []any{ReplyScanRows, ReplyScanRows, ReplyScanRows, ReplyScanRows, rd.params.personaList, seasonedSeq, seasoned, VoteScanRows, trustedSeq, trusted}
+	links := rd.links
+	inputArgs := []any{links.list, ReplyScanRows, ReplyScanRows, ReplyScanRows, ReplyScanRows, rd.params.personaList, seasonedSeq, seasoned, VoteScanRows, trustedSeq, trusted,
+		links.list, trustedSeq, trusted, VoteScanRows}
 	collect := func(candidates string, cargs []any) error {
 		rows, err := tx.QueryContext(ctx, fmt.Sprintf(rankInputs, candidates), append(slices.Clone(inputArgs), cargs...)...)
 		if err != nil {
@@ -695,15 +712,23 @@ func (s *Store) candidates(ctx context.Context, tx *sql.Tx, v rankView, rd *rank
 		}
 		for rows.Next() {
 			var r rankedPost
-			var votes, thread int64
-			var text string
-			if err = rows.Scan(&r.id, &r.seq, &r.at, &votes, &r.quality, &r.edited, &r.flagged, &thread, &r.trusted,
+			var votes int64
+			var text, threadCol string
+			var voters sql.NullString
+			if err = rows.Scan(&r.id, &r.seq, &r.at, &votes, &r.quality, &r.edited, &r.flagged, &threadCol, &r.trusted, &voters,
 				&r.room, &r.account, &r.signed, &r.kind, &r.endsQ, &r.handle, &r.title, &text); err != nil {
 				rows.Close()
 				return err
 			}
 			r.urlKey, r.textKey = copyKeys(text)
+			packed, repliers, _ := strings.Cut(threadCol, " ")
+			thread, err := strconv.ParseInt(packed, 10, 64)
+			if err != nil {
+				rows.Close()
+				return fmt.Errorf("thread counts %q: %w", packed, err)
+			}
 			r.replies, r.exchanges = thread/threadStride, thread%threadStride
+			links.collapse(&r, repliers, voters.String, &votes)
 			r.score = rankWeight(votes, weights[r.id])
 			if !r.flagged {
 				found[r.id] = r

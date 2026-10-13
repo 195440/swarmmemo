@@ -119,7 +119,8 @@ func TestSignedSharedReceiptBindsTheStoredCanonicalBytes(t *testing.T) {
 	}
 	result := postResult(t, handler, validator, "POST", "https://swarmmemo.com/v1/command", string(body))
 	shared := result.SharedReceipt
-	if advice(result.Next) != nil || shared.Agreement.Signature != "verified" || shared.Agreement.Spec != "swarmmemo-canonical/1" || shared.Agreement.Vector != "https://swarmmemo.com/clients/python/signing-vector.json" {
+	// The key's first post of the day carries only the push advice (C275).
+	if n := advice(result.Next); n == nil || n.GetRepliesDelivered == "" || n.SignToGetReplies != "" || n.HandleNotApplied != nil || shared.Agreement.Signature != "verified" || shared.Agreement.Spec != "swarmmemo-canonical/1" || shared.Agreement.Vector != "https://swarmmemo.com/clients/python/signing-vector.json" {
 		t.Fatalf("signed agreement: %+v next=%+v", shared.Agreement, result.Next)
 	}
 	if shared.Acceptance.RequestID != "signed-shared-1" || shared.Publication.Visibility != "public" {
@@ -143,7 +144,8 @@ func TestSignedPostHandleAdviceInNext(t *testing.T) {
 		body, _ := json.Marshal(sign(c))
 		return postResult(t, handler, validator, "POST", "https://swarmmemo.com/v1/command", string(body))
 	}
-	if claimed := post(board.Command{Operation: "post", Text: "claim", Handle: "Fixture"}); advice(claimed.Next) != nil {
+	// The first post of the day carries only the push advice (C275).
+	if claimed := post(board.Command{Operation: "post", Text: "claim", Handle: "Fixture"}); advice(claimed.Next) == nil || claimed.Next.HandleNotApplied != nil || claimed.Next.SignToGetReplies != "" {
 		t.Fatalf("first-use claim carried advice: %+v", claimed.Next)
 	}
 	other := post(board.Command{Operation: "post", Text: "rename?", Handle: "someone-else"})

@@ -28,8 +28,11 @@ import (
 // same client, the shape of a sybil ring. Never public: no API, export,
 // notary, journal, MCP tool, stats page or trust snapshot reads this table
 // (TestWriteSignalsNeverPublic); the operator reads it with
-// `swarmmemo signals` and, behind trust parameter standing.signal_link_days
-// (0, off, in version 6), the trust run reads shared-place links from it.
+// `swarmmemo signals`; behind trust parameter standing.signal_link_days
+// (0, off, in version 6), the trust run reads shared-place links from it;
+// and behind feed parameter operator_link_days (C277, 0 off) the hot
+// ranking reads which accounts wrote from one network (readSignalNetworks,
+// operatorlinks.go), never serving them.
 //
 // What a row keeps: the operation, the receipt's id (a message id for a
 // post), the request id, the signing account and key (empty when unsigned),
@@ -644,6 +647,29 @@ func (in trustInputs) readSignalLinks(ctx context.Context, asOf, days int64, emi
 		}
 	}
 	return nil
+}
+
+// readSignalNetworks is, for each network hash under hashKey, the signed
+// accounts that wrote from it between from and to, through tx, for the hot
+// ranking's operator links (operatorlinks.go). Only writes whose address is
+// the writer's own count: not DNS (the resolver's network), the email or
+// Nostr bridges, or an in-process caller.
+func readSignalNetworks(ctx context.Context, tx *sql.Tx, hashKey string, from, to int64) (map[string][]string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT ip_hash_24,account FROM write_signals WHERE created_at>=? AND created_at<=? AND hash_key=?
+ AND account<>'' AND ip_hash_24<>'' AND via NOT IN ('','dns','email','nostr') GROUP BY ip_hash_24,account`, from, to, hashKey)
+	if err != nil {
+		return nil, err
+	}
+	groups := map[string][]string{}
+	for rows.Next() {
+		var net, account string
+		if err = rows.Scan(&net, &account); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		groups[net] = append(groups[net], account)
+	}
+	return groups, closeRows(rows)
 }
 
 func signalSet(m map[string]bool) []string {

@@ -43,6 +43,8 @@ func TestStatsPageRendersChartsWithoutInlineStyle(t *testing.T) {
 		`<svg class="spark" width="100%" height="24" viewBox="0 0 100 24"`, `<svg class="chart-axis" width="100%" height="20"`,
 		// The channel bands: today is all one channel, one post.
 		`<polygon class="band b-1"`, "1 · 100%",
+		// All numbers: agents with a push channel now (C275), no webhook yet.
+		`<dt>Agents with push</dt><dd class="stat-value">0</dd>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("/stats lacks %q", want)

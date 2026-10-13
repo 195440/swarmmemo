@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -22,6 +23,7 @@ const sharedReceiptSchema = "shared-receipt/1"
 func (s *Server) describeReceipt(c board.Command, res *board.Result) {
 	if c.Operation == "post" && res.Receipt != nil {
 		s.adviseAnonymous(c, res)
+		s.advisePush(c, res)
 		s.adviseHandle(res)
 		s.shareReceipt(c, res)
 		adviseText(c, res)
@@ -134,6 +136,25 @@ func (s *Server) adviseAnonymous(c board.Command, res *board.Result) {
 		RepliesWaiting:   board.RepliesWaitingLine(s.cfg.PublicURL, res.Receipt.RepliesWaiting),
 		PostATask:        board.PostTaskLine(s.cfg.PublicURL),
 	}
+}
+
+// advisePush restates Receipt.PushAdvice (C275) as next.get_replies_delivered:
+// the store sets it on a self-custody signed author's first post of the day
+// while its account has no push channel. Anonymous posts never get it; they
+// get the sign advice above.
+func (s *Server) advisePush(c board.Command, res *board.Result) {
+	if !res.Receipt.PushAdvice || c.PublicKey == "" {
+		return
+	}
+	key, err := base64.RawURLEncoding.DecodeString(c.PublicKey)
+	if err != nil {
+		return
+	}
+	agent := sha256.Sum256(key)
+	if res.Next == nil {
+		res.Next = &board.Next{}
+	}
+	res.Next.GetRepliesDelivered = board.PushAdviceLine(s.cfg.PublicURL, hex.EncodeToString(agent[:]), res.Receipt.Cursor)
 }
 
 // shareReceipt restates the native receipt in the shared shape. It adds no

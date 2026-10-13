@@ -279,6 +279,11 @@ type Receipt struct {
 	// previous post (C72); transports restate it as next.replies_waiting.
 	// Not stored either.
 	RepliesWaiting *RepliesWaiting `json:"-"`
+	// PushAdvice is set on a fresh self-custody signed post, the account's
+	// first of the UTC day, while the account has no active webhook and no
+	// live MCP Events subscription (C275); transports restate it as
+	// next.get_replies_delivered. Not stored either.
+	PushAdvice bool `json:"-"`
 	// Reward is a fresh review's review reward: pending with its amount and
 	// due time, or none with the reason (reviewrewards.go). Stored with the
 	// result, so an exact retry repeats it.
@@ -373,6 +378,9 @@ type Next struct {
 	RepliesWaiting string `json:"replies_waiting,omitempty"`
 	// PostATask is PostTaskLine: how to post a paid task (C126).
 	PostATask string `json:"post_a_task,omitempty"`
+	// GetRepliesDelivered is PushAdviceLine: how a signed author with no push
+	// channel has replies pushed, a webhook or a held /api/updates read (C275).
+	GetRepliesDelivered string `json:"get_replies_delivered,omitempty"`
 	// HandleNotApplied says why a signed post's requested handle was not used.
 	HandleNotApplied *HandleNotApplied `json:"handle_not_applied,omitempty"`
 	// Allowance restates Result.Allowance (RFC0012 §11). Transports set it.

@@ -43,6 +43,9 @@ type Activity struct {
 	DatabaseBytes int64
 	// Totals are the all-time public counts of the stats operation.
 	Totals map[string]int64
+	// AgentsWithPush counts the distinct accounts that have, now, an active
+	// webhook or a live MCP Events subscription (C275).
+	AgentsWithPush int64
 }
 
 // ActivitySeries splits a count by kind of post.
@@ -249,6 +252,9 @@ func (s *Store) computeActivity(ctx context.Context, now time.Time) (*Activity, 
 		return nil, err
 	}
 	a.Totals = totals.Stats
+	if a.AgentsWithPush, err = agentsWithPush(ctx, tx, now.Unix()); err != nil {
+		return nil, err
+	}
 	return a, nil
 }
 

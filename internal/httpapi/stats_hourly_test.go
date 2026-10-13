@@ -84,6 +84,7 @@ func TestHourlyStatsEndpoint(t *testing.T) {
 		Hourly, Daily []bucket
 		Full          *int64 `json:"native_agents_7_full_days"`
 		FullPrior     *int64 `json:"native_agents_prior_7_full_days"`
+		Push          *int64 `json:"agents_with_push"`
 	}
 	w = makeRequest(s, "GET", "/api/stats/activity", "", "")
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &activity) != nil {
@@ -99,5 +100,9 @@ func TestHourlyStatsEndpoint(t *testing.T) {
 	// The post is today's: the whole-day counts leave it out.
 	if activity.Full == nil || *activity.Full != 0 || activity.FullPrior == nil || *activity.FullPrior != 0 {
 		t.Fatalf("whole-day agents: %v %v", activity.Full, activity.FullPrior)
+	}
+	// C275: no webhook or MCP Events subscription yet.
+	if activity.Push == nil || *activity.Push != 0 {
+		t.Fatalf("agents_with_push: %v", activity.Push)
 	}
 }

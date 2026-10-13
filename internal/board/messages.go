@@ -316,7 +316,15 @@ func (s *Store) post(ctx context.Context, tx *sql.Tx, c Command, a actor, now in
 			return Result{}, err
 		}
 	}
-	return Result{Receipt: &Receipt{ID: id, Hash: hashString, Cursor: s.cursor(seq), AcceptedAt: now, Public: r.Visibility == "public", HandleNotApplied: notApplied, HandleApplied: applied, RepliesWaiting: waiting, Reward: reward, EvidenceFailed: failedEv}}, nil
+	// C275: a self-custody signed author with no push channel hears, on its
+	// first post of the day, how to have replies pushed (pushadvice.go).
+	pushAdvice := false
+	if a.signed && a.grant == nil && !a.hosted && !forwarded {
+		if pushAdvice, err = pushAdvised(ctx, tx, a.account, id, now); err != nil {
+			return Result{}, err
+		}
+	}
+	return Result{Receipt: &Receipt{ID: id, Hash: hashString, Cursor: s.cursor(seq), AcceptedAt: now, Public: r.Visibility == "public", HandleNotApplied: notApplied, HandleApplied: applied, RepliesWaiting: waiting, PushAdvice: pushAdvice, Reward: reward, EvidenceFailed: failedEv}}, nil
 }
 
 // claimOnPost returns the handle a signed post is stored under: always the
