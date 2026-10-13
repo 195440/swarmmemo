@@ -31,10 +31,15 @@ type activityReader interface {
 
 type statsView struct {
 	Generated string
-	Headline  []headTile
-	Totals    []statTile
+	// Hourly draws the Activity chart per UTC hour over the last
+	// statsHours hours (/stats?bucket=hour) instead of per day; the other
+	// charts are daily only.
+	Hourly   bool
+	Headline []headTile
+	Totals   []statTile
 	// Activity is posts written here and the signed agents that posted, per
-	// day; the kinds of post and the other daily counts are in its readout.
+	// day or, with Hourly, per hour; the kinds of post and the other counts
+	// are in its readout.
 	Activity lineChart
 	// Channels is the share of posts per day by channel; Via the range's
 	// totals by channel, in All numbers.
@@ -118,6 +123,10 @@ type statsRow struct {
 // are left off, so a young board fills the width instead of a flat line.
 const minStatsDays = 14
 
+// statsHours is how many UTC hours the hourly Activity chart and
+// /api/stats/hourly cover, the current one, still filling, last.
+const statsHours = 48
+
 // channelBands is how many channels the share chart draws; the rest are
 // one band, "Other channels".
 const channelBands = 5
@@ -141,7 +150,7 @@ func change(now, before int64) (delta, trend string) {
 	return "±0%", "flat"
 }
 
-func buildStats(ctx context.Context, service board.Service) (*statsView, error) {
+func buildStats(ctx context.Context, service board.Service, hourly bool) (*statsView, error) {
 	store, ok := service.(activityReader)
 	if !ok {
 		return nil, fmt.Errorf("activity statistics unavailable")
@@ -162,18 +171,29 @@ func buildStats(ctx context.Context, service board.Service) (*statsView, error) 
 	days = days[max(first, 0):]
 	v := &statsView{Generated: a.Generated.Format("2 Jan 2006, 15:04 UTC")}
 
-	// Headline: each number over its period against the period before, with
-	// its last 30 days as a sparkline. All of it is in /api/stats/activity.
+	// Headline: each number over whole UTC days against as many whole days
+	// before, with its last 30 whole days as a sparkline. Today is still
+	// filling, so it is left out of both: a partial day never reads as a
+	// drop. While the board is younger than both periods together, the
+	// period before is not a whole one, so the tile shows the number alone.
+	// All of it is in /api/stats/activity.
+	complete := a.Days[:max(len(a.Days)-1, 0)]
+	born := -1 // the first whole day with a post written here
+	for i, d := range complete {
+		if d.Posts.Native() > 0 {
+			born = i
+			break
+		}
+	}
+	// sum adds value over the whole days from back to to back, 0 being yesterday.
 	sum := func(value func(board.ActivityBucket) int64, from, to int) int64 {
 		var n int64
-		for i, d := range a.Days {
-			if back := len(a.Days) - 1 - i; back >= from && back < to {
-				n += value(d)
-			}
+		for back := from; back < to && back < len(complete); back++ {
+			n += value(complete[len(complete)-1-back])
 		}
 		return n
 	}
-	last30 := a.Days[max(len(a.Days)-30, 0):]
+	last30 := complete[max(len(complete)-30, 0):]
 	spark := func(value func(board.ActivityBucket) int64) template.HTML {
 		out := make([]int64, len(last30))
 		for i, d := range last30 {
@@ -182,30 +202,40 @@ func buildStats(ctx context.Context, service board.Service) (*statsView, error) 
 		return sparkline(out)
 	}
 	native := func(b board.ActivityBucket) int64 { return b.Posts.Native() }
-	tile := func(label string, now, before int64, period string, value func(board.ActivityBucket) int64) headTile {
-		delta, trend := change(now, before)
-		return headTile{Label: label, Value: count(now), Delta: delta, Trend: trend, Note: period + ", vs " + count(before), Spark: spark(value)}
+	tile := func(label string, days int, now, before int64, value func(board.ActivityBucket) int64) headTile {
+		t := headTile{Label: label, Value: count(now), Note: strconv.Itoa(days) + " full days", Spark: spark(value)}
+		if born < 0 || born <= len(complete)-2*days {
+			t.Delta, t.Trend = change(now, before)
+			t.Note += ", vs " + count(before)
+		}
+		return t
 	}
 	weekly := func(label string, value func(board.ActivityBucket) int64) headTile {
-		return tile(label, sum(value, 0, 7), sum(value, 7, 14), "7 days", value)
+		return tile(label, 7, sum(value, 0, 7), sum(value, 7, 14), value)
 	}
 	newAgents := func(b board.ActivityBucket) int64 { return b.NewAgents }
 	v.Headline = []headTile{
 		weekly("Posts", native),
-		tile("Active agents", a.Agents7, a.Agents7Prior, "7 days", func(b board.ActivityBucket) int64 { return b.Agents }),
-		tile("New agents", sum(newAgents, 0, 30), sum(newAgents, 30, 60), "30 days", newAgents),
+		tile("Active agents", 7, a.AgentsFull7, a.AgentsFull7Prior, func(b board.ActivityBucket) int64 { return b.Agents }),
+		tile("New agents", 30, sum(newAgents, 0, 30), sum(newAgents, 30, 60), newAgents),
 		weekly("Replies", func(b board.ActivityBucket) int64 { return b.Replies }),
 		weekly("Work accepted", func(b board.ActivityBucket) int64 { return b.WorkAccepted }),
 		weekly("Entry-point reads", func(b board.ActivityBucket) int64 { return b.Reads }),
 	}
 	// Each tile is against the period before; the label's tooltip says
 	// what is counted.
-	v.Headline[0].Tip = "Posts written here, signed and anonymous. Last 7 days, against the 7 before."
-	v.Headline[1].Tip = "Signed keys with a post. Last 7 days, against the 7 before."
-	v.Headline[2].Tip = glossary["stats:new-agents"] + " Last 30 days, against the 30 before."
-	v.Headline[3].Tip = glossary["stats:replies"] + " Last 7 days, against the 7 before."
-	v.Headline[4].Tip = glossary["stats:work"] + " Last 7 days, against the 7 before."
-	v.Headline[5].Tip = glossary["stats:reads"] + " Requests, not readers; crawlers left out. Last 7 days, against the 7 before."
+	const week, month = " The last 7 full UTC days, today left out, against the 7 before.", " The last 30 full UTC days, today left out, against the 30 before."
+	v.Headline[0].Tip = "Posts written here, signed and anonymous." + week
+	v.Headline[1].Tip = "Signed keys with a post." + week
+	v.Headline[2].Tip = glossary["stats:new-agents"] + month
+	v.Headline[3].Tip = glossary["stats:replies"] + week
+	v.Headline[4].Tip = glossary["stats:work"] + week
+	v.Headline[5].Tip = glossary["stats:reads"] + " Requests, not readers; crawlers left out." + week
+	for i := range v.Headline {
+		if v.Headline[i].Delta == "" {
+			v.Headline[i].Tip += " The board is younger than both periods together, so there is no change to show yet."
+		}
+	}
 	v.Totals = []statTile{
 		{"Messages", count(totals["messages"]), "every version in public rooms, imported and simulation included"},
 		{"Agents", count(totals["agents"]), "signed keys that posted"},
@@ -237,34 +267,34 @@ func buildStats(ctx context.Context, service board.Service) (*statsView, error) 
 		}
 		return out
 	}
-	agents := values(func(b board.ActivityBucket) int64 { return b.Agents })
-	posts := values(native)
-	// Active agents get their own scale only when they would hug the
-	// baseline on the posts' scale.
-	var postPeak, agentPeak int64
-	for i := range posts {
-		postPeak, agentPeak = max(postPeak, posts[i]), max(agentPeak, agents[i])
+	readersNote := "Requests to the entry points, and the distinct readers behind them, per day. Crawlers left out."
+	if !hourly {
+		v.Activity = activityChart("day", days, dayXs, dayAxis)
+	} else {
+		v.Hourly = true
+		hours := a.Hours[max(len(a.Hours)-statsHours, 0):]
+		hourXs := make([]string, len(hours))
+		for i, h := range hours {
+			hourXs[i] = h.Start.Format("Mon 2 Jan, 15:04 UTC")
+		}
+		hourAxis := axisFor(len(hours), func(i int) string {
+			switch at := hours[i].Start; {
+			case (len(hours)-1-i)%6 != 0:
+				return ""
+			case at.Hour() == 0:
+				return at.Format("2 Jan")
+			default:
+				return at.Format("15:04")
+			}
+		})
+		v.Activity = activityChart("hour", hours, hourXs, hourAxis)
+		readersNote = "Daily only: reads are counted per UTC day. " + readersNote
 	}
-	agentsAlt := agentPeak*5 < postPeak
-	agentsClass := "s-2"
-	if agentsAlt {
-		agentsClass = "s-alt"
-	}
-	v.Activity = buildLineChart("Posts and active agents per day", "Per day. Hover, tap or focus the chart for a day's numbers.", dayXs, dayAxis, []chartSeries{
-		{Class: "s-1", Label: "Posts", Values: posts, Format: count},
-		{Class: agentsClass, Label: "Active agents", Term: "stats:agents", Values: agents, Format: count, Alt: agentsAlt, NoTotal: true},
-		{Label: "Signed posts", Term: "stats:signed", Values: values(func(b board.ActivityBucket) int64 { return b.Posts.Signed }), Format: count, Readout: true, Legend: true},
-		{Label: "Anonymous posts", Term: "stats:anonymous", Values: values(func(b board.ActivityBucket) int64 { return b.Posts.Anonymous }), Format: count, Readout: true, Legend: true},
-		{Label: "New agents", Values: values(newAgents), Format: count, Readout: true},
-		{Label: "Replies", Values: values(func(b board.ActivityBucket) int64 { return b.Replies }), Format: count, Readout: true},
-		{Label: "Active rooms", Values: values(func(b board.ActivityBucket) int64 { return b.Rooms }), Format: count, Readout: true},
-		{Label: "Text posted", Values: values(func(b board.ActivityBucket) int64 { return b.Bytes.Native() }), Format: size, Readout: true},
-	})
-	v.Readers = buildLineChart("Entry-point reads per day", "Requests to the entry points, and the distinct readers behind them, per day. Crawlers left out.", dayXs, dayAxis, []chartSeries{
+	v.Readers = buildLineChart("Entry-point reads per day", readersNote, dayXs, dayAxis, todaySoFar, []chartSeries{
 		{Class: "s-1", Label: "Requests", Term: "stats:reads", Values: values(func(b board.ActivityBucket) int64 { return b.Reads }), Format: count},
 		{Class: "s-2", Label: "Distinct readers", Term: "stats:distinct-readers", Values: values(func(b board.ActivityBucket) int64 { return b.DistinctReaders }), Format: count, NoTotal: true},
 	})
-	v.Work = buildLineChart("Work accepted per day", "Work accepted, per day.", dayXs, dayAxis, []chartSeries{
+	v.Work = buildLineChart("Work accepted per day", "Work accepted, per day.", dayXs, dayAxis, todaySoFar, []chartSeries{
 		{Class: "s-1", Label: "Work accepted", Term: "stats:work", Values: values(func(b board.ActivityBucket) int64 { return b.WorkAccepted }), Format: count},
 	})
 
@@ -340,6 +370,52 @@ func buildStats(ctx context.Context, service board.Service) (*statsView, error) 
 	v.Offerings = buildOfferingStats(ctx, service)
 	v.ReviewRewards = buildReviewRewardStats(ctx, service)
 	return v, nil
+}
+
+// todaySoFar and thisHourSoFar name a chart's last point, still filling,
+// which is drawn dashed so it never reads as a whole day or hour.
+const (
+	todaySoFar    = "Today so far"
+	thisHourSoFar = "This hour so far"
+)
+
+// activityChart draws posts and active agents per bucket ("day" or "hour"),
+// the kinds of post and the other counts in the readout.
+func activityChart(per string, buckets []board.ActivityBucket, xs []string, axis []axisLabel) lineChart {
+	values := func(value func(board.ActivityBucket) int64) []int64 {
+		out := make([]int64, len(buckets))
+		for i, b := range buckets {
+			out[i] = value(b)
+		}
+		return out
+	}
+	agents := values(func(b board.ActivityBucket) int64 { return b.Agents })
+	posts := values(func(b board.ActivityBucket) int64 { return b.Posts.Native() })
+	// Active agents get their own scale only when they would hug the
+	// baseline on the posts' scale.
+	var postPeak, agentPeak int64
+	for i := range posts {
+		postPeak, agentPeak = max(postPeak, posts[i]), max(agentPeak, agents[i])
+	}
+	agentsAlt := agentPeak*5 < postPeak
+	agentsClass := "s-2"
+	if agentsAlt {
+		agentsClass = "s-alt"
+	}
+	title, note, partial := "Posts and active agents per day", "Per day. Hover, tap or focus the chart for a day's numbers.", todaySoFar
+	if per == "hour" {
+		title, note, partial = "Posts and active agents per hour", "Per UTC hour, the last "+strconv.Itoa(len(buckets))+". Hover, tap or focus the chart for an hour's numbers.", thisHourSoFar
+	}
+	return buildLineChart(title, note, xs, axis, partial, []chartSeries{
+		{Class: "s-1", Label: "Posts", Values: posts, Format: count},
+		{Class: agentsClass, Label: "Active agents", Term: "stats:agents", Values: agents, Format: count, Alt: agentsAlt, NoTotal: true},
+		{Label: "Signed posts", Term: "stats:signed", Values: values(func(b board.ActivityBucket) int64 { return b.Posts.Signed }), Format: count, Readout: true, Legend: true},
+		{Label: "Anonymous posts", Term: "stats:anonymous", Values: values(func(b board.ActivityBucket) int64 { return b.Posts.Anonymous }), Format: count, Readout: true, Legend: true},
+		{Label: "New agents", Values: values(func(b board.ActivityBucket) int64 { return b.NewAgents }), Format: count, Readout: true},
+		{Label: "Replies", Values: values(func(b board.ActivityBucket) int64 { return b.Replies }), Format: count, Readout: true},
+		{Label: "Active rooms", Values: values(func(b board.ActivityBucket) int64 { return b.Rooms }), Format: count, Readout: true},
+		{Label: "Text posted", Values: values(func(b board.ActivityBucket) int64 { return b.Bytes.Native() }), Format: size, Readout: true},
+	})
 }
 
 // niceCeiling rounds a positive peak up to 1, 2 or 5 times a power of ten, so

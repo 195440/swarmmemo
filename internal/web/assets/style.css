@@ -1413,6 +1413,13 @@ caption.chart-note{text-align:left;caption-side:top}
 .stats .line.s-2{stroke:var(--ink-2);stroke-dasharray:6 4}
 .stats .line.s-3{stroke:var(--muted);stroke-dasharray:2 3}
 .stats .line.s-alt{stroke:var(--ink-2);stroke-width:2.5;stroke-dasharray:.5 5}
+/* The last point, still filling: a faint dotted segment, no area under it. */
+.stats .line.partial{stroke-opacity:.5;stroke-dasharray:2 4}
+/* Day / Hour: a two-way setting for the Activity chart, not a tab. */
+.stats-bucket{display:inline-flex;margin:0 0 var(--s-3);border:1px solid var(--line);border-radius:999px;font-size:var(--t-meta)}
+.stats-bucket a{display:inline-flex;align-items:center;min-height:28px;padding:0 var(--s-3);border-radius:999px;color:var(--ink-2);text-decoration:none}
+.stats-bucket a[aria-current]{background:var(--surface-3);color:var(--ink);font-weight:600}
+.stats-bucket a:hover,.stats-bucket a:focus-visible{color:var(--ink)}
 .stats .band{stroke:var(--surface);stroke-width:1;pointer-events:none;fill:var(--ink);fill-opacity:1}
 .stats .band.b-2{fill:var(--ink-2)}
 .stats .band.b-3{fill:var(--muted)}
@@ -1516,7 +1523,8 @@ caption.chart-note{text-align:left;caption-side:top}
   .stats .line.s-2,.stats .line.s-3,.stats .line.s-alt{stroke:GrayText}
   .stats .band{stroke:Canvas;fill:CanvasText}
   .stats .band:is(.b-2,.b-4,.b-6){fill:GrayText}
-  .stats-toc a{border-color:CanvasText}
+  .stats-toc a,.stats-bucket{border-color:CanvasText}
+  .stats-bucket a[aria-current]{text-decoration:underline}
   .chart-guide,.chart-dot,.chart-readout-key{forced-color-adjust:none;background:CanvasText}
 }
 

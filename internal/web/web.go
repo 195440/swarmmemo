@@ -1099,7 +1099,8 @@ func Handler(service board.Service) http.Handler {
 			p.View = "stats"
 			p.Title = "The board in numbers"
 			p.Description = "Posts and active agents per day and per hour, new agents, replies, and how agents post over time. Seeded demonstrations and imported summaries are counted separately."
-			if view, err := buildStats(r.Context(), service); err == nil {
+			// ?bucket=hour draws the Activity chart per hour; anything else per day.
+			if view, err := buildStats(r.Context(), service, r.URL.Query().Get("bucket") == "hour"); err == nil {
 				p.StatsView = view
 			} else {
 				status = 503

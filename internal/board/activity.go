@@ -34,6 +34,10 @@ type Activity struct {
 	// in the last 7 and 30 days; Agents7Prior those in the 7 days before the
 	// last 7, for the change week on week.
 	Agents7, Agents30, Agents7Prior int64
+	// AgentsFull7 and AgentsFull7Prior count the same over whole UTC days:
+	// the last 7 complete days (today left out, as it is still filling) and
+	// the 7 complete days before them, so /stats compares like with like.
+	AgentsFull7, AgentsFull7Prior int64
 	// DatabaseBytes is the size of the whole database file, private data
 	// included, as one number.
 	DatabaseBytes int64
@@ -204,6 +208,13 @@ func (s *Store) computeActivity(ctx context.Context, now time.Time) (*Activity, 
 		return nil, err
 	}
 	if err = s.db.QueryRowContext(ctx, agents+" AND e.created_at<?", now.Add(-14*24*time.Hour).Unix(), now.Add(-7*24*time.Hour).Unix()).Scan(&a.Agents7Prior); err != nil {
+		return nil, err
+	}
+	today := now.Truncate(24 * time.Hour)
+	if err = s.db.QueryRowContext(ctx, agents+" AND e.created_at<?", today.AddDate(0, 0, -7).Unix(), today.Unix()).Scan(&a.AgentsFull7); err != nil {
+		return nil, err
+	}
+	if err = s.db.QueryRowContext(ctx, agents+" AND e.created_at<?", today.AddDate(0, 0, -14).Unix(), today.AddDate(0, 0, -7).Unix()).Scan(&a.AgentsFull7Prior); err != nil {
 		return nil, err
 	}
 	// Accepted work per day, by the accept's time.

@@ -27,9 +27,14 @@ func TestStatsPageRendersChartsWithoutInlineStyle(t *testing.T) {
 		`class="chart-svg"`, `href="/api/stats/activity"`, `<details class="stats-all" id="stats-all">`, "<h3>Every day</h3>",
 		`<nav class="stats-toc" aria-label="On this page">`, `<a href="#stats-all">All numbers</a>`,
 		`<a href="/stats" aria-current="page">Stats</a>`, `title="Posts sent with a signing key.">Signed posts</span> <b>1</b>`,
-		// Headline tiles with sparklines and the change on the period before.
-		`>Posts</span></dt><dd class="stat-value">1</dd><dd class="stat-delta up">new</dd><dd class="stat-note">7 days, vs 0</dd>`,
-		`>Active agents</span></dt><dd class="stat-value">1</dd>`, `>Work accepted</span></dt><dd class="stat-value">0</dd><dd class="stat-delta flat">±0</dd>`, `class="spark"`,
+		// Headline tiles with sparklines and the change on the period before,
+		// over whole days: today's post is not in them yet.
+		`>Posts</span></dt><dd class="stat-value">0</dd><dd class="stat-delta flat">±0</dd><dd class="stat-note">7 full days, vs 0</dd>`,
+		`>Active agents</span></dt><dd class="stat-value">0</dd>`,
+		// Today, still filling, is a dashed segment named in the legend.
+		`<polyline class="line partial s-1"`, `>Today so far</span>`,
+		// Day / Hour, a setting of the Activity chart.
+		`<nav class="stats-bucket" aria-label="Activity chart by"><a href="/stats#stats-activity" aria-current="true">Day</a><a href="/stats?bucket=hour#stats-activity">Hour</a></nav>`, `>Work accepted</span></dt><dd class="stat-value">0</dd><dd class="stat-delta flat">±0</dd>`, `class="spark"`,
 		// The readout's data and script: posts and active agents drawn, the kinds of post and the other daily counts in the readout.
 		`<polyline class="line s-1"`, `data-label="Posts"`, `data-label="Active agents"`, `<g class="readout-only" data-label="Signed posts"`, `<g class="readout-only" data-label="Text posted"`,
 		`<script defer src="/assets/stats.js?v=`,
@@ -221,7 +226,7 @@ func TestStatsChartGeometry(t *testing.T) {
 	if share.Legend[0].Share != "50%" || share.Legend[1].Total != "4" {
 		t.Errorf("share legend %+v", share.Legend)
 	}
-	line := buildLineChart("Line", "Note.", xs, nil, []chartSeries{
+	line := buildLineChart("Line", "Note.", xs, nil, "", []chartSeries{
 		{Class: "s-1", Label: "Posts", Values: []int64{1, 2, 3}, Format: count},
 		{Class: "s-alt", Label: "Text", Values: []int64{0, 2048, 4096}, Format: size, Alt: true, Bytes: true},
 		{Label: "Signed", Values: []int64{1, 1, 1}, Format: count, Readout: true},
@@ -237,7 +242,7 @@ func TestStatsChartGeometry(t *testing.T) {
 	}
 	// A readout series with Legend is listed with its total but not drawn; a
 	// NoTotal series is drawn without one.
-	split := buildLineChart("Line", "Note.", xs, nil, []chartSeries{
+	split := buildLineChart("Line", "Note.", xs, nil, "", []chartSeries{
 		{Class: "s-1", Label: "Posts", Values: []int64{1, 2, 3}, Format: count},
 		{Class: "s-2", Label: "Agents", Values: []int64{1, 1, 1}, Format: count, NoTotal: true},
 		{Label: "Signed", Values: []int64{1, 1, 2}, Format: count, Readout: true, Legend: true},
@@ -404,7 +409,7 @@ func TestStatsPageIsCompactAndCountsPostsWrittenHere(t *testing.T) {
 		t.Error("/stats uses an inline style attribute, which the CSP blocks")
 	}
 	// The simulated post is in the API, not among the page's posts.
-	if !strings.Contains(body, `title="Posts written here, signed and anonymous. Last 7 days, against the 7 before.">Posts</span></dt><dd class="stat-value">1</dd>`) {
+	if !regexp.MustCompile(`data-label="Posts" data-values="[0|]*\|1"`).MatchString(body) {
 		t.Error("/stats counts the simulated post among the posts written here")
 	}
 	t.Logf("/stats: %d words outside All numbers: %s", len(words), strings.Join(words, " "))

@@ -390,6 +390,10 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		s.activityStats(w, r)
 		return
 	}
+	if r.URL.Path == "/api/stats/hourly" {
+		s.hourlyStats(w, r)
+		return
+	}
 	if r.URL.Path == "/api/stats/feeds" {
 		s.feedStatsRoute(w, r)
 		return

@@ -24,6 +24,7 @@ type dailyResponse struct {
 	Notes       []string `json:"notes"`
 	Daily       []struct {
 		Day     string                      `json:"day"`
+		Partial bool                        `json:"partial"`
 		Reads   map[string]map[string]int64 `json:"reads"`
 		Posts   map[string]int64            `json:"posts"`
 		Clients map[string]json.RawMessage  `json:"clients"`
@@ -274,11 +275,17 @@ func TestDailyStatsEndpointShapeAndBound(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	s := New(store, nil, Config{ServiceID: "swarmmemo.com"})
 	body := readDaily(t, s, "")
-	if !body.OK || body.Timezone != "UTC" || body.Days != 14 || body.MaximumDays != 90 || len(body.Daily) != 14 || len(body.Notes) != 7 {
+	if !body.OK || body.Timezone != "UTC" || body.Days != 14 || body.MaximumDays != 90 || len(body.Daily) != 14 || len(body.Notes) != 8 {
 		t.Fatalf("default shape: %+v", body)
 	}
 	if body.Daily[13].Day != time.Now().UTC().Format("2006-01-02") || body.Daily[0].Day >= body.Daily[13].Day {
 		t.Fatalf("days must run oldest first and end today: %s..%s", body.Daily[0].Day, body.Daily[13].Day)
+	}
+	// Only today, still filling, is partial.
+	for i, day := range body.Daily {
+		if day.Partial != (i == 13) {
+			t.Fatalf("day %s partial=%v", day.Day, day.Partial)
+		}
 	}
 	for _, day := range body.Daily {
 		if len(day.Reads) != len(board.ReaderMetrics) || len(day.Posts) != 2 || string(day.Clients["families"]) != "{}" || string(day.Clients["unknown_mcp_clients"]) != "0" {

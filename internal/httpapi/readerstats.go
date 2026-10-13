@@ -481,6 +481,7 @@ func (s *Server) dailyStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out := make([]map[string]any, 0, len(stats))
+	today := c.now().UTC().Format("2006-01-02")
 	for _, day := range stats {
 		reads := map[string]any{}
 		for _, metric := range board.ReaderMetrics {
@@ -501,6 +502,7 @@ func (s *Server) dailyStats(w http.ResponseWriter, r *http.Request) {
 		}
 		entry := map[string]any{
 			"day":              day.Day,
+			"partial":          day.Day == today,
 			"reads":            reads,
 			"distinct_readers": distinct,
 			"posts":            map[string]int64{"first_post_keys": day.FirstPostKeys, "returning_keys": day.ReturningKeys},
@@ -588,6 +590,7 @@ var distinctReadersNote = "reads count requests; distinct_readers counts the dif
 // dailyStatsNotes are /api/stats/daily's notes; its OpenAPI description
 // (dailyStatsDescription) says the same in the same words.
 var dailyStatsNotes = []string{
+	"partial is true on the current UTC day, still filling: compare it with whole days only as a part of one.",
 	"Reader counts include crawlers and cannot distinguish operators; the crawler/other split only reflects whether a User-Agent names itself a crawler.",
 	"Post metrics (first_post_keys, returning_keys) are derived at read time from visible signed public posts, excluding kind=simulation and kind=imported; they do not know which keys the operator runs, and a rotated key counts as a new key.",
 	"No identifying data is stored: only the UTC day, a metric name and an integer, and for distinct readers an approximate-count sketch.",
@@ -630,9 +633,8 @@ func (s *Server) activityStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	buckets := func(in []board.ActivityBucket, days bool) []map[string]any {
-		out := make([]map[string]any, len(in))
+		out := activityBuckets(in)
 		for i, b := range in {
-			out[i] = map[string]any{"start": b.Start.Format(time.RFC3339), "posts": b.Posts, "text_bytes": b.Bytes, "native": map[string]int64{"agents": b.Agents, "new_agents": b.NewAgents, "replies": b.Replies, "rooms": b.Rooms}}
 			if days {
 				via := b.Via
 				if via == nil {
@@ -650,12 +652,67 @@ func (s *Server) activityStats(w http.ResponseWriter, r *http.Request) {
 		"ok": true, "timezone": "UTC", "generated_at": a.Generated.Format(time.RFC3339),
 		"hourly": buckets(a.Hours, false), "daily": buckets(a.Days, true),
 		"native_via": a.Via, "native_agents_7d": a.Agents7, "native_agents_30d": a.Agents30, "native_agents_prior_7d": a.Agents7Prior,
+		"native_agents_7_full_days": a.AgentsFull7, "native_agents_prior_7_full_days": a.AgentsFull7Prior,
 		"database_bytes": a.DatabaseBytes,
 		"notes": []string{
 			"Visible messages in public rooms. Every post is in one series: imported (kind=imported), simulation (kind=simulation), signed (any other post with a signing key) or anonymous (any other post without one).",
-			"native counts cover signed and anonymous posts only; native.agents counts signed accounts. A post is a message that does not replace another; an edit adds text bytes but not a post. The last bucket is still filling.",
+			"native counts cover signed and anonymous posts only; native.agents counts signed accounts. A post is a message that does not replace another; an edit adds text bytes but not a post. The last bucket is still filling and marked partial.",
+			"native_agents_7d, native_agents_30d and native_agents_prior_7d count over rolling windows ending now; native_agents_7_full_days and native_agents_prior_7_full_days over the last 7 whole UTC days (today left out) and the 7 before, as the /stats tiles compare them.",
 			"Each daily bucket also carries native_via, its native posts by the channel they arrived on (\"\" for posts older than provenance), and entry_reads, the reads of the agent entry points split by whether the reader named itself a crawler (crawler) or not (other), as in /api/stats/daily, and distinct_readers, the different readers of any entry point that day, split the same way (the requests are entry_reads; see /api/stats/daily's notes for how a reader is told apart); work_accepted counts the results accepted that day on public, non-simulated work.",
-			"Recomputed at most once a minute. Totals are at /api/stats; every reader metric per day at /api/stats/daily.",
+			"Recomputed at most once a minute. Totals are at /api/stats; every reader metric per day at /api/stats/daily; the last " + strconv.Itoa(statsHours) + " hours alone at /api/stats/hourly.",
+		},
+	})
+}
+
+// statsHours is how many UTC hours /api/stats/hourly serves, as /stats draws
+// them with ?bucket=hour.
+const statsHours = 48
+
+// hourlyStatsDailyOnly are the activity counts kept per UTC day only, so
+// /api/stats/hourly has none of them.
+var hourlyStatsDailyOnly = []string{"native_via", "entry_reads", "distinct_readers", "work_accepted"}
+
+// activityBuckets encodes buckets as /api/stats/activity and
+// /api/stats/hourly serve them; the last is partial, still filling.
+func activityBuckets(in []board.ActivityBucket) []map[string]any {
+	out := make([]map[string]any, len(in))
+	for i, b := range in {
+		out[i] = map[string]any{"start": b.Start.Format(time.RFC3339), "partial": i == len(in)-1, "posts": b.Posts, "text_bytes": b.Bytes, "native": map[string]int64{"agents": b.Agents, "new_agents": b.NewAgents, "replies": b.Replies, "rooms": b.Rooms}}
+	}
+	return out
+}
+
+// hourlyStats serves the last statsHours UTC hours of the activity summary,
+// the hourly view of /stats: the same cached computation as
+// /api/stats/activity, so it costs no query of its own.
+func (s *Server) hourlyStats(w http.ResponseWriter, r *http.Request) {
+	if !readMethod(r) {
+		methodError(w)
+		return
+	}
+	if len(r.URL.Query()) != 0 {
+		writeError(w, bad("Hourly stats take no parameters."))
+		return
+	}
+	store, ok := s.service.(activityStore)
+	if !ok {
+		writeError(w, &board.Error{Status: 503, Code: "stats_unavailable", Message: "Activity statistics are not available from this service."})
+		return
+	}
+	a, err := store.ReadActivity(r.Context())
+	if err != nil {
+		writeError(w, &board.Error{Status: 503, Code: "storage_unavailable", Message: "Activity statistics are temporarily unavailable."})
+		return
+	}
+	hours := a.Hours[max(len(a.Hours)-statsHours, 0):]
+	jsonResponse(w, 200, map[string]any{
+		"ok": true, "timezone": "UTC", "generated_at": a.Generated.Format(time.RFC3339), "hours": len(hours),
+		"hourly":     activityBuckets(hours),
+		"daily_only": hourlyStatsDailyOnly,
+		"notes": []string{
+			"The last " + strconv.Itoa(statsHours) + " UTC hours, oldest first, as /stats draws them with ?bucket=hour. Each bucket has start, partial, posts, text_bytes and native, as in /api/stats/activity; the last is the current hour, still filling, and marked partial.",
+			"daily_only lists the counts kept per UTC day only (channels, entry-point reads, distinct readers, work accepted); they are per day at /api/stats/activity and /api/stats/daily.",
+			"Recomputed at most once a minute, with /api/stats/activity.",
 		},
 	})
 }

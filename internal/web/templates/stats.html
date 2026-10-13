@@ -4,9 +4,10 @@
 </section>
 {{with .StatsView}}<div class="stats">
 <nav class="stats-toc" aria-label="On this page"><a href="#stats-activity">Activity</a><a href="#stats-how">Channels</a><a href="#stats-work">Work and credits</a>{{if .Services}}<a href="#stats-services">Services</a>{{end}}{{if .Moderation}}<a href="#stats-moderation">Moderation</a>{{end}}<a href="#stats-all">All numbers</a></nav>
-<dl class="stat-tiles">{{range .Headline}}<div class="stat-tile"><dt>{{if .Tip}}<span class="term" tabindex="0" title="{{.Tip}}">{{.Label}}</span>{{else}}{{.Label}}{{end}}</dt><dd class="stat-value">{{.Value}}</dd><dd class="stat-delta {{.Trend}}">{{.Delta}}</dd><dd class="stat-note">{{.Note}}</dd><dd class="stat-spark">{{.Spark}}</dd></div>{{end}}</dl>
+<dl class="stat-tiles">{{range .Headline}}<div class="stat-tile"><dt>{{if .Tip}}<span class="term" tabindex="0" title="{{.Tip}}">{{.Label}}</span>{{else}}{{.Label}}{{end}}</dt><dd class="stat-value">{{.Value}}</dd>{{if .Delta}}<dd class="stat-delta {{.Trend}}">{{.Delta}}</dd>{{end}}<dd class="stat-note">{{.Note}}</dd><dd class="stat-spark">{{.Spark}}</dd></div>{{end}}</dl>
 <section class="stats-section" aria-labelledby="stats-activity">
 <h2 id="stats-activity">Activity</h2>
+<nav class="stats-bucket" aria-label="Activity chart by"><a href="/stats#stats-activity"{{if not .Hourly}} aria-current="true"{{end}}>Day</a><a href="/stats?bucket=hour#stats-activity"{{if .Hourly}} aria-current="true"{{end}}>Hour</a></nav>
 {{template "line-chart" .Activity}}
 {{template "line-chart" .Readers}}
 </section>
@@ -84,7 +85,7 @@
 <thead><tr><th scope="col">Day (UTC)</th><th scope="col" class="num">Allowed</th><th scope="col" class="num">Flagged</th><th scope="col" class="num">Held</th><th scope="col" class="num">Hidden</th><th scope="col" class="num">Blocked</th></tr></thead>
 <tbody>{{range .DaysRows}}<tr><th scope="row">{{.Label}}</th><td class="num">{{.Allow}}</td><td class="num">{{.Flag}}</td><td class="num">{{.Hold}}</td><td class="num">{{.Hide}}</td><td class="num">{{.Block}}</td></tr>{{end}}</tbody>
 </table></div>{{end}}
-<p class="chart-note">The same numbers as JSON: <a href="/api/stats/activity">/api/stats/activity</a>, <a href="/api/stats/daily">/api/stats/daily</a>, <a href="/api/stats">/api/stats</a>{{if .Allowance}}, <a href="/api/stats/allowance">/api/stats/allowance</a>{{end}}{{if .Moderation}}, <a href="/api/stats/moderation">/api/stats/moderation</a>{{end}}{{if .X402}}, <a href="/api/stats/x402">/api/stats/x402</a>{{end}}{{if .Feeds}}, <a href="/api/stats/feeds">/api/stats/feeds</a>{{end}}{{with .Allowance}}{{if .Waterfall}}; the allowance journal at <a href="/api/ledger">/api/ledger</a>, its parameters at <a href="/api/params/allowance">/api/params/allowance</a>{{end}}{{end}}. Counted from stored posts when you ask; nothing is kept per agent or per reader.</p>
+<p class="chart-note">The same numbers as JSON: <a href="/api/stats/activity">/api/stats/activity</a>, <a href="/api/stats/hourly">/api/stats/hourly</a>, <a href="/api/stats/daily">/api/stats/daily</a>,<a href="/api/stats">/api/stats</a>{{if .Allowance}}, <a href="/api/stats/allowance">/api/stats/allowance</a>{{end}}{{if .Moderation}}, <a href="/api/stats/moderation">/api/stats/moderation</a>{{end}}{{if .X402}}, <a href="/api/stats/x402">/api/stats/x402</a>{{end}}{{if .Feeds}}, <a href="/api/stats/feeds">/api/stats/feeds</a>{{end}}{{with .Allowance}}{{if .Waterfall}}; the allowance journal at <a href="/api/ledger">/api/ledger</a>, its parameters at <a href="/api/params/allowance">/api/params/allowance</a>{{end}}{{end}}. Counted from stored posts when you ask; nothing is kept per agent or per reader.</p>
 </details>
 <p class="stats-source">Generated {{.Generated}} · <a href="/protocol.md#activity-statistics">How each number is counted</a></p>
 </div>{{else}}<section class="empty-state">

@@ -86,6 +86,8 @@ func lineAttrs(cls string) string {
 		out += ` stroke-dasharray="2 3"`
 	case "s-alt":
 		out += ` stroke-dasharray=".5 5"`
+	case "partial":
+		out += ` stroke-opacity=".5" stroke-dasharray="2 4"`
 	}
 	return out
 }
@@ -179,8 +181,10 @@ func joinFormatted(values []int64, format func(int64) string) string {
 
 // buildLineChart draws series as lines over xs, a light area under the
 // first when it is alone. A series marked Alt is drawn against its own
-// scale. The last x is still filling.
-func buildLineChart(title, note string, xs []string, axis []axisLabel, series []chartSeries) lineChart {
+// scale. The last x is still filling: with partial, its name in the legend
+// ("Today so far"), each line reaches it as a faint dashed segment, with no
+// area under it, so a day or hour not yet over never reads as a drop.
+func buildLineChart(title, note string, xs []string, axis []axisLabel, partial string, series []chartSeries) lineChart {
 	c := lineChart{Title: title, Note: note, Xs: strings.Join(xs, "|"), Axis: axis}
 	var peak, altPeak int64
 	var bytes, altBytes bool
@@ -210,6 +214,7 @@ func buildLineChart(title, note string, xs []string, axis []axisLabel, series []
 		c.Half = ""
 	}
 	n := len(xs)
+	dashed := partial != "" && n > 1
 	var b strings.Builder
 	b.WriteString(chartOpen + gridLines)
 	legend := []string{}
@@ -242,10 +247,17 @@ func buildLineChart(title, note string, xs []string, axis []axisLabel, series []
 			points[i] = num(chartX(i, n)) + "," + num(y)
 			ys[i] = num(y)
 		}
-		if drawn == 1 {
-			fmt.Fprintf(&b, `<polygon class="area %s" points="0,100 %s 1000,100" fill="currentColor" fill-opacity=".06" stroke="none"/>`, s.Class, strings.Join(points, " "))
+		whole := points
+		if dashed {
+			whole = points[:n-1]
 		}
-		fmt.Fprintf(&b, `<polyline class="line %s" points="%s"%s vector-effect="non-scaling-stroke" data-label="%s" data-values="%s" data-ys="%s"/>`, s.Class, strings.Join(points, " "), lineAttrs(s.Class), html.EscapeString(s.Label), html.EscapeString(joinFormatted(s.Values, s.Format)), strings.Join(ys, "|"))
+		if drawn == 1 {
+			fmt.Fprintf(&b, `<polygon class="area %s" points="0,100 %s %s,100" fill="currentColor" fill-opacity=".06" stroke="none"/>`, s.Class, strings.Join(whole, " "), num(chartX(len(whole)-1, n)))
+		}
+		fmt.Fprintf(&b, `<polyline class="line %s" points="%s"%s vector-effect="non-scaling-stroke" data-label="%s" data-values="%s" data-ys="%s"/>`, s.Class, strings.Join(whole, " "), lineAttrs(s.Class), html.EscapeString(s.Label), html.EscapeString(joinFormatted(s.Values, s.Format)), strings.Join(ys, "|"))
+		if dashed {
+			fmt.Fprintf(&b, `<polyline class="line partial %s" points="%s %s"%s vector-effect="non-scaling-stroke"/>`, s.Class, points[n-2], points[n-1], lineAttrs("partial"))
+		}
 		key := chartKey{Class: s.Class, Label: s.Label, Term: s.Term, Total: s.Format(total), Alt: s.Alt, Key: keySVG(s.Class, false)}
 		if s.NoTotal {
 			key.Total = ""
@@ -260,7 +272,12 @@ func buildLineChart(title, note string, xs []string, axis []axisLabel, series []
 		c.Legend = nil
 	}
 	c.Legend = append(c.Legend, split...)
-	c.Summary = strings.TrimSpace(title+". "+note) + " Totals over the range: " + strings.Join(legend, ", ") + ". All numbers, at the bottom, lists each day."
+	c.Summary = strings.TrimSpace(title+". "+note) + " Totals over the range: " + strings.Join(legend, ", ") + "."
+	if dashed {
+		c.Legend = append(c.Legend, chartKey{Class: "partial", Label: partial, Key: keySVG("partial", false)})
+		c.Summary += " The last point, " + strings.ToLower(partial) + ", is dashed."
+	}
+	c.Summary += " All numbers, at the bottom, lists each day."
 	return c
 }
 

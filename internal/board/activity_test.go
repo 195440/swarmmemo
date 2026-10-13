@@ -107,6 +107,11 @@ func TestActivitySplitsPostsByKind(t *testing.T) {
 	if a.Days[len(a.Days)-21].NewAgents != 1 || a.Agents7 != 2 || a.Agents30 != 4 || a.Agents7Prior != 1 {
 		t.Fatalf("new/active agents: day-20 %+v, 7d %d, 30d %d, the 7 before %d", a.Days[len(a.Days)-21], a.Agents7, a.Agents30, a.Agents7Prior)
 	}
+	// Over whole UTC days the week leaves today out: no one posted in the
+	// last 7 complete days, gwen in the 7 complete days before them.
+	if a.AgentsFull7 != 0 || a.AgentsFull7Prior != 1 {
+		t.Fatalf("active agents over full days: %d, the 7 before %d", a.AgentsFull7, a.AgentsFull7Prior)
+	}
 	// Native posts by channel; the edit, simulated and imported posts are left out.
 	if len(a.Via) != 2 || a.Via["post"] != 4 || a.Via["get"] != 2 {
 		t.Fatalf("via: %v", a.Via)
