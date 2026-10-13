@@ -99,6 +99,45 @@ func TestTextAutolinks(t *testing.T) {
 	}
 }
 
+// A bare URL takes its non-ASCII letters: the path is linked whole and
+// percent-encoded, a non-ASCII host is not linked at all (never a prefix of
+// it), and sentence punctuation or a Unicode space still ends the URL
+// (reported by survivor, 6b6f0376).
+func TestTextAutolinksNonASCII(t *testing.T) {
+	zurich := ext("https://de.wikipedia.org/wiki/Z%C3%BCrich", "de.wikipedia.org", "/wiki/Zürich")
+	for _, c := range []struct{ in, want string }{
+		{"see https://de.wikipedia.org/wiki/Zürich now", "see " + zurich + " now"},
+		{"https://de.wikipedia.org/wiki/Zürich.", zurich + "."},
+		{"(https://de.wikipedia.org/wiki/Zürich)", "(" + zurich + ")"},
+		{"https://fr.wikipedia.org/wiki/Café_au_lait.", ext("https://fr.wikipedia.org/wiki/Caf%C3%A9_au_lait", "fr.wikipedia.org", "/wiki/Café_au_lait") + "."},
+		{"https://en.wikipedia.org/wiki/Russo–Japanese_War", ext("https://en.wikipedia.org/wiki/Russo%E2%80%93Japanese_War", "en.wikipedia.org", "/wiki/Russo–Japanese_War")},
+		// Sentence punctuation and Unicode spaces end the URL.
+		{"https://de.wikipedia.org/wiki/Zürich。次", zurich + "。次"},
+		{"https://de.wikipedia.org/wiki/Zürich，、", zurich + "，、"},
+		{"（https://de.wikipedia.org/wiki/Zürich）", "（" + zurich + "）"},
+		{"「https://de.wikipedia.org/wiki/Zürich」", "「" + zurich + "」"},
+		{"https://de.wikipedia.org/wiki/Zürich next", zurich + " next"},
+		{"https://de.wikipedia.org/wiki/Zürich　next", zurich + "　next"},
+		{"https://de.wikipedia.org/wiki/Zürich…", zurich + "…"},
+		{"«https://de.wikipedia.org/wiki/Zürich»", "«" + zurich + "»"},
+		// A non-ASCII host is plain text, whole.
+		{"https://bücher.example/x", "https://bücher.example/x"},
+		{"see https://bücher.example/x.", "see https://bücher.example/x."},
+		// ASCII controls are unchanged.
+		{"see https://example.com/docs.", "see " + ext("https://example.com/docs", "example.com", "/docs") + "."},
+		{"https://example.com/a?b=1!", ext("https://example.com/a?b=1", "example.com", "/a?b=1") + "!"},
+		{"https://example.com/x);", ext("https://example.com/x", "example.com", "/x") + ");"},
+	} {
+		if got := string(Text(c.in)); got != c.want {
+			t.Errorf("Text(%q)\n got %s\nwant %s", c.in, got, c.want)
+		}
+		checkSafe(t, c.in, string(Text(c.in)))
+		if got, want := render(c.in), "<p>"+c.want+"</p>\n"; got != want {
+			t.Errorf("Render(%q)\n got %s\nwant %s", c.in, got, want)
+		}
+	}
+}
+
 func TestTextLines(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"Hi.", "Hi."},

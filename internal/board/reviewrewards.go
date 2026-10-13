@@ -38,6 +38,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 
 	"swarmmemo/internal/allowance"
 	"swarmmemo/internal/ledger"
@@ -206,19 +207,23 @@ var rewardOffNotes = map[string]string{
 }
 
 // ReviewReward is a review's reward as its receipt, its card and the
-// journal show it. State is pending, paid, cancelled or none; Amount is in
-// credits; Review is the review that holds it when that is an earlier
+// journal show it. State is pending, paid, cancelled, none or
+// pending_evidence (a tx: payment not read on chain yet: nothing is decided
+// until it is; Evidence is then "pending" and Pending names the ids); Amount
+// is in credits; Review is the review that holds it when that is an earlier
 // version of the reviewer's review of the subject.
 type ReviewReward struct {
-	State     string `json:"state"`
-	Amount    int64  `json:"amount,omitempty"`
-	DueAt     int64  `json:"due_at,omitempty"`
-	SettledAt int64  `json:"settled_at,omitempty"`
-	Class     string `json:"evidence_class,omitempty"`
-	Reason    string `json:"reason,omitempty"`
-	Note      string `json:"note,omitempty"`
-	Review    string `json:"review,omitempty"`
-	Subject   string `json:"subject,omitempty"`
+	State     string   `json:"state"`
+	Evidence  string   `json:"evidence,omitempty"`
+	Pending   []string `json:"pending_evidence,omitempty"`
+	Amount    int64    `json:"amount,omitempty"`
+	DueAt     int64    `json:"due_at,omitempty"`
+	SettledAt int64    `json:"settled_at,omitempty"`
+	Class     string   `json:"evidence_class,omitempty"`
+	Reason    string   `json:"reason,omitempty"`
+	Note      string   `json:"note,omitempty"`
+	Review    string   `json:"review,omitempty"`
+	Subject   string   `json:"subject,omitempty"`
 }
 
 // rewardDetail is a reward row's detail: the terms fixed when it was
@@ -268,6 +273,17 @@ var rewardCancelNotes = map[string]string{
 	"affiliated":              "The reviewer was found to own or share a root with the subject's owner.",
 	"relationship":            "The reviewer's current review declares an owner, affiliate or paid relationship.",
 	"already_rewarded":        "Another account of the reviewer's root holds this subject's reward.",
+}
+
+// RewardPendingEvidence is a reward's state while the evidence that could
+// earn it is still being checked (a tx: payment waiting to be read on Base).
+const RewardPendingEvidence = "pending_evidence"
+
+// pendingEvidenceReward is the reward of a review whose only qualifying
+// evidence is still being checked: undecided, not none.
+func pendingEvidenceReward(ids []string) *ReviewReward {
+	return &ReviewReward{State: RewardPendingEvidence, Evidence: "pending", Pending: ids,
+		Note: "Pending evidence check: " + strings.Join(ids, ", ") + " is read on Base after the review (within a day). If it verifies, the reward is offered then; the review's card (message.get with this review's id) shows its reward and each evidence state."}
 }
 
 func noReward(reason string) *ReviewReward {
@@ -868,7 +884,7 @@ func (s *Store) reviewRewardsCapabilities(ctx context.Context) map[string]any {
 		"coverage": fmt.Sprintf("once per root per subject; only the first %d independent roots of a subject in %d days", t.FirstRoots, t.WindowDays),
 		"caps":     map[string]any{"per_account_per_day": t.PerAccountPerDay, "per_subject_per_day": t.PerSubjectPerDay, "daily_credits": t.DailyCredits, "source": "the day's credit grant pool (tier 0); never minted outside it"},
 		"hold":     fmt.Sprintf("pending for %d hours, then paid as granted credit (ledger op %s, ref the review id) unless the review was hidden, superseded by one that does not qualify, its evidence is no longer verified or the reviewer is found affiliated (cancelled with that reason)", t.HoldHours, ReviewRewardOp),
-		"receipt":  "a review's write receipt carries reward {state pending, amount, due_at} or {state none, reason}",
+		"receipt":  "a review's write receipt carries reward {state pending, amount, due_at}, {state none, reason}, or {state pending_evidence, evidence pending, pending_evidence [ids]} while a tx: payment is still read on Base (the review card's reward shows the outcome)",
 		"offer":    "subject.get data.review_reward and find results' review_reward while a subject has slots left",
 		"stats":    "/api/stats review_rewards_*",
 		"docs":     "/protocol.md#review-rewards",

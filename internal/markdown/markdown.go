@@ -512,6 +512,20 @@ func startsBlock(lines []string, i int) bool {
 	return ok
 }
 
+// interruptsParagraph is startsBlock for a line that would otherwise continue
+// a paragraph: a list starts there only with a non-empty first item and, if
+// ordered, at 1 (CommonMark 5.2), so "in\n2026. It works." stays prose. A list
+// item's lazy line is not such a line: there the item closes first, and any
+// marker starts a list.
+func interruptsParagraph(lines []string, i int) bool {
+	if !thematicBreak(lines[i]) {
+		if m, ok := listMarker(lines[i]); ok {
+			return m.text != "" && (!m.ordered || m.start == 1)
+		}
+	}
+	return startsBlock(lines, i)
+}
+
 // ---------- blocks ----------
 
 // blocks renders lines. bare renders a first paragraph without <p>, as a tight
@@ -593,7 +607,7 @@ func (r *renderer) blocks(lines []string, depth int, bare bool) {
 			continue
 		}
 		start := i
-		for i++; i < len(lines) && !isBlank(lines[i]) && !startsBlock(lines, i); i++ {
+		for i++; i < len(lines) && !isBlank(lines[i]) && !interruptsParagraph(lines, i); i++ {
 		}
 		para := make([]string, 0, i-start)
 		for _, l := range lines[start:i] {
@@ -758,7 +772,7 @@ func (r *renderer) list(lines []string, i int, m marker, depth int) int {
 					}
 					continue
 				}
-				if j < len(lines) {
+				if j < len(lines) && !thematicBreak(lines[j]) {
 					if next, ok := listMarker(lines[j]); ok && sameList(next, m) && next.markerAt < current.content {
 						i = j
 					}
@@ -785,7 +799,8 @@ func (r *renderer) list(lines []string, i int, m marker, depth int) int {
 		r.tag("<li>")
 		r.blocks(body, depth+1, true)
 		r.tag("</li>\n")
-		if i >= len(lines) || r.done {
+		// "* * *" is a thematic break, not the next item: the break wins (4.1).
+		if i >= len(lines) || r.done || thematicBreak(lines[i]) {
 			break
 		}
 		next, ok := listMarker(lines[i])
@@ -1275,19 +1290,25 @@ func unescapePunct(s string) string {
 }
 
 // bareURL measures an http(s) URL in running text, leaving trailing
-// punctuation and an unbalanced closing parenthesis to the sentence.
+// punctuation and an unbalanced closing parenthesis to the sentence. The run
+// takes non-ASCII letters whole ("/wiki/Zürich"), so SafeURL sees the URL as
+// written: it encodes such a path and refuses such a host, never linking a
+// prefix of either.
 func bareURL(s string) int {
 	lower := strings.ToLower(s[:min(len(s), 8)])
 	if !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") {
 		return 0
 	}
 	n := 0
-	for n < len(s) && n < maxURLBytes {
-		c := s[n]
-		if c <= ' ' || c == '<' || c == '>' || c == '"' || c == '`' || c >= 0x80 {
+	for n < len(s) {
+		c, size := rune(s[n]), 1
+		if c >= utf8.RuneSelf {
+			c, size = utf8.DecodeRuneInString(s[n:])
+		}
+		if n+size > maxURLBytes || c <= ' ' || c == '<' || c == '>' || c == '"' || c == '`' || !urlRune(c, size) {
 			break
 		}
-		n++
+		n += size
 	}
 	// Counted once and updated as the tail shrinks: recounting per trimmed
 	// parenthesis made a run of them quadratic in the URL length.
@@ -1309,6 +1330,20 @@ func bareURL(s string) int {
 		return 0
 	}
 	return n
+}
+
+// urlRune reports whether a decoded rune may continue a bare URL. ASCII is
+// left to the caller. A Unicode space, invalid UTF-8, a control or format
+// character, and sentence punctuation (。，、）」« …) end the URL; dashes and
+// connectors ("Russo–Japanese_War") do not.
+func urlRune(c rune, size int) bool {
+	if c < utf8.RuneSelf {
+		return true
+	}
+	if c == utf8.RuneError && size == 1 || !unicode.IsPrint(c) || bidiControl(c) {
+		return false
+	}
+	return !unicode.In(c, unicode.Ps, unicode.Pe, unicode.Pi, unicode.Pf, unicode.Po)
 }
 
 // resolveEmphasis pairs * and _ runs with a bounded delimiter stack. Matching a

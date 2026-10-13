@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -86,11 +87,36 @@ func TestReviewTxEvidenceOnChain(t *testing.T) {
 		{owner, add(908, "0x1", recent, transferLog(asset, wallet(7), payTo, 1000)), "failed", "paid_from_the_providers_wallet"},
 		{keys[8], add(909, "0x1", recent, transferLog(asset, wallet(7), payTo, 1000)), "failed", "paid_from_the_providers_wallet"},
 	}
+	receipts := map[string]*Receipt{}
 	for _, c := range cases {
-		rt.review(c.key, reviewSubject, map[string]any{}, "", c.evidence)
+		receipts[c.evidence] = rt.review(c.key, reviewSubject, map[string]any{}, "", c.evidence)
+	}
+	// Until the chain is read the reward is pending the evidence check, not
+	// none (C254), on the receipt and on the review's card alike.
+	for _, c := range cases {
+		r := receipts[c.evidence].Reward
+		if keyID(c.key) == keyID(owner) { // the owner earns nothing whatever the evidence
+			if r == nil || r.State != "none" || r.Reason != "relationship" {
+				t.Fatalf("owner's receipt reward %+v", r)
+			}
+			continue
+		}
+		if r == nil || r.State != RewardPendingEvidence || r.Evidence != "pending" || len(r.Pending) != 1 || r.Pending[0] != c.evidence || r.Reason != "" || !strings.Contains(r.Note, "Pending evidence check") {
+			t.Fatalf("%s: receipt reward %+v", c.evidence, r)
+		}
+	}
+	card := func(evidence string) *MessageReview {
+		t.Helper()
+		return run(t, s, Command{Operation: "message.get", MessageID: receipts[evidence].ID}).Messages[0].Review
+	}
+	if r := card(valid).Reward; r == nil || r.State != RewardPendingEvidence || r.Evidence != "pending" {
+		t.Fatalf("card before the read: %+v", r)
 	}
 	// Another chain fails at post; a subject no record names a pay_to fails too.
-	rt.review(keys[2], "x402:GET https://nopay.example.org/x", map[string]any{}, "", "tx:eip155:8453:"+txHash(902))
+	failedAtPost := rt.review(keys[2], "x402:GET https://nopay.example.org/x", map[string]any{}, "", "tx:eip155:8453:"+txHash(902))
+	if r := failedAtPost.Reward; r == nil || r.State != "none" || r.Reason != "evidence_class" || len(failedAtPost.EvidenceFailed) != 1 || failedAtPost.EvidenceFailed[0].Reason != "subject_pay_to_unknown" {
+		t.Fatalf("failed at post: %+v %+v", r, failedAtPost.EvidenceFailed)
+	}
 	rt.review(keys[3], "x402:GET https://nopay.example.org/x", map[string]any{}, "", "tx:eip155:1:"+txHash(903))
 
 	row := func(key ed25519.PrivateKey, evidence string) (state, reason, class string) {
@@ -140,6 +166,17 @@ func TestReviewTxEvidenceOnChain(t *testing.T) {
 	// The verified payment raised the class after commit and offered a reward.
 	if err := s.db.QueryRow(`SELECT json_extract(v.detail,'$.class') FROM review_evidence v JOIN reviews r ON r.event_id=v.event_id WHERE v.evidence=? AND r.account=?`, RewardEvidence, keyID(keys[1])).Scan(&rewards); err != nil || rewards != "paid_use" {
 		t.Fatalf("reward %q %v", rewards, err)
+	}
+	// Verified: the card's reward is the offered one; failed: none pending,
+	// and the evidence names its failure reason.
+	if r := card(valid).Reward; r == nil || r.State != "pending" || r.Amount <= 0 || r.Class != "paid_use" || r.Evidence != "" {
+		t.Fatalf("card after verification: %+v", r)
+	}
+	for _, c := range cases[1:] {
+		m := card(c.evidence)
+		if m.Reward != nil || len(m.Evidence) != 1 || m.Evidence[0].State != "failed" || m.Evidence[0].Detail["reason"] != c.reason || m.Evidence[0].Why == "" {
+			t.Fatalf("%s: card after failure %+v %+v", c.evidence, m.Reward, m.Evidence)
+		}
 	}
 	// One payment backs one account's review of the subject.
 	rt.now++

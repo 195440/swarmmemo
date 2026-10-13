@@ -35,12 +35,12 @@ const ReviewsRoom = "reviews"
 // Review caps (RFC 0019 §4) and the default order's parameters (RFC 0015
 // §5.4). The order is version 1 of the reviews parameters.
 const (
-	ReviewsPerAccountDay  = 20
+	ReviewsPerAccountDay = 20
 	// ReviewsOperatorDay is the daily cap for the operator's importer and lab
 	// keys (relationship outside_source or lab, each checked against its
 	// parameters first): an import or a lab run rates a catalogue, not a few
 	// things an agent used.
-	ReviewsOperatorDay = 200
+	ReviewsOperatorDay    = 200
 	ReviewEvidenceDays    = 30
 	ReviewPageDefault     = 20
 	ReviewPageMax         = 50
@@ -388,12 +388,16 @@ func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, e
 		return nil, nil, err
 	}
 	pending := false
+	var onChain []string // tx: rows still to be read on Base
 	for _, e := range evidence {
 		detail, _ := json.Marshal(e.detail)
 		if _, err = tx.ExecContext(ctx, "INSERT INTO review_evidence(event_id,evidence,class,state,checked_at,detail) VALUES(?,?,?,?,?,?)", eventID, e.id, e.class, e.state, now, string(detail)); err != nil {
 			return nil, nil, err
 		}
 		pending = pending || e.state == "unknown" && (e.class == "record" || e.detail["reason"] == TxPending)
+		if e.state == "unknown" && e.detail["reason"] == TxPending {
+			onChain = append(onChain, e.id)
+		}
 	}
 	// Listed (in subjects.list, Find and search engines) once two accounts
 	// review it, its verified owner does (RFC 0015 §4.3), or an operator
@@ -421,7 +425,11 @@ func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, e
 			failed = append(failed, failedEvidence(e.id, evidenceReason(e.detail)))
 		}
 	}
-	if reward != nil && reward.State == "none" && reward.Reason == "evidence_class" && len(failed) > 0 {
+	// A tx: payment not read yet can still qualify: the reward is pending
+	// the evidence check, not none (raiseReviewClass offers it once verified).
+	if reward != nil && reward.State == "none" && reward.Reason == "evidence_class" && len(onChain) > 0 {
+		reward = pendingEvidenceReward(onChain)
+	} else if reward != nil && reward.State == "none" && reward.Reason == "evidence_class" && len(failed) > 0 {
 		lines := make([]string, len(failed))
 		for i, f := range failed {
 			lines[i] = f.Line
@@ -1172,8 +1180,33 @@ func loadEvidence(ctx context.Context, tx *sql.Tx, cards []*MessageReview, list 
 			e.Why = ReviewEvidenceReasons[evidenceReason(e.Detail)]
 			card.Evidence = append(card.Evidence, e)
 		}
-		return rows.Err()
+		if err = rows.Err(); err != nil {
+			return err
+		}
+		for _, id := range args {
+			pendingEvidenceCard(cards[index[id.(string)]])
+		}
+		return nil
 	})
+}
+
+// pendingEvidenceCard gives a current community review that holds no reward
+// and cites a tx: payment not read on chain yet the reward its receipt
+// said: pending the evidence check.
+func pendingEvidenceCard(card *MessageReview) {
+	if card == nil || card.Reward != nil || !card.Current || card.Relationship == "lab" || card.Relationship == "outside_source" ||
+		barredRelationship(card.Relationship) || barredRelationship(card.RelationshipRaised) {
+		return
+	}
+	var ids []string
+	for _, e := range card.Evidence {
+		if e.State == "unknown" && e.Detail["reason"] == TxPending {
+			ids = append(ids, e.ID)
+		}
+	}
+	if len(ids) > 0 {
+		card.Reward = pendingEvidenceReward(ids)
+	}
 }
 
 func placeholders(n int) string { return strings.TrimSuffix(strings.Repeat("?,", n), ",") }

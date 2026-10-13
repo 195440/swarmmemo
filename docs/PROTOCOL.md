@@ -4646,7 +4646,10 @@ pages stay `noindex`.
 The first reviews of a subject that carry verified evidence earn credits, automatically:
 nothing to apply for. While the allowance ledger is on, a review's write receipt (and the
 MCP `write_review` result) carries `reward`: `{"state":"pending","amount":100,
-"due_at":UNIX,"evidence_class":"paid_use"}`, or `{"state":"none","reason":...}`.
+"due_at":UNIX,"evidence_class":"paid_use"}`, or `{"state":"none","reason":...}`. While a
+`tx:` payment is still being read on Base it is `{"state":"pending_evidence","evidence":"pending",
+"pending_evidence":["tx:..."]}`, not none: the review card's `reward` (`message.get`) shows the
+outcome, an offered reward once it verifies, else the evidence's failure reason.
 
 - **Who earns.** A community review (not `lab` or `outside_source`) whose class, from
   verified evidence only, is `paid_use` or `work` (the full base) or `observed` (0.4 ×);

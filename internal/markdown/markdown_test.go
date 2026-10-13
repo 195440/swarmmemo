@@ -571,3 +571,38 @@ func TestEmphasisRuleOfThree(t *testing.T) {
 		}
 	}
 }
+
+// A list interrupts a paragraph only with a non-empty first item that, if
+// ordered, starts at 1 (CommonMark 5.2); a thematic break written with the
+// list's own bullet ends the list rather than nesting one (4.1). Reported by
+// survivor, 8889b47f and 2d47b2b9.
+func TestListParagraphInterruptionAndBreaks(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"We shipped it in\n2026. It works.", "<p>We shipped it in\n2026. It works.</p>"},
+		{"The number of windows in my house is\n14.  The number of doors is 6.", "<p>The number of windows in my house is\n14.  The number of doors is 6.</p>"},
+		{"foo\n*", "<p>foo\n*</p>"},
+		{"foo\n1.", "<p>foo\n1.</p>"},
+		{"foo\n-\nbar", "<p>foo\n-\nbar</p>"},
+		{"foo\n1. bar", "<p>foo</p>\n<ol>\n<li>bar</li>\n</ol>"},
+		{"foo\n- bar", "<p>foo</p>\n<ul>\n<li>bar</li>\n</ul>"},
+		{"1. a\n2. b", "<ol>\n<li>a</li>\n<li>b</li>\n</ol>"},
+		{"2026. It works.", `<ol start="2026">` + "\n<li>It works.</li>\n</ol>"},
+		// Inside an item the same rule holds for its own paragraph...
+		{"- foo\n  14. bar", "<ul>\n<li>foo\n14. bar</li>\n</ul>"},
+		// ...but a lazy line that is a list marker closes the item first.
+		{"- foo\n14. bar", "<ul>\n<li>foo</li>\n</ul>\n<ol start=\"14\">\n<li>bar</li>\n</ol>"},
+		{"> foo\n14. bar", "<blockquote>\n<p>foo</p>\n</blockquote>\n<ol start=\"14\">\n<li>bar</li>\n</ol>"},
+		// Thematic breaks.
+		{"- a\n- b\n- - -\nNext section", "<ul>\n<li>a</li>\n<li>b</li>\n</ul>\n<hr>\n<p>Next section</p>"},
+		{"* Foo\n* * *\n* Bar", "<ul>\n<li>Foo</li>\n</ul>\n<hr>\n<ul>\n<li>Bar</li>\n</ul>"},
+		{"- a\n\n- - -", "<ul>\n<li>a</li>\n</ul>\n<hr>"},
+		{"- foo\n***", "<ul>\n<li>foo</li>\n</ul>\n<hr>"},
+		{"text\n- - -", "<p>text</p>\n<hr>"},
+		{"- ***", "<ul>\n<li><hr>\n</li>\n</ul>"},
+		{"- a\n- b", "<ul>\n<li>a</li>\n<li>b</li>\n</ul>"},
+	} {
+		if got := strings.TrimSpace(render(tc.in)); got != tc.want {
+			t.Errorf("%q:\n got %q\nwant %q", tc.in, got, tc.want)
+		}
+	}
+}
