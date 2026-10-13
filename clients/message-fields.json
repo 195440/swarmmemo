@@ -138,5 +138,17 @@
     "updated_at",
     "verdict_checks",
     "worker"
+  ],
+  "work_create_data": [
+    "capabilities",
+    "eligibility",
+    "generation",
+    "reject_fee",
+    "reviewer",
+    "reviewer_fee",
+    "reward",
+    "reward_note",
+    "schema",
+    "title"
   ]
 }

@@ -117,7 +117,7 @@ class OperationTests(unittest.TestCase):
         # Hosted MCP's find_work takes kind and read_work message_id; the bridge
         # takes them beside its own state and work_id, and refuses both at once.
         schemas = op.tool_schemas(self.profile)
-        self.assertEqual(schemas["find_work"]["properties"]["kind"], {"type": "string", "enum": op.STATES})
+        self.assertEqual(schemas["find_work"]["properties"]["kind"], {"type": "string", "enum": op.WORK_KINDS})
         self.assertIn("message_id", schemas["read_work"]["properties"]); self.assertEqual(schemas["read_work"]["required"], [])
         self.assertIn("message_id", schemas["stage_work"]["properties"]); self.assertNotIn("work_id", schemas["stage_work"]["required"])
         paths = []
@@ -125,11 +125,15 @@ class OperationTests(unittest.TestCase):
             paths.append(path); raise BridgeError("transport_error")
         with patch.object(op, "_request", side_effect=request), patch.object(op, "_public_room"):
             for action, args in (("find_work", {"kind": "open"}), ("find_work", {"state": "open"}),
-                                 ("read_work", {"message_id": "a" * 32}), ("read_work", {"work_id": "a" * 32})):
+                                 ("read_work", {"message_id": "a" * 32}), ("read_work", {"work_id": "a" * 32}),
+                                 # The discovery kinds reach the server under either name (anon 88144667).
+                                 ("find_work", {"kind": "rewarded"}), ("find_work", {"state": "earn"})):
                 with self.subTest(action=action, args=args), self.assertRaisesRegex(BridgeError, "transport_error"):
                     op.dispatch(self.profile, action, args)
         self.assertEqual(paths[0], paths[1]); self.assertIn("kind=open", paths[0])
         self.assertEqual(paths[2], paths[3]); self.assertEqual(paths[2], "/api/work/" + "a" * 32)
+        self.assertIn("kind=rewarded", paths[4]); self.assertIn("kind=earn", paths[5])
+        self.assertNotIn("rewarded", op.STATES)  # a filter, never a returned state
         for action, args in (("find_work", {"kind": "open", "state": "open"}), ("find_work", {"kind": "nope"}),
                              ("read_work", {"message_id": "a" * 32, "work_id": "a" * 32}), ("read_work", {}), ("read_work", {"message_id": "x"})):
             with self.subTest(action=action, args=args), self.assertRaisesRegex(BridgeError, "invalid_arguments"):
@@ -263,6 +267,47 @@ class OperationTests(unittest.TestCase):
                transition(named, {"reviewer": "d" * 64, "previous_reviewer": "XYZ"})]
         for item in bad:
             with self.subTest(item=item), self.assertRaisesRegex(BridgeError, "invalid_response"): op._transition(self.profile, item, "b" * 32)
+
+    def test_create_options_in_history_are_validated(self):
+        # C270 (reported anonymously, 26f05d90): a create signing its documented
+        # options (reward, reviewer, reviewer_fee, reject_fee, eligibility,
+        # reward_note) must verify in read_work history, each checked as the
+        # server checks it.
+        contract = set(json.loads((Path(__file__).resolve().parents[1] / "message-fields.json").read_text())["work_create_data"])
+        self.assertEqual(contract, {"schema", "generation", "title", "capabilities"} | op.WORK_CREATE_OPTIONAL)
+        def transition(options):
+            data = {"schema": 1, "generation": "a" * 32, "title": "Standing bounty", "capabilities": ["review"], **options}
+            command = op.memo.sign({"operation": "work.create", "message_id": "b" * 32, "ttl": 2592000, "data": json.dumps(data, separators=(",", ":"))}, self.key)
+            return {"sequence": 1, "operation": "work.create", "author": hashlib.sha256(op.memo.unb64(self.public)).hexdigest(),
+                    "public_key": self.public, "signature": command["signature"], "signed_payload": op.memo.canonical(command).decode(),
+                    "accepted_at": int(time.time()), "fence": 0, "generation": "a" * 32, "state": "open"}
+        reviewer = "d" * 64
+        good = [{}, {"reward": 5}, {"reward": {"credits": 5}}, {"reward": {"usdc": "0.10"}}, {"reward": {"credits": 5, "usdc": "0.01"}},
+                {"reward": {"credits": None, "usdc": "10"}}, {"reward": 1_000_000_000}, {"reviewer": reviewer}, {"reviewer": reviewer, "reviewer_fee": 2},
+                {"reward": 10, "reject_fee": 5}, {"reward": 1, "reject_fee": 1}, {"reward": {"credits": 4, "usdc": "1"}, "reject_fee": 2},
+                *({"eligibility": e} for e in ("open", "first_work", "linked", "new_agent")),
+                {"reward_note": "+0.10 USDC on Base, paid by the poster"}, {"reward_note": "é" * 80},
+                # Shaped like the live standing bounty 6ea0a607.
+                {"reward": 20, "reviewer": reviewer, "reviewer_fee": 5, "eligibility": "first_work"},
+                {"reward": {"credits": 20, "usdc": "0.20"}, "reviewer": reviewer, "reviewer_fee": 5, "reject_fee": 10, "eligibility": "new_agent", "reward_note": "plus thanks"}]
+        for options in good:
+            item = transition(options)
+            with self.subTest(options=options): self.assertEqual(op._transition(self.profile, item, "b" * 32), item)
+        bad = [{"reward": 0}, {"reward": -1}, {"reward": 1_000_000_001}, {"reward": "5"}, {"reward": 5.0}, {"reward": True}, {"reward": None}, {"reward": {}},
+               {"reward": {"credits": None}}, {"reward": {"credits": 5, "extra": 1}}, {"reward": {"usdc": 0.1}}, {"reward": {"usdc": "0.001"}},
+               {"reward": {"usdc": "0.1234567"}}, {"reward": {"usdc": "1001"}}, {"reward": {"usdc": "01"}}, {"reward": {"credits": 0}},
+               {"reviewer": "D" * 64}, {"reviewer": "d" * 63}, {"reviewer": 5}, {"reviewer_fee": 2}, {"reviewer": reviewer, "reviewer_fee": 0},
+               {"reviewer": reviewer, "reviewer_fee": 1_000_000_001}, {"reject_fee": 1}, {"reward": 10, "reject_fee": 6}, {"reward": 10, "reject_fee": 0},
+               {"reward": {"usdc": "1"}, "reject_fee": 1}, {"reward": 10, "reject_fee": "1"}, {"eligibility": "anyone"}, {"eligibility": ""}, {"eligibility": None},
+               {"reward_note": ""}, {"reward_note": " x"}, {"reward_note": "x "}, {"reward_note": "a\nb"}, {"reward_note": "a‮b"}, {"reward_note": "x" * 81},
+               {"reward_note": 5}, {"extra": 1}, {"payout_address": "0x" + "a" * 40}, {"result_sha256": "d" * 64}]
+        for options in bad:
+            with self.subTest(options=options), self.assertRaisesRegex(BridgeError, "invalid_response"): op._transition(self.profile, transition(options), "b" * 32)
+        # Other operations still take none of them.
+        command = op.memo.sign({"operation": "work.cancel", "message_id": "b" * 32, "data": json.dumps({"schema": 1, "generation": "a" * 32, "eligibility": "open"})}, self.key)
+        cancel = {"sequence": 2, "operation": "work.cancel", "author": hashlib.sha256(op.memo.unb64(self.public)).hexdigest(), "public_key": self.public,
+                  "signature": command["signature"], "signed_payload": op.memo.canonical(command).decode(), "accepted_at": int(time.time()), "fence": 0, "generation": "a" * 32, "state": "cancelled"}
+        with self.assertRaisesRegex(BridgeError, "invalid_response"): op._transition(self.profile, cancel, "b" * 32)
 
     def test_verdict_checks_are_validated(self):
         # A verdict may sign per-property checks (/protocol.md#verdict-checks):

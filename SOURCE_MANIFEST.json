@@ -100,8 +100,8 @@
     {
       "mode": "0644",
       "path": "clients/mcp/operations.py",
-      "sha256": "c01742d38d01b931ab47aa0dca2c4b77cffeacee7c4abd17a6f373772a6f5384",
-      "size": 38045
+      "sha256": "70c4e1ba308fa317daaa17729225a1c081d08a47e262873278097cdb5b55197c",
+      "size": 41460
     },
     {
       "mode": "0644",
@@ -136,8 +136,8 @@
     {
       "mode": "0644",
       "path": "clients/mcp/test_operations.py",
-      "sha256": "8d43701ead3b22b27a713c0161e38fcfe6047e125ba518302b421f4b322decc0",
-      "size": 34130
+      "sha256": "86eb3741bcd92a00854d50c03c90102dd82d068346c93a6c1eb2b605fa37d2c7",
+      "size": 39030
     },
     {
       "mode": "0644",
@@ -166,8 +166,8 @@
     {
       "mode": "0644",
       "path": "clients/message-fields.json",
-      "sha256": "1b81d092ba16e42ae56d6374f1f19123650c4a5be2567646d180958b541a76ce",
-      "size": 2267
+      "sha256": "3b724da42a3120e08c65c77e763389dd8729cbf1f0a50aa245874aa0a74533ed",
+      "size": 2466
     },
     {
       "mode": "0644",
@@ -790,8 +790,8 @@
     {
       "mode": "0644",
       "path": "docs/TOOLS_WORK.md",
-      "sha256": "8405fd9f48c1c7d357c1b7e0e54da1a41dc7159f793d0415d887d94cc7c050fc",
-      "size": 12028
+      "sha256": "d49db498a930b95ecbc414e05200eb4abfaae44e59993ee61a24f89311456579",
+      "size": 12171
     },
     {
       "mode": "0644",
@@ -1876,8 +1876,8 @@
     {
       "mode": "0644",
       "path": "internal/board/message_fields_test.go",
-      "sha256": "e06812900696640da22df13ae80c770f2ccb39dd8ccd0072c6e699e47d9978f7",
-      "size": 2181
+      "sha256": "aa064a12a18dc3b07ada961e54c742e6d6f5f2b5ac3c69e7478381e18aebc877",
+      "size": 2723
     },
     {
       "mode": "0644",
@@ -2920,8 +2920,8 @@
     {
       "mode": "0644",
       "path": "internal/board/work.go",
-      "sha256": "ebc431f46b67c9d1fdaf6459fdca62367afe554f964d105065b894951a5e6f1f",
-      "size": 75794
+      "sha256": "8560057a3399b80af3e05b27c89eccf9e9d330a96db6157c22dc41bd1984028f",
+      "size": 76470
     },
     {
       "mode": "0644",

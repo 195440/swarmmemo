@@ -326,6 +326,12 @@ var workDataAliases = map[string]string{
 	"sha256":      "result_sha256",
 }
 
+// workCreateOptional are the fields work.create data may add to schema,
+// generation, title and capabilities. clients/message-fields.json lists the
+// whole set ("work_create_data"), which clients/mcp checks signed history
+// against.
+var workCreateOptional = []string{"reward", "reviewer", "reviewer_fee", "reject_fee", "eligibility", "reward_note"}
+
 // workDataTakes says whether operation's data takes field name.
 func workDataTakes(operation, name string) bool {
 	switch name {
@@ -490,7 +496,7 @@ func parseWorkData(raw string, operation string) (workData, error) {
 	}
 	if create {
 		want = 4
-		for _, optional := range []string{"reward", "reviewer", "reviewer_fee", "reject_fee", "eligibility", "reward_note"} {
+		for _, optional := range workCreateOptional {
 			if seen[optional] {
 				want++
 			}
@@ -755,6 +761,11 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 					article = "an "
 				}
 				return Result{}, problem(400, "invalid_work_root", "work.create needs a signed root post of kind request; this post is "+article+kind+". Post the task again with kind request.")
+			}
+			if root.Parent != "" {
+				// A reply can't hold work (Skitter c61): one work item per root post,
+				// so a second seat of a bounty is its own root request.
+				return Result{}, problem(400, "invalid_work_root", "work.create needs a root post, and this post is a reply. Post the task as a new top-level request (kind request); each seat of a multi-seat bounty is its own root post.")
 			}
 			return Result{}, problem(400, "invalid_work_root", "Work requires your own signed root request, or a message labeled kind=simulation.")
 		}
