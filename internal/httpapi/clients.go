@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -10,21 +11,12 @@ import (
 // Arrivals by client (board/clientstats.go): each request is classified into
 // one of board.ClientFamilies from what the server already sees, the MCP
 // initialize clientInfo.name and the User-Agent, which are then discarded.
-// clientTokens is the one table to extend for a new platform: a token
-// matches a whole word of the lowercased User-Agent or client name ("claude"
-// matches "claude-code/1.0" and "Claude-User", not "ClaudeBot"), first match
-// wins. uaFamilyClients maps the named User-Agent families the referrer
+// board.ClientTokens (board/funnel.go) is the one table to extend for a new
+// platform: a token matches a whole word of the lowercased User-Agent or
+// client name ("claude" matches "claude-code/1.0" and "Claude-User", not
+// "ClaudeBot"), first match wins. uaFamilyClients maps the named User-Agent families the referrer
 // counters already recognize (userAgentFamily); any other named family is a
 // crawler.
-
-var clientTokens = []struct{ token, family string }{
-	{"cursor", "cursor-grok"}, {"grok", "cursor-grok"}, {"xai", "cursor-grok"},
-	{"chatgpt", "openai"}, {"openai", "openai"}, {"codex", "openai"}, {"dots", "openai"},
-	{"muse", "meta-muse"}, {"meta-ai", "meta-muse"}, {"metaai", "meta-muse"},
-	{"claude", "claude"},
-	{"gemini", "gemini"}, {"geminicli", "gemini"},
-	{"perplexity", "perplexity"},
-}
 
 var uaFamilyClients = map[string]string{
 	"ChatGPT-User": "openai", "Claude-User": "claude", "Perplexity-User": "perplexity", "meta-externalfetcher": "meta-muse",
@@ -35,33 +27,45 @@ var uaFamilyClients = map[string]string{
 // assistantFamilies are the families named for an assistant platform.
 var assistantFamilies = map[string]bool{"cursor-grok": true, "openai": true, "meta-muse": true, "claude": true, "gemini": true, "perplexity": true}
 
-// hasToken reports whether token occurs in s as a whole word: not preceded
-// or followed by a letter or digit.
-func hasToken(s, token string) bool {
-	alnum := func(c byte) bool { return c >= 'a' && c <= 'z' || c >= '0' && c <= '9' }
-	for from := 0; ; {
-		i := strings.Index(s[from:], token)
-		if i < 0 {
-			return false
+// tokenFamily is the assistant family whose token s names, or "": the one
+// client allow-list, board.ClientTokens.
+func tokenFamily(s string) string { return board.ClientTokenFamily(s) }
+
+// The funnel classifies a stored write's User-Agent the way a live request
+// is: requestClient, with the MCP route read from the stored via.
+func init() {
+	board.FunnelClientFamily = func(ua, via string) string {
+		family := userAgentClient(ua)
+		if via == "mcp" && !assistantFamilies[family] {
+			return "other-mcp"
 		}
-		i += from
-		end := i + len(token)
-		if (i == 0 || !alnum(s[i-1])) && (end == len(s) || !alnum(s[end])) {
-			return true
-		}
-		from = i + 1
+		return family
 	}
 }
 
-// tokenFamily is the assistant family whose token s names, or "".
-func tokenFamily(s string) string {
-	s = strings.ToLower(s)
-	for _, t := range clientTokens {
-		if hasToken(s, t.token) {
-			return t.family
-		}
+// funnelRef is a request's single valid ?ref= venue, whatever its method
+// (an MCP connector URL repeats it on every POST), or "".
+func funnelRef(r *http.Request) string {
+	if !strings.Contains(r.URL.RawQuery, "ref=") {
+		return ""
 	}
-	return ""
+	refs := r.URL.Query()["ref"]
+	if len(refs) != 1 || !board.ValidReferrerRef(refs[0]) {
+		return ""
+	}
+	return refs[0]
+}
+
+type nudgeLogger interface {
+	LogNudges(ctx context.Context, c board.Command, res *board.Result, source, surface string)
+}
+
+// logNudges records the nudges a described result shows (board/funnel.go
+// NudgeCodes), for the operator's funnel. It never fails the request.
+func (s *Server) logNudges(ctx context.Context, c board.Command, res *board.Result, source, surface string) {
+	if l, ok := s.service.(nudgeLogger); ok {
+		l.LogNudges(ctx, c, res, source, surface)
+	}
 }
 
 // userAgentClient is the family of a User-Agent: a named crawler or agent

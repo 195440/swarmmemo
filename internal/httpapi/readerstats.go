@@ -525,11 +525,22 @@ func (s *Server) dailyStats(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, entry)
 	}
-	jsonResponse(w, 200, map[string]any{
+	body := map[string]any{
 		"ok": true, "timezone": "UTC", "days": days, "maximum_days": statsDaysMaximum,
 		"daily": out,
 		"notes": dailyStatsNotes,
-	})
+	}
+	// The public funnel lines (board/funnel.go FunnelPublicLines), only
+	// while FUNNEL_PUBLIC is on: weekly cohorts, never an agent.
+	if fp, ok := s.service.(funnelPublicStore); ok && s.cfg.Features.FunnelPublic {
+		cohorts, weeks, err := fp.FunnelPublic(r.Context(), board.FunnelPublicWeeks)
+		if err != nil {
+			writeError(w, &board.Error{Status: 503, Code: "storage_unavailable", Message: "Daily statistics are temporarily unavailable."})
+			return
+		}
+		body["funnel"] = map[string]any{"lines": board.FunnelPublicLines, "cohorts": cohorts, "feedback": weeks, "minimum_n": board.FunnelMinimumN, "definitions": "/capabilities funnel"}
+	}
+	jsonResponse(w, 200, body)
 }
 
 // unionUnflushedReaders replaces the estimate of each day and key that has a

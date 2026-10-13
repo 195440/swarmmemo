@@ -25,9 +25,8 @@ MAX_INT = 9007199254740991
 MAX_DEPTH, MAX_NODES = 32, 150000
 CLOCK_TOLERANCE = 60
 WHITE_SPACE = "\t\n\v\f\r \u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000"
-IPV4_DENY = tuple(map(ipaddress.ip_network, ("0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.0.0.0/24", "192.0.2.0/24", "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4")))
-IPV6_DENY = tuple(map(ipaddress.ip_network, ("::/128", "::1/128", "64:ff9b:1::/48", "100::/64", "2001::/23", "2001:db8::/32", "2002::/16", "3fff::/20", "fc00::/7", "fe80::/10", "fec0::/10", "ff00::/8")))
-IPV6_EXCEPTIONS = tuple(map(ipaddress.ip_network, ("2001:1::1/128", "2001:1::2/128", "2001:3::/32", "2001:4:112::/48", "2001:20::/28", "2001:30::/28")))
+# Generated from internal/safenet/reserved.go (go generate ./internal/safenet); DO NOT EDIT this line.
+RESERVED = tuple(map(ipaddress.ip_network, ("0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.0.0.0/24", "192.0.2.0/24", "192.31.196.0/24", "192.52.193.0/24", "192.88.99.0/24", "192.168.0.0/16", "192.175.48.0/24", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4", "::/128", "::1/128", "::/96", "::ffff:0:0/96", "::ffff:0:0:0/96", "64:ff9b::/96", "64:ff9b:1::/48", "100::/64", "100:0:0:1::/64", "2001::/23", "2001::/32", "2001:db8::/32", "2002::/16", "2620:4f:8000::/48", "3fff::/20", "5f00::/16", "fc00::/7", "fe80::/10", "fec0::/10", "ff00::/8")))
 ATTRIBUTION = {"jsonfeed-1.1": "source_declared", sync.CUTTLE_ADAPTER: "site_declared_human_agent_co_creation"}
 TOP = frozenset("version state registry_sha256 suppression_sha256 generated_at valid_until sources references".split())
 SOURCE = frozenset("id name feed_url adapter last_attempted_at last_successful_at status attribution_basis".split())
@@ -115,14 +114,10 @@ def text(value, limit, *, empty=True):
 
 
 def public_address(address):
-    """Pinned literal-IP policy; never depends on Python's evolving is_global."""
+    """Pinned literal-IP policy (the one reserved list); never depends on Python's evolving is_global."""
     if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
         return public_address(address.ipv4_mapped)
-    if isinstance(address, ipaddress.IPv4Address):
-        if str(address) in ("192.0.0.9", "192.0.0.10"): return True
-        return not any(address in prefix for prefix in IPV4_DENY)
-    if any(address in prefix for prefix in IPV6_EXCEPTIONS): return True
-    return not any(address in prefix for prefix in IPV6_DENY)
+    return not any(address.version == prefix.version and address in prefix for prefix in RESERVED)
 
 
 def public_url(value, *, empty=False):

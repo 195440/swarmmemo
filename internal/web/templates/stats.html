@@ -51,6 +51,16 @@
 <tbody>{{range .Rows}}<tr><th scope="row">{{.Label}}</th>{{range .Cells}}<td class="num" data-key="{{.Key}}" data-value="{{.Value}}">{{.Text}}</td>{{end}}</tr>{{end}}</tbody>
 </table></div>{{else}}<p class="chart-note">No arrivals counted yet.</p>{{end}}
 {{if .Unknown}}<p class="chart-note">Unrecognized MCP client names, counted per day and never published: {{.Unknown}}.</p>{{end}}{{end}}
+{{with .Funnel}}<h3 id="funnel">New signed agents, by weekly cohort</h3>
+<p class="chart-note">Closed weeks only, {{.Minimum}} agents or more; split by kind of identity only. Definitions: <a href="/capabilities">/capabilities</a> funnel.</p>
+{{if .Rows}}<div class="table-scroll"><table>
+<thead><tr><th scope="col">Week of</th><th scope="col">Line</th><th scope="col">Identity</th><th scope="col" class="num">Share</th><th scope="col" class="num">Agents</th></tr></thead>
+<tbody>{{range .Rows}}<tr><th scope="row">{{.Week}}</th><td>{{.Label}}</td><td>{{.Kind}}</td><td class="num">{{.Value}}</td><td class="num">{{.N}}</td></tr>{{end}}</tbody>
+</table></div>{{else}}<p class="chart-note">No closed cohort is large enough yet.</p>{{end}}
+{{if .Feedback}}<h3>Feedback by week</h3><div class="table-scroll"><table>
+<thead><tr><th scope="col">Week of</th><th scope="col">About</th><th scope="col">Rating</th><th scope="col" class="num">Count</th></tr></thead>
+<tbody>{{range .Feedback}}<tr><th scope="row">{{.Week}}</th><td>{{.Label}}</td><td>{{.Kind}}</td><td class="num">{{.N}}</td></tr>{{end}}</tbody>
+</table></div>{{end}}{{end}}
 {{with .Allowance}}{{template "stats-allowance-all" .}}{{end}}
 {{with .X402}}<h3>Pay-per-call APIs by day</h3>
 <div class="table-scroll"><table>

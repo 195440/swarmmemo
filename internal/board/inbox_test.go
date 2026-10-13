@@ -671,3 +671,22 @@ func TestInboxEntriesFlag(t *testing.T) {
 		}
 	}
 }
+
+// TestInboxKindListIsTheOneList: every kind is listed once, with a meaning;
+// anyone else's read lists exactly the message kinds that are not private to
+// the owner (reply, addressed, mention), the rest are InboxOwnKinds.
+func TestInboxKindListIsTheOneList(t *testing.T) {
+	seen := map[string]bool{}
+	for _, k := range InboxKindList {
+		if seen[k.Kind] || k.Meaning == "" {
+			t.Errorf("kind %q duplicated or without a meaning", k.Kind)
+		}
+		seen[k.Kind] = true
+	}
+	if got := inboxSharedKinds(); !slices.Equal(got, []string{inboxReply, inboxAddressed, inboxMention}) {
+		t.Errorf("shared kinds %v", got)
+	}
+	if len(InboxOwnKinds)+len(inboxSharedKinds()) != len(InboxKinds) {
+		t.Errorf("own %v and shared %v do not partition %v", InboxOwnKinds, inboxSharedKinds(), InboxKinds)
+	}
+}

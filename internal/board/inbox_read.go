@@ -173,15 +173,12 @@ type inboxPageOf struct {
 	more    bool
 }
 
-// inboxOwnKinds are the kinds only the agent's own read lists.
-var inboxOwnKinds = []string{inboxConversation, inboxRequest, inboxReceived, inboxWakeup, inboxWork, inboxWitness, inboxOfferingCall, inboxOfferingAnswer, inboxReview}
-
 // inboxPage lists account's entries after the cursor: with no cursor the
 // newest limit, oldest first; with "start" from the first; with a v2 cursor
 // after its entry part; with any other cursor after the newest entry
 // written before its message sequence (since). Every row re-applies access:
 // a message entry needs its message to exist and its room to be readable by
-// caller now, and the private kinds (inboxOwnKinds) are the own read's only.
+// caller now, and the private kinds (InboxOwnKinds) are the own read's only.
 // Another reader's page also carries the agent's wake-up notices, for
 // data.wakeups as it always showed them, but does not list them.
 func (s *Store) inboxPage(ctx context.Context, tx *sql.Tx, cursor string, since int64, account, caller string, own bool, limit int, now int64) (inboxPageOf, error) {
@@ -203,7 +200,8 @@ func (s *Store) inboxPage(ctx context.Context, tx *sql.Tx, cursor string, since 
  FROM inbox_entries ie WHERE ie.account=?`
 	args := []any{caller, account}
 	if !own {
-		query += " AND ie.kind IN ('reply','addressed','mention','wakeup')"
+		// The shared kinds, and wake-ups for data.wakeups (not listed below).
+		query += " AND ie.kind IN ('" + strings.Join(append(inboxSharedKinds(), inboxWakeup), "','") + "')"
 	}
 	// A message entry: the message is there, and a mention-only one is not
 	// hidden (no version of it).

@@ -8,7 +8,13 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"swarmmemo/internal/safenet"
 )
+
+// QueryBytes bounds a reference search query (/api/references q, the
+// /references search box).
+const QueryBytes = 256
 
 const cuttleAdapter = "cuttle-worklog-index-v1"
 const cuttleOrigin = "https://blog.cuttle.af"
@@ -23,37 +29,11 @@ var legacyDatePattern = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}
 var hostPattern = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$`)
 var browserIPv4Tail = regexp.MustCompile(`^(?:[0-9]+|0[xX][0-9a-fA-F]+)$`)
 
-var nonpublicIPRanges = prefixes(
-	"0.0.0.0/8", "10.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12",
-	"192.0.0.0/24", "192.0.2.0/24", "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24",
-	"203.0.113.0/24", "240.0.0.0/4", "100.64.0.0/10", "224.0.0.0/4",
-	"::/128", "::1/128", "64:ff9b:1::/48", "100::/64", "2001::/23", "2001:db8::/32",
-	"2002::/16", "3fff::/20", "fc00::/7", "fe80::/10", "fec0::/10", "ff00::/8",
-)
-var publicIPExceptions = prefixes("192.0.0.9/32", "192.0.0.10/32", "2001:1::1/128", "2001:1::2/128", "2001:3::/32", "2001:4:112::/48", "2001:20::/28", "2001:30::/28")
-
-func prefixes(values ...string) []netip.Prefix {
-	result := make([]netip.Prefix, len(values))
-	for index, value := range values {
-		result[index] = netip.MustParsePrefix(value)
-	}
-	return result
-}
-
-// Fixed cross-runtime profile, not DNS or a claim about future IP assignments.
+// publicIP refuses a literal inside the one reserved list (safenet.Reserved,
+// which curation/publish_references.py mirrors under test). A fixed profile,
+// not DNS or a claim about future IP assignments.
 func publicIP(address netip.Addr) bool {
-	address = address.Unmap()
-	for _, allowed := range publicIPExceptions {
-		if allowed.Contains(address) {
-			return true
-		}
-	}
-	for _, denied := range nonpublicIPRanges {
-		if denied.Contains(address) {
-			return false
-		}
-	}
-	return address.IsValid()
+	return address.IsValid() && !safenet.IsReserved(address)
 }
 
 type grant struct {

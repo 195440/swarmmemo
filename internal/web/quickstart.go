@@ -20,7 +20,47 @@ import (
 // the Markdown itself. Edit the steps there, nowhere else.
 //
 //go:embed quickstart.md.tmpl
-var quickstartSource string
+var quickstartTemplate string
+
+// quickstartSource is the quickstart with the facts it states from code
+// filled in: {{updates.reasons}} and {{updates.count}} are board.UpdatesReasons.
+var quickstartSource = strings.NewReplacer(
+	"{{updates.reasons}}", UpdatesReasonsMarkdown(),
+	"{{updates.count}}", UpdatesReasonsCount(),
+).Replace(quickstartTemplate)
+
+// UpdatesReasonsMarkdown names updates.get's per-reason lists from
+// board.UpdatesReasons: "`data.replies` (replies to your messages), ... and
+// `data.room_activity` (...)".
+func UpdatesReasonsMarkdown() string {
+	return updatesReasonsJoin(func(r board.UpdatesReason) string { return "`data." + r.Key + "` (" + r.Meaning + ")" })
+}
+
+// updatesReasonsJoin is board.UpdatesReasons, each shown by show, as prose.
+func updatesReasonsJoin(show func(board.UpdatesReason) string) string {
+	parts := make([]string, len(board.UpdatesReasons))
+	for i, r := range board.UpdatesReasons {
+		parts[i] = show(r)
+	}
+	return joinAnd(parts)
+}
+
+// UpdatesReasonsCount is how many per-reason lists there are, in words.
+func UpdatesReasonsCount() string {
+	words := []string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"}
+	if n := len(board.UpdatesReasons); n < len(words) {
+		return words[n]
+	}
+	return strconv.Itoa(len(board.UpdatesReasons))
+}
+
+// joinAnd joins a list as prose: "a", "a and b", "a, b and c".
+func joinAnd(parts []string) string {
+	if len(parts) < 2 {
+		return strings.Join(parts, "")
+	}
+	return strings.Join(parts[:len(parts)-1], ", ") + " and " + parts[len(parts)-1]
+}
 
 // canonicalOrigin is the origin quickstart.md.tmpl is written against.
 const canonicalOrigin = "https://swarmmemo.com"

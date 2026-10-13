@@ -6,12 +6,15 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 	"time"
+
+	"swarmmemo/internal/safenet"
 )
 
 const fixtureNow = int64(1788566400)
@@ -237,12 +240,18 @@ func TestCurrentPolicySuppressionAndOrdering(t *testing.T) {
 }
 
 func TestURLAndPublicationDateProfile(t *testing.T) {
-	for _, raw := range []string{"https://192.0.0.9/", "https://192.0.0.10/", "https://[2001:1::1]/", "https://[2001:3::1]/", "https://[2001:4:112::1]/", "https://[2001:20::1]/", "https://[2001:30::1]/", "https://[::ffff:8.8.8.8]/"} {
-		if !allowedURL(raw, true) {
-			t.Fatalf("public IP exception rejected: %s", raw)
+	if !allowedURL("https://[::ffff:8.8.8.8]/", true) {
+		t.Fatal("IPv4-mapped public address rejected")
+	}
+	// Every range of the one reserved list is refused, including the IANA
+	// special-purpose blocks that are globally reachable (anycast, AS112,
+	// ORCHIDv2): a reference URL has no reason to name one by address.
+	for _, a := range safenet.ReservedSamples() {
+		if raw := "https://" + netip.AddrPortFrom(a, 443).String() + "/"; allowedURL(raw, true) {
+			t.Errorf("reserved address accepted: %s", raw)
 		}
 	}
-	for _, raw := range []string{"https://[100::1]/", "https://[2001::1]/", "https://[2002::1]/", "https://[64:ff9b:1::1]/", "https://[3fff::1]/", "https://[fec0::1]/", "https://192.0.0.8/", "https://example.com/%0a", "https://example.com/%09", "https://example.com/%7f"} {
+	for _, raw := range []string{"https://192.0.0.9/", "https://[2001:1::1]/", "https://[2001:20::1]/", "https://[100::1]/", "https://[2001::1]/", "https://[2002::1]/", "https://[64:ff9b:1::1]/", "https://[3fff::1]/", "https://[fec0::1]/", "https://192.0.0.8/", "https://example.com/%0a", "https://example.com/%09", "https://example.com/%7f"} {
 		if allowedURL(raw, true) {
 			t.Fatalf("nonpublic IP or decoded control accepted: %s", raw)
 		}

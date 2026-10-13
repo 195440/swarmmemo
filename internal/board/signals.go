@@ -285,6 +285,32 @@ func (s *Store) recordWriteSignal(ctx context.Context, tx *sql.Tx, cmd Command, 
 	return err
 }
 
+// writeClient is one write's time, channel and User-Agent.
+type writeClient struct {
+	at             int64
+	via, userAgent string
+}
+
+// accountWriteClients are an account's writes in [from, to], oldest first:
+// what the funnel reads to name a day's client (funnel_store.go). The
+// User-Agent goes no further than ClientNameOf and the family classifier.
+func (s *Store) accountWriteClients(ctx context.Context, account string, from, to int64) ([]writeClient, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT created_at,via,user_agent FROM write_signals WHERE account=? AND created_at BETWEEN ? AND ? ORDER BY seq", account, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []writeClient
+	for rows.Next() {
+		var w writeClient
+		if err = rows.Scan(&w.at, &w.via, &w.userAgent); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
 // PruneWriteSignals deletes write signals older than
 // WriteSignalsRetentionDays, in bounded batches. The hourly maintenance loop
 // and `swarmmemo maintenance` call it.

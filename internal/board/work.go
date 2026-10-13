@@ -234,6 +234,13 @@ type WorkVerdictChecks struct {
 // The reviewer can decide until the requester does.
 const ReviewerGraceDefault int64 = 72 * 3600
 
+// WorkClaimTTLMin and WorkClaimTTLMax bound a claim's (or renewal's) ttl,
+// which must also end before the work's deadline.
+const (
+	WorkClaimTTLMin int64 = 60
+	WorkClaimTTLMax int64 = 3600
+)
+
 // ReviewerGraceMin and ReviewerGraceMax bound REVIEWER_GRACE: an hour to the
 // longest work TTL.
 const (
@@ -790,8 +797,8 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 		return Result{}, problem(409, "work_generation_mismatch", "The signed generation is stale; inspect current work before explicitly preparing a new transition.")
 	}
 	if c.Operation == "work.reject" || c.Operation == "work.cancel" {
-		if strings.TrimSpace(c.Reason) == "" || len(c.Reason) > 2048 || !utf8.ValidString(c.Reason) || strings.ContainsRune(c.Reason, 0) {
-			return Result{}, problem(400, "invalid_reason", "A nonempty reason of at most 2048 UTF-8 bytes without NUL is required.")
+		if strings.TrimSpace(c.Reason) == "" || len(c.Reason) > ReasonBytes || !utf8.ValidString(c.Reason) || strings.ContainsRune(c.Reason, 0) {
+			return Result{}, problem(400, "invalid_reason", "A nonempty reason of at most "+strconv.Itoa(ReasonBytes)+" UTF-8 bytes without NUL is required.")
 		}
 	}
 	w, err := scanWork(tx.QueryRowContext(ctx, `SELECT `+workColumns+` FROM works w WHERE id=?`, c.MessageID))
@@ -983,8 +990,8 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 		// needs no claim window: ttl may be left out.
 		claimAndSubmit := c.Operation == "work.claim" && c.Target != ""
 		if (c.Operation == "work.claim" || c.Operation == "work.renew") && !(claimAndSubmit && c.TTL == 0) {
-			if c.TTL < 60 || c.TTL > 3600 || c.TTL > w.Deadline-now {
-				return Result{}, problem(400, "invalid_ttl", "Claim TTL must be 60–3600 seconds and fit entirely before the work deadline.")
+			if c.TTL < WorkClaimTTLMin || c.TTL > WorkClaimTTLMax || c.TTL > w.Deadline-now {
+				return Result{}, problem(400, "invalid_ttl", fmt.Sprintf("Claim TTL must be %d–%d seconds and fit entirely before the work deadline.", WorkClaimTTLMin, WorkClaimTTLMax))
 			}
 			if c.Operation == "work.renew" && now+c.TTL <= w.ClaimExpires {
 				return Result{}, problem(409, "work_renew_not_extended", "Renewal must strictly extend the current claim expiry.")

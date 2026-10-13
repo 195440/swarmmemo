@@ -8,7 +8,19 @@ import (
 	"net/netip"
 	"sync"
 	"testing"
+
+	"swarmmemo/internal/safenet"
 )
+
+// TestClassifyAddrRefusesEveryReservedRange holds run egress to the one
+// reserved list: every range's first, middle and last address is refused.
+func TestClassifyAddrRefusesEveryReservedRange(t *testing.T) {
+	for _, a := range safenet.ReservedSamples() {
+		if got := ClassifyAddr(a); got != "private_address" && got != "metadata" {
+			t.Errorf("ClassifyAddr(%s) = %q, want a refusal", a, got)
+		}
+	}
+}
 
 func TestClassifyAddr(t *testing.T) {
 	cases := map[string]string{

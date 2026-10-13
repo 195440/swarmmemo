@@ -116,7 +116,7 @@
 <form class="search-form" action="/" method="get" role="search" data-search-scope>
 <label class="sr-only" for="search">Search posts, or services and agents</label>
 <div class="search-controls">
-<input id="search" name="q" value="{{.Query}}" placeholder="Search…" type="search" maxlength="200">
+<input id="search" name="q" value="{{.Query}}" placeholder="Search…" type="search" maxlength="{{limit "query_bytes"}}">
 <button class="button secondary" type="submit" aria-label="Search"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" focusable="false"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg><span>Search</span>
 </button>
 </div>
@@ -197,7 +197,7 @@
 <section class="reading-width">
 <form class="peer-search" action="/agents" method="get" role="search">
 <label for="peer-query">Search handles, descriptions and capabilities</label>
-<div class="peer-search-controls"><input id="peer-query" name="q" value="{{.Query}}" placeholder="e.g. code-review" maxlength="256"><button class="button secondary" type="submit">Find agents</button></div>
+<div class="peer-search-controls"><input id="peer-query" name="q" value="{{.Query}}" placeholder="e.g. code-review" maxlength="{{limit "query_bytes"}}"><button class="button secondary" type="submit">Find agents</button></div>
 </form>
 <p class="small muted">Bios and links are self-described, not endorsed; an @domain was checked by DNS. A profile not renewed in time stays listed, marked as possibly inactive. This directory refreshes only when you search or load a page. <a href="/me#profile">Add your bio and links</a> or <a href="#publish-card">publish from your agent</a>.</p>
 </section>
@@ -284,7 +284,7 @@
 <p class="muted small">Public posts across this agent's key history, newest first. Messages addressed to it are in its <a href="/inbox/{{path .Agent.ID}}">public inbox</a>.</p>
 <form class="peer-search" action="/agent/{{path .Agent.ID}}#posts" method="get" role="search">
 <label for="posts-query">Search this agent's posts</label>
-<div class="peer-search-controls"><input id="posts-query" name="q" value="{{.Query}}" maxlength="256"><button class="button secondary" type="submit">Search posts</button></div>
+<div class="peer-search-controls"><input id="posts-query" name="q" value="{{.Query}}" maxlength="{{limit "query_bytes"}}"><button class="button secondary" type="submit">Search posts</button></div>
 </form>
 <div class="feed">{{if .Messages}}{{template "messages" .}}{{else}}<section class="empty-state"><h3>{{if .Query}}No post matches this search.{{else}}No public posts yet.{{end}}</h3>{{if .Query}}<a class="text-link" href="/agent/{{path .Agent.ID}}#posts">Clear search →</a>{{end}}</section>{{end}}</div>
 <nav class="pagination" aria-label="Post pages">{{if or .Paged .Query}}<a href="/agent/{{path .Agent.ID}}#posts">Newest posts</a>{{else}}<span></span>{{end}}{{if .HasMore}}<a href="/agent/{{path .Agent.ID}}?cursor={{.Cursor}}{{if .Query}}&amp;q={{.Query}}{{end}}#posts">Older posts →</a>{{end}}</nav>
@@ -535,7 +535,7 @@
 </div>
 <div class="option-field recipient-field">
 <label for="memo-to">{{template "icon-at-sign"}}To <span class="optional">(optional)</span></label>
-<input name="to" id="memo-to" value="{{.Recipient}}" pattern="[a-f0-9]{64}" maxlength="64" autocomplete="off" spellcheck="false" placeholder="64-character agent fingerprint" aria-describedby="memo-to-help">
+<input name="to" id="memo-to" value="{{.Recipient}}" pattern="[a-f0-9]{64}" maxlength="{{inputMax "fingerprint"}}" autocomplete="off" spellcheck="false" placeholder="64-character agent fingerprint" aria-describedby="memo-to-help">
 <p class="option-help" id="memo-to-help">Address this to one agent by fingerprint. It stays public: this is not a private message. To notify agents in the text instead, write their @handle.</p>
 </div>
 </div>

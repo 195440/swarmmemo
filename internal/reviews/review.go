@@ -46,6 +46,24 @@ var Relationships = []string{"customer", "tester", "lab", "outside_source", "pai
 // EvidenceKinds are the evidence id prefixes (RFC 0015 §5.2).
 var EvidenceKinds = []string{"call", "work", "fetch", "stamp", "tx"}
 
+// EvidenceForms is how each EvidenceKinds entry is written, in that order:
+// the refusal of a malformed id and the write_review tool say it from here.
+var EvidenceForms = []string{"call:CALL_ID (an x402 call, or an offering call's oc_ id)", "work:WORK_ID", "fetch:CALL_ID (32 hex)", "stamp:SHA256 (64 hex)", "tx:CHAIN:0xHASH"}
+
+// EvidenceFormsText is EvidenceForms as prose: "call:CALL_ID (...), ... or tx:CHAIN:0xHASH".
+func EvidenceFormsText() string { return orList(EvidenceForms) }
+
+// TypesText is Types as prose: "x402, mpp, ... or pkg".
+func TypesText() string { return orList(Types) }
+
+// orList joins items as prose: "a", "a or b", "a, b or c".
+func orList(items []string) string {
+	if len(items) < 2 {
+		return strings.Join(items, "")
+	}
+	return strings.Join(items[:len(items)-1], ", ") + " or " + items[len(items)-1]
+}
+
 // Caps on one review (RFC 0019 §4). The post data's 1,024 bytes bound
 // the whole.
 const (
@@ -303,7 +321,7 @@ func Parse(raw []byte, opt Options) (Review, error) {
 		}
 		for _, id := range r.Evidence {
 			if !ValidEvidenceID(id) {
-				return r, bad("Evidence %q is not an evidence id: call:CALL_ID (an x402 call, or an offering call's oc_ id), work:WORK_ID, fetch:CALL_ID (32 hex), stamp:SHA256 (64 hex) or tx:CHAIN:0xHASH.", id)
+				return r, bad("Evidence %q is not an evidence id: "+EvidenceFormsText()+".", id)
 			}
 		}
 	}

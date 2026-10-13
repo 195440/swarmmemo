@@ -64,10 +64,6 @@ type Config struct {
 	// Images serves post and room images (IMAGES); nil leaves every route and
 	// response exactly as it is without them.
 	Images *cards.Service
-	// AppsChallengeToken, when set, is served as plain text at
-	// AppsChallengePath (default DefaultAppsChallengePath): the OpenAI plugin
-	// directory's domain verification. Unset, the path is a 404.
-	AppsChallengePath, AppsChallengeToken string
 	// GraphSummary configures the /graph AI summaries; nil leaves them off
 	// and /graph offers only "Copy as prompt".
 	GraphSummary *GraphSummaryConfig
@@ -278,6 +274,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	s.countReferrer(r)
 	r = r.WithContext(board.WithClientFamily(r.Context(), requestClient(r)))
+	r = r.WithContext(board.WithFunnelRef(r.Context(), funnelRef(r))) // the funnel's entry venue (board/funnel.go)
 	r = withoutRef(r)
 	if referencePath(r.URL.Path) {
 		s.referenceRead(w, r)
@@ -579,6 +576,7 @@ func (s *Server) execute(w http.ResponseWriter, r *http.Request, c board.Command
 		return
 	}
 	s.describeReceipt(c, &res)
+	s.logNudges(r.Context(), c, &res, s.peer(r), "receipt")
 	if s.cfg.Images != nil {
 		if c.Operation == "room.hide" || c.Operation == "room.restore" {
 			s.forgetImage(c.MessageID)
@@ -1540,6 +1538,9 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request) {
 	b := sha256.Sum256([]byte(s.cfg.AdminToken))
 	if s.cfg.AdminToken == "" || subtle.ConstantTimeCompare(a[:], b[:]) != 1 {
 		writeError(w, &board.Error{Status: 401, Code: "unauthorized", Message: "Administrative credential required."})
+		return
+	}
+	if s.funnelAdmin(w, r) { // GET /admin/funnel (funnel.go)
 		return
 	}
 	if s.moderationAdmin(w, r) { // read-only steward routes; declines while MODERATION is off

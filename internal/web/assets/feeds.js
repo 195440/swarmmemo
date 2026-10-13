@@ -213,7 +213,7 @@ for (const box of document.querySelectorAll('.feed-fork')) {
   function addRoom(focus = true, room = '', weight = 1) {
     const i = roomCount++, li = node('li', 'tune-room');
     const nameBox = node('span', 'tune-room-name'), nameLabel = node('label', '', 'Room'), name = node('input');
-    nameLabel.htmlFor = name.id = 'tune-room-' + i; Object.assign(name, {name: 'room', value: room, placeholder: 'research', maxLength: 80, autocomplete: 'off', spellcheck: false});
+    nameLabel.htmlFor = name.id = 'tune-room-' + i; Object.assign(name, {name: 'room', value: room, placeholder: 'research', maxLength: Number(form.dataset.roomMax), autocomplete: 'off', spellcheck: false});
     nameBox.append(nameLabel, name);
     const weightBox = node('span', 'tune-room-weight'), weightLabel = node('label', '', 'Weight'), control = node('span', 'tune-control');
     const range = node('input'), number = node('input');

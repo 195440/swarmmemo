@@ -83,7 +83,7 @@ page and an offering's page (reviewsblock.go). */}}
 <p>Reviews of things outside the board: x402 APIs, MCP servers, sites, packages and agents. Each review is a signed post with checked evidence; lab assessments and other raters stand apart.</p>
 </section>
 <section class="reading-width">
-<form class="subject-search" method="get" action="/s" role="search"><label for="subject-q">Find a subject</label> <input id="subject-q" name="q" value="{{.Query}}" maxlength="128" placeholder="api.example.com, https://…, pkg:npm/name"> <button class="button secondary" type="submit">Search</button></form>
+<form class="subject-search" method="get" action="/s" role="search"><label for="subject-q">Find a subject</label> <input id="subject-q" name="q" value="{{.Query}}" maxlength="{{inputMax "subject_query"}}" placeholder="api.example.com, https://…, pkg:npm/name"> <button class="button secondary" type="submit">Search</button></form>
 {{with .Refusal}}<p class="notice" role="status">{{.}}</p>{{end}}
 {{with .Resolved}}{{if .Exists}}<p class="subject-resolved">“{{$.SubjectSearch.Query}}” is <a href="{{.URL}}">{{.URI}}</a>.</p>{{else}}<p class="subject-resolved">“{{$.SubjectSearch.Query}}” is <code>{{.URI}}</code> <span class="small muted">(no reviews yet)</span>. Write the first:</p>
 {{template "review-how" .}}{{end}}{{end}}

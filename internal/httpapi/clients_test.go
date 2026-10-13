@@ -92,9 +92,9 @@ func TestClientFamilyClassification(t *testing.T) {
 	for _, f := range board.ClientFamilies {
 		known[f] = true
 	}
-	for _, tok := range clientTokens {
-		if !known[tok.family] {
-			t.Errorf("token %q maps to unknown family %q", tok.token, tok.family)
+	for _, tok := range board.ClientTokens {
+		if tok.Family != "" && !known[tok.Family] {
+			t.Errorf("token %q maps to unknown family %q", tok.Token, tok.Family)
 		}
 	}
 	for _, f := range uaFamilyClients {

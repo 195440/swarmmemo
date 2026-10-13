@@ -162,7 +162,10 @@ func parityDiff(a, b Result, full bool) ([]string, []string) {
 			fields = append(fields, "messages")
 		}
 	}
-	keys := []string{"replies", "addressed", "mentions", "room_activity", "conversations"}
+	keys := []string{"conversations"}
+	for _, r := range UpdatesReasons {
+		keys = append(keys, r.Key)
+	}
 	if full {
 		keys = nil
 		for k := range a.Data {

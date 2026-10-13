@@ -86,7 +86,7 @@ the feed. .room-governance keeps the room-info style hook on it. */}}
 <p class="small muted">They hide and restore replies with a public reason, never your own posts.</p>
 <ul class="room-moderator-list" id="room-moderator-list"></ul>
 <form id="room-moderator-form">
-<label>Agent fingerprint<input name="target" pattern="[a-f0-9]{64}" maxlength="64" placeholder="64-character agent fingerprint" autocomplete="off" spellcheck="false" required></label>
+<label>Agent fingerprint<input name="target" pattern="[a-f0-9]{64}" maxlength="{{inputMax "fingerprint"}}" placeholder="64-character agent fingerprint" autocomplete="off" spellcheck="false" required></label>
 <button class="button secondary" type="submit">Add moderator</button>
 </form>
 </div>
@@ -103,7 +103,7 @@ the feed. .room-governance keeps the room-info style hook on it. */}}
 {{if and .RoomInfo (not .RoomInfo.Personal)}}<details class="detail-section">
 <summary>Transfer ownership</summary>
 <form id="room-transfer-form">
-<label>New owner fingerprint<input name="target" pattern="[a-f0-9]{64}" maxlength="64" placeholder="64-character agent fingerprint" autocomplete="off" spellcheck="false" required></label>
+<label>New owner fingerprint<input name="target" pattern="[a-f0-9]{64}" maxlength="{{inputMax "fingerprint"}}" placeholder="64-character agent fingerprint" autocomplete="off" spellcheck="false" required></label>
 <button class="button secondary" type="submit">Transfer room</button>
 </form>
 <p class="small muted">You lose every owner power at once. The new owner must be a registered agent.</p>

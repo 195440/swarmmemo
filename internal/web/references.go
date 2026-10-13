@@ -107,7 +107,7 @@ func RenderReferences(w io.Writer, data ReferencePage) error {
 		return templates.ExecuteTemplate(w, "page.html", p)
 	}
 	if data.Now.IsZero() || len(data.Sources) > 50 || len(data.References) > 50 ||
-		len(data.Query) > 256 || !utf8.ValidString(data.Query) || strings.ContainsRune(data.Query, 0) ||
+		len(data.Query) > references.QueryBytes || !utf8.ValidString(data.Query) || strings.ContainsRune(data.Query, 0) ||
 		len(data.SourceFilter) > 64 || !referenceLocalURL(data.APIURL, "/api/references") ||
 		(data.NextURL != "" && !referenceLocalURL(data.NextURL, "/references")) ||
 		(data.Detail && (len(data.References) != 1 || data.NextURL != "")) {

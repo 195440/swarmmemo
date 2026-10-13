@@ -5,6 +5,7 @@
 // index.ts wires it to the gateway entrypoint and the per-run Durable Object.
 
 import { LIMITS, type EgressEntry, type EgressSummary, type NetworkPolicy } from "./protocol.ts";
+import { RESERVED } from "./reserved.gen.ts";
 
 // ---------------------------------------------------------------- addresses
 
@@ -98,20 +99,15 @@ function contains(c: Cidr, a: Addr): boolean {
   return true;
 }
 
-const cidrs = (label: string, list: string[]): Cidr[] => list.map((s) => parseCidr(s, label)!);
+const cidrs = (label: string, list: readonly string[]): Cidr[] => list.map((s) => parseCidr(s, label)!);
 
 // Cloud metadata endpoints are named apart from the ranges that already hold
 // most of them, so the log says what was reached for.
 const METADATA = cidrs("metadata", ["169.254.169.254/32", "169.254.170.2/32", "168.63.129.16/32", "100.100.100.200/32", "fd00:ec2::254/128", "192.0.0.192/32"]);
 
-// Everything that is not a public unicast address (RFC 6890 and friends).
-const PRIVATE = cidrs("private_address", [
-  "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.0.0.0/24",
-  "192.0.2.0/24", "192.31.196.0/24", "192.52.193.0/24", "192.88.99.0/24", "192.168.0.0/16", "192.175.48.0/24",
-  "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4",
-  "::/96", "::1/128", "64:ff9b::/96", "64:ff9b:1::/48", "100::/64", "2001::/23", "2001:db8::/32", "2002::/16",
-  "3fff::/20", "5f00::/16", "fc00::/7", "fe80::/10", "fec0::/10", "ff00::/8",
-]);
+// Everything that is not a public unicast address: the one reserved list,
+// generated from internal/safenet/reserved.go (reserved.gen.ts).
+const PRIVATE = cidrs("private_address", RESERVED);
 
 // ---------------------------------------------------------------- names
 

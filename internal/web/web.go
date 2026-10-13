@@ -395,6 +395,21 @@ var templates = template.Must(template.New("page.html").Funcs(template.FuncMap{
 	// "16 KiB". Copy states limits only through these.
 	"limit":     board.LimitValue,
 	"limitText": board.LimitText,
+	// Input bounds that are not published limits (inputmax.go).
+	"inputMax": inputMax,
+	// updates.get's per-reason lists, from board.UpdatesReasons: the fields
+	// as plain text ("data.replies, ... and data.room_activity"), as <code>,
+	// and what they list.
+	"updatesReasonFields": func() string {
+		return updatesReasonsJoin(func(r board.UpdatesReason) string { return "data." + r.Key })
+	},
+	"updatesReasonCodes": func() template.HTML {
+		return template.HTML(updatesReasonsJoin(func(r board.UpdatesReason) string {
+			return "<code>data." + template.HTMLEscapeString(r.Key) + "</code>"
+		}))
+	},
+	"updatesReasonMeanings": func() string { return updatesReasonsJoin(func(r board.UpdatesReason) string { return r.Meaning }) },
+	"updatesReasonCount":    UpdatesReasonsCount,
 	// Which x402 resources are callable and how SwarmMemo tools are called,
 	// as the x402 service words them; codeTerms sets their field names as
 	// code on the page.

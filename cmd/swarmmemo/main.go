@@ -111,13 +111,14 @@ func run() error {
 		"receiver",     // receiver.go
 		"inbox",        // inbox.go
 		"paste", "doc", // receiver.go
-		"fetch",    // fetch.go
-		"feed",     // feed.go
-		"signals",  // signals.go
+		"fetch",              // fetch.go
+		"feed",               // feed.go
+		"signals",            // signals.go
+		"funnel", "feedback", // funnel.go
 		"offering": // offerings.go
 		return operator(command)
 	default:
-		return errors.New("usage: swarmmemo [serve|mcp-stdio [--profile core|assistant|full]|version|keygen FILE|nostr keygen FILE|canonical|rubric score RUBRIC OBSERVATIONS|rubric validate RUBRIC|backup FILE|integrity|reports|moderate ID hide/restore REASON|room ROOM policy JSON|room ROOM moderator add/remove AGENT|room ROOM owner AGENT|room ROOM style set FILE|room ROOM asset put FILE|recover-generation --offline-confirmed|stats referrers [--days N]|tier|params|allowance|lever|trust|x402 keygen FILE|x402 check|x402 import FILE|x402 vet ID|x402 unvet ID|topup check|topup unknown|topup resolve ID credit TXHASH|topup resolve ID fail|offering unknown|offering resolve ID paid TXHASH|offering resolve ID fail|moderation|receiver revoke ID REASON|inbox parity [AGENTS [CURSOR_BACK]]|doc hide ID REASON|paste hide ID REASON|fetch deny HOST REASON|fetch allow HOST|fetch denylist|signals account FINGERPRINT|signals message ID|signals cluster [--days N] [--min N]|feed replay [--profile FILE] [--against FILE] [--at TIME] [--top N]]")
+		return errors.New("usage: swarmmemo [serve|mcp-stdio [--profile core|assistant|full]|version|keygen FILE|nostr keygen FILE|canonical|rubric score RUBRIC OBSERVATIONS|rubric validate RUBRIC|backup FILE|integrity|reports|moderate ID hide/restore REASON|room ROOM policy JSON|room ROOM moderator add/remove AGENT|room ROOM owner AGENT|room ROOM style set FILE|room ROOM asset put FILE|recover-generation --offline-confirmed|stats referrers [--days N]|tier|params|allowance|lever|trust|x402 keygen FILE|x402 check|x402 import FILE|x402 vet ID|x402 unvet ID|topup check|topup unknown|topup resolve ID credit TXHASH|topup resolve ID fail|offering unknown|offering resolve ID paid TXHASH|offering resolve ID fail|moderation|receiver revoke ID REASON|inbox parity [AGENTS [CURSOR_BACK]]|doc hide ID REASON|paste hide ID REASON|fetch deny HOST REASON|fetch allow HOST|fetch denylist|signals account FINGERPRINT|signals message ID|signals cluster [--days N] [--min N]|funnel [--days N] [--split X] [--organic] [--json|--html FILE]|funnel kpi [--days N] [--json]|funnel backfill [--since YYYY-MM-DD]|funnel recompute|funnel exclude add|rm|list|feedback list [--limit N]|feed replay [--profile FILE] [--against FILE] [--at TIME] [--top N]]")
 	}
 }
 
@@ -162,6 +163,10 @@ func operator(command string) error {
 		return operatorFeed(ctx, store, os.Args[2:], os.Stdout)
 	case "signals":
 		return operatorSignals(ctx, store, os.Args[2:], os.Stdout)
+	case "funnel":
+		return operatorFunnel(ctx, store, os.Args[2:], os.Stdout)
+	case "feedback":
+		return operatorFeedback(ctx, store, os.Args[2:], os.Stdout)
 	case "maintenance":
 		n, err := store.PruneExpiredBlobs(ctx)
 		if err != nil {
@@ -344,16 +349,6 @@ func serve() error {
 	if config.BridgeTokens, e = bridgeTokens(); e != nil {
 		return e
 	}
-	// The OpenAI plugin directory's domain verification token, served as
-	// plain text while set (404 otherwise); a malformed one is not served.
-	if token := strings.TrimSpace(os.Getenv("OPENAI_APPS_CHALLENGE_TOKEN")); token != "" {
-		path := os.Getenv("OPENAI_APPS_CHALLENGE_PATH")
-		if httpapi.ValidAppsChallenge(path, token) {
-			config.AppsChallengePath, config.AppsChallengeToken = path, token
-		} else {
-			slog.Warn("OPENAI_APPS_CHALLENGE_TOKEN or _PATH is malformed and is not served: a token of 8 to 512 URL-safe characters, a path under /.well-known/")
-		}
-	}
 	// Constrained transports (RFC0007) are each off until an operator sets an
 	// address. They share HTTP's per-origin limiter, so a peer has one budget.
 	// NETWORK_RATE=BURST/PER_SECOND overrides the per-network request limit
@@ -440,6 +435,14 @@ func serve() error {
 			if err != nil && ctx.Err() == nil {
 				slog.Warn("Write signal retention maintenance failed; it retries in an hour")
 			}
+			// C293a: the funnel's flush, its daily re-derive and recompute,
+			// and nudge retention (board/funnel_store.go).
+			work, cancel = context.WithTimeout(ctx, 2*time.Minute)
+			err = store.FunnelMaintenance(work)
+			cancel()
+			if err != nil && ctx.Err() == nil {
+				slog.Warn("Funnel maintenance failed; it retries in an hour", "error", err)
+			}
 			select {
 			case <-ctx.Done():
 				return
@@ -500,6 +503,18 @@ func serve() error {
 		defer cancel()
 		err := server.Shutdown(shutdown)
 		api.FlushReaderCounts()
+		flush, cancelFlush := context.WithTimeout(context.Background(), 10*time.Second)
+		_ = store.FlushFunnel(flush) // the funnel's last 30 seconds
+		cancelFlush()
+		// Feedback screens in flight store their outcome before the database
+		// closes (each is bounded by its own screen and store deadlines).
+		screens := make(chan struct{})
+		go func() { store.WaitFeedbackScreens(); close(screens) }()
+		select {
+		case <-screens:
+		case <-time.After(30 * time.Second):
+			slog.Warn("Feedback screens still running at shutdown; the maintenance retries them")
+		}
 		// In-flight deliveries finish and record their outcome; queued ones stay
 		// in storage, so stopping repeats nothing and loses nothing.
 		store.StopWebhookDelivery()

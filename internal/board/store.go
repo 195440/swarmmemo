@@ -128,6 +128,8 @@ type Store struct {
 	moderation moderationState
 	// Arrivals by client (clientstats.go), in memory until written.
 	clients clientState
+	// The funnel's live acts and nudges (funnel_store.go), in memory until flushed.
+	funnel funnelState
 	// RFC0013: hosted identities' keys and the conversation screening worker.
 	hosted     hostedState     // hosted.go
 	convScreen convScreenState // conversation_screen.go
@@ -301,7 +303,12 @@ CREATE TABLE IF NOT EXISTS leases (
 // works.standing_tier, the work_standing table and the works_standing
 // index. Additive; a schema-34 binary would read a result a standing task
 // opened as work of its own and never return its seat.
-const SchemaVersion = 35
+//
+// 36: the funnel (C293a, funnel_store.go): its four tables (an agent's
+// days, its funnel row, nudges shown, feedback) and their indexes. Additive: a schema-35 binary
+// never reads or writes them, and refuses the feedback operation as
+// unknown.
+const SchemaVersion = 36
 
 // connPragmas are the per-connection PRAGMAs, in modernc.org/sqlite's DSN
 // syntax. journal_mode=WAL is stored in the database file and set at Open.
@@ -495,6 +502,9 @@ func Open(path string, config Config) (*Store, error) {
 }
 
 func (s *Store) Close() error {
+	// A funnel flush in flight finishes first, so no write outlives Close.
+	s.funnel.flushMu.Lock()
+	defer s.funnel.flushMu.Unlock()
 	if e := s.find.engine.Load(); e != nil {
 		e.Close()
 	}
@@ -818,6 +828,9 @@ func (s *Store) executeCommand(ctx context.Context, cmd Command, source string) 
 	ctx = s.preflightAnswerScreen(ctx, cmd, a)   // RFC 0017: an answer's screen, no transaction held
 	ctx = s.preflightRefund(ctx, cmd, a)         // RFC 0017: a refund's chain read, no transaction held
 	s.preflightScreen(ctx, a, cmd)               // RFC0013 §5.2: a protected reader's catch-up, no transaction held
+	if cmd.Operation == "feedback" {
+		ctx = context.WithValue(ctx, funnelSourceKey{}, source) // an anonymous caller's network (funnel_feedback.go)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return empty, err
@@ -1058,6 +1071,7 @@ func (s *Store) executeCommand(ctx context.Context, cmd Command, source string) 
 		newKey, lastWrite = false, 0 // not a write of the key's own
 	}
 	s.countClientCommand(ctx, a, cmd, source, newKey, lastWrite, now)
+	s.recordAct(ctx, a, cmd, result, source, newKey, now) // the funnel (funnel_store.go)
 	return result, nil
 }
 
@@ -1137,6 +1151,8 @@ func (s *Store) execute(ctx context.Context, tx *sql.Tx, c Command, a actor, now
 		return s.transfer(ctx, tx, c, a, now)
 	case "report":
 		return s.report(ctx, tx, c, a, now)
+	case "feedback":
+		return s.feedback(ctx, tx, c, a, now)
 	case "vote":
 		return s.vote(ctx, tx, c, a, now)
 	case "stats":

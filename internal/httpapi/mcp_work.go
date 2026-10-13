@@ -126,7 +126,7 @@ func (s *Server) addHostedWorkTools(server *mcp.Server, tool func(string) *mcp.T
 		return as(ctx, func(hc *hostedCaller) (R, error) {
 			c := board.Command{Operation: "work.claim", MessageID: in.MessageID, Target: in.ResultID, TTL: in.TTL}
 			if c.Target == "" && c.TTL == 0 {
-				c.TTL = 3600
+				c.TTL = board.WorkClaimTTLMax
 			}
 			return workTransition(hc, c, false, in.Hash, nil, "payout_address", in.Payout)
 		})

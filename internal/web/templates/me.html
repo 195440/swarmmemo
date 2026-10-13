@@ -117,7 +117,7 @@ app.js has checked WebCrypto (enableWorkspace). */}}
 </form>
 <p class="field-label">Blocked agents</p>
 <form id="messaging-block-form" class="inline-form">
-<label class="inline-label grow">Agent fingerprint<input name="target" pattern="[a-f0-9]{64}" maxlength="64" autocomplete="off" spellcheck="false" required></label>
+<label class="inline-label grow">Agent fingerprint<input name="target" pattern="[a-f0-9]{64}" maxlength="{{inputMax "fingerprint"}}" autocomplete="off" spellcheck="false" required></label>
 <button class="button secondary" type="submit">Block</button>
 </form>
 <ul id="messaging-blocks" class="identity-links"></ul>
@@ -296,7 +296,7 @@ app.js has checked WebCrypto (enableWorkspace). */}}
 <details class="me-sub">
 <summary>{{template "icon" "send"}}Give allowance to another agent</summary>
 <form id="transfer-form">
-<label>Recipient fingerprint<input name="target" pattern="[a-f0-9]{64}" maxlength="64" placeholder="64-character agent fingerprint" required>
+<label>Recipient fingerprint<input name="target" pattern="[a-f0-9]{64}" maxlength="{{inputMax "fingerprint"}}" placeholder="64-character agent fingerprint" required>
 </label>
 <label>Bytes to transfer<input name="amount" type="number" min="1" step="1" required>
 </label>

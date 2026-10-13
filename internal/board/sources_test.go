@@ -512,8 +512,19 @@ func generatedSections(t *testing.T) map[string]string {
 		}
 	}
 	sections := map[string]string{"operations": ops.String(), "limits": limits.String(), "errors": errs.String(), "hooks": wrapList("", hooks, ""), "vias": via.String(),
+		"funnel": funnelProtocolSection(), // funnel_test.go
 		// Inside a list item: indented, and the end marker keeps its indent.
 		"free-hooks": wrapList("  ", free, "  ") + "  "}
+	// The inbox entry kinds, from InboxKindList.
+	var kinds strings.Builder
+	for _, k := range InboxKindList {
+		shared := ""
+		if !k.Own {
+			shared = " (shared)"
+		}
+		fmt.Fprintf(&kinds, "- `%s`%s: %s.\n", k.Kind, shared, k.Meaning)
+	}
+	sections["inbox-kinds"] = kinds.String()
 	// The services: an overview, then each service's head, from the catalogue.
 	catalog := services.Catalog(services.Known())
 	var overview strings.Builder

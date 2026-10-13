@@ -81,6 +81,9 @@ type statsView struct {
 	// ReviewRewards is review rewards paid and pending; nil while reviews
 	// are off (stats_reviews.go).
 	ReviewRewards *offeringsView
+	// Funnel is the public funnel lines; nil while FUNNEL_PUBLIC is off
+	// (stats_funnel.go).
+	Funnel *funnelPublicView
 }
 
 // Services reports whether any service group is drawn.
@@ -368,6 +371,7 @@ func buildStats(ctx context.Context, service board.Service, hourly bool) (*stats
 	v.Wake = buildWakeStats(ctx, service)
 	v.Feeds = buildFeedStats(ctx, service)
 	v.Inbox = buildInboxStats(ctx, service)
+	v.Funnel = buildFunnelPublic(ctx, service)
 	v.Offerings = buildOfferingStats(ctx, service)
 	v.ReviewRewards = buildReviewRewardStats(ctx, service)
 	return v, nil

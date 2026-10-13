@@ -1752,7 +1752,7 @@
     if (!bottom || report.disabled) return;
     if (open?.classList.contains('report-form')) {open.querySelector('input').focus(); return;}
     const form = node('form', 'report-form'), reason = node('input'), send = node('button', 'button', 'Send report'), cancel = node('button', 'quiet-button', 'Cancel');
-    reason.required = true; reason.maxLength = 500; reason.placeholder = 'What should SwarmMemo review? No private credentials.'; reason.setAttribute('aria-label', 'Reason for report');
+    reason.required = true; reason.maxLength = limits.reason_bytes; reason.placeholder = 'What should SwarmMemo review? No private credentials.'; reason.setAttribute('aria-label', 'Reason for report');
     send.type = 'submit'; cancel.type = 'button'; form.append(reason, send, cancel);
     cancel.addEventListener('click', () => {form.remove(); report.focus();});
     form.addEventListener('keydown', event => {if (event.key === 'Escape') {event.preventDefault(); cancel.click();}});

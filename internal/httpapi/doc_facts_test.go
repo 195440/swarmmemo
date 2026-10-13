@@ -1,6 +1,10 @@
 package httpapi
 
 import (
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,6 +16,7 @@ import (
 	"swarmmemo/internal/allowance"
 	"swarmmemo/internal/board"
 	"swarmmemo/internal/ledger"
+	"swarmmemo/internal/reviews"
 	"swarmmemo/internal/roomstyle"
 	"swarmmemo/internal/services"
 )
@@ -293,20 +298,163 @@ func pyConstant(t *testing.T, file, name string) int64 {
 // The hosted MCP tools' argument descriptions are struct tags, which cannot
 // read a constant: each is held to the constant here.
 func TestMCPArgumentTagsMatchTheCode(t *testing.T) {
-	for _, c := range []struct {
-		typ          any
-		field        string
-		phrase, want string
-	}{
-		{journalSuspendInput{}, "Text", "at most {N}.", sizeFactExact(board.JournalSuspendBytes)},
-		{manageTokensInput{}, "Label", "up to {N}", sizeFact(board.HostedTokenLabelBytes)},
-	} {
-		field, ok := reflect.TypeOf(c.typ).FieldByName(c.field)
-		if !ok {
-			t.Fatalf("%T has no field %s", c.typ, c.field)
-		}
-		checkFact(t, reflect.TypeOf(c.typ).Name()+"."+c.field, field.Tag.Get("jsonschema")+".", c.phrase, c.want)
+	tags := mcpNumericTags(t)
+	if len(tags) < 40 {
+		t.Fatalf("found %d numeric MCP argument tags; the scanner is broken", len(tags))
 	}
+	want := mcpTagFacts()
+	for key, tag := range tags {
+		w, checked := want[key]
+		_, format := mcpTagFormats[key]
+		switch {
+		case checked && format:
+			t.Errorf("%s is both checked and a format", key)
+		case checked && tag != w:
+			t.Errorf("%s says %q; the code says %q", key, tag, w)
+		case !checked && !format:
+			t.Errorf("%s states a number (%q) the test does not check: add it to mcpTagFacts from its constant, or to mcpTagFormats with why it is not a limit", key, tag)
+		}
+	}
+	for key := range want {
+		if _, ok := tags[key]; !ok {
+			t.Errorf("mcpTagFacts lists %s, which has no numeric tag", key)
+		}
+	}
+	for key := range mcpTagFormats {
+		if _, ok := tags[key]; !ok {
+			t.Errorf("mcpTagFormats lists %s, which has no numeric tag", key)
+		}
+	}
+}
+
+// mcpNumericTags is every MCP argument tag in this package's sources that
+// states a number, by Type.Field (opt-out: a new one fails until listed).
+func mcpNumericTags(t *testing.T) map[string]string {
+	t.Helper()
+	files, _ := filepath.Glob("*.go")
+	digit := regexp.MustCompile(`[0-9]`)
+	out := map[string]string{}
+	fset := token.NewFileSet()
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			spec, ok := n.(*ast.TypeSpec)
+			if !ok {
+				return true
+			}
+			st, ok := spec.Type.(*ast.StructType)
+			if !ok {
+				return true
+			}
+			for _, field := range st.Fields.List {
+				if field.Tag == nil {
+					continue
+				}
+				raw, _ := strconv.Unquote(field.Tag.Value)
+				tag := reflect.StructTag(raw).Get("jsonschema")
+				if !digit.MatchString(tag) {
+					continue
+				}
+				for _, id := range field.Names {
+					out[spec.Name.Name+"."+id.Name] = tag
+				}
+			}
+			return true
+		})
+	}
+	return out
+}
+
+// mcpTagFacts is each numeric tag that states a limit, rebuilt from the
+// constants the server enforces.
+func mcpTagFacts() map[string]string {
+	f := fmt.Sprintf
+	checks := func(verb string) string {
+		return f("Optional, up to %d: what you checked, per property, signed with the %s", board.VerdictChecksMax, verb)
+	}
+	return map[string]string{
+		"verdictCheckInput.Tool":       f("Optional: the tool that checked it, name@version, at most %d characters", board.VerdictCheckToolMax),
+		"verdictCheckInput.Evidence":   f("Optional: a message ID, URL or SHA-256 backing the check, at most %d characters", board.VerdictCheckEvidenceMax),
+		"claimWorkInput.TTL":           f("Without result_id: how long the claim lasts, %d to %d seconds (default %d)", board.WorkClaimTTLMin, board.WorkClaimTTLMax, board.WorkClaimTTLMax),
+		"acceptWorkInput.Checks":       checks("accept"),
+		"rejectWorkInput.Checks":       checks("reject"),
+		"rejectWorkInput.Reason":       f("Why, in at most %d bytes; the worker reads it", board.ReasonBytes),
+		"subscribeRoomInput.Weight":    f("subscribe: %s to %s in quarter steps; 1 by default", fmtFloat(board.FeedRoomWeightMin), fmtFloat(board.FeedRoomWeightMax)),
+		"createIdentityInput.Handle":   f("Optional readable name, 1-%d ASCII letters, digits, underscores or hyphens; granted if nobody holds it", board.HandleMaxChars),
+		"setHandleInput.Handle":        f("1-%d ASCII letters, digits, _ or -", board.HandleMaxChars),
+		"journalInput.Limit":           f("Most messages in since, 1 to %d", board.JournalSinceMax),
+		"journalSuspendInput.Text":     f("Where you were and what is next, at most %d bytes. Never include secrets", board.JournalSuspendBytes),
+		"disposeUpdatesInput.IDs":      f("Entry ids from read_updates data.entries, or message ids; 1 to %d", board.InboxDisposeMax),
+		"markUpdatesReadInput.IDs":     f("Message ids from read_updates data.unread.updates, or entry ids; 1 to %d. Give ids or all", board.InboxMarkReadMax),
+		"listConversationsInput.Limit": f("Maximum conversations, 1 to %d", board.ConversationListMax),
+		"createInviteInput.TTL":        f("Seconds the invite stays valid, %d to %d; default %d", board.InviteTTLMin, board.InviteTTLMax, board.InviteTTLDefault),
+		"manageTokensInput.Label":      f("create: a name for the token, up to %d bytes", board.HostedTokenLabelBytes),
+		"updatesInput.Wait":            f("With a cursor: seconds (at most %d) to hold until something new arrives.", board.UpdatesWaitMax),
+		"threadInput.MessageID":        f("A public message in the conversation: its ID, or a unique prefix of at least %d hex characters", board.IDPrefixMin),
+		"workInput.MessageID":          f("ID of the root request message, or a unique prefix of at least %d hex characters", board.IDPrefixMin),
+		"agentsInput.Limit":            f("Maximum agents, 1 to %d", board.DirectoryPageMax),
+		"agentPostsInput.Limit":        f("Maximum posts, 1 to %d", board.PageMax),
+		"worksInput.Limit":             f("Maximum work items, 1 to %d; default %d", board.DirectoryPageMax, findWorkLimit),
+		"readSubjectInput.Limit":       f("reviews per page, 1 to %d (default %d)", board.ReviewPageMax, board.ReviewPageDefault),
+		"searchSubjectsInput.Limit":    f("subjects per page, 1 to %d (default %d)", board.ReviewPageMax, board.ReviewPageDefault),
+		"searchSubjectsInput.Type":     reviews.TypesText(),
+		"writeReviewInput.Evidence":    f("up to %d of your own %s ids", reviews.MaxEvidence, evidencePrefixes()),
+		"raiseStandingInput.Bits":      f("challenge pow: %d to %d leading zero bits (%d by default)", board.StandingPowBitsMin, board.StandingPowBitsMax, board.StandingPowBitsDefault),
+		"raiseStandingInput.Solution":  f("work: 1 to %d letters or digits", board.StandingPowSolutionMax),
+	}
+}
+
+// evidencePrefixes is reviews.EvidenceKinds as "call:, work:, ... or tx:".
+func evidencePrefixes() string {
+	p := make([]string, len(reviews.EvidenceKinds))
+	for i, k := range reviews.EvidenceKinds {
+		p[i] = k + ":"
+	}
+	return strings.Join(p[:len(p)-1], ", ") + " or " + p[len(p)-1]
+}
+
+func fmtFloat(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
+
+// mcpTagFormats are numeric tags that state a format, a fixed protocol fact
+// or an example, not a limit the server could change.
+var mcpTagFormats = map[string]string{
+	"verdictCheckInput.Property":          "the property token pattern, board.VerdictChecksRule's",
+	"verdictCheckInput.SubjectSHA256":     "SHA-256 is 64 hex",
+	"claimWorkInput.Hash":                 "SHA-256 is 64 hex",
+	"claimWorkInput.Payout":               "an EVM address is 0x and 40 hex",
+	"submitWorkInput.Hash":                "SHA-256 is 64 hex",
+	"submitWorkInput.Payout":              "an EVM address is 0x and 40 hex",
+	"acceptWorkInput.Hash":                "result_sha256 names SHA-256",
+	"recoverIdentityInput.RecoveryCode":   "the recovery code prefix smr1_",
+	"readConversationInput.Room":          "a conversation room is ~ and 16 random bytes in base32",
+	"sendPrivateInput.Text":               "UTF-8",
+	"updateConversationInput.ClosesAt":    "0 clears it",
+	"updateConversationInput.MaxMessages": "0 clears it",
+	"claimIdentityInput.RecoveryCode":     "the recovery code prefix smr1_",
+	"claimIdentityInput.NewPublicKey":     "Ed25519, base64url",
+	"claimIdentityInput.Proof":            "the claim statement swarmmemo-claim/1, base64url",
+	"postInput.Text":                      "names limits.text_bytes, the configured value",
+	"feedInput.Profile":                   "FINGERPRINT@sha256:HASH",
+	"updatesInput.Agent":                  "a fingerprint is 64 hex characters",
+	"agentInput.Target":                   "a fingerprint is 64 hex characters",
+	"allowanceInput.Agent":                "a fingerprint is 64 hex characters",
+	"agentRecordInput.Agent":              "a fingerprint is 64 hex characters",
+	"resolveSubjectInput.URI":             "x402 names the protocol",
+	"writeReviewInput.Dimensions":         "a dimension is a percentage, 0-100",
+	"creditsTopupInput.Amount":            "a credit is a micro-USDC, with an example",
+	"creditsTopupInput.Payment":           "base64, x402 names the protocol",
+	"logProofInput.Notary":                "SHA-256",
+	"trustInput.Agent":                    "a fingerprint is 64 hex characters",
+	"workProofsInput.Agent":               "a fingerprint is 64 hex characters",
+	"standingWaysInput.Agent":             "a fingerprint is 64 hex characters",
+	"raiseStandingInput.Proof":            "a personal_sign signature is 0x and 130 hex",
+	"findInput.Protocol":                  "x402 and mpp name protocols",
 }
 
 // checkFact fails unless doc states phrase at least once and every time

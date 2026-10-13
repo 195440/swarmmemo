@@ -291,11 +291,23 @@ func TestStalePhrasesStayGone(t *testing.T) {
 // Templates and the generated agent text state a limit through the board
 // constants (the limit/limitText template funcs, board.LimitText in Go), so a
 // changed limit cannot leave a page promising the old one.
+//
+// Every template and every script under web/assets is scanned (opt-out, not
+// opt-in): a limit of 1000 or more may not appear as a bare number, a smaller
+// one may not appear next to its unit ("500 bytes", "64 characters"), and no
+// form field states its own maxlength: it reads {{limit}}/{{inputMax}} in a
+// template, the page's data-limits (or a data- attribute the template filled)
+// in a script.
 func TestCopyStatesLimitsThroughConstants(t *testing.T) {
 	var sources []string
 	templates, _ := filepath.Glob("../web/templates/*.html")
+	scripts, _ := filepath.Glob("../web/assets/*.js")
+	if len(templates) < 20 || len(scripts) < 10 {
+		t.Fatalf("found %d templates and %d scripts; the globs are broken", len(templates), len(scripts))
+	}
 	sources = append(sources, templates...)
-	sources = append(sources, "discovery.go", "mcp.go", "receipts.go", "../web/assets/app.js")
+	sources = append(sources, scripts...)
+	sources = append(sources, "discovery.go", "mcp.go", "receipts.go")
 	forbidden := map[string]string{}
 	for _, l := range board.PublicLimits() {
 		if l.Value >= 1000 {
@@ -304,6 +316,25 @@ func TestCopyStatesLimitsThroughConstants(t *testing.T) {
 		if l.Unit == "bytes" && l.Value >= 1024 {
 			forbidden[`\b`+regexp.QuoteMeta(l.Text())+`\b`] = l.Key
 		}
+		// A smaller limit is stated next to its unit.
+		if l.Value >= 10 && l.Value < 1000 {
+			unit := map[string]string{"bytes": `(?:UTF-8 )?bytes`, "seconds": `seconds`}[l.Unit]
+			if strings.HasSuffix(l.Key, "_chars") {
+				unit = `(?:characters|chars)`
+			}
+			if unit != "" {
+				forbidden[`\b`+strconv.FormatInt(l.Value, 10)+`[ -]`+unit+`\b`] = l.Key
+			}
+		}
+	}
+	// A form field's own number: maxlength="64" in a template, maxLength = 500
+	// or maxLength: 80 in a script.
+	forbidden[`(?i)maxlength(?:="|\s*[:=]\s*)\d`] = "the field's bound"
+	// Numbers that equal a limit by coincidence, by file and match.
+	coincidences := map[string]string{
+		"graph.js|604800":  "seconds in a week, for the weekly timeline",
+		"graph-gl.js|2048": "the camera's world coordinates",
+		"embed-v1.js|2048": "a sanity bound on the host page's data-url, which is never sent",
 	}
 	patterns := make([]string, 0, len(forbidden))
 	for pattern := range forbidden {
@@ -323,6 +354,9 @@ func TestCopyStatesLimitsThroughConstants(t *testing.T) {
 				if m := regexp.MustCompile(pattern).FindString(line); m != "" {
 					if m == "1000" && strings.HasSuffix(path, ".js") {
 						continue // milliseconds per second in a script, not the 1,000 limits
+					}
+					if coincidences[filepath.Base(path)+"|"+m] != "" {
+						continue
 					}
 					t.Errorf("%s:%d states %q literally; use the %s limit (limitText %q in templates, board.LimitText in Go)", path, i+1, m, forbidden[pattern], forbidden[pattern])
 				}

@@ -7,7 +7,7 @@
 <form class="search-form find-form" method="get" action="/find" role="search" data-search-scope>
 <label class="sr-only" for="find-q">What do you need?</label>
 <div class="search-controls">
-<input id="find-q" name="q" value="{{.Query}}" maxlength="200" type="search" placeholder="weather forecast under a cent, returns JSON">
+<input id="find-q" name="q" value="{{.Query}}" maxlength="{{inputMax "find_query"}}" type="search" placeholder="weather forecast under a cent, returns JSON">
 <button class="button secondary" type="submit"><svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" focusable="false"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg><span>Find</span></button>
 </div>
 {{template "search-scope" "find"}}
@@ -23,7 +23,7 @@
 <input type="hidden" name="q" value="{{$.FindView.Query}}">
 <input type="hidden" name="type" value="{{.Edit.Type}}">
 <label>Category <select name="category"><option value="any">any</option>{{range .Categories}}<option value="{{.}}"{{if eq . $.FindView.Edit.Category}} selected{{end}}>{{.}}</option>{{end}}</select></label>
-<label>Max price, USD a call <input name="max_price" value="{{.Edit.MaxPrice}}" placeholder="any" inputmode="decimal" maxlength="12"></label>
+<label>Max price, USD a call <input name="max_price" value="{{.Edit.MaxPrice}}" placeholder="any" inputmode="decimal"></label>
 <label>Returns <select name="output"><option value="any">any</option>{{range .Outputs}}<option value="{{.}}"{{if eq . $.FindView.Edit.Output}} selected{{end}}>{{.}}</option>{{end}}</select></label>
 <label>Network <select name="network"><option value="any">any</option>{{range .Networks}}<option value="{{.}}"{{if eq . $.FindView.Edit.Network}} selected{{end}}>{{.}}</option>{{end}}</select></label>
 <label>Protocol <select name="protocol"><option value="any">any</option>{{range .Protocols}}<option value="{{.}}"{{if eq . $.FindView.Edit.Protocol}} selected{{end}}>{{.}}</option>{{end}}</select></label>

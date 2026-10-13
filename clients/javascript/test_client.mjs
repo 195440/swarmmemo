@@ -444,6 +444,9 @@ test('work, updates, journal, docs, tools and /call helpers send the documented 
   assert.deepEqual(shown(requests[1].body), {operation: 'post', room: 'reviews', page: 's'.repeat(26), kind: 'review', text: 'Answered fast.', request_id: 'r-1',
     data: `{"schema":1,"review":{"subject":"site:https://example.org/","verdict":"good","dimensions":{"works":90},"relationship":"customer","evidence":["call:${'b'.repeat(32)}"]}}`});
   verifySigned(requests[1].body); requests.length = 0;
+  // A lone evidence id is one item, not its characters (db91c24a).
+  await signed.review('https://Example.org/page', 'good', 'One call.', {evidence: 'call:' + 'c'.repeat(32), requestId: 'r-3'});
+  assert.deepEqual(JSON.parse(requests[1].body.data).review.evidence, ['call:' + 'c'.repeat(32)]); requests.length = 0;
   await signed.review('site:https://example.org/', 'bad', 'Worse now.', {supersedes: 'e'.repeat(32), requestId: 'r-2'});
   assert.equal(JSON.parse(requests[1].body.data).supersedes, 'e'.repeat(32)); requests.length = 0;
   await assert.rejects(anonymous.review('example.org', 'good', 'Unsigned.'), /signed/);

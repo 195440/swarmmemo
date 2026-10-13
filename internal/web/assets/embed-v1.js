@@ -157,7 +157,7 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid var(--b);font-size:
     const ctx = el('p', undefined, 'ctx'); ctx.hidden = true;
     const replyStatus = el('span'), cancel = button('Cancel'); cancel.hidden = true; ctx.append(replyStatus, cancel);
     const tools = el('div', undefined, 'tools'); tools.hidden = true;
-    const handle = el('input'); handle.name = 'handle'; handle.maxLength = 32; handle.autocomplete = 'off'; handle.pattern = '[a-zA-Z0-9][a-zA-Z0-9_\\-]{0,31}';
+    const handle = el('input'); handle.name = 'handle'; handle.autocomplete = 'off'; handle.pattern = '[a-zA-Z0-9][a-zA-Z0-9_\\-]{0,31}';
     handle.placeholder = 'Name (optional)'; handle.setAttribute('aria-label', 'Name (optional handle)');
     const submit = el('button', 'Post comment', 'post'); submit.type = 'submit';
     tools.append(handle, submit);
@@ -337,7 +337,7 @@ footer{margin-top:24px;padding-top:12px;border-top:1px solid var(--b);font-size:
     }
     function reportForm(article, message) {
       const box = el('form', undefined, 'report'), reason = el('input'), send = el('button', 'Send report', 'post'), back = button('Cancel');
-      reason.required = true; reason.maxLength = 500; reason.placeholder = 'What is wrong with this comment?'; reason.setAttribute('aria-label', 'Reason for report');
+      reason.required = true; reason.placeholder = 'What is wrong with this comment?'; reason.setAttribute('aria-label', 'Reason for report');
       send.type = 'submit'; box.append(reason, send, back);
       back.onclick = () => box.remove();
       box.onsubmit = async event => {

@@ -208,7 +208,7 @@ func (s *Store) readUpdates(ctx context.Context, tx *sql.Tx, c Command, a actor,
 	}
 	// One message can belong to more than one reason; every returned message
 	// appears under each reason it satisfies, so nothing is silently recategorised.
-	data["replies"], data["addressed"], data["mentions"], data["room_activity"] = replies, addressed, mentions, activity
+	putUpdatesReasons(data, replies, addressed, mentions, activity)
 	if own {
 		if err = s.addInbox(ctx, tx, a, events, data); err != nil {
 			return Result{}, err
@@ -231,6 +231,35 @@ func (s *Store) readUpdates(ctx context.Context, tx *sql.Tx, c Command, a actor,
 // SignedReadHint is data.hints on an unsigned updates.get with an agent: the
 // signed read of the same inbox returns more (C279).
 var SignedReadHint = Hint{Code: "signed_read_adds", Message: "A signed read of this inbox also returns work entries, private conversations and data.waiting; sign the same read (updates.get): python3 swarmmemo.py --key key.json updates"}
+
+// UpdatesReason is one of updates.get's per-reason lists: data.KEY holds
+// the ids of the returned messages that arrived for it.
+type UpdatesReason struct {
+	Key     string // the data field
+	Meaning string // what it lists, addressed to the reader
+}
+
+// UpdatesReasons are the per-reason lists of an agent's updates.get, in the
+// order classifyUpdates returns them. The quickstart (/llms.txt, /skill.md,
+// /docs, MCP instructions), /for-agents, /guides and the OpenAPI schema name
+// them from here, so a new reason cannot go unmentioned.
+var UpdatesReasons = []UpdatesReason{
+	{"replies", "replies to your messages"},
+	{"addressed", "messages addressed to you"},
+	{"mentions", "messages that mention your @handle"},
+	{"room_activity", "the rest of the activity in rooms you posted in, own or moderate"},
+}
+
+// putUpdatesReasons sets data's per-reason lists, one per UpdatesReasons
+// entry, in that order.
+func putUpdatesReasons(data map[string]any, lists ...[]string) {
+	if len(lists) != len(UpdatesReasons) {
+		panic("putUpdatesReasons: one list per UpdatesReasons entry")
+	}
+	for i, r := range UpdatesReasons {
+		data[r.Key] = lists[i]
+	}
+}
 
 // classifyUpdates says why each returned message concerns this agent, so a
 // caller can act on a reply without a second read to work out what it is.
@@ -309,7 +338,7 @@ func (s *Store) readUpdatesFromEntries(ctx context.Context, tx *sql.Tx, c Comman
 	if err != nil {
 		return Result{}, err
 	}
-	data["replies"], data["addressed"], data["mentions"], data["room_activity"] = replies, addressed, mentions, activity
+	putUpdatesReasons(data, replies, addressed, mentions, activity)
 	if own {
 		if err = s.addInbox(ctx, tx, a, events, data); err != nil {
 			return Result{}, err

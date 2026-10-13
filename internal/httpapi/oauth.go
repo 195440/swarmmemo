@@ -159,19 +159,11 @@ func (s *Server) oauthChallenge(profile, errorCode, description string) string {
 	return v
 }
 
-// oauthRoute serves the OAuth endpoints and the directory's domain
-// verification; false for any other path.
+// oauthRoute serves the OAuth endpoints; false for any other path. The
+// plugin directory's domain verification token is Caddy's
+// (deploy/caddy/Caddyfile @openaiChallenge), which answers before the app.
 func (s *Server) oauthRoute(w http.ResponseWriter, r *http.Request) bool {
 	path := r.URL.Path
-	if s.cfg.AppsChallengeToken != "" && path == s.appsChallengePath() {
-		if !readMethod(r) {
-			methodError(w)
-			return true
-		}
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = io.WriteString(w, s.cfg.AppsChallengeToken)
-		return true
-	}
 	switch path {
 	case oauthPRMPath, oauthPRMPath + "/mcp", oauthPRMPath + web.AssistantMCPPath, oauthPRMPath + mcpProfileCore, oauthASMPath, oauthAuthorizePath, oauthTokenPath, oauthRegisterPath, oauthRevokePath:
 	default:
@@ -212,29 +204,6 @@ func (s *Server) oauthRoute(w http.ResponseWriter, r *http.Request) bool {
 		s.revokeEndpoint(w, r, o)
 	}
 	return true
-}
-
-// appsChallengePath is where the plugin directory's domain verification
-// token is served.
-func (s *Server) appsChallengePath() string {
-	if s.cfg.AppsChallengePath != "" {
-		return s.cfg.AppsChallengePath
-	}
-	return DefaultAppsChallengePath
-}
-
-// DefaultAppsChallengePath is the OpenAI plugin directory's domain
-// verification path.
-const DefaultAppsChallengePath = "/.well-known/openai-apps-challenge"
-
-var appsChallengeTokenRE = regexp.MustCompile(`^[A-Za-z0-9._~+/=-]{8,512}$`)
-var appsChallengePathRE = regexp.MustCompile(`^/\.well-known/[A-Za-z0-9._-]{1,64}$`)
-
-// ValidAppsChallenge reports whether a configured domain verification path
-// and token may be served: a path under /.well-known/ (or empty for the
-// default) and a token of 8 to 512 URL-safe characters.
-func ValidAppsChallenge(path, token string) bool {
-	return (path == "" || appsChallengePathRE.MatchString(path)) && appsChallengeTokenRE.MatchString(token)
 }
 
 func (s *Server) protectedResourceMetadata(profile string) map[string]any {

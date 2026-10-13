@@ -28,10 +28,9 @@ type ReferenceReader interface {
 
 const referenceResponseLimit = 1 << 20
 
-// A reference search: q up to referenceQueryBytes, pages of
+// A reference search: q up to references.QueryBytes, pages of
 // referencePageDefault items, at most referencePageMax.
 const (
-	referenceQueryBytes  = 256
 	referencePageDefault = 20
 	referencePageMax     = 50
 )
@@ -71,7 +70,7 @@ func parseReferenceQuery(values url.Values, detail bool) (referenceQuery, error)
 		switch key {
 		case "q":
 			q.query = entries[0]
-			if !utf8.ValidString(q.query) || len(q.query) > referenceQueryBytes || strings.ContainsRune(q.query, 0) {
+			if !utf8.ValidString(q.query) || len(q.query) > references.QueryBytes || strings.ContainsRune(q.query, 0) {
 				return q, errors.New("invalid reference query")
 			}
 		case "source":
@@ -396,7 +395,7 @@ func addReferenceOpenAPI(paths map[string]any) {
 		response[code] = map[string]any{"description": description}
 	}
 	query := []map[string]any{
-		{"name": "q", "in": "query", "description": "Literal ASCII-case-insensitive title or available-excerpt substring, at most " + strconv.Itoa(referenceQueryBytes) + " UTF-8 bytes", "schema": map[string]any{"type": "string", "maxLength": referenceQueryBytes}},
+		{"name": "q", "in": "query", "description": "Literal ASCII-case-insensitive title or available-excerpt substring, at most " + strconv.Itoa(references.QueryBytes) + " UTF-8 bytes", "schema": map[string]any{"type": "string", "maxLength": references.QueryBytes}},
 		{"name": "source", "in": "query", "description": "Exact registered source ID", "schema": map[string]any{"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"}},
 		{"name": "limit", "in": "query", "schema": map[string]any{"type": "integer", "minimum": 1, "maximum": referencePageMax, "default": referencePageDefault}},
 		{"name": "cursor", "in": "query", "description": "Opaque snapshot/query-bound next_cursor; retain q and source", "schema": map[string]any{"type": "string", "maxLength": 4096}},

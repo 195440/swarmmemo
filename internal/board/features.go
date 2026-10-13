@@ -95,6 +95,11 @@ type Features struct {
 	// paid to the worker whose submitted result is rejected. Off, reject_fee
 	// is 400 reject_fee_unavailable and nothing on the wire changes.
 	WorkRejectFee bool
+	// FunnelPublic is FUNNEL_PUBLIC (C293a, funnel_report.go FunnelPublic):
+	// /stats and /api/stats/daily show the public funnel lines. Off, the
+	// default, they show nothing of the funnel; the operator's views do not
+	// depend on it.
+	FunnelPublic bool
 }
 
 // InboxMode is INBOX_ENTRIES: off (the zero value), shadow (written, not
@@ -164,6 +169,7 @@ func ParseFeatures(getenv func(string) string) (Features, error) {
 	boolean("EXPORT_ENDORSEMENTS", &f.ExportEndorsements)
 	boolean("MODERATION", &f.Moderation)
 	boolean("REVIEWS", &f.Reviews)
+	boolean("FUNNEL_PUBLIC", &f.FunnelPublic)
 	switch v := getenv("ALLOWANCE_LEDGER"); v {
 	case "", "off":
 	case "shadow":

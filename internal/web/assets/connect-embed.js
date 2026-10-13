@@ -15,7 +15,7 @@
   const opener = window.opener;
   const say = (text, error = false) => { line.textContent = text; line.classList.toggle('error', error); };
   const tell = message => { try { opener?.postMessage(message, origin); } catch (_) { /* The opener left. */ } };
-  // Ninety days and a lifetime byte ceiling of 2 MiB: hundreds of comments and likes.
+  // Ninety days and a lifetime byte ceiling (amount): hundreds of comments and likes.
   const ttl = 90 * 86400, amount = 2 << 20;
   const uuid = () => crypto.randomUUID ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
   const hex = bytes => Array.from(new Uint8Array(bytes), b => b.toString(16).padStart(2, '0')).join('');

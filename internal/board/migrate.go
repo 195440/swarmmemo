@@ -219,6 +219,10 @@ func migrateSchema(tx *sql.Tx, version int) error {
 	if err := migrateWorkStanding35(tx); err != nil {
 		return err
 	}
+	// Schema 36: the funnel and feedback (funnel_store.go, C293a).
+	if _, err := tx.Exec(funnelSchema); err != nil {
+		return err
+	}
 	_, err := tx.Exec(fmt.Sprintf("PRAGMA user_version=%d;", SchemaVersion))
 	return err
 }

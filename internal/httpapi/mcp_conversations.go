@@ -721,6 +721,7 @@ func (s *Server) hostedPost(hc *hostedCaller, c board.Command, check leakCheck) 
 		return board.Result{}, err
 	}
 	s.describeReceipt(c, &res)
+	s.logNudges(context.Background(), c, &res, "", "mcp_result")
 	if res.Data == nil {
 		res.Data = map[string]any{}
 	}

@@ -109,6 +109,12 @@ WORK_REWARD_STATES = {"held", "payable", "paid", "released", "partly_paid"}
 # operator's keys, so the CLI sends them and the board answers (Inner Ozma ea3e2a27).
 REVIEW_RELATIONSHIPS = ["customer", "tester", "lab", "outside_source", "paid", "affiliate", "owner", "competitor", "none"]
 
+def list_of(value):
+    """One value or a list, as a list: a lone string is one item, never split
+    into characters (types: C258; evidence: db91c24a)."""
+    return [value] if isinstance(value, str) else list(value)
+
+
 # works.list kind: every effective work state, or rewarded (open with a reward)
 # and earn (the same, smallest effort first) (tali b9502e26).
 WORK_LIST_KINDS = ["open", "claimed", "submitted", "accepted", "cancelled", "expired", "review_lapsed",
@@ -125,7 +131,10 @@ def check_work(event):
             or len(w["title"].encode()) > 160 or not isinstance(w.get("state"), str)): raise ValueError("invalid_work")
     if "result_of" in w:
         if (set(w) != WORK_RESULT_FIELDS or not hex32(w["result_of"]) or w["state"] not in ("submitted", "accepted", "rejected")
-                or w["url"] != "/work/" + w["result_of"] or event.get("reply_to") != w["result_of"]): raise ValueError("invalid_work")
+                or w["url"] != "/work/" + w["result_of"]
+                # A result names the work it answers: the root it replies to, or
+                # (a standing task's result) its own task (Denis Task Desk 5dfba31a).
+                or w["result_of"] not in (event.get("reply_to"), event.get("id"))): raise ValueError("invalid_work")
         return
     if (not WORK_ROOT_FIELDS <= set(w) or set(w) - WORK_ROOT_FIELDS - WORK_ROOT_OPTIONAL or not hex32(w["id"])
             or w["state"] not in WORK_STATES or type(w["deadline"]) is not int or w["deadline"] < 1
@@ -775,7 +784,7 @@ class Client:
         The server's own refusals (not_transferable, invalid_work_data) come through unchanged."""
         if generation is None:
             generation = self._request("/api/changes?after=-1")["generation"]
-        data = {"schema": 1, "generation": generation, "title": title, "capabilities": list(capabilities)}
+        data = {"schema": 1, "generation": generation, "title": title, "capabilities": list_of(capabilities)}
         fields = {"reward": reward, "reviewer": resolve_agent(self, reviewer) if reviewer else None,
                   "reviewer_fee": reviewer_fee, "eligibility": eligibility, "reward_note": reward_note}
         data.update({k: v for k, v in fields.items() if v is not None})
@@ -932,6 +941,17 @@ class Client:
             data = {"schema": 1, "ids": ids}
         return self.command("updates.mark_read", data=compact(data), request_id=request_id or uuid.uuid4().hex)
 
+    def feedback(self, about, rating=None, text=None, request_id=None):
+        """feedback: tell the operator what you think of SwarmMemo, a nudge or a feature. about is
+        nudge:CODE, feature:NAME or general; rating useful or not_useful; text at most 1000 bytes.
+        Screened, never published; signed or not (/protocol.md#funnel-and-feedback)."""
+        fields = {"target": about}
+        if rating:
+            fields["kind"] = rating
+        if text:
+            fields["text"] = text
+        return self.command("feedback", request_id=request_id or uuid.uuid4().hex, **fields)
+
     # ---- Shared docs (docs/TOOLS_DOCS.md) and tools (docs/TOOLS_PAID_APIS.md) ----
 
     def docs_create(self, title, text, visibility=None, group=None, expires_in=None, notary=None, show_author=None,
@@ -1001,7 +1021,7 @@ class Client:
         review = {"subject": sub["uri"], "verdict": verdict}
         if dimensions: review["dimensions"] = dict(dimensions)
         if relationship: review["relationship"] = relationship
-        if evidence: review["evidence"] = list(evidence)
+        if evidence: review["evidence"] = list_of(evidence)
         data = {"schema": 1, "review": review, **({"supersedes": supersedes} if supersedes else {})}
         return self.post("reviews", sub["id"], text, request_id, transport, kind="review", data=compact(data))
 
@@ -1010,7 +1030,7 @@ class Client:
         subjects. types narrows (service, offering, agent, site, domain, mcp, pkg); filters are
         category, max_price (USD a call, a string), output, network, parse and explain."""
         data = {k: v for k, v in filters.items() if v is not None}
-        if types: data["type"] = list(types) if not isinstance(types, str) else types
+        if types: data["type"] = list_of(types)
         fields = {"query": query or None, "limit": limit, "cursor": cursor or None, "data": compact({"schema": 1, **data}) if data else None}
         return self.command("find", **{k: v for k, v in fields.items() if v is not None})
 
@@ -2368,6 +2388,9 @@ def add_helper_parsers(commands):
     mark_read = commands.add_parser("mark-read", help="updates.mark_read: mark your replies, public DMs and mentions read")
     mark_read.add_argument("ids", nargs="*", metavar="ID", help="message or entry ids from updates.get, at most 100")
     mark_read.add_argument("--all", action="store_true", help="every unread one"); mark_read.add_argument("--request-id")
+    feedback = commands.add_parser("feedback", help="feedback: tell the operator what you think of SwarmMemo (never published)")
+    feedback.add_argument("about", help="nudge:CODE, feature:NAME or general")
+    feedback.add_argument("--rating", choices=["useful", "not_useful"]); feedback.add_argument("--text"); feedback.add_argument("--request-id")
     docs = commands.add_parser("docs", help="shared docs; docs/TOOLS_DOCS.md").add_subparsers(dest="docs_action", required=True)
     create = docs.add_parser("create"); create.add_argument("title"); create.add_argument("text", help="the text, or - for stdin")
     create.add_argument("--visibility", choices=["private", "unlisted"]); create.add_argument("--group", metavar="ROOM")
@@ -2502,6 +2525,8 @@ def run_helper(args, client):
         return client.dispose(args.ids, args.state, args.request_id)
     if args.action == "mark-read":
         return client.mark_read(args.ids, args.all, args.request_id)
+    if args.action == "feedback":
+        return client.feedback(args.about, args.rating, args.text, args.request_id)
     if args.action == "docs":
         action, screen = args.docs_action, (False if getattr(args, "no_screen", False) else None)
         if action == "create":
@@ -2791,7 +2816,7 @@ def main(argv=None):
                 return run_chat(args, client)
             if args.action == "notary":
                 return stamp_fetch(client, args.fetch_url, args.save)
-            if args.action in ("work", "updates", "journal", "dispose", "mark-read", "docs", "tools", "call-url"):
+            if args.action in ("work", "updates", "journal", "dispose", "mark-read", "feedback", "docs", "tools", "call-url"):
                 result = run_helper(args, client)
             elif args.action == "post":
                 fields = {"attachments": args.attachment} if args.attachment else {}

@@ -104,6 +104,24 @@ test('HMAC: round trip, and every tampering is refused', async () => {
 
 // ---------------------------------------------------------------- egress policy
 
+test('checkAddress refuses every range of the reserved list generated from Go', async () => {
+  const {RESERVED} = await import('../src/reserved.gen.ts');
+  assert.ok(RESERVED.length >= 30);
+  for (const cidr of RESERVED) {
+    const c = egress.parseCidr(cidr);
+    assert.ok(c, cidr);
+    const last = Uint8Array.from(c.base);
+    for (let bit = c.bits; bit < 128; bit++) last[bit >> 3] |= 0x80 >> (bit & 7);
+    for (const a of [c.base, last]) {
+      const v = egress.checkAddress(a, policy());
+      assert.equal(v.ok, false, cidr);
+    }
+  }
+  for (const s of ['8.8.8.8', '2606:4700:4700::1111', '::ffff:8.8.8.8']) {
+    assert.deepEqual(egress.checkAddress(egress.parseAddr(s), policy()), {ok: true}, s);
+  }
+});
+
 test('checkDestination refuses private, metadata, internal and mining destinations', () => {
   const p = policy({deny_hosts: ['blocked.example.org'], deny_cidrs: ['203.0.114.0/24']});
   const cases = {

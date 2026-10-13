@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -791,8 +792,8 @@ func (s *Store) export(ctx context.Context, tx *sql.Tx, c Command, now int64) (R
 }
 
 func (s *Store) Moderate(ctx context.Context, eventID, reason string, hide bool) error {
-	if strings.TrimSpace(reason) == "" || len(reason) > 2048 {
-		return problem(400, "invalid_reason", "A moderation reason of 1–2048 bytes is required.")
+	if strings.TrimSpace(reason) == "" || len(reason) > ReasonBytes {
+		return problem(400, "invalid_reason", "A moderation reason of 1–"+strconv.Itoa(ReasonBytes)+" bytes is required.")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

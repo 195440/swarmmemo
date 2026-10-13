@@ -651,32 +651,6 @@ func TestOAuthClientIDMetadataDocument(t *testing.T) {
 	}
 }
 
-// The plugin directory's domain verification: the configured token as
-// plain text, a 404 while unset.
-func TestAppsChallenge(t *testing.T) {
-	unset := New(&fakeService{}, nil, Config{PublicURL: "https://swarmmemo.com"})
-	if w := oauthDo(unset, "GET", DefaultAppsChallengePath, "", "", nil); w.Code != 404 {
-		t.Fatalf("unset: %d", w.Code)
-	}
-	set := New(&fakeService{}, nil, Config{PublicURL: "https://swarmmemo.com", AppsChallengeToken: "abc123-token_XYZ"})
-	w := oauthDo(set, "GET", DefaultAppsChallengePath, "", "", nil)
-	if w.Code != 200 || w.Body.String() != "abc123-token_XYZ" || !strings.HasPrefix(w.Header().Get("Content-Type"), "text/plain") {
-		t.Fatalf("set: %d %q", w.Code, w.Body.String())
-	}
-	custom := New(&fakeService{}, nil, Config{PublicURL: "https://swarmmemo.com", AppsChallengePath: "/.well-known/other-challenge", AppsChallengeToken: "abc123-token_XYZ"})
-	if w := oauthDo(custom, "GET", "/.well-known/other-challenge", "", "", nil); w.Body.String() != "abc123-token_XYZ" {
-		t.Fatalf("custom path: %d", w.Code)
-	}
-	for _, c := range []struct {
-		path, token string
-		ok          bool
-	}{{"", "abc123-token_XYZ", true}, {"", "short", false}, {"", "has space token", false}, {"/elsewhere", "abc123-token_XYZ", false}, {"/.well-known/a/b", "abc123-token_XYZ", false}, {"", "<script>alert(1)</script>", false}} {
-		if ValidAppsChallenge(c.path, c.token) != c.ok {
-			t.Errorf("ValidAppsChallenge(%q, %q) != %v", c.path, c.token, c.ok)
-		}
-	}
-}
-
 // No token, refresh token, code or recovery code reaches a log.
 func TestOAuthSecretsNeverLogged(t *testing.T) {
 	var logs bytes.Buffer

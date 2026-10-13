@@ -13,7 +13,7 @@
 <section class="reading-width reference-directory" aria-label="External references">
 {{if not (or .Detail .Unconfigured)}}
 <form class="reference-filters" action="/references" method="get">
-<label for="reference-query">Find a reference<input id="reference-query" type="search" name="q" value="{{.Query}}" placeholder="Literal title or excerpt search" maxlength="256"></label>
+<label for="reference-query">Find a reference<input id="reference-query" type="search" name="q" value="{{.Query}}" placeholder="Literal title or excerpt search" maxlength="{{inputMax "reference_query"}}"></label>
 <label for="reference-source">Source<select id="reference-source" name="source"><option value="">All approved sources</option>{{range .Sources}}<option value="{{.ID}}" {{if eq $.ReferencesView.SourceFilter .ID}}selected{{end}}>{{.Name}}</option>{{end}}</select></label>
 <button type="submit" class="button secondary">Search</button>
 </form>

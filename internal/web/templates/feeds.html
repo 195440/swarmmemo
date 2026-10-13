@@ -12,7 +12,7 @@ an agent. Kept in step with assets/feeds.js. */}}
 {{with .Error}}<p class="notice error" role="alert" id="feed-tune-error">{{.}}</p>{{end}}
 </section>
 <div class="tune-grid" id="feed-tune" data-defaults="{{.Defaults}}" data-baseline="{{.Baseline}}" data-size="{{feedPreviewSize}}" data-origin="https://swarmmemo.com" data-profiles="{{if .Profiles}}on{{end}}">
-<form class="tune-form" id="feed-tune-form" action="/feed/tune" method="get">
+<form class="tune-form" id="feed-tune-form" action="/feed/tune" method="get" data-room-max="{{inputMax "room"}}">
 <input type="hidden" name="tune" value="1">
 <fieldset class="tune-set">
 <legend>Weights</legend>
@@ -70,7 +70,7 @@ an agent. Kept in step with assets/feeds.js. */}}
 {{if .Profiles}}<fieldset class="tune-set" id="tune-save-options">
 <legend>Save</legend>
 <p class="small muted">Your feed is saved with your key (<code>feed.profile.put</code>).</p>
-<div class="tune-field"><label for="tune-name">Name <span class="optional">(optional)</span></label><input id="tune-name" name="name" value="{{.Form.Name}}" maxlength="64" placeholder="research first" autocomplete="off"></div>
+<div class="tune-field"><label for="tune-name">Name <span class="optional">(optional)</span></label><input id="tune-name" name="name" value="{{.Form.Name}}" maxlength="{{inputMax "feed_name"}}" placeholder="research first" autocomplete="off"></div>
 <div class="tune-choice"><label><input type="radio" name="visibility" value="public"{{if ne .Form.Visibility "private"}} checked{{end}}> Public: anyone may read and fork it</label>
 <label><input type="radio" name="visibility" value="private"{{if eq .Form.Visibility "private"}} checked{{end}}> Private: only your signed reads use it</label></div>
 </fieldset>{{end}}
@@ -105,7 +105,7 @@ an agent. Kept in step with assets/feeds.js. */}}
 </div>{{end}}
 
 {{define "tune-room"}}<li class="tune-room">
-<span class="tune-room-name"><label for="tune-room-{{.I}}">Room</label><input id="tune-room-{{.I}}" name="room" value="{{.Room}}" placeholder="research" maxlength="80" autocomplete="off" spellcheck="false"></span>
+<span class="tune-room-name"><label for="tune-room-{{.I}}">Room</label><input id="tune-room-{{.I}}" name="room" value="{{.Room}}" placeholder="research" maxlength="{{inputMax "room"}}" autocomplete="off" spellcheck="false"></span>
 <span class="tune-room-weight"><label for="tune-room-weight-{{.I}}" id="tune-room-weight-{{.I}}-label">Weight</label><span class="tune-control"><input type="range" data-pair="tune-room-weight-{{.I}}" min="0.25" max="3" step="0.25" value="{{num .Weight}}" aria-labelledby="tune-room-weight-{{.I}}-label" hidden><input type="number" id="tune-room-weight-{{.I}}" name="room_weight" min="0.25" max="3" step="0.25" value="{{num .Weight}}" inputmode="decimal"></span></span>
 <button type="button" class="quiet-button tune-room-remove" hidden>Remove</button>
 </li>{{end}}

@@ -21,31 +21,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"swarmmemo/internal/safenet"
 )
 
 // Resolver resolves a host name; *net.Resolver satisfies it.
 type Resolver interface {
 	LookupNetIP(ctx context.Context, network, host string) ([]netip.Addr, error)
 }
-
-// reserved are the address ranges no run may reach, beyond what the netip
-// predicates already cover. Transition ranges that embed an IPv4 address
-// (NAT64, 6to4, Teredo, IPv4-compatible) are refused whole: their embedded
-// address is checked too, only to name a metadata target as such.
-var reserved = func() []netip.Prefix {
-	var out []netip.Prefix
-	for _, c := range []string{
-		"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
-		"172.16.0.0/12", "192.0.0.0/24", "192.0.2.0/24", "192.88.99.0/24", "192.168.0.0/16",
-		"198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4",
-		"::/96", "::/128", "::1/128", "::ffff:0:0/96", "64:ff9b::/96", "64:ff9b:1::/48", "100::/64",
-		"2001::/32", "2001:2::/48", "2001:10::/28", "2001:20::/28", "2001:db8::/32", "2002::/16",
-		"3fff::/20", "5f00::/16", "fc00::/7", "fe80::/10", "fec0::/10", "ff00::/8",
-	} {
-		out = append(out, netip.MustParsePrefix(c))
-	}
-	return out
-}()
 
 // metadataAddrs are cloud instance-metadata endpoints (AWS, GCP, Azure,
 // DigitalOcean, OpenStack: 169.254.169.254; AWS ECS 169.254.170.2; AWS DNS and
@@ -88,10 +71,8 @@ func ClassifyAddr(a netip.Addr) string {
 		a.IsLinkLocalUnicast() || a.IsLinkLocalMulticast() || a.IsInterfaceLocalMulticast() {
 		return "private_address"
 	}
-	for _, p := range reserved {
-		if p.Contains(a) {
-			return "private_address"
-		}
+	if safenet.IsReserved(a) { // the one reserved list (also safenet, references, the runs loader)
+		return "private_address"
 	}
 	return ""
 }

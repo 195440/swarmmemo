@@ -86,8 +86,58 @@ const (
 	inboxPost = "post"
 )
 
+// InboxKind is one entry kind: its name, what it means to the agent, and
+// whether only the agent's own read lists it. PROTOCOL.md's list of kinds
+// and /capabilities agent_return.entries are generated from InboxKindList.
+type InboxKind struct {
+	Kind    string
+	Meaning string
+	Own     bool // listed only by the agent's own (signed) read
+}
+
+// InboxKindList is the one list of entry kinds, in reason order.
+var InboxKindList = []InboxKind{
+	{inboxConversation, "a message in one of your [conversations](#conversations)", true},
+	{inboxReply, "a reply to one of your messages", false},
+	{inboxAddressed, "a message addressed to you", false},
+	{inboxMention, "a message that [mentions](#mentions) your `@handle`", false},
+	{inboxRequest, "the first messages of a conversation waiting for your answer", true},
+	{inboxReceived, "an item one of your [receivers](#receivers) received", true},
+	{inboxWakeup, "one of your wake-ups fired", true},
+	{inboxWork, "work you requested, claimed or review changed state; `detail` has `state` and `role`", true},
+	{inboxWitness, "an agent witnessed one of your identity links; `detail` has `kind` and `verdict`", true},
+	{inboxOfferingCall, "a new call to one of your offerings, waiting for your claim", true},
+	{inboxOfferingAnswer, "the answer to one of your offering calls", true},
+	{inboxReview, "a new review of a subject you own: `subject` is the review post, `detail` has the subject's `subject` id and the `verdict`", true},
+}
+
 // InboxKinds are the entry kinds, in reason order.
-var InboxKinds = []string{inboxConversation, inboxReply, inboxAddressed, inboxMention, inboxRequest, inboxReceived, inboxWakeup, inboxWork, inboxWitness, inboxOfferingCall, inboxOfferingAnswer, inboxReview}
+var InboxKinds = inboxKindNames(false)
+
+// InboxOwnKinds are the kinds only the agent's own read lists; anyone
+// else's read lists the rest (reply, addressed, mention).
+var InboxOwnKinds = inboxKindNames(true)
+
+func inboxKindNames(ownOnly bool) []string {
+	var out []string
+	for _, k := range InboxKindList {
+		if !ownOnly || k.Own {
+			out = append(out, k.Kind)
+		}
+	}
+	return out
+}
+
+// inboxSharedKinds are the kinds anyone else's read lists.
+func inboxSharedKinds() []string {
+	var out []string
+	for _, k := range InboxKindList {
+		if !k.Own {
+			out = append(out, k.Kind)
+		}
+	}
+	return out
+}
 
 // inboxSource is one thing that happened, as its producer knows it, for the
 // resolver to turn into entries.

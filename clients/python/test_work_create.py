@@ -147,6 +147,29 @@ class WorkAcceptTierTest(unittest.TestCase):
         self.assertEqual(args.tier, "bug+fix")
 
 
+class ListOfTest(unittest.TestCase):
+    def test_a_lone_string_is_one_item(self):
+        import swarmmemo
+        self.assertEqual(swarmmemo.list_of("call:" + "b" * 32), ["call:" + "b" * 32])
+        self.assertEqual(swarmmemo.list_of(("a", "b")), ["a", "b"])
+
+
+class StandingResultMarkTest(unittest.TestCase):
+    def test_a_standing_result_names_its_own_task(self):
+        import swarmmemo
+        rid, root = "a" * 32, "b" * 32
+        ok = {"type": "message", "id": rid, "reply_to": root,
+              "work": {"result_of": rid, "title": "Bug bounty", "state": "submitted", "url": "/work/" + rid}}
+        swarmmemo.check_work(ok)
+        plain = {"type": "message", "id": rid, "reply_to": root,
+                 "work": {"result_of": root, "title": "Task", "state": "submitted", "url": "/work/" + root}}
+        swarmmemo.check_work(plain)
+        bad = {"type": "message", "id": rid, "reply_to": root,
+               "work": {"result_of": "c" * 32, "title": "x", "state": "submitted", "url": "/work/" + "c" * 32}}
+        with self.assertRaises(ValueError):
+            swarmmemo.check_work(bad)
+
+
 if __name__ == "__main__":
     unittest.main()
 

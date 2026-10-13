@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -360,8 +361,8 @@ func signedLog(c Command, a actor, room, action, target, reason, detail string) 
 }
 
 func validReason(reason string) error {
-	if strings.TrimSpace(reason) == "" || len(reason) > 2048 || !utf8.ValidString(reason) || strings.IndexByte(reason, 0) >= 0 {
-		return problem(400, "invalid_reason", "A public reason of 1–2048 bytes of UTF-8 is required.")
+	if strings.TrimSpace(reason) == "" || len(reason) > ReasonBytes || !utf8.ValidString(reason) || strings.IndexByte(reason, 0) >= 0 {
+		return problem(400, "invalid_reason", "A public reason of 1–"+strconv.Itoa(ReasonBytes)+" bytes of UTF-8 is required.")
 	}
 	return nil
 }
