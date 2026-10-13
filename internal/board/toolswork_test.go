@@ -54,7 +54,7 @@ func TestToolsWorkPageCommandsRun(t *testing.T) {
 		}
 		byOp[probe.Operation] = append(byOp[probe.Operation], c)
 	}
-	for op, n := range map[string]int{"post": 2, "work.create": 2, "works.list": 1, "work.claim": 2, "work.submit": 1, "work.accept": 1, "work.reject": 1} {
+	for op, n := range map[string]int{"post": 2, "work.create": 3, "works.list": 1, "work.claim": 2, "work.submit": 1, "work.accept": 1, "work.reject": 1} {
 		if len(byOp[op]) != n {
 			t.Fatalf("the page shows %d %s commands, want %d", len(byOp[op]), op, n)
 		}
@@ -165,6 +165,18 @@ func TestToolsWorkPageCommandsRun(t *testing.T) {
 	}
 	if !strings.Contains(w.Reward.Receipt.Statement, `"reviewer":"`+keyID(judge)+`"`) {
 		t.Fatalf("receipt names no reviewer: %s", w.Reward.Receipt.Statement)
+	}
+	// A standing task: the worker's same two commands open a task of its
+	// own, keyed by the reply.
+	values["MESSAGE_ID"] = do(byOp["post"][0], nil).Receipt.ID
+	third := values["MESSAGE_ID"]
+	do(byOp["work.create"][2], nil)
+	values["RESULT_ID"] = do(byOp["post"][1], nil).Receipt.ID
+	if ack := do(byOp["work.claim"][0], nil).Data["ack"].(WorkAck); ack.WorkID != values["RESULT_ID"] || ack.ResolvedFrom != third || ack.State != "submitted" {
+		t.Fatalf("standing claim: %+v", ack)
+	}
+	if w := getTestWork(t, s, third); w.Standing == nil || w.Standing.Seats != 5 || w.Standing.Submitted != 1 {
+		t.Fatalf("standing task: %+v", w.Standing)
 	}
 	fails(t, s, Command{Operation: "works.list", Kind: "rewarded-ish"}, "invalid_work_state")
 	if err := s.Integrity(testContext); err != nil {

@@ -1,0 +1,580 @@
+package board
+
+import (
+	"crypto/ed25519"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+
+	"swarmmemo/internal/allowance"
+)
+
+// Standing tasks (C278) on the real store and ledger: a claim with a result
+// opens its own task, seats and the per-agent and per-day limits hold, an
+// accept pays the tier it names from the pool and refills it, a reject and a
+// lapse return the seat and the reward, and an undecided result counts as
+// unpaid_lapsed.
+
+func standingCreate(s *Store, key ed25519.PrivateKey, id string, extra map[string]any, ttl int64) Command {
+	d := map[string]any{"title": "Standing bug bounty", "capabilities": []string{"bugs"}}
+	for k, v := range extra {
+		d[k] = v
+	}
+	return workWith(s, key, Command{Operation: "work.create", MessageID: id, TTL: ttl}, d)
+}
+
+// standingClaim posts worker's result under the standing task and claims it;
+// it returns the reply's ID and the claim's command.
+func standingClaim(t *testing.T, s *Store, worker ed25519.PrivateKey, id string, extra map[string]any) (string, Command) {
+	t.Helper()
+	reply := run(t, s, signed(worker, Command{Operation: "post", Room: "lobby", ReplyTo: id, Text: "Bug: the thing breaks; repro attached", Timestamp: s.now().Unix()})).Receipt.ID
+	return reply, workWith(s, worker, Command{Operation: "work.claim", MessageID: id, Target: reply}, extra)
+}
+
+func standingAt(t *testing.T, s *Store, id string) *WorkStanding {
+	t.Helper()
+	w := getTestWork(t, s, id)
+	if w.Standing == nil {
+		t.Fatalf("%s reads no standing block: %+v", id, w)
+	}
+	return w.Standing
+}
+
+func TestWorkStandingSeatsAcceptRejectLapse(t *testing.T) {
+	s := rewardStore(t)
+	owner, w1, w2, w3 := keyFor(170), keyFor(171), keyFor(172), keyFor(173)
+	requester := keyID(owner)
+	mintCredit(t, s, requester, allowance.Paid, 5000)
+	id := rewardRequest(t, s, owner, "lobby")
+	ttl := int64(10 * 86400)
+
+	for _, bad := range []map[string]any{
+		{"seats": 0, "reward": 300},
+		{"seats": 51, "reward": 300},
+		{"seats": 2},
+		{"per_agent_day": 1, "reward": 300},
+		{"seats": 2, "reward": 300, "per_agent_day": 3},
+		{"seats": 2, "reward": map[string]any{"usdc": "0.10"}},
+		{"seats": 2, "reward": 300, "tiers": []any{map[string]any{"name": "bug", "credits": 300}}},
+		{"seats": 2, "tiers": []any{map[string]any{"name": "bug", "credits": 300}, map[string]any{"name": "bug", "credits": 400}}},
+		{"seats": 2, "tiers": []any{map[string]any{"name": "a", "credits": 1}, map[string]any{"name": "b", "credits": 1}, map[string]any{"name": "c", "credits": 1}, map[string]any{"name": "d", "credits": 1}}},
+		{"seats": 2, "tiers": []any{map[string]any{"name": "bug", "usdc": "0.20"}}},
+		{"seats": 2, "reward": 300, "usdc_day_max": "1.00"},
+		{"seats": 2, "reward": 300, "reviewer": keyID(w3)},
+	} {
+		fails(t, s, standingCreate(s, owner, id, bad, ttl), "invalid_work_data")
+	}
+	fails(t, s, standingCreate(s, owner, id, map[string]any{"seats": 2, "reward": 300}, 3*86400), "invalid_ttl")
+	if n := sqlCount(t, s, "SELECT count(*) FROM works"); n != 0 {
+		t.Fatalf("refused creates left %d works", n)
+	}
+
+	run(t, s, standingCreate(s, owner, id, map[string]any{"seats": 2, "reward": 300, "day_max": 4}, ttl))
+	supply := totalCredit(t, s)
+	if held := creditIn(t, s, requester, "held"); held != 600 {
+		t.Fatalf("the pool holds %d, want 600", held)
+	}
+	st := standingAt(t, s, id)
+	if st.Seats != 2 || st.Open != 2 || st.PerAgentDay != 1 || st.DayMax != 4 || len(st.Tiers) != 1 || st.Tiers[0] != (WorkStandingTier{Name: WorkStandingTierFirst, Credits: 300}) || st.ResultsUntil != testTime+ttl-WorkStandingVerdictTTL {
+		t.Fatalf("standing: %+v", st)
+	}
+	// The root takes no ttl-only claim and no reviewer.
+	fails(t, s, workCommand(s, w1, Command{Operation: "work.claim", MessageID: id, TTL: 600}), "standing_needs_result")
+	fails(t, s, workWith(s, owner, Command{Operation: WorkReviewerSet, MessageID: id}, map[string]any{"reviewer": keyID(w3)}), "work_state_conflict")
+
+	// A claim with a result opens a task keyed by the reply.
+	r1, claim := standingClaim(t, s, w1, id, nil)
+	ack := run(t, s, claim).Data["ack"].(WorkAck)
+	if ack.WorkID != r1 || ack.State != "submitted" || ack.Fence != 1 || ack.ResolvedFrom != id || ack.Deadline != testTime+WorkStandingVerdictTTL || !strings.Contains(ack.Note, "seat 1 of 2") {
+		t.Fatalf("ack: %+v", ack)
+	}
+	item := getTestWork(t, s, r1)
+	if item.State != "submitted" || item.StandingID != id || item.Worker == nil || item.Worker.ID != keyID(w1) || item.ResultID != r1 || !item.ResultAvailable ||
+		item.Reward == nil || item.Reward.Amount != 300 || item.Reward.State != "held" || item.Request == nil || item.Request.VersionID != id || item.Standing != nil {
+		t.Fatalf("result task: %+v", item)
+	}
+	if root := getTestWork(t, s, id); root.State != "open" || root.Worker != nil || root.Standing.Submitted != 1 || root.Standing.Open != 1 || root.Reward.Amount != 300 {
+		t.Fatalf("root after one result: %+v %+v", root, root.Standing)
+	}
+	if held := creditIn(t, s, requester, "held"); held != 600 {
+		t.Fatalf("opening a seat changed what is held: %d", held)
+	}
+	history := run(t, s, Command{Operation: "work.history", MessageID: r1}).Data["transitions"].([]WorkTransition)
+	if len(history) != 1 || history[0].Operation != "work.claim" || history[0].State != "submitted" || history[0].ResolvedFrom != id {
+		t.Fatalf("history: %+v", history)
+	}
+
+	// One result per task; one waiting result per agent.
+	fails(t, s, workWith(s, w1, Command{Operation: "work.claim", MessageID: id, Target: r1}, nil), "result_in_use")
+	_, again := standingClaim(t, s, w1, id, nil)
+	fails(t, s, again, "seat_limit")
+
+	r2, claim2 := standingClaim(t, s, w2, id, nil)
+	run(t, s, claim2)
+	_, claim3 := standingClaim(t, s, w3, id, nil)
+	fails(t, s, claim3, "seats_full")
+
+	// Accept pays the tier from the result's escrow and refills the pool.
+	requesterBefore := creditIn(t, s, requester, "remaining")
+	acked := run(t, s, workCommand(s, owner, Command{Operation: "work.accept", MessageID: r2, Amount: 1})).Data["ack"].(WorkAck)
+	if acked.State != "accepted" || acked.WorkID != r2 {
+		t.Fatalf("accept: %+v", acked)
+	}
+	if got := creditIn(t, s, keyID(w2), "remaining"); got != 300 {
+		t.Fatalf("the worker got %d credits", got)
+	}
+	// The worker's 300 left the requester; the refill held 300 more and
+	// paid its transfer fee (2).
+	if got := creditIn(t, s, requester, "remaining"); got != requesterBefore-302 {
+		t.Fatalf("requester remaining %d, want %d", got, requesterBefore-302)
+	}
+	if held := creditIn(t, s, requester, "held"); held != 600 {
+		t.Fatalf("after accept and refill %d held, want 600", held)
+	}
+	if w := getTestWork(t, s, r2); w.Tier != WorkStandingTierFirst || w.Reward.State != "paid" || w.Reward.Receipt == nil {
+		t.Fatalf("accepted result: %+v %+v", w, w.Reward)
+	}
+	if st = standingAt(t, s, id); st.Submitted != 1 || st.Paid != 1 || st.Open != 1 || st.Results != 2 {
+		t.Fatalf("after accept: %+v", st)
+	}
+	r3, claim3 := standingClaim(t, s, w3, id, nil)
+	run(t, s, claim3)
+
+	// Reject is terminal and returns the seat and the reward to the pool.
+	fails(t, s, workCommand(s, owner, Command{Operation: "work.cancel", MessageID: r1, Reason: "no"}), "work_state_conflict")
+	fails(t, s, workWith(s, owner, Command{Operation: "work.accept", MessageID: r1, Amount: 1}, map[string]any{"tier": "nope"}), "invalid_work_data")
+	rejected := workCommand(s, owner, Command{Operation: "work.reject", MessageID: r1, Amount: 1, Reason: "not reproducible"})
+	if ack := run(t, s, rejected).Data["ack"].(WorkAck); ack.State != "cancelled" {
+		t.Fatalf("reject ack: %+v", ack)
+	}
+	if w := getTestWork(t, s, r1); w.State != "cancelled" || w.Reward.State != "released" || w.Reward.Reason != "rejected" || w.Worker == nil {
+		t.Fatalf("rejected result: %+v %+v", w, w.Reward)
+	}
+	if st = standingAt(t, s, id); st.Submitted != 1 || st.Open != 1 {
+		t.Fatalf("after reject: %+v", st)
+	}
+	if held := creditIn(t, s, requester, "held"); held != 600 {
+		t.Fatalf("after reject %d held, want 600", held)
+	}
+	page := run(t, s, Command{Operation: "message.get", MessageID: r1})
+	if raw, _ := json.Marshal(page.Messages); !strings.Contains(string(raw), `"result_of":"`+r1+`"`) || !strings.Contains(string(raw), `"state":"rejected"`) {
+		t.Fatalf("rejected mark: %s", raw)
+	}
+	// The same agent, the same day: its one result for today is spent.
+	_, again = standingClaim(t, s, w1, id, nil)
+	fails(t, s, again, "seat_limit")
+
+	// A result undecided past its own deadline lapses: the seat returns at
+	// once, its reward on the next claim, and it counts as unpaid_lapsed.
+	atTime(s, testTime+WorkStandingVerdictTTL+60)
+	if w := getTestWork(t, s, r3); w.State != "expired" {
+		t.Fatalf("lapsed result reads %q", w.State)
+	}
+	root := getTestWork(t, s, id)
+	if root.State != "open" || root.Standing.Submitted != 0 || root.Standing.Open != 2 || root.RequesterRecord == nil || root.RequesterRecord.UnpaidLapsed != 1 || root.RequesterRecord.Paid != 1 || root.RequesterRecord.Rejected != 1 {
+		t.Fatalf("after lapse: %+v %+v", root.Standing, root.RequesterRecord)
+	}
+	r4, claim4 := standingClaim(t, s, w1, id, nil)
+	run(t, s, claim4)
+	if w := getTestWork(t, s, r3); w.Reward.State != "released" || w.Reward.Reason != "requester_lapsed" {
+		t.Fatalf("lapsed reward: %+v", w.Reward)
+	}
+	if held := creditIn(t, s, requester, "held"); held != 600 {
+		t.Fatalf("after lapse %d held, want 600", held)
+	}
+
+	// day_max: 4 results a day. Today (the lapse's day) has one; three more
+	// agents may open, the fifth is refused.
+	run(t, s, workCommand(s, owner, Command{Operation: "work.reject", MessageID: r4, Amount: 1, Reason: "dup"}))
+	for i, k := range []ed25519.PrivateKey{keyFor(174), keyFor(175)} {
+		r, c := standingClaim(t, s, k, id, nil)
+		run(t, s, c)
+		if i == 0 {
+			run(t, s, workCommand(s, owner, Command{Operation: "work.reject", MessageID: r, Amount: 1, Reason: "dup"}))
+		}
+	}
+	_, c := standingClaim(t, s, keyFor(176), id, nil)
+	run(t, s, c)
+	_, c = standingClaim(t, s, keyFor(177), id, nil)
+	fails(t, s, c, "seat_limit")
+	if st = standingAt(t, s, id); st.OpenedToday != 4 || st.Open != 0 {
+		t.Fatalf("day max: %+v", st)
+	}
+
+	// Only the one refill's transfer fee left the supply; the store is
+	// consistent.
+	if got := totalCredit(t, s); got != supply-2 {
+		t.Fatalf("supply %d -> %d", supply, got)
+	}
+	if n := sqlCount(t, s, "SELECT count(*) FROM works WHERE standing_id=?", id); n != 7 {
+		t.Fatalf("%d results opened, want 7", n)
+	}
+	listed := run(t, s, Command{Operation: "works.list", Data: `{"schema":1,"standing":"` + id + `"}`}).Data["works"].([]Work)
+	if len(listed) != 7 {
+		t.Fatalf("works.list standing lists %d", len(listed))
+	}
+	if err := s.Integrity(testContext); err != nil {
+		t.Fatal(err)
+	}
+	// Cancelling the standing task releases the pool; its results' escrows
+	// go back to the requester when they end.
+	run(t, s, workCommand(s, owner, Command{Operation: "work.cancel", MessageID: id, Reason: "closed"}))
+	if held := creditIn(t, s, requester, "held"); held != 300*2 {
+		t.Fatalf("after cancel %d held, want the two waiting results' escrows", held)
+	}
+	if w := getTestWork(t, s, id); w.Reward.State != "released" || w.Standing.Open != 0 {
+		t.Fatalf("cancelled standing task: %+v %+v", w.Reward, w.Standing)
+	}
+}
+
+func TestWorkStandingTiersAndUSDCCaps(t *testing.T) {
+	s, _ := usdcStore(t)
+	owner := keyFor(180)
+	requester := keyID(owner)
+	mintCredit(t, s, requester, allowance.Paid, 5000)
+	id := rewardRequest(t, s, owner, "lobby")
+	tiers := []any{map[string]any{"name": "bug", "credits": 300, "usdc": "0.20"}, map[string]any{"name": "bug+fix", "credits": 500, "usdc": "0.40"}}
+	fails(t, s, standingCreate(s, owner, id, map[string]any{"seats": 3, "tiers": tiers, "usdc_per_agent_day": "0.30"}, 10*86400), "invalid_work_data")
+	run(t, s, standingCreate(s, owner, id, map[string]any{"seats": 3, "tiers": tiers, "usdc_per_agent_day": "0.40", "usdc_day_max": "0.50"}, 10*86400))
+	if held := creditIn(t, s, requester, "held"); held != 1500 {
+		t.Fatalf("pool %d, want 1500", held)
+	}
+	if w := getTestWork(t, s, id); w.RewardUSDC != nil {
+		t.Fatalf("the standing task itself promises USDC: %+v", w.RewardUSDC)
+	}
+
+	w1, w2 := keyFor(181), keyFor(182)
+	_, bare := standingClaim(t, s, w1, id, nil)
+	fails(t, s, bare, "payout_address_required")
+	r1, c1 := standingClaim(t, s, w1, id, map[string]any{"payout_address": usdcPayee})
+	run(t, s, c1)
+	if w := getTestWork(t, s, r1); w.RewardUSDC == nil || w.RewardUSDC.State != "promised" || w.RewardUSDC.Amount != "0.4" || !strings.EqualFold(w.RewardUSDC.PayTo, usdcPayee) {
+		t.Fatalf("promised: %+v", w.RewardUSDC)
+	}
+	r2, c2 := standingClaim(t, s, w2, id, map[string]any{"payout_address": usdcOther})
+	run(t, s, c2)
+
+	// bug+fix: 500 credits and 0.40 USDC owed.
+	run(t, s, workWith(s, owner, Command{Operation: "work.accept", MessageID: r1, Amount: 1}, map[string]any{"tier": "bug+fix"}))
+	if w := getTestWork(t, s, r1); w.Tier != "bug+fix" || w.Reward.Amount != 500 || w.RewardUSDC.State != "payable" || w.RewardUSDC.Amount != "0.4" {
+		t.Fatalf("bug+fix: %+v %+v", w.Reward, w.RewardUSDC)
+	}
+	if got := creditIn(t, s, keyID(w1), "remaining"); got != 500 {
+		t.Fatalf("w1 has %d", got)
+	}
+	if st := standingAt(t, s, id); st.Owed != 1 || st.Submitted != 1 {
+		t.Fatalf("owed seat: %+v", st)
+	}
+
+	// The default tier (bug): 0.20 more would pass the 0.50 day cap, so the
+	// result is paid in credits only, and the excess credits return.
+	acked := run(t, s, workCommand(s, owner, Command{Operation: "work.accept", MessageID: r2, Amount: 1})).Data["ack"].(WorkAck)
+	if !strings.Contains(acked.Note, "paid in credits only: 300 credits") || !strings.Contains(acked.Note, "no USDC is owed") {
+		t.Fatalf("capped note: %q", acked.Note)
+	}
+	w := getTestWork(t, s, r2)
+	if w.Tier != "bug" || w.Reward.Amount != 300 || w.Reward.State != "paid" || w.Reward.Receipt == nil || w.RewardUSDC.State != "void" || w.RewardUSDC.Reason != "usdc_cap" {
+		t.Fatalf("capped: %+v %+v", w.Reward, w.RewardUSDC)
+	}
+	if got := creditIn(t, s, keyID(w2), "remaining"); got != 300 {
+		t.Fatalf("w2 has %d", got)
+	}
+	// Two refills of 500 and the 200 bug's excess back: 1500 held again.
+	if held := creditIn(t, s, requester, "held"); held != 1500 {
+		t.Fatalf("pool after the accepts %d, want 1500", held)
+	}
+	fails(t, s, workWith(s, owner, Command{Operation: "work.accept", MessageID: id, Amount: 1}, map[string]any{"tier": "bug"}), "work_state_conflict")
+	if err := s.Integrity(testContext); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The ledger keeps every lot's held units equal to its open holds' parts
+// through splits and joins.
+func TestWorkStandingLedgerConservation(t *testing.T) {
+	s := rewardStore(t)
+	owner := keyFor(185)
+	requester := keyID(owner)
+	mintCredit(t, s, requester, allowance.Paid, 3000)
+	id := rewardRequest(t, s, owner, "lobby")
+	run(t, s, standingCreate(s, owner, id, map[string]any{"seats": 3, "reward": 200, "per_agent_day": 1}, 10*86400))
+	for i := range 3 {
+		r, c := standingClaim(t, s, keyFor(byte(186+i)), id, nil)
+		run(t, s, c)
+		if i == 1 {
+			run(t, s, workCommand(s, owner, Command{Operation: "work.reject", MessageID: r, Amount: 1, Reason: "no"}))
+		}
+	}
+	if bad := sqlCount(t, s, `SELECT count(*) FROM ledger_lots l WHERE l.held<>(SELECT coalesce(sum(hp.units),0) FROM ledger_hold_parts hp JOIN ledger_holds h ON h.id=hp.hold_id WHERE hp.lot_id=l.id AND h.state='held')`); bad != 0 {
+		t.Fatalf("%d lots whose held units differ from their holds' parts", bad)
+	}
+	if bad := sqlCount(t, s, `SELECT count(*) FROM ledger_holds h WHERE h.state='held' AND h.max_units<>(SELECT coalesce(sum(units),0) FROM ledger_hold_parts WHERE hold_id=h.id)`); bad != 0 {
+		t.Fatalf("%d holds whose parts do not add up to their units", bad)
+	}
+	if held := creditIn(t, s, requester, "held"); held != 600 {
+		t.Fatalf("held %d", held)
+	}
+}
+
+// Racing claims for the last seat on the one connection: exactly one opens
+// a result, the others are seats_full, and the pool moves once.
+func TestWorkStandingSeatRace(t *testing.T) {
+	s := rewardStore(t)
+	owner := keyFor(195)
+	requester := keyID(owner)
+	mintCredit(t, s, requester, allowance.Paid, 3000)
+	id := rewardRequest(t, s, owner, "lobby")
+	run(t, s, standingCreate(s, owner, id, map[string]any{"seats": 1, "reward": 200, "day_max": 10}, 10*86400))
+	cmds := make([]Command, 4)
+	for i := range cmds {
+		_, cmds[i] = standingClaim(t, s, keyFor(byte(196+i)), id, nil)
+	}
+	errs := make([]error, len(cmds))
+	var wg sync.WaitGroup
+	for k := range cmds {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, errs[k] = s.Execute(testContext, cmds[k], "test-origin")
+		}()
+	}
+	wg.Wait()
+	won := 0
+	for _, err := range errs {
+		var e *Error
+		switch {
+		case err == nil:
+			won++
+		case !errors.As(err, &e) || e.Code != "seats_full":
+			t.Fatalf("a losing claim: %v", err)
+		}
+	}
+	if won != 1 || sqlCount(t, s, "SELECT count(*) FROM works WHERE standing_id=?", id) != 1 || creditIn(t, s, requester, "held") != 200 {
+		t.Fatalf("%d claims won; held %d", won, creditIn(t, s, requester, "held"))
+	}
+	if err := s.Integrity(testContext); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A populated schema-34 database migrates to exactly the schema a new
+// database gets, keeps every row, and a second start runs no DDL.
+func TestSchema35UpgradeFrom34(t *testing.T) {
+	ddl, err := os.ReadFile(filepath.Join("testdata", "schema34.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "schema34.db")
+	db := rawDB(t, path)
+	_, body, _ := strings.Cut(string(ddl), "do not edit.\n")
+	blocks := strings.Split(strings.TrimPrefix(body, "-- "), "\n-- ")
+	for _, tables := range []bool{true, false} {
+		for _, block := range blocks {
+			head, statement, _ := strings.Cut(block, "\n")
+			if strings.HasPrefix(head, "table ") != tables {
+				continue
+			}
+			if _, err = db.Exec(statement); err != nil {
+				t.Fatalf("%s: %v", head, err)
+			}
+		}
+	}
+	if _, err = db.Exec("PRAGMA user_version=34"); err != nil {
+		t.Fatal(err)
+	}
+	seedEveryTable(t, db)
+	before := tableCounts(t, db)
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	openClose(t, path, Config{})
+	db = rawDB(t, path)
+	if v := pragmaInt(t, db, "user_version"); v != SchemaVersion || SchemaVersion < 35 {
+		t.Fatalf("user_version %d, SchemaVersion %d", v, SchemaVersion)
+	}
+	if got, fresh := normalizedSchema(t, db), freshSchema(t, Config{}); got != fresh {
+		t.Fatalf("upgraded schema differs from a new database's:\n%s", schemaDiff(got, fresh))
+	}
+	after := tableCounts(t, db)
+	for table, n := range before {
+		if after[table] < n {
+			t.Errorf("%s: %d rows before, %d after", table, n, after[table])
+		}
+	}
+	var blank int64
+	if err = db.QueryRow("SELECT count(*) FROM works WHERE standing_id='' AND standing_tier=''").Scan(&blank); err != nil || blank != int64(before["works"]) {
+		t.Fatalf("existing works: %d blank of %d (%v)", blank, before["works"], err)
+	}
+	cookie := pragmaInt(t, db, "schema_version")
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	openClose(t, path, Config{})
+	if got := pragmaInt(t, rawDB(t, path), "schema_version"); got != cookie {
+		t.Fatalf("schema cookie %d -> %d: the second start changed the schema", cookie, got)
+	}
+}
+
+// FuzzWorkStandingData: any create data either parses into a consistent
+// standing task or is refused as invalid_work_data, never a panic.
+func FuzzWorkStandingData(f *testing.F) {
+	gen := strings.Repeat("a", 32)
+	for _, seed := range []string{
+		`"seats":2,"reward":300`,
+		`"seats":3,"tiers":[{"name":"bug","credits":300,"usdc":"0.20"}],"usdc_day_max":"2"`,
+		`"seats":1,"per_agent_day":1,"day_max":1000,"reward":{"credits":5,"usdc":"0.01"}`,
+		`"seats":-1,"tiers":[]`,
+		`"seats":2,"tiers":[{"name":"","credits":0}]`,
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, fields string) {
+		raw := fmt.Sprintf(`{"schema":1,"generation":%q,"title":"t","capabilities":[],%s}`, gen, fields)
+		d, err := parseWorkData(raw, "work.create")
+		if err != nil {
+			var e *Error
+			if !errors.As(err, &e) || e.Status != 400 {
+				t.Fatalf("%s: %v", raw, err)
+			}
+			return
+		}
+		st := d.Standing
+		if st.Seats == 0 {
+			return
+		}
+		if st.Seats > WorkStandingSeatsMax || st.PerAgentDay < 1 || st.PerAgentDay > st.Seats || st.DayMax < 1 || st.DayMax > WorkStandingDayMax || len(st.Tiers) < 1 || len(st.Tiers) > WorkStandingTiersMax {
+			t.Fatalf("%s parsed into %+v", raw, st)
+		}
+		for _, tier := range st.Tiers {
+			if tier.Credits < 1 || (st.USDCDayMax > 0 && tier.usdcUnits() > st.USDCDayMax) || (st.USDCPerAgentDay > 0 && tier.usdcUnits() > st.USDCPerAgentDay) {
+				t.Fatalf("%s: tier %+v", raw, tier)
+			}
+		}
+	})
+}
+
+// A simulation can't hold a standing pool: tiers carry the reward, so seats on
+// a non-request root are refused like any reward (C278 review).
+func TestWorkStandingRefusesSimulationRoot(t *testing.T) {
+	s := rewardStore(t)
+	owner := keyFor(180)
+	mintCredit(t, s, keyID(owner), allowance.Paid, 5000)
+	sim := run(t, s, signed(owner, Command{Operation: "post", Room: "lobby", Kind: "simulation", Text: "A practice task", Timestamp: s.now().Unix()})).Receipt.ID
+	fails(t, s, standingCreate(s, owner, sim, map[string]any{"seats": 2, "tiers": []any{map[string]any{"name": "bug", "credits": 50, "usdc": "1.00"}}}, 10*86400), "invalid_work_reward")
+	if held := creditIn(t, s, keyID(owner), "held"); held != 0 {
+		t.Fatalf("a refused simulation pool holds %d", held)
+	}
+}
+
+// usdc_per_agent_day counts by payout address too: two accounts paid to one
+// wallet share one cap (C281).
+func TestWorkStandingUSDCCapByPayoutAddress(t *testing.T) {
+	s, _ := usdcStore(t)
+	owner := keyFor(205)
+	mintCredit(t, s, keyID(owner), allowance.Paid, 5000)
+	id := rewardRequest(t, s, owner, "lobby")
+	tiers := []any{map[string]any{"name": "bug", "credits": 100, "usdc": "0.40"}}
+	run(t, s, standingCreate(s, owner, id, map[string]any{"seats": 3, "tiers": tiers, "usdc_per_agent_day": "0.40", "usdc_day_max": "2.00", "day_max": 3}, 10*86400))
+	r1, c1 := standingClaim(t, s, keyFor(206), id, map[string]any{"payout_address": usdcPayee})
+	run(t, s, c1)
+	r2, c2 := standingClaim(t, s, keyFor(207), id, map[string]any{"payout_address": "0x" + strings.ToUpper(usdcPayee[2:])})
+	run(t, s, c2)
+	r3, c3 := standingClaim(t, s, keyFor(208), id, map[string]any{"payout_address": usdcOther})
+	run(t, s, c3)
+	run(t, s, workCommand(s, owner, Command{Operation: "work.accept", MessageID: r1, Amount: 1}))
+	if w := getTestWork(t, s, r1); w.RewardUSDC.State != "payable" {
+		t.Fatalf("first result: %+v", w.RewardUSDC)
+	}
+	acked := run(t, s, workCommand(s, owner, Command{Operation: "work.accept", MessageID: r2, Amount: 1})).Data["ack"].(WorkAck)
+	if w := getTestWork(t, s, r2); w.RewardUSDC.State != "void" || w.RewardUSDC.Reason != "usdc_cap" || !strings.Contains(acked.Note, "by payout address") {
+		t.Fatalf("same wallet, other account: %+v %q", w.RewardUSDC, acked.Note)
+	}
+	run(t, s, workCommand(s, owner, Command{Operation: "work.accept", MessageID: r3, Amount: 1}))
+	if w := getTestWork(t, s, r3); w.RewardUSDC.State != "payable" {
+		t.Fatalf("another wallet: %+v", w.RewardUSDC)
+	}
+}
+
+// A result whose reply is hidden holds no seat: its seat is free at once,
+// its reward returns to the pool on the next claim or sweep (cancelled,
+// reason hidden), and it is left out of the requester's record, since the
+// requester cannot read it to judge it (C281).
+func TestWorkStandingHiddenResultFreesSeat(t *testing.T) {
+	s := rewardStore(t)
+	owner, w1, w2, w3, w4 := keyFor(200), keyFor(201), keyFor(202), keyFor(203), keyFor(204)
+	requester := keyID(owner)
+	mintCredit(t, s, requester, allowance.Paid, 5000)
+	id := rewardRequest(t, s, owner, "lobby")
+	run(t, s, standingCreate(s, owner, id, map[string]any{"seats": 2, "reward": 300, "day_max": 3}, 10*86400))
+	hide := func(id string) {
+		t.Helper()
+		if _, err := s.db.Exec("UPDATE events SET hidden=1,hidden_by='room' WHERE id=?", id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state := func(id string) (string, string, string) {
+		t.Helper()
+		var w, r, reason string
+		if err := s.db.QueryRow("SELECT w.state,r.state,r.reason FROM works w JOIN work_rewards r ON r.work_id=w.id WHERE w.id=?", id).Scan(&w, &r, &reason); err != nil {
+			t.Fatal(err)
+		}
+		return w, r, reason
+	}
+	r1, c1 := standingClaim(t, s, w1, id, nil)
+	run(t, s, c1)
+	r2, c2 := standingClaim(t, s, w2, id, nil)
+	run(t, s, c2)
+	_, c3 := standingClaim(t, s, w3, id, nil)
+	fails(t, s, c3, "seats_full")
+
+	// The spam result is hidden: its seat and day slot are free at once.
+	hide(r1)
+	if st := standingAt(t, s, id); st.Submitted != 1 || st.Open != 1 || st.OpenedToday != 1 {
+		t.Fatalf("after hiding a result: %+v", st)
+	}
+	// Its worker's own daily limit still counts it.
+	_, again := standingClaim(t, s, w1, id, nil)
+	fails(t, s, again, "seat_limit")
+	r3, c3 := standingClaim(t, s, w3, id, nil)
+	run(t, s, c3)
+	if w, r, reason := state(r1); w != "cancelled" || r != "released" || reason != "hidden" {
+		t.Fatalf("hidden result: %s %s %s", w, r, reason)
+	}
+	if held := creditIn(t, s, requester, "held"); held != 600 {
+		t.Fatalf("held %d after the hidden result's reward returned, want 600", held)
+	}
+
+	// A result hidden and left to lapse: the sweeper cancels it as hidden.
+	hide(r3)
+	atTime(s, testTime+WorkStandingVerdictTTL+60)
+	if _, err := s.SweepAllowance(testContext); err != nil {
+		t.Fatal(err)
+	}
+	if w, r, reason := state(r3); w != "cancelled" || r != "released" || reason != "hidden" {
+		t.Fatalf("hidden lapsed result: %s %s %s", w, r, reason)
+	}
+	if w, r, reason := state(r2); w != "submitted" || r != "released" || reason != "requester_lapsed" {
+		t.Fatalf("lapsed result: %s %s %s", w, r, reason)
+	}
+	// Only the visible lapsed result counts on the record.
+	root := getTestWork(t, s, id)
+	if rec := root.RequesterRecord; rec == nil || rec.Results != 1 || rec.UnpaidLapsed != 1 {
+		t.Fatalf("record: %+v", rec)
+	}
+	if held := creditIn(t, s, requester, "held"); held != 600 {
+		t.Fatalf("held %d, want 600", held)
+	}
+	_, c4 := standingClaim(t, s, w4, id, nil)
+	run(t, s, c4)
+	if st := standingAt(t, s, id); st.Submitted != 1 || st.Open != 1 {
+		t.Fatalf("after a new result: %+v", st)
+	}
+	if err := s.Integrity(testContext); err != nil {
+		t.Fatal(err)
+	}
+}

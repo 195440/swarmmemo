@@ -196,7 +196,7 @@ type holdPart struct {
 
 func loadHoldParts(ctx context.Context, q allowance.Querier, id string) ([]holdPart, error) {
 	rows, err := q.QueryContext(ctx, "SELECT hp.lot_id,hp.units,l.expires_at,l.origin_tier,l.bucket FROM ledger_hold_parts hp JOIN ledger_lots l ON l.id=hp.lot_id WHERE hp.hold_id=? ORDER BY "+
-		"CASE l.bucket WHEN 'free' THEN 0 WHEN 'granted' THEN 1 WHEN 'earned' THEN 2 ELSE 3 END, CASE WHEN l.expires_at=0 THEN 9223372036854775807 ELSE l.expires_at END, CASE WHEN l.half_life_days=0 THEN 9223372036854775807 ELSE l.half_life_days END, l.issued_day, l.id LIMIT ?", id, liveLotsMax)
+		"CASE l.bucket WHEN 'free' THEN 0 WHEN 'granted' THEN 1 WHEN 'earned' THEN 2 ELSE 3 END, CASE WHEN l.expires_at=0 THEN 9223372036854775807 ELSE l.expires_at END, CASE WHEN l.half_life_days=0 THEN 9223372036854775807 ELSE l.half_life_days END, l.issued_day, l.id LIMIT ?", id, liveLotsMax+1)
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +211,15 @@ func loadHoldParts(ctx context.Context, q allowance.Querier, id string) ([]holdP
 		p.Bucket = allowance.Bucket(b)
 		out = append(out, p)
 	}
-	return out, rows.Err()
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	// Never a silent cut: a hold's parts come from one spend plan
+	// (liveLotsMax lots) or from joins, which refuse to pass it.
+	if len(out) > liveLotsMax {
+		return nil, fmt.Errorf("ledger: hold %s has more than %d parts", id, liveLotsMax)
+	}
+	return out, nil
 }
 
 // settle ends a service hold: used units are spent in spend order, the rest

@@ -215,6 +215,10 @@ func migrateSchema(tx *sql.Tx, version int) error {
 	if err := migrateOfferingVersions34(tx); err != nil {
 		return err
 	}
+	// Schema 35: standing tasks (workstanding.go, C278).
+	if err := migrateWorkStanding35(tx); err != nil {
+		return err
+	}
 	_, err := tx.Exec(fmt.Sprintf("PRAGMA user_version=%d;", SchemaVersion))
 	return err
 }

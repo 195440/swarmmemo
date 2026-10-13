@@ -50,7 +50,8 @@ SAFE_CODES.update({"work_generation_mismatch", "work_state_conflict", "work_fenc
                    "work_forbidden", "work_exists", "work_renew_not_extended", "work_fence_exhausted",
                    "invalid_work_data", "invalid_work_root", "invalid_work_result", "invalid_ttl", "invalid_reason",
                    "invalid_work_reward", "invalid_reward_note", "reject_fee_unavailable", "work_reward_limit", "reviewer_not_found",
-                   "reviewer_is_requester", "not_the_reviewer", "not_eligible", "work_result_changed"})
+                   "reviewer_is_requester", "not_the_reviewer", "not_eligible", "work_result_changed",
+                   "seats_full", "seat_limit", "result_in_use", "standing_needs_result"})
 SAFE_CODES.update({"invalid_delegation_context", "delegation_required", "delegation_not_found", "delegation_context_mismatch",
                    "delegation_inactive", "delegation_forbidden", "delegation_scope_mismatch", "delegation_quota_exhausted",
                    "delegation_exists", "delegation_limit", "delegation_already_revoked", "invalid_delegation_data",
@@ -203,6 +204,8 @@ def validate_ack(command, result, service=memo.SERVICE):
                     "work.cancel": "cancelled"}.get(operation)
         if operation == "work.reviewer.set" and isinstance(ack, dict) and ack.get("state") in ("open", "claimed"):
             expected = ack["state"]  # a reviewer change leaves the state as it was
+        if operation == "work.reject" and isinstance(ack, dict) and ack.get("state") == "cancelled":
+            expected = "cancelled"  # a reject ends a result a standing task opened
         fields = {"work_id", "state", "fence", "generation", "service_id", "accepted_at", "deadline", "claim_expires_at"}
         # resolved_from: the command named an edited version of the request and
         # work_id is its root; result_sha256 echoes a hash the command signed;

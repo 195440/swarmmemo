@@ -126,6 +126,12 @@ type Work struct {
 	// VerdictChecks is the newest accept or reject that carried a signed
 	// checks list (C97), on work.get only.
 	VerdictChecks *WorkVerdictChecks `json:"verdict_checks,omitempty"`
+	// Standing is a standing task's seats (workstanding.go), on the
+	// standing task itself; StandingID names the standing task a result
+	// opened this work on, and Tier the tier its accept paid.
+	Standing   *WorkStanding `json:"standing,omitempty"`
+	StandingID string        `json:"standing_id,omitempty"`
+	Tier       string        `json:"tier,omitempty"`
 }
 
 // WorkRequest is the text of a work item's request at its newest version,
@@ -290,6 +296,10 @@ type workData struct {
 	RewardNote        string
 	ResultSHA256      string
 	Checks            []VerdictCheck
+	// A standing task (workstanding.go): seats and its limits at create,
+	// and the tier an accept of one of its results names.
+	Standing workStandingData
+	Tier     string
 }
 
 // workVerdictOp says whether an operation is a verdict on a submitted
@@ -307,7 +317,7 @@ func workResultHashOp(operation string) bool {
 
 // workDataRule is the whole rule for work.* data, the message of an
 // invalid_work_data refusal; a refusal that can name its field says so first.
-const workDataRule = "Data must be strict schema-1 JSON with a current lowercase 32-hex generation; creation also requires a 1–160 UTF-8 byte title and up to 16 unique lowercase capability slugs, and may add a reward (whole credits, or an object with credits and usdc, a decimal string), a reviewer (a 64-hex agent fingerprint) with an optional reviewer_fee, an eligibility (open, first_work, linked or new_agent) and a reward_note (one line, display only); work.reviewer.set takes reviewer, the new one's fingerprint; work.claim and work.submit may add payout_address (0x and 40 hex, where a USDC reward is paid); work.settle takes tx_hash, the payment's transaction; submit, accept and a claim with a result may add result_sha256, the 64-hex SHA-256 of the result text; accept and reject may add checks, the verifier's per-property list."
+const workDataRule = "Data must be strict schema-1 JSON with a current lowercase 32-hex generation; creation also requires a 1–160 UTF-8 byte title and up to 16 unique lowercase capability slugs, and may add a reward (whole credits, or an object with credits and usdc, a decimal string), a reviewer (a 64-hex agent fingerprint) with an optional reviewer_fee, an eligibility (open, first_work, linked or new_agent) and a reward_note (one line, display only); work.reviewer.set takes reviewer, the new one's fingerprint; work.claim and work.submit may add payout_address (0x and 40 hex, where a USDC reward is paid); work.settle takes tx_hash, the payment's transaction; submit, accept and a claim with a result may add result_sha256, the 64-hex SHA-256 of the result text; accept and reject may add checks, the verifier's per-property list; a standing task's create may add seats (1–50) with per_agent_day, day_max, tiers, usdc_per_agent_day and usdc_day_max, and an accept of one of its results may add tier."
 
 // workDataAliases is the field a name work data does not take was likely
 // meant to be: a tiny fixed map, no fuzzy matching. ttl is the command field
@@ -330,7 +340,7 @@ var workDataAliases = map[string]string{
 // generation, title and capabilities. clients/message-fields.json lists the
 // whole set ("work_create_data"), which clients/mcp checks signed history
 // against.
-var workCreateOptional = []string{"reward", "reviewer", "reviewer_fee", "reject_fee", "eligibility", "reward_note"}
+var workCreateOptional = []string{"reward", "reviewer", "reviewer_fee", "reject_fee", "eligibility", "reward_note", "seats", "per_agent_day", "day_max", "tiers", "usdc_per_agent_day", "usdc_day_max"}
 
 // workDataTakes says whether operation's data takes field name.
 func workDataTakes(operation, name string) bool {
@@ -339,8 +349,11 @@ func workDataTakes(operation, name string) bool {
 		return true
 	case "reviewer":
 		return operation == "work.create" || operation == WorkReviewerSet
-	case "title", "capabilities", "reward", "reviewer_fee", "reject_fee", "eligibility", "reward_note":
+	case "title", "capabilities", "reward", "reviewer_fee", "reject_fee", "eligibility", "reward_note",
+		"seats", "per_agent_day", "day_max", "tiers", "usdc_per_agent_day", "usdc_day_max":
 		return operation == "work.create"
+	case "tier":
+		return operation == "work.accept"
 	case "result_sha256":
 		return workResultHashOp(operation)
 	case "checks":
@@ -443,6 +456,26 @@ func parseWorkData(raw string, operation string) (workData, error) {
 			dest = &d.RewardNote
 		case "result_sha256":
 			dest = &d.ResultSHA256
+		case "seats":
+			dest = &d.Standing.Seats
+		case "per_agent_day":
+			dest = &d.Standing.PerAgentDay
+		case "day_max":
+			dest = &d.Standing.DayMax
+		case "usdc_per_agent_day":
+			dest = &d.Standing.USDCPerAgentDayText
+		case "usdc_day_max":
+			dest = &d.Standing.USDCDayMaxText
+		case "tier":
+			dest = &d.Tier
+		case "tiers":
+			if !workDataTakes(operation, name) {
+				return workData{}, invalidWorkField(operation, name)
+			}
+			if d.Standing.Tiers, err = parseWorkStandingTiers(value); err != nil {
+				return workData{}, err
+			}
+			continue
 		case "checks":
 			if !workDataTakes(operation, name) {
 				return workData{}, invalidWorkField(operation, name)
@@ -472,6 +505,12 @@ func parseWorkData(raw string, operation string) (workData, error) {
 	}
 	if seen["checks"] {
 		want++
+	}
+	if seen["tier"] {
+		want++
+		if !workStandingTierRE.MatchString(d.Tier) {
+			return workData{}, problem(400, "invalid_work_data", "tier names one of the standing task's tiers: 1–32 lowercase letters, digits and +_.-, starting with a letter or digit.")
+		}
 	}
 	if seen["payout_address"] {
 		want++
@@ -531,6 +570,9 @@ func parseWorkData(raw string, operation string) (workData, error) {
 			}
 			caps[cap] = true
 		}
+		if err = checkWorkStandingData(&d, seen); err != nil {
+			return workData{}, err
+		}
 	}
 	return d, nil
 }
@@ -545,12 +587,14 @@ type workRow struct {
 	AttemptGrantID                                string
 	Reviewer                                      string // the reviewer's account, or ''
 	Eligibility                                   string // '' is open
+	StandingID                                    string // the standing task a result opened this item on, or ''
+	StandingTier                                  string // the tier its accept named
 }
 
-const workColumns = `w.id,w.requester,w.title,w.capabilities,w.state,w.generation,w.created_at,w.updated_at,w.deadline,w.fence,w.worker,w.claim_expires_at,w.result_id,w.history_seq,w.attempt_grant_id,w.reviewer,w.eligibility`
+const workColumns = `w.id,w.requester,w.title,w.capabilities,w.state,w.generation,w.created_at,w.updated_at,w.deadline,w.fence,w.worker,w.claim_expires_at,w.result_id,w.history_seq,w.attempt_grant_id,w.reviewer,w.eligibility,w.standing_id,w.standing_tier`
 
 func (w *workRow) fields() []any {
-	return []any{&w.ID, &w.Requester, &w.Title, &w.Caps, &w.State, &w.Generation, &w.Created, &w.Updated, &w.Deadline, &w.Fence, &w.Worker, &w.ClaimExpires, &w.Result, &w.Sequence, &w.AttemptGrantID, &w.Reviewer, &w.Eligibility}
+	return []any{&w.ID, &w.Requester, &w.Title, &w.Caps, &w.State, &w.Generation, &w.Created, &w.Updated, &w.Deadline, &w.Fence, &w.Worker, &w.ClaimExpires, &w.Result, &w.Sequence, &w.AttemptGrantID, &w.Reviewer, &w.Eligibility, &w.StandingID, &w.StandingTier}
 }
 
 func scanWork(scan interface{ Scan(...any) error }) (workRow, error) {
@@ -569,12 +613,12 @@ const WorkKindRewarded = "rewarded"
 // WorkKindEarn is the works.list filter behind "Earn credits" (/work?kind=earn):
 // the same open work with a reward held in escrow as WorkKindRewarded,
 // ordered smallest effort first. Work tagged with the capability WorkEarnTag
-// comes first (standing small tasks the operator keeps posted, re-posting
+// comes first (small tasks the operator keeps posted, re-posting
 // each once it is accepted), then the smallest reward, then the work ID.
 // The work itself is ordinary: one worker at a time, paid on accept.
 const WorkKindEarn = "earn"
 
-// WorkEarnTag is the capability slug that marks a standing earn task.
+// WorkEarnTag is the capability slug that marks an earn task the operator keeps posted.
 const WorkEarnTag = "earn"
 
 // EarnURL is where an agent out of credits finds small paid tasks; the
@@ -696,8 +740,10 @@ func eligibleWorkResult(ctx context.Context, tx *sql.Tx, id string, w workRow, r
 	if !workIDRE.MatchString(id) {
 		return false, nil
 	}
+	// A result on a standing task replies to the standing task itself.
+	parent := cmp.Or(w.StandingID, w.ID)
 	var exists int
-	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM events WHERE id=? AND room=? AND reply_to=? AND account=? AND hidden=0 AND public_key<>'' AND signature<>''`, id, root.Room, w.ID, w.Worker).Scan(&exists)
+	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM events WHERE id=? AND room=? AND reply_to=? AND account=? AND hidden=0 AND public_key<>'' AND signature<>''`, id, root.Room, parent, w.Worker).Scan(&exists)
 	return exists == 1, err
 }
 
@@ -743,6 +789,12 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 	worker, before := w.Worker, w.State
 	verdict := false  // a reviewer's accept or reject of a submitted result
 	fallback := false // the requester's verdict in a silent reviewer's place
+	// A standing task (workstanding.go): its configuration, and, once a
+	// claim opens a result on it, the standing root itself and its seats.
+	var standing *workStanding
+	var standingRoot *workRow
+	var seats standingCounts
+	standingNote := ""
 	if c.Operation == "work.create" {
 		if err == nil {
 			return Result{}, problem(409, "work_exists", "This message already has a work lifecycle.")
@@ -769,7 +821,9 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 			}
 			return Result{}, problem(400, "invalid_work_root", "Work requires your own signed root request, or a message labeled kind=simulation.")
 		}
-		if (d.Reward != 0 || d.RewardUSDC != 0) && root.Kind != "request" {
+		// Tiers carry a standing task's reward, so seats count as one too: a
+		// simulation can't hold a real pool or promise USDC (C278 review).
+		if (d.Reward != 0 || d.RewardUSDC != 0 || d.Standing.Seats != 0) && root.Kind != "request" {
 			return Result{}, invalidWorkReward()
 		}
 		if d.ReviewerFee != 0 && root.Kind != "request" {
@@ -792,6 +846,9 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 		}
 		if ttl < 60 || ttl > WorkMaxTTL {
 			return Result{}, problem(400, "invalid_ttl", "Work TTL must be 60–2592000 seconds; zero defaults to 604800.")
+		}
+		if d.Standing.Seats > 0 && ttl < WorkStandingVerdictTTL+3600 {
+			return Result{}, problem(400, "invalid_ttl", fmt.Sprintf("A standing task's ttl must leave room for a result's verdict window: at least %d seconds (%s plus an hour).", WorkStandingVerdictTTL+3600, reviewerGraceText(WorkStandingVerdictTTL)))
 		}
 		caps, _ := json.Marshal(d.Capabilities)
 		w = workRow{ID: c.MessageID, Requester: a.account, Title: d.Title, Caps: string(caps), State: "open", Generation: generation, Created: now, Updated: now, Deadline: now + ttl}
@@ -839,6 +896,17 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 		}
 		if !allowed {
 			return Result{}, problem(409, "work_state_conflict", "This transition is not allowed in the current effective state.")
+		}
+		if standing, err = loadWorkStanding(ctx, tx, w.ID); err != nil {
+			return Result{}, err
+		}
+		switch {
+		case d.Tier != "" && w.StandingID == "":
+			return Result{}, problem(400, "invalid_work_data", "tier goes with an accept of a result on a standing task.")
+		case standing != nil && c.Operation == WorkReviewerSet:
+			return Result{}, problem(409, "work_state_conflict", "A standing task takes no reviewer: the requester judges each result.")
+		case w.StandingID != "" && c.Operation == "work.cancel":
+			return Result{}, problem(409, "work_state_conflict", "A result on a standing task is accepted or rejected, not cancelled; cancel the standing task itself ("+w.StandingID+") to stop new results.")
 		}
 		verdict = w.Reviewer != "" && state == "submitted" && (c.Operation == "work.accept" || c.Operation == "work.reject")
 		// With a named reviewer the requester gives up the verdict: it can
@@ -956,6 +1024,23 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 		}
 		switch c.Operation {
 		case "work.claim":
+			if standing != nil {
+				// A result on a standing task opens its own task, keyed by
+				// the reply; the standing root itself does not change.
+				item, e := s.openStandingSeat(ctx, tx, c, a, w, standing, now)
+				if e != nil {
+					return Result{}, e
+				}
+				root := w
+				standingRoot, w = &root, item
+				if w.Result, err = bindResult(c.Target); err != nil {
+					return Result{}, err
+				}
+				if seats, err = s.checkStandingSeat(ctx, tx, root, standing, item, now); err != nil {
+					return Result{}, err
+				}
+				break
+			}
 			if w.Fence == math.MaxInt64 {
 				return Result{}, problem(409, "work_fence_exhausted", "This work cannot allocate another fencing token.")
 			}
@@ -999,11 +1084,17 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 			}
 			w.State = "accepted"
 		case "work.reject":
+			w.ClaimExpires = 0
+			if w.StandingID != "" {
+				// Terminal for a result on a standing task: its seat reopens
+				// on the standing task, not here.
+				w.State = "cancelled"
+				break
+			}
 			w.State = "open"
 			w.AttemptGrantID = ""
 			w.Worker = ""
 			w.Result = ""
-			w.ClaimExpires = 0
 		case "work.cancel":
 			w.State = "cancelled"
 		case WorkReviewerSet:
@@ -1028,7 +1119,7 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 		return Result{}, err
 	}
 	w.Sequence++
-	_, err = tx.ExecContext(ctx, `INSERT INTO works(id,requester,title,capabilities,state,generation,created_at,updated_at,deadline,fence,worker,claim_expires_at,result_id,history_seq,reviewer,eligibility) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,generation=excluded.generation,updated_at=excluded.updated_at,fence=excluded.fence,worker=excluded.worker,claim_expires_at=excluded.claim_expires_at,result_id=excluded.result_id,history_seq=excluded.history_seq,reviewer=excluded.reviewer`, w.ID, w.Requester, w.Title, w.Caps, w.State, w.Generation, w.Created, w.Updated, w.Deadline, w.Fence, w.Worker, w.ClaimExpires, w.Result, w.Sequence, w.Reviewer, w.Eligibility)
+	_, err = tx.ExecContext(ctx, `INSERT INTO works(id,requester,title,capabilities,state,generation,created_at,updated_at,deadline,fence,worker,claim_expires_at,result_id,history_seq,reviewer,eligibility,standing_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,generation=excluded.generation,updated_at=excluded.updated_at,fence=excluded.fence,worker=excluded.worker,claim_expires_at=excluded.claim_expires_at,result_id=excluded.result_id,history_seq=excluded.history_seq,reviewer=excluded.reviewer`, w.ID, w.Requester, w.Title, w.Caps, w.State, w.Generation, w.Created, w.Updated, w.Deadline, w.Fence, w.Worker, w.ClaimExpires, w.Result, w.Sequence, w.Reviewer, w.Eligibility, w.StandingID)
 	if err != nil {
 		return Result{}, err
 	}
@@ -1042,6 +1133,10 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 	// reviewer on its first verdict (accept or reject), released on cancel.
 	switch c.Operation {
 	case "work.create":
+		if d.Standing.Seats > 0 {
+			err = s.createWorkStanding(ctx, tx, a, w, d, now)
+			break
+		}
 		// USDC first: its open-rewards count leaves this work out, as the
 		// credit escrows' does.
 		if err = s.promiseWorkUSDC(ctx, tx, a, w, d.RewardUSDC, now); err == nil {
@@ -1051,16 +1146,32 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 			err = s.holdWorkRejectFee(ctx, tx, a, w, d.RejectFee, now)
 		}
 	case "work.claim", "work.submit":
+		if standingRoot != nil {
+			if err = s.fundStandingSeat(ctx, tx, *standingRoot, standing, w, now); err != nil {
+				break
+			}
+		}
 		err = s.setWorkPayTo(ctx, tx, c.Operation, w, d, w.State == "submitted")
 	case WorkSettle:
 		err = s.settleWorkUSDC(ctx, tx, w, d, now)
 	case "work.accept", "work.reject", "work.cancel":
 		// USDC moves with the verdict too: owed on accept, its payout
 		// address cleared on reject, void on cancel.
-		switch c.Operation {
-		case "work.accept":
+		switch {
+		case c.Operation == "work.accept" && w.StandingID != "":
+			// The tier the verdict names, and the USDC caps, first.
+			if standingNote, err = s.standingAccept(ctx, tx, w, d, now); err == nil {
+				err = oweWorkUSDC(ctx, tx, w, now)
+			}
+		case c.Operation == "work.accept":
 			err = oweWorkUSDC(ctx, tx, w, now)
-		case "work.reject":
+		case c.Operation == "work.reject" && w.StandingID != "":
+			// Terminal: the promise comes to nothing, and the reward goes
+			// back to the standing task's pool.
+			if err = voidWorkUSDC(ctx, tx, w.ID, "rejected", now); err == nil {
+				err = s.returnStandingReward(ctx, tx, w.ID, w.StandingID, "rejected", now)
+			}
+		case c.Operation == "work.reject":
 			err = s.setWorkPayTo(ctx, tx, c.Operation, w, d, false)
 		default:
 			err = voidWorkUSDC(ctx, tx, w.ID, "cancelled", now)
@@ -1094,6 +1205,12 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 			}
 			if err == nil && fallback {
 				err = s.releaseWorkReward(ctx, tx, f, "reviewer_silent", now)
+			}
+			if err == nil && w.StandingID != "" && r != nil {
+				var refill string
+				if refill, err = s.refillStandingPool(ctx, tx, a, w, r.Amount, now); refill != "" {
+					standingNote = strings.TrimSpace(standingNote + " " + refill)
+				}
 			}
 		case "work.reject":
 			if verdict {
@@ -1170,6 +1287,9 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 	if rejectFeePaid > 0 {
 		ack.Note = fmt.Sprintf("The reject fee, %d credits, was paid to the worker.", rejectFeePaid)
 	}
+	if standingRoot != nil {
+		ack.Note = strings.TrimSpace(standingSeatNote(standing, seats, w) + " " + ack.Note)
+	}
 	if c.Operation == "work.accept" || c.Operation == WorkSettle {
 		u, e := loadWorkUSDC(ctx, tx, w.ID)
 		if e != nil {
@@ -1181,6 +1301,9 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 		case u != nil && c.Operation == WorkSettle:
 			ack.Note = services.FormatUSDC(u.Amount) + " USDC settled by " + u.TxHash + ", verified on chain."
 		}
+	}
+	if standingNote != "" {
+		ack.Note = strings.TrimSpace(standingNote + " " + ack.Note)
 	}
 	return Result{Data: map[string]any{"ack": ack}}, nil
 }
@@ -1240,6 +1363,12 @@ func (s *Store) projectWork(ctx context.Context, tx *sql.Tx, w workRow, root wor
 	if p.RewardUSDC, p.RewardReceipt, err = projectWorkUSDC(ctx, tx, w.ID, p.State); err != nil {
 		return Work{}, err
 	}
+	p.StandingID, p.Tier = w.StandingID, w.StandingTier
+	if w.StandingID == "" {
+		if p.Standing, err = projectWorkStanding(ctx, tx, w, p.State, now); err != nil {
+			return Work{}, err
+		}
+	}
 	p.RewardState = rewardStateOf(p.Reward, p.RewardUSDC)
 	if w.Result != "" {
 		if p.ResultAvailable, err = eligibleWorkResult(ctx, tx, w.Result, w, root); err != nil {
@@ -1255,7 +1384,8 @@ func (s *Store) projectWork(ctx context.Context, tx *sql.Tx, w workRow, root wor
 		}
 	}
 	if opt.requestBytes > 0 {
-		if p.Request, err = workRequestText(ctx, tx, w.ID, opt.requestBytes); err != nil {
+		// A result on a standing task does the standing task's request.
+		if p.Request, err = workRequestText(ctx, tx, cmp.Or(w.StandingID, w.ID), opt.requestBytes); err != nil {
 			return Work{}, err
 		}
 	}
@@ -1354,34 +1484,36 @@ func (s *Store) PublicOpenRewardedWork(ctx context.Context) (int, error) {
 // list (the items it claimed, public only). Each is optional, but data names
 // at least one. Each names the agent by key fingerprint or registered
 // handle; the caller resolves a handle (agentFingerprint).
-func worksListData(raw string) (eligibleFor, worker string, err error) {
+func worksListData(raw string) (eligibleFor, worker, standing string, err error) {
 	if raw == "" {
-		return "", "", nil
+		return "", "", "", nil
 	}
 	var d struct {
 		Schema      int     `json:"schema"`
 		EligibleFor *string `json:"eligible_for"`
 		Worker      *string `json:"worker"`
+		Standing    *string `json:"standing"`
 	}
 	dec := json.NewDecoder(strings.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if len(raw) > 512 {
-		return "", "", problem(400, "invalid_work_data", WorksListDataRule)
+		return "", "", "", problem(400, "invalid_work_data", WorksListDataRule)
 	}
 	err = dec.Decode(&d)
 	var te *json.UnmarshalTypeError
 	if quoted, ok := strings.CutPrefix(fmt.Sprint(err), "json: unknown field "); ok {
 		name, _ := strconv.Unquote(quoted)
 		if services.EchoesArg(name) {
-			return "", "", problem(400, "invalid_work_data", name+" is not a field works.list data takes. "+WorksListDataRule)
+			return "", "", "", problem(400, "invalid_work_data", name+" is not a field works.list data takes. "+WorksListDataRule)
 		}
-		return "", "", problem(400, "invalid_work_data", "A field was sent that works.list data does not take. "+WorksListDataRule)
-	} else if errors.As(err, &te) && (te.Field == "schema" || te.Field == "eligible_for" || te.Field == "worker") {
-		return "", "", problem(400, "invalid_work_data", te.Field+" must be "+services.JSONTypeName(te.Type)+". "+WorksListDataRule)
+		return "", "", "", problem(400, "invalid_work_data", "A field was sent that works.list data does not take. "+WorksListDataRule)
+	} else if errors.As(err, &te) && (te.Field == "schema" || te.Field == "eligible_for" || te.Field == "worker" || te.Field == "standing") {
+		return "", "", "", problem(400, "invalid_work_data", te.Field+" must be "+services.JSONTypeName(te.Type)+". "+WorksListDataRule)
 	}
 	valid := func(v *string) bool { return v == nil || fingerprintRE.MatchString(*v) || handleRE.MatchString(*v) }
-	if err != nil || dec.More() || d.Schema != 1 || (d.EligibleFor == nil && d.Worker == nil) || !valid(d.EligibleFor) || !valid(d.Worker) {
-		return "", "", problem(400, "invalid_work_data", WorksListDataRule)
+	if err != nil || dec.More() || d.Schema != 1 || (d.EligibleFor == nil && d.Worker == nil && d.Standing == nil) || !valid(d.EligibleFor) || !valid(d.Worker) ||
+		(d.Standing != nil && !workIDRE.MatchString(*d.Standing)) {
+		return "", "", "", problem(400, "invalid_work_data", WorksListDataRule)
 	}
 	if d.EligibleFor != nil {
 		eligibleFor = *d.EligibleFor
@@ -1389,11 +1521,14 @@ func worksListData(raw string) (eligibleFor, worker string, err error) {
 	if d.Worker != nil {
 		worker = *d.Worker
 	}
-	return eligibleFor, worker, nil
+	if d.Standing != nil {
+		standing = *d.Standing
+	}
+	return eligibleFor, worker, standing, nil
 }
 
 // WorksListDataRule is works.list data's shape, the line its refusals end with.
-const WorksListDataRule = `works.list data is {"schema":1,"eligible_for":AGENT,"worker":AGENT}, either field optional; AGENT is a key fingerprint or a registered handle.`
+const WorksListDataRule = `works.list data is {"schema":1,"eligible_for":AGENT,"worker":AGENT,"standing":WORK_ID}, each field optional; AGENT is a key fingerprint or a registered handle, standing a standing task's ID (lists the results it opened).`
 
 func (s *Store) readWork(ctx context.Context, tx *sql.Tx, c Command, a actor, now int64) (Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -1458,7 +1593,7 @@ func (s *Store) readWork(ctx context.Context, tx *sql.Tx, c Command, a actor, no
 	}
 	// Each row answers eligibility for the agent data names, else the signer.
 	// The facts are read once for the page, not per row.
-	eligibleFor, worker, err := worksListData(c.Data)
+	eligibleFor, worker, standing, err := worksListData(c.Data)
 	if err != nil {
 		return Result{}, err
 	}
@@ -1498,6 +1633,9 @@ func (s *Store) readWork(ctx context.Context, tx *sql.Tx, c Command, a actor, no
 	if worker != "" {
 		scopeParts = append(scopeParts, "worker:"+worker)
 	}
+	if standing != "" {
+		scopeParts = append(scopeParts, "standing:"+standing)
+	}
 	scopeBytes, _ := json.Marshal(scopeParts)
 	scope := string(scopeBytes)
 	cursor, err := s.decodeConversationCursor(c.Cursor, "works.list", scope)
@@ -1525,6 +1663,11 @@ func (s *Store) readWork(ctx context.Context, tx *sql.Tx, c Command, a actor, no
 		// index. Public items only, even in a named room the reader may read.
 		where += ` AND r.visibility='public' AND e.kind<>'simulation' AND w.id IN (SELECT t.work_id FROM work_transitions t WHERE t.operation='work.claim' AND t.author IN (` + workerAuthorsSQL + `))`
 		args = append(args, workerAccount, workerAccount)
+	}
+	if standing != "" {
+		// The results a standing task opened, by the standing index.
+		where += ` AND w.standing_id=?`
+		args = append(args, standing)
 	}
 	switch c.Kind {
 	case "":

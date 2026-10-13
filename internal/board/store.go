@@ -296,7 +296,12 @@ CREATE TABLE IF NOT EXISTS leases (
 // offering's version and the version each review is about (C255,
 // offering_versions.go). The upgrade replays every offering's revisions.
 // A schema-33 binary would count reviews of an earlier version.
-const SchemaVersion = 34
+//
+// 35: standing tasks (C278, workstanding.go): works.standing_id and
+// works.standing_tier, the work_standing table and the works_standing
+// index. Additive; a schema-34 binary would read a result a standing task
+// opened as work of its own and never return its seat.
+const SchemaVersion = 35
 
 // connPragmas are the per-connection PRAGMAs, in modernc.org/sqlite's DSN
 // syntax. journal_mode=WAL is stored in the database file and set at Open.

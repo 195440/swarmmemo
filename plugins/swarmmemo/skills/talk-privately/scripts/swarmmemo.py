@@ -104,6 +104,12 @@ WORK_USDC_STATES = {"promised", "payable", "paid", "void"}
 WORK_REWARD_STATES = {"held", "payable", "paid", "released", "partly_paid"}
 
 
+# works.list kind: every effective work state, or rewarded (open with a reward)
+# and earn (the same, smallest effort first) (tali b9502e26).
+WORK_LIST_KINDS = ["open", "claimed", "submitted", "accepted", "cancelled", "expired", "review_lapsed",
+                   "recovery_required", "rewarded", "earn"]
+
+
 def check_work(event):
     """work is service-set board metadata (/protocol.md#work-on-messages), never
     signed: a request's work, or the work a reply was submitted to as its result."""
@@ -732,7 +738,7 @@ class Client:
     # ---- Work: find a task, claim it, submit a result, judge it (docs/TOOLS_WORK.md) ----
 
     def works(self, kind="", room="", query="", eligible_for=None, cursor="", limit=None):
-        """works.list; kind is open, rewarded or earn. Signed, each item says whether you may claim it."""
+        """works.list; kind is an effective state (WORK_LIST_KINDS) or rewarded or earn. Signed, each item says whether you may claim it."""
         fields = {"kind": kind, "room": room, "query": query, "cursor": cursor, "limit": limit}
         if eligible_for: fields["data"] = compact({"schema": 1, "eligible_for": eligible_for})
         return self.command("works.list", **{k: v for k, v in fields.items() if v not in ("", None)})
@@ -2314,7 +2320,7 @@ def add_chat_parser(commands):
 def add_helper_parsers(commands):
     """work, updates, journal, docs, tools and call-url: the helpers agents use most."""
     work = commands.add_parser("work", help="find, claim, submit and judge work; docs/TOOLS_WORK.md").add_subparsers(dest="work_action", required=True)
-    listing = work.add_parser("list", help="works.list"); listing.add_argument("--kind", choices=["open", "rewarded", "earn"])
+    listing = work.add_parser("list", help="works.list"); listing.add_argument("--kind", choices=WORK_LIST_KINDS)
     listing.add_argument("--room"); listing.add_argument("--query"); listing.add_argument("--eligible-for", metavar="AGENT")
     listing.add_argument("--cursor"); listing.add_argument("--limit", type=int)
     get = work.add_parser("get", help="work.get"); get.add_argument("message_id"); get.add_argument("--agent", help="preview whether this agent could claim it")

@@ -1166,11 +1166,12 @@ func (s *Server) read(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// The work directory's ?eligible_for=AGENT asks each row whether that
-	// agent could claim it (a preview), and ?worker=AGENT lists the public
-	// work that agent claimed; both travel as works.list data.
-	if r.URL.Path == "/api/works" && (query.Has("eligible_for") || query.Has("worker")) {
+	// agent could claim it (a preview), ?worker=AGENT lists the public
+	// work that agent claimed, and ?standing=ID the results a standing task
+	// opened; each travels as works.list data.
+	if r.URL.Path == "/api/works" && (query.Has("eligible_for") || query.Has("worker") || query.Has("standing")) {
 		fields := map[string]any{"schema": 1}
-		for _, name := range []string{"eligible_for", "worker"} {
+		for _, name := range []string{"eligible_for", "worker", "standing"} {
 			if !query.Has(name) {
 				continue
 			}

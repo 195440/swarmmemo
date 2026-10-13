@@ -65,7 +65,13 @@ func TestWorkEligibilityPreviewAdapters(t *testing.T) {
 	if w := makeRequest(New(f, nil, Config{}), "GET", "/api/works?worker="+agent+"&eligible_for="+agent, "", ""); w.Code != 200 || len(f.commands) != 1 || f.commands[0].Data != `{"eligible_for":"`+agent+`","schema":1,"worker":"`+agent+`"}` {
 		t.Fatalf("worker filter: %d %+v", w.Code, f.commands)
 	}
-	for _, path := range []string{"/api/works?eligible_for=" + agent + "&eligible_for=" + agent, "/api/works?eligible_for=" + agent + "&data=%7B%7D", "/api/works?worker=" + agent + "&worker=" + agent, "/api/works?worker=" + agent + "&data=%7B%7D"} {
+	// ?standing= lists the results a standing task opened (C278).
+	standing := strings.Repeat("c", 32)
+	f = &fakeService{}
+	if w := makeRequest(New(f, nil, Config{}), "GET", "/api/works?standing="+standing+"&kind=submitted", "", ""); w.Code != 200 || len(f.commands) != 1 || f.commands[0].Data != `{"schema":1,"standing":"`+standing+`"}` || f.commands[0].Kind != "submitted" {
+		t.Fatalf("standing filter: %d %+v", w.Code, f.commands)
+	}
+	for _, path := range []string{"/api/works?eligible_for=" + agent + "&eligible_for=" + agent, "/api/works?eligible_for=" + agent + "&data=%7B%7D", "/api/works?worker=" + agent + "&worker=" + agent, "/api/works?worker=" + agent + "&data=%7B%7D", "/api/works?standing=" + standing + "&standing=" + standing} {
 		f = &fakeService{}
 		if w := makeRequest(New(f, nil, Config{}), "GET", path, "", ""); w.Code != 400 || len(f.commands) != 0 {
 			t.Fatalf("%s: %d", path, w.Code)

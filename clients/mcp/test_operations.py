@@ -101,7 +101,11 @@ class OperationTests(unittest.TestCase):
                 "resolved_from": "e" * 32, "result_sha256": "f" * 64, "result_changed_since_submit": False,
                 "reward_note": "+0.10 USDC on Base, paid by the poster",
                 "requester_record": {"results": 0, "paid": 0, "rejected": 0, "unpaid_lapsed": 0, "cancelled_after_submit": 0, "distinct_workers": 0, "median_hours_to_verdict": None},
-                "verdict_checks": {"operation": "work.reject", "sequence": 3, "author": fingerprint, "at": 4, "checks": [{"property": "tests", "state": "fail"}]}}
+                "verdict_checks": {"operation": "work.reject", "sequence": 3, "author": fingerprint, "at": 4, "checks": [{"property": "tests", "state": "fail"}]},
+                "standing": {"seats": 10, "open": 7, "submitted": 3, "owed": 0, "paid": 12, "results": 15, "per_agent_day": 1, "day_max": 10, "opened_today": 2,
+                             "tiers": [{"name": "bug", "credits": 2000, "usdc": "0.2"}, {"name": "bug+fix", "credits": 2000}], "usdc_day_max": "2",
+                             "verdict_ttl": 259200, "results_until": 9},
+                "standing_id": "9" * 32, "tier": "bug+fix"}
         self.assertEqual(set(work), contract, "add a sample for the new work field, then teach _work to validate it")
         self.assertEqual(op._work(self.profile, dict(work), "e" * 32), work)
         for state in op.REWARD_STATES: self.assertIsNotNone(op._work(self.profile, {**work, "reward_state": state}))
@@ -109,7 +113,10 @@ class OperationTests(unittest.TestCase):
         for name, bad in (("reward_usdc", {"amount": 0.1, "state": "promised"}), ("reward_usdc", {"amount": "1e3", "state": "promised"}),
                           ("reward_usdc", {"amount": "0.1", "state": "owed"}), ("reward_usdc", {"amount": "0.1", "state": "paid", "block": "7"}), ("reward_usdc", "0.1"),
                           ("reward_state", "owed"), ("reward_state", ""), ("reward_receipt", "r"), ("reward_note", ""), ("reward_note", " x"), ("reward_note", "a\nb"),
-                          ("reward_note", "x" * 81), ("reward_note", 5), ("requester_may_decide_at", "7"), ("requester_may_decide_at", True), ("requester_may_decide_at", -1)):
+                          ("reward_note", "x" * 81), ("reward_note", 5), ("requester_may_decide_at", "7"), ("requester_may_decide_at", True), ("requester_may_decide_at", -1),
+                          ("standing", {**work["standing"], "open": "7"}), ("standing", {**work["standing"], "extra": 1}), ("standing", {**work["standing"], "tiers": []}),
+                          ("standing", {k: v for k, v in work["standing"].items() if k != "seats"}), ("standing", {**work["standing"], "usdc_day_max": "x"}),
+                          ("standing_id", "B" * 32), ("standing_id", "b" * 32), ("tier", "Bug"), ("tier", 5)):
             with self.subTest(name=name, bad=bad), self.assertRaisesRegex(BridgeError, "invalid_response"):
                 op._work(self.profile, {**work, name: bad})
 
@@ -289,7 +296,10 @@ class OperationTests(unittest.TestCase):
                 {"reward_note": "+0.10 USDC on Base, paid by the poster"}, {"reward_note": "é" * 80},
                 # Shaped like the live standing bounty 6ea0a607.
                 {"reward": 20, "reviewer": reviewer, "reviewer_fee": 5, "eligibility": "first_work"},
-                {"reward": {"credits": 20, "usdc": "0.20"}, "reviewer": reviewer, "reviewer_fee": 5, "reject_fee": 10, "eligibility": "new_agent", "reward_note": "plus thanks"}]
+                {"reward": {"credits": 20, "usdc": "0.20"}, "reviewer": reviewer, "reviewer_fee": 5, "reject_fee": 10, "eligibility": "new_agent", "reward_note": "plus thanks"},
+                # A standing task (/protocol.md#standing-tasks).
+                {"seats": 10, "reward": 2000}, {"seats": 2, "reward": {"credits": 5, "usdc": "0.20"}, "per_agent_day": 2, "day_max": 1000, "usdc_day_max": "2.00"},
+                {"seats": 3, "tiers": [{"name": "bug", "credits": 300, "usdc": "0.20"}, {"name": "bug+fix", "credits": 500, "usdc": "0.40"}], "usdc_per_agent_day": "0.50"}]
         for options in good:
             item = transition(options)
             with self.subTest(options=options): self.assertEqual(op._transition(self.profile, item, "b" * 32), item)
@@ -300,7 +310,12 @@ class OperationTests(unittest.TestCase):
                {"reviewer": reviewer, "reviewer_fee": 1_000_000_001}, {"reject_fee": 1}, {"reward": 10, "reject_fee": 6}, {"reward": 10, "reject_fee": 0},
                {"reward": {"usdc": "1"}, "reject_fee": 1}, {"reward": 10, "reject_fee": "1"}, {"eligibility": "anyone"}, {"eligibility": ""}, {"eligibility": None},
                {"reward_note": ""}, {"reward_note": " x"}, {"reward_note": "x "}, {"reward_note": "a\nb"}, {"reward_note": "a‮b"}, {"reward_note": "x" * 81},
-               {"reward_note": 5}, {"extra": 1}, {"payout_address": "0x" + "a" * 40}, {"result_sha256": "d" * 64}]
+               {"reward_note": 5}, {"extra": 1}, {"payout_address": "0x" + "a" * 40}, {"result_sha256": "d" * 64},
+               {"seats": 0, "reward": 5}, {"seats": 51, "reward": 5}, {"seats": 2}, {"per_agent_day": 1, "reward": 5}, {"seats": 2, "reward": 5, "per_agent_day": 3},
+               {"seats": 2, "reward": {"usdc": "0.10"}}, {"seats": 2, "reward": 5, "tiers": [{"name": "a", "credits": 1}]}, {"seats": 2, "reward": 5, "reviewer": reviewer},
+               {"seats": 2, "tiers": [{"name": "a", "credits": 1}, {"name": "a", "credits": 2}]}, {"seats": 2, "tiers": [{"name": "A", "credits": 1}]},
+               {"seats": 2, "tiers": [{"name": "a", "usdc": "0.10"}]}, {"seats": 2, "reward": 5, "usdc_day_max": "1"},
+               {"seats": 2, "reward": {"credits": 5, "usdc": "0.50"}, "usdc_per_agent_day": "0.40"}]
         for options in bad:
             with self.subTest(options=options), self.assertRaisesRegex(BridgeError, "invalid_response"): op._transition(self.profile, transition(options), "b" * 32)
         # Other operations still take none of them.
@@ -321,11 +336,14 @@ class OperationTests(unittest.TestCase):
             return {"sequence": 3, "operation": operation, "author": fingerprint, "public_key": self.public, "signature": command["signature"],
                     "signed_payload": op.memo.canonical(command).decode(), "accepted_at": int(time.time()), "fence": 7, "generation": "a" * 32, "state": state, **extra}
         plain, checked = {"schema": 1, "generation": "a" * 32}, {"schema": 1, "generation": "a" * 32, "checks": checks}
-        for item in (transition(checked, {"checks": checks}), transition(checked, {"checks": checks}, "work.reject", "open"), transition(plain, {})):
+        # A result a standing task opened: its reject ends it, and an accept may name a tier.
+        tiered = {**plain, "tier": "bug+fix"}
+        for item in (transition(checked, {"checks": checks}), transition(checked, {"checks": checks}, "work.reject", "open"), transition(plain, {}),
+                     transition(plain, {}, "work.reject", "cancelled"), transition(tiered, {})):
             with self.subTest(item=item): self.assertEqual(op._transition(self.profile, item, "b" * 32), item)
         bad_list = {"schema": 1, "generation": "a" * 32, "checks": [{"property": "integrity", "state": "maybe"}]}
         for item in (transition(checked, {}), transition(checked, {"checks": checks[:1]}), transition(plain, {"checks": checks}),
-                     transition(bad_list, {"checks": bad_list["checks"]})):
+                     transition(bad_list, {"checks": bad_list["checks"]}), transition({**plain, "tier": "Bug"}, {}), transition(tiered, {}, "work.reject", "cancelled")):
             with self.subTest(item=item), self.assertRaisesRegex(BridgeError, "invalid_response"): op._transition(self.profile, item, "b" * 32)
         work = {"id": "b" * 32, "room": "lab", "title": "t", "capabilities": [], "simulated": False, "state": "accepted", "stored_state": "accepted", "generation": "a" * 32,
                 "service_generation": "a" * 32, "service_id": self.profile.service_id, "created_at": 1, "updated_at": 1, "deadline": 2, "fence": 7, "claim_expires_at": 0,

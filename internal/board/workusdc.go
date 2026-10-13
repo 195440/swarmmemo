@@ -162,9 +162,12 @@ func rewardNoteAmountError() error {
 // credit escrows held or pending, and USDC promised or still owed.
 func openWorkRewards(ctx context.Context, tx *sql.Tx, account, id string) (int, error) {
 	var n int
+	// A standing task counts once: the results it opened are bounded by
+	// its seats and left out.
 	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM (SELECT work_id FROM work_rewards WHERE requester=? AND state IN ('held','pending') AND work_id<>?
  UNION SELECT work_id FROM work_review_fees WHERE requester=? AND state IN ('held','pending') AND work_id<>?
- UNION SELECT work_id FROM work_usdc WHERE requester=? AND state IN ('promised','payable') AND work_id<>?)`, account, id, account, id, account, id).Scan(&n)
+ UNION SELECT work_id FROM work_usdc WHERE requester=? AND state IN ('promised','payable') AND work_id<>?)
+ WHERE work_id NOT IN (SELECT id FROM works WHERE standing_id<>'' AND requester=?)`, account, id, account, id, account, id, account).Scan(&n)
 	return n, err
 }
 
@@ -525,7 +528,9 @@ func (s *Store) stampWorkPaid(ctx context.Context, tx *sql.Tx, id string, now in
 // workHasUSDC says whether work id has a USDC reward.
 func workHasUSDC(ctx context.Context, tx *sql.Tx, id string) (bool, error) {
 	var n int
-	err := tx.QueryRowContext(ctx, "SELECT count(*) FROM work_usdc WHERE work_id=?", id).Scan(&n)
+	// A promise that came to nothing (void: a standing task's result paid
+	// in credits only) leaves the credits their own receipt.
+	err := tx.QueryRowContext(ctx, "SELECT count(*) FROM work_usdc WHERE work_id=? AND state<>'void'", id).Scan(&n)
 	return n > 0, err
 }
 

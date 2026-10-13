@@ -220,7 +220,11 @@ def _valid_checks(checks):
 WORK_REQUIRED = frozenset("id room title capabilities simulated state stored_state generation service_generation service_id created_at updated_at deadline fence claim_expires_at requester_author requester result_available".split())
 WORK_OPTIONAL = frozenset({"worker", "result_id", "attempt_grant_id", "reward", "reward_usdc", "reward_state", "reward_receipt", "reward_note", "reviewer", "reviewer_fee", "reject_fee",
                            "requester_may_decide_at", "eligibility", "request", "eligible", "eligible_reason", "eligible_agent", "eligible_preview", "resolved_from", "result_sha256",
-                           "result_changed_since_submit", "requester_record", "verdict_checks"})
+                           "result_changed_since_submit", "requester_record", "verdict_checks", "standing", "standing_id", "tier"})
+# A standing task's read (internal/board/workstanding.go WorkStanding): its
+# seats as counts, its limits, its tiers and optional daily USDC caps.
+STANDING_COUNTS = frozenset("seats open submitted owed paid results per_agent_day day_max opened_today verdict_ttl results_until".split())
+STANDING_TIER = r"[a-z0-9][a-z0-9+_.-]{0,31}"
 # The whole reward's state (Work.RewardState) and a USDC asset's own state (internal/board/workusdc.go).
 REWARD_STATES = ("held", "payable", "paid", "released", "partly_paid")
 USDC_STATES = ("promised", "payable", "paid", "void")
@@ -230,7 +234,8 @@ USDC_STATES = ("promised", "payable", "paid", "void")
 # "work_create_data" in clients/message-fields.json, which test_operations.py
 # checks. The bounds are the server's: WorkRewardMax, WorkUSDCMin/Max (in
 # micro-USDC), WorkRejectFeeMaxPercent, WorkRewardNoteMax.
-WORK_CREATE_OPTIONAL = frozenset({"reward", "reviewer", "reviewer_fee", "reject_fee", "eligibility", "reward_note"})
+WORK_CREATE_OPTIONAL = frozenset({"reward", "reviewer", "reviewer_fee", "reject_fee", "eligibility", "reward_note",
+                                  "seats", "per_agent_day", "day_max", "tiers", "usdc_per_agent_day", "usdc_day_max"})
 WORK_REWARD_MAX = 1_000_000_000
 WORK_USDC_MIN, WORK_USDC_MAX = 10_000, 1_000_000_000
 ELIGIBILITIES = ("open", "first_work", "linked", "new_agent")
@@ -272,6 +277,35 @@ def _valid_create_options(data):
         # leading or trailing space.
         note = data["reward_note"]
         if not isinstance(note, str) or not 1 <= len(note) <= 80 or note.strip() != note or not note.isprintable(): return False
+    # A standing task (/protocol.md#standing-tasks): seats with a reward that
+    # has credits or 1 to 3 tiers, its limits and USDC caps, and no reviewer.
+    standing = {"seats", "per_agent_day", "day_max", "tiers", "usdc_per_agent_day", "usdc_day_max"} & data.keys()
+    if standing:
+        seats = data.get("seats")
+        if not whole(seats, 1, 50) or {"reviewer", "reviewer_fee", "reject_fee"} & data.keys(): return False
+        if "per_agent_day" in data and not whole(data["per_agent_day"], 1, seats): return False
+        if "day_max" in data and not whole(data["day_max"], 1, 1000): return False
+        if ("reward" in data) == ("tiers" in data): return False
+        usdc = []
+        if "reward" in data:
+            if credits < 1: return False
+            if isinstance(data["reward"], dict) and data["reward"].get("usdc") is not None: usdc.append(_usdc_units(data["reward"]["usdc"]))
+        else:
+            tiers = data["tiers"]
+            if not isinstance(tiers, list) or not 1 <= len(tiers) <= 3: return False
+            names = set()
+            for tier in tiers:
+                if (not isinstance(tier, dict) or set(tier) - {"name", "credits", "usdc"} or not isinstance(tier.get("name"), str)
+                        or not re.fullmatch(STANDING_TIER, tier["name"]) or tier["name"] in names or not whole(tier.get("credits"), 1, WORK_REWARD_MAX)): return False
+                names.add(tier["name"])
+                if "usdc" in tier:
+                    units = _usdc_units(tier["usdc"])
+                    if units is None or not WORK_USDC_MIN <= units <= WORK_USDC_MAX: return False
+                    usdc.append(units)
+        for cap in ("usdc_per_agent_day", "usdc_day_max"):
+            if cap in data:
+                units = _usdc_units(data[cap])
+                if units is None or units < WORK_USDC_MIN or not usdc or units < max(usdc): return False
     return True
 
 
@@ -294,6 +328,18 @@ def _work(profile, work, expected=None):
                 or any(ord(ch) < 32 or 127 <= ord(ch) < 160 or ch in "  " for ch in note)):
             raise BridgeError("invalid_response")
     if "requester_may_decide_at" in work and (type(work["requester_may_decide_at"]) is not int or not 0 <= work["requester_may_decide_at"] < 2**63): raise BridgeError("invalid_response")
+    # standing: a standing task's seats; standing_id and tier: a result it opened.
+    if "standing" in work:
+        standing = work["standing"]
+        if (not isinstance(standing, dict) or set(standing) - STANDING_COUNTS - {"tiers", "usdc_per_agent_day", "usdc_day_max"} or not STANDING_COUNTS <= standing.keys()
+                or any(type(standing[name]) is not int or not 0 <= standing[name] < 2**63 for name in STANDING_COUNTS)
+                or any(name in standing and _usdc_units(standing[name]) is None for name in ("usdc_per_agent_day", "usdc_day_max"))
+                or not isinstance(standing.get("tiers"), list) or not 1 <= len(standing["tiers"]) <= 3
+                or any(not isinstance(t, dict) or set(t) - {"name", "credits", "usdc"} or not isinstance(t.get("name"), str) or not re.fullmatch(STANDING_TIER, t["name"])
+                       or type(t.get("credits")) is not int or ("usdc" in t and _usdc_units(t["usdc"]) is None) for t in standing["tiers"])):
+            raise BridgeError("invalid_response")
+    if "standing_id" in work and (not isinstance(work["standing_id"], str) or not re.fullmatch(HEX32, work["standing_id"]) or work["standing_id"] == work.get("id")): raise BridgeError("invalid_response")
+    if "tier" in work and (not isinstance(work["tier"], str) or not re.fullmatch(STANDING_TIER, work["tier"])): raise BridgeError("invalid_response")
     # request is the task at its newest version, bounded (4096 bytes on one
     # work, an excerpt in a directory); eligible answers a signed or naming read.
     if "request" in work:
@@ -387,6 +433,8 @@ def _transition(profile, item, work_id):
         # A reviewer change leaves the state as it was, open or claimed.
         if item["operation"] == "work.reviewer.set" and item["state"] not in ("open", "claimed"): raise ValueError()
         if item["operation"] == "work.claim" and "target" in command: expected_state = "submitted"
+        # A reject of a result a standing task opened ends it (cancelled).
+        if item["operation"] == "work.reject" and item["state"] == "cancelled": expected_state = "cancelled"
         if item["state"] != expected_state or item["sequence"] < 1 or item["accepted_at"] < 1: raise ValueError()
         if item["operation"] == "work.create" and item["fence"] != 0: raise ValueError()
         if item["operation"] in ("work.claim", "work.renew", "work.submit", "work.accept") and item["fence"] < 1: raise ValueError()
@@ -409,6 +457,10 @@ def _transition(profile, item, work_id):
             if not _valid_checks(data["checks"]) or item.get("checks") != data["checks"]: raise ValueError()
             data_fields = data_fields | {"checks"}
         elif "checks" in item: raise ValueError()
+        # An accept of a standing task's result may name its tier.
+        if isinstance(data, dict) and "tier" in data and item["operation"] == "work.accept":
+            if not isinstance(data["tier"], str) or not re.fullmatch(STANDING_TIER, data["tier"]): raise ValueError()
+            data_fields = data_fields | {"tier"}
         # A reviewer change signs the new reviewer; the service adds the one it replaced.
         if item["operation"] == "work.reviewer.set":
             if (not isinstance(data, dict) or not isinstance(data.get("reviewer"), str) or not re.fullmatch(HEX64, data["reviewer"])

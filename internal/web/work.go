@@ -21,6 +21,7 @@ type workHistoryEntry struct {
 type workPage struct {
 	Item                                     *board.Work
 	Items                                    []board.Work
+	StandingItems                            []board.Work // a standing task's page: the results it opened, newest page
 	EarnItems                                []board.Work // /work unfiltered: the first few earn tasks
 	ShowEarn                                 bool         // render the Earn credits section
 	History                                  []workHistoryEntry
@@ -210,7 +211,16 @@ func loadWorkPage(r *http.Request, p *page, execute func(board.Command) (board.R
 		v.NextURL = v.StartURL + "?cursor=" + url.QueryEscape(history.NextCursor)
 	}
 	data, _ := json.Marshal(map[string]any{"schema": 1, "generation": item.ServiceGeneration})
-	example, _ := json.MarshalIndent(board.Command{Operation: "work.claim", MessageID: id, TTL: 60, Data: string(data)}, "", "  ")
+	claim := board.Command{Operation: "work.claim", MessageID: id, TTL: 60, Data: string(data)}
+	if item.Standing != nil {
+		// A standing task takes a result, never a bare claim; its results
+		// are listed (a failed read only leaves the list out).
+		claim = board.Command{Operation: "work.claim", MessageID: id, Target: "REPLY_ID", Data: string(data)}
+		if res, err := execute(board.Command{Operation: "works.list", Data: `{"schema":1,"standing":"` + id + `"}`, Limit: 25}); err == nil {
+			v.StandingItems, _ = res.Data["works"].([]board.Work)
+		}
+	}
+	example, _ := json.MarshalIndent(claim, "", "  ")
 	v.ClaimExample = string(example)
 	return 200
 }

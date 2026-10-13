@@ -17,9 +17,10 @@ import (
 	"swarmmemo/internal/allowance"
 )
 
-// SpendLimitSchema is created with Schema: tables only, so SchemaVersion
-// does not change. Rows are never deleted: a limit lifted keeps its row with
-// both limits null, and the daily counts stay as history.
+// SpendLimitSchema is created with Schema, which the board's migration runs
+// (spend_limit_hold_shares arrived with board schema 35, C281). Rows are
+// never deleted: a limit lifted keeps its row with both limits null, and the
+// daily counts stay as history.
 const SpendLimitSchema = `
 CREATE TABLE IF NOT EXISTS spend_limits (
  credential TEXT PRIMARY KEY, account TEXT NOT NULL, credit_per_day INTEGER, credit_per_call INTEGER,
@@ -30,6 +31,9 @@ CREATE TABLE IF NOT EXISTS spend_limit_usage (
  PRIMARY KEY(credential,day));
 CREATE TABLE IF NOT EXISTS spend_limit_holds (
  hold_id TEXT PRIMARY KEY, credential TEXT NOT NULL, day INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS spend_limit_hold_shares (
+ hold_id TEXT NOT NULL, credential TEXT NOT NULL, day INTEGER NOT NULL, units INTEGER NOT NULL,
+ PRIMARY KEY(hold_id,credential,day));
 `
 
 // SpendLimitMax bounds credit_per_day and credit_per_call.
@@ -196,14 +200,36 @@ func credentialRecord(ctx context.Context, q allowance.Querier, o *op, s allowan
 
 // credentialRelease gives back units of a hold made through a credential to
 // the day it was made, as settle and release give them back to
-// allowance_usage.
+// allowance_usage. Units an escrow join brought in from another credential
+// or day (spend_limit_hold_shares) go back to theirs first, newest day
+// first; the rest to the hold's own.
 func credentialRelease(ctx context.Context, q allowance.Querier, holdID string, units int64) error {
 	if units <= 0 {
 		return nil
 	}
+	shares, err := holdShares(ctx, q, holdID)
+	if err != nil {
+		return err
+	}
+	for _, sh := range shares {
+		if units == 0 {
+			return nil
+		}
+		back := min(sh.units, units)
+		if _, err = q.ExecContext(ctx, "UPDATE spend_limit_usage SET spent=max(0,spent-?) WHERE credential=? AND day=?", back, sh.credential, sh.day); err != nil {
+			return err
+		}
+		if _, err = q.ExecContext(ctx, "UPDATE spend_limit_hold_shares SET units=units-? WHERE hold_id=? AND credential=? AND day=?", back, holdID, sh.credential, sh.day); err != nil {
+			return err
+		}
+		units -= back
+	}
+	if units == 0 {
+		return nil
+	}
 	var credential string
 	var day int64
-	err := q.QueryRowContext(ctx, "SELECT credential,day FROM spend_limit_holds WHERE hold_id=?", holdID).Scan(&credential, &day)
+	err = q.QueryRowContext(ctx, "SELECT credential,day FROM spend_limit_holds WHERE hold_id=?", holdID).Scan(&credential, &day)
 	if isNoRows(err) {
 		return nil
 	}
@@ -212,4 +238,76 @@ func credentialRelease(ctx context.Context, q allowance.Querier, holdID string, 
 	}
 	_, err = q.ExecContext(ctx, "UPDATE spend_limit_usage SET spent=max(0,spent-?) WHERE credential=? AND day=?", units, credential, day)
 	return err
+}
+
+// holdShare is units an escrow join moved into a hold that were counted
+// against another credential or day than the hold's own.
+type holdShare struct {
+	credential string
+	day, units int64
+}
+
+func holdShares(ctx context.Context, q allowance.Querier, holdID string) ([]holdShare, error) {
+	rows, err := q.QueryContext(ctx, "SELECT credential,day,units FROM spend_limit_hold_shares WHERE hold_id=? AND units>0 ORDER BY day DESC,credential", holdID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []holdShare
+	for rows.Next() {
+		var sh holdShare
+		if err = rows.Scan(&sh.credential, &sh.day, &sh.units); err != nil {
+			return nil, err
+		}
+		out = append(out, sh)
+	}
+	return out, rows.Err()
+}
+
+// credentialJoin carries the credential spend of units moving from the
+// hold src into the hold dst (an escrow join): units counted against
+// another credential or day than dst's own stay counted there, and dst
+// remembers them, so a later release of dst gives them back to the
+// credential and day that spent them, not to dst's.
+func credentialJoin(ctx context.Context, q allowance.Querier, src, dst string, units int64) error {
+	shares, err := holdShares(ctx, q, src)
+	if err != nil {
+		return err
+	}
+	var own *holdShare
+	var c string
+	var d int64
+	switch err = q.QueryRowContext(ctx, "SELECT credential,day FROM spend_limit_holds WHERE hold_id=?", src).Scan(&c, &d); {
+	case err == nil:
+		own = &holdShare{credential: c, day: d}
+	case !isNoRows(err):
+		return err
+	}
+	var dstCred string
+	dstDay := int64(-1)
+	if err = q.QueryRowContext(ctx, "SELECT credential,day FROM spend_limit_holds WHERE hold_id=?", dst).Scan(&dstCred, &dstDay); err != nil && !isNoRows(err) {
+		return err
+	}
+	left := units
+	add := func(cred string, day, n int64) error {
+		if n <= 0 || (cred == dstCred && day == dstDay) {
+			return nil
+		}
+		_, err := q.ExecContext(ctx, "INSERT INTO spend_limit_hold_shares(hold_id,credential,day,units) VALUES(?,?,?,?) ON CONFLICT(hold_id,credential,day) DO UPDATE SET units=units+excluded.units", dst, cred, day, n)
+		return err
+	}
+	for _, sh := range shares {
+		n := min(sh.units, left)
+		if err = add(sh.credential, sh.day, n); err != nil {
+			return err
+		}
+		left -= n
+	}
+	if _, err = q.ExecContext(ctx, "UPDATE spend_limit_hold_shares SET units=0 WHERE hold_id=?", src); err != nil {
+		return err
+	}
+	if own != nil {
+		return add(own.credential, own.day, left)
+	}
+	return nil
 }

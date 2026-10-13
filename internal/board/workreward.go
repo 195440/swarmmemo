@@ -339,10 +339,26 @@ func (s *Store) settleWorkEscrows(ctx context.Context, tx *sql.Tx, table string,
 		// reviewer (review_lapsed), else to the requester (requester_lapsed,
 		// on its requester record). Work nobody finished is expired.
 		var reason string
-		if err = tx.QueryRowContext(ctx, `SELECT coalesce((SELECT CASE WHEN reviewer<>'' THEN 'review_lapsed' ELSE 'requester_lapsed' END FROM works WHERE id=? AND state='submitted'),'expired')`, id).Scan(&reason); err != nil {
+		var standingID string
+		if err = tx.QueryRowContext(ctx, `SELECT coalesce((SELECT CASE WHEN reviewer<>'' THEN 'review_lapsed' ELSE 'requester_lapsed' END FROM works WHERE id=? AND state='submitted'),'expired'),coalesce((SELECT standing_id FROM works WHERE id=?),'')`, id, id).Scan(&reason, &standingID); err != nil {
 			return n, err
 		}
-		if err = s.releaseWorkReward(ctx, tx, r, reason, now); err != nil {
+		hidden := false
+		if table == workRewardsTable && standingID != "" && reason != "expired" {
+			if err = tx.QueryRowContext(ctx, `SELECT `+standingHiddenSQL+` FROM works w WHERE w.id=?`, id).Scan(&hidden); err != nil {
+				return n, err
+			}
+		}
+		if hidden {
+			// A result whose reply is hidden: the requester could not judge it.
+			err = s.cancelHiddenStandingResult(ctx, tx, id, standingID, now)
+		} else if table == workRewardsTable && standingID != "" {
+			// A standing task's result: back to its pool while it holds.
+			err = s.returnStandingReward(ctx, tx, id, standingID, reason, now)
+		} else {
+			err = s.releaseWorkReward(ctx, tx, r, reason, now)
+		}
+		if err != nil {
 			return n, err
 		}
 		n++

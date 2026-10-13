@@ -111,7 +111,7 @@ func attachWork(ctx context.Context, q workRowsQuerier, events []Message, now in
  coalesce((SELECT group_concat(CASE WHEN te.origin<>'' THEN te.origin ELSE te.id END) FROM work_transitions t
   JOIN work_transitions x ON x.work_id=t.work_id AND x.sequence=t.sequence+1 AND x.operation='work.reject'
   JOIN events te ON te.id=json_extract(t.payload,'$.command.target')
-  WHERE t.work_id=w.id AND t.state='submitted'),'')
+  WHERE t.work_id=w.id AND t.state='submitted'),''),w.standing_id
  FROM works w JOIN events e ON e.id=w.id
  LEFT JOIN work_rewards rw ON rw.work_id=w.id
  LEFT JOIN work_usdc wu ON wu.work_id=w.id
@@ -125,6 +125,7 @@ func attachWork(ctx context.Context, q workRowsQuerier, events []Message, now in
 		root             MessageWork
 		stored           string // the stored state: accepted marks the current result accepted
 		result, rejected string // the current result's version chain; rejected results' chains, comma-separated
+		standing         string // a result a standing task opened: the standing task
 	}
 	found := map[string]mark{}
 	for rows.Next() {
@@ -133,7 +134,7 @@ func attachWork(ctx context.Context, q workRowsQuerier, events []Message, now in
 		var reward, usdc int64
 		var rewardState, usdcState string
 		var reviewer AgentRef
-		if err = rows.Scan(&m.root.ID, &m.root.Title, &m.root.State, &m.stored, &m.root.Deadline, &m.root.Eligibility, &kind, &reward, &rewardState, &usdc, &usdcState, &m.root.RewardNote, &reviewer.ID, &reviewer.PublicKey, &reviewer.Handle, &m.result, &m.rejected); err != nil {
+		if err = rows.Scan(&m.root.ID, &m.root.Title, &m.root.State, &m.stored, &m.root.Deadline, &m.root.Eligibility, &kind, &reward, &rewardState, &usdc, &usdcState, &m.root.RewardNote, &reviewer.ID, &reviewer.PublicKey, &reviewer.Handle, &m.result, &m.rejected, &m.standing); err != nil {
 			return err
 		}
 		m.root.Simulated = kind == "simulation"
@@ -176,6 +177,19 @@ func attachWork(ctx context.Context, q workRowsQuerier, events []Message, now in
 		if m, ok := found[e.Origin()]; ok && e.ReplyTo == "" {
 			root := m.root
 			events[i].Work = &root
+			continue
+		}
+		if m, ok := found[e.Origin()]; ok && m.standing != "" && e.ReplyTo == m.standing {
+			// A result on a standing task is work of its own: marked as
+			// the result it is, rejected once its reject ended it.
+			state := WorkResultSubmitted
+			switch m.stored {
+			case "accepted":
+				state = WorkResultAccepted
+			case "cancelled":
+				state = WorkResultRejected
+			}
+			events[i].Work = &MessageWork{ResultOf: m.root.ID, Title: m.root.Title, State: state, URL: m.root.URL}
 			continue
 		}
 		m, ok := found[e.ReplyTo]

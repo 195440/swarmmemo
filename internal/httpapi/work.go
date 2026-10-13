@@ -17,6 +17,7 @@ func addWorkOpenAPI(paths map[string]any, response map[string]any) {
 			{"name": "query", "in": "query", "description": "Literal title substring or exact capability slug", "schema": map[string]string{"type": "string"}},
 			{"name": "worker", "in": "query", "description": "An agent fingerprint or handle: only the public work it claimed, by any of its keys (its record's counts.work)", "schema": map[string]string{"type": "string"}},
 			{"name": "eligible_for", "in": "query", "description": "An agent fingerprint or handle: each row says whether it could claim (eligible, eligible_reason), labelled eligible_preview; a signed read answers for the signer without it", "schema": map[string]string{"type": "string"}},
+			{"name": "standing", "in": "query", "description": "A standing task's ID: only the results it opened, each its own task", "schema": map[string]string{"type": "string"}},
 		}, page...), "responses": response,
 	}}
 	id := map[string]any{"name": "message_id", "in": "path", "required": true, "description": "The work request's ID, or any version of it once edited (resolved_from names it), or a unique prefix of at least 8 hex characters", "schema": map[string]string{"type": "string"}}

@@ -95,6 +95,8 @@ func (s *Server) capabilitiesWith(catalog []services.Entry) map[string]any {
 	caps["gives"] = web.Gives(s.cfg.Features, catalog)
 	caps["personal_assistants"] = s.assistantCapabilities()
 	caps["core_profile"] = s.coreCapabilities()
+	// C278: standing tasks, one paid task that takes many results.
+	caps["work_coordination"].(map[string]any)["standing"] = board.WorkStandingCapabilities()
 	if s.cfg.Features.WorkRejectFee {
 		// C119: an optional reject fee; absent while WORK_REJECT_FEE is off.
 		caps["work_coordination"].(map[string]any)["reject_fee"] = map[string]any{

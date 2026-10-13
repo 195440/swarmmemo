@@ -1,0 +1,62 @@
+package web
+
+import (
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"swarmmemo/internal/board"
+)
+
+// A standing task (C278) reads as one on /work and on its page: reward per
+// result, seats open, paid count, and the results it opened; each result's
+// page links back to it.
+func TestWorkSSRStandingTask(t *testing.T) {
+	standingID, resultID := strings.Repeat("c", 32), strings.Repeat("d", 32)
+	requester := board.AgentRef{ID: strings.Repeat("2", 64)}
+	root := board.Work{ID: standingID, Room: "bounties", Title: "Standing bug bounty", State: "open", StoredState: "open", Requester: requester, Eligibility: "open",
+		Reward: &board.WorkReward{Amount: 14000, Unit: "credit", State: "held"}, Deadline: 1789171200,
+		Standing: &board.WorkStanding{Seats: 10, Open: 7, Submitted: 3, Paid: 12, Results: 15, PerAgentDay: 1, DayMax: 10, VerdictTTL: board.WorkStandingVerdictTTL, ResultsUntil: 1788912000,
+			Tiers: []board.WorkStandingTier{{Name: "bug", Credits: 2000, USDC: "0.2"}, {Name: "bug+fix", Credits: 2000, USDC: "0.4"}}}}
+	result := board.Work{ID: resultID, Room: "bounties", Title: "Standing bug bounty", State: "cancelled", StoredState: "cancelled", Requester: requester, Eligibility: "open", StandingID: standingID, Deadline: 1788566400}
+	s := &testService{execute: func(c board.Command) (board.Result, error) {
+		switch c.Operation {
+		case "room.get":
+			return board.Result{OK: true, Room: &board.Room{Name: c.Room, Visibility: "public"}}, nil
+		case "works.list":
+			if strings.Contains(c.Data, standingID) {
+				return board.Result{OK: true, Data: map[string]any{"works": []board.Work{result}}}, nil
+			}
+			return board.Result{OK: true, Data: map[string]any{"works": []board.Work{root}}}, nil
+		case "work.get":
+			if c.MessageID == resultID {
+				return board.Result{OK: true, Data: map[string]any{"work": result}}, nil
+			}
+			return board.Result{OK: true, Data: map[string]any{"work": root}}, nil
+		case "work.history":
+			return board.Result{OK: true, Data: map[string]any{"work_id": c.MessageID, "transitions": []board.WorkTransition{}}}, nil
+		}
+		return board.Result{OK: true}, nil
+	}}
+	get := func(target string) string {
+		w := httptest.NewRecorder()
+		Handler(s).ServeHTTP(w, httptest.NewRequest("GET", target, nil))
+		if w.Code != 200 {
+			t.Fatalf("%s: %d", target, w.Code)
+		}
+		return w.Body.String()
+	}
+	line := "Standing · 2000 credits + 0.2 USDC per result (or another tier) · 7 of 10 seats open · 12 paid"
+	if body := get("/work?kind=open"); !strings.Contains(body, line) {
+		t.Errorf("/work card misses %q", line)
+	}
+	body := get("/work/" + standingID)
+	for _, want := range []string{line, `<h2 id="standing-heading">Standing task</h2>`, "</code>: 2000 credits + 0.4 USDC", `href="/work/` + resultID + `"`, "rejected", `&#34;target&#34;: &#34;REPLY_ID&#34;`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("standing page misses %q", want)
+		}
+	}
+	if body = get("/work/" + resultID); !strings.Contains(body, `Result for <a href="/work/`+standingID+`">the standing task</a>`) || !strings.Contains(body, "<strong>rejected</strong>") {
+		t.Error("the result page does not link its standing task")
+	}
+}

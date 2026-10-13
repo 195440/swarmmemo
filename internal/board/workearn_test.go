@@ -28,7 +28,7 @@ func earnTitles(t *testing.T, s *Store, c Command) ([]string, string) {
 }
 
 // kind=earn lists what kind=rewarded lists (open, public, a reward held),
-// standing tasks tagged earn first, then the smallest reward; its cursor
+// tasks tagged earn first, then the smallest reward; its cursor
 // pages in that order.
 func TestWorksListEarnSmallestEffortFirst(t *testing.T) {
 	s := rewardStore(t)

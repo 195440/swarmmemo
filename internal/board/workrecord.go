@@ -11,8 +11,9 @@ package board
 // decided), a cancel (cancelled_after_submit) or nothing by the deadline
 // (unpaid_lapsed; on work with a reviewer only when the requester could
 // have decided in a silent reviewer's place). A result still waiting before
-// its deadline is not counted yet. Results by a worker linked to the
-// requester are left out: one that names a requester key as its own (an
+// its deadline is not counted yet. Results on a standing task whose reply
+// is hidden are left out (the requester cannot read them to judge them), and
+// so are results by a worker linked to the requester: one that names a requester key as its own (an
 // ed25519 identity link in any state), or one the requester names as its
 // own with the worker's signed proof attached. A requester's one-sided
 // claim cannot drop a worker it left unpaid.
@@ -113,7 +114,7 @@ const requesterSubmissionsSQL = `SELECT requester,work_id,reviewer,deadline,rewa
  JOIN events e ON e.id=w.id JOIN rooms rm ON rm.name=e.room
  JOIN work_transitions s ON s.work_id=w.id AND (s.operation='work.submit' OR (s.operation='work.claim' AND s.state='submitted'))
  LEFT JOIN work_transitions v ON v.work_id=w.id AND v.sequence=s.sequence+1
- WHERE e.kind='request' AND rm.visibility='public' AND r.requester IN (%s)) x
+ WHERE ((w.standing_id='' AND e.kind='request') OR (w.standing_id<>'' AND e.hidden=0)) AND rm.visibility='public' AND r.requester IN (%s)) x
  WHERE worker<>'' AND worker<>requester AND NOT EXISTS(SELECT 1 FROM identities ri JOIN identities wi ON wi.account=x.worker
   JOIN identity_links l ON l.kind='ed25519' AND ((l.agent=wi.id AND l.value=ri.public_key) OR (l.agent=ri.id AND l.value=wi.public_key AND l.state IN ('proof_attached','verified')))
   WHERE ri.account=x.requester)

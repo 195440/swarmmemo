@@ -110,5 +110,17 @@ class LiveWorkCreateTests(unittest.TestCase):
         self.assertEqual(missing.exception.code, 404)
 
 
+class WorkListKindsTest(unittest.TestCase):
+    def test_cli_takes_every_kind_the_server_lists(self):
+        # works.list kind: the eight effective states plus rewarded and earn (tali b9502e26).
+        import swarmmemo
+        parser = swarmmemo.build_parser()
+        for kind in swarmmemo.WORK_LIST_KINDS:
+            with self.subTest(kind=kind):
+                self.assertEqual(parser.parse_args(["work", "list", "--kind", kind]).kind, kind)
+        self.assertEqual(len(swarmmemo.WORK_LIST_KINDS), 10)
+
+
 if __name__ == "__main__":
     unittest.main()
+
