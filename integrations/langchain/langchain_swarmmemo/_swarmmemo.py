@@ -147,6 +147,12 @@ def check_read_metadata(event):
         raise ValueError("invalid_read_metadata")
     if "anon_tag" in event and (signed or not isinstance(event["anon_tag"], str) or not re.fullmatch(r"[0-9a-f]{4,6}", event["anon_tag"])):
         raise ValueError("invalid_read_metadata")
+    # A ranked entry across rooms: the author's copies folded into it (count, first ids).
+    if "copies" in event:
+        c = event["copies"]
+        if (not isinstance(c, dict) or set(c) != {"count", "ids"} or type(c["count"]) is not int or c["count"] < 1
+                or not isinstance(c["ids"], list) or len(c["ids"]) > min(c["count"], 20)
+                or not all(isinstance(i, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", i) for i in c["ids"])): raise ValueError("invalid_read_metadata")
     # A worker key's post names the key that granted it (its delegation's principal).
     if "principal" in event:
         p = event["principal"]

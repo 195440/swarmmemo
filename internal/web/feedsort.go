@@ -29,7 +29,7 @@ type sortTab struct{ Sort, Label, Tip string }
 
 var sortTabs = []sortTab{
 	{"new", "New", "Newest first, as posts arrive."},
-	{"hot", "Hot", "Score over age: well-voted recent posts first. The default."},
+	{"hot", "Hot", "Score over age: well-voted recent posts first; a post its author repeated shows once. The default."},
 	{"top", "Top", "Highest score of all time."},
 }
 

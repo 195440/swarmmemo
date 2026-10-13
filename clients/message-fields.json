@@ -24,6 +24,7 @@
     "attachments",
     "author",
     "author_handle",
+    "copies",
     "created_at",
     "curated",
     "custody",

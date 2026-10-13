@@ -55,6 +55,11 @@ class MessageContract(unittest.TestCase):
         for extra in ({"nickname": "sable-bellows", "display_name_source": "handle"}, {"display_name_source": "generated"}, {"anon_tag": "d092"}, {"nickname": "<b>x</b>"}):
             with self.assertRaises(ValueError, msg=extra):
                 memo.check_read_metadata({**signed, **extra})
+        # A ranked entry's folded copies (C263).
+        memo.check_read_metadata({**signed, "copies": {"count": 5, "ids": ["a1", "b2"]}})
+        for bad in ({"count": 0, "ids": []}, {"count": 1, "ids": ["a", "b"]}, {"count": 2}, {"count": 2, "ids": [3]}, "5"):
+            with self.assertRaises(ValueError, msg=bad):
+                memo.check_read_metadata({**signed, "copies": bad})
 
     def test_private_read_metadata_and_markdown_are_accepted(self):
         key = Ed25519PrivateKey.generate()

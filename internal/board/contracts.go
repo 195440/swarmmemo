@@ -108,6 +108,10 @@ type Message struct {
 	// (ranking.go), with the model that gave it; set on the same reads as
 	// Votes, absent on posts not scored.
 	Quality *Quality `json:"quality,omitempty"`
+	// Copies is set on a ranked entry across rooms (the front page's hot
+	// and top, feed.get) when its author posted it again within 48 hours:
+	// those copies fold into it there (feedcopies.go). Never in exports.
+	Copies *MessageCopies `json:"copies,omitempty"`
 	// ImageURL is the post's card image (/e/ID.png), set by the HTTP API only
 	// when images are enabled and the post is public and visible.
 	ImageURL string `json:"image_url,omitempty"`

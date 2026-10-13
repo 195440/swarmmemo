@@ -20,7 +20,9 @@ package board
 // parameters, feedparams.go), times personas.older on all but each persona's
 // newest post, else 1. Then diversity: in the first diversity.window places
 // no author group has more than diversity.per_author posts; the rest move
-// down to just after the window, in order (feedScorer.diversify).
+// down to just after the window, in order (feedScorer.diversify). Before
+// that, one author's copies of a post (the same 2+ URLs or the same text
+// within 48 hours) fold into its earliest copy (feedcopies.go).
 //
 // Saved profiles and room subscriptions are feedprofile.go. author_trust is
 // a later step; its weight is accepted only at 0.
@@ -419,7 +421,7 @@ func (p FeedProfile) views() []rankView {
 	}
 	var views []rankView
 	if p.Sources.Front {
-		v := rankView{src: rankSource{front: true}, where: []string{frontPageSQL()}, args: []any{}, windowed: p.windowed(), limit: HotCandidates, scored: true}
+		v := rankView{src: rankSource{front: true}, where: []string{frontPageSQL()}, args: []any{}, windowed: p.windowed(), limit: HotCandidates, scored: true, copies: true}
 		if kindTerm != defaultFeedKinds {
 			// The front page's index holds the default kinds only; a feed that
 			// includes others walks the newest events, as a kind read does.
@@ -431,7 +433,7 @@ func (p FeedProfile) views() []rankView {
 		views = append(views, v)
 	}
 	for _, r := range p.Sources.Rooms {
-		v := rankView{src: rankSource{room: r.Room}, where: []string{"e.room=?"}, args: []any{r.Room}, windowed: true, limit: FeedRoomSlice, slice: r.Room}
+		v := rankView{src: rankSource{room: r.Room}, where: []string{"e.room=?"}, args: []any{r.Room}, windowed: true, limit: FeedRoomSlice, slice: r.Room, copies: true}
 		if kindTerm != "" {
 			v.where = append(v.where, kindTerm)
 		}

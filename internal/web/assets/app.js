@@ -733,6 +733,8 @@
       head.append(sim);
     }
     head.append(meta);
+    // Parity with the "memo-bottom" template: a ranked entry's folded copies (copies).
+    if (event.copies && event.copies.count > 0) {const copies = node('span', 'memo-copies small muted', 'also posted ' + event.copies.count + ' more ' + (event.copies.count === 1 ? 'time' : 'times')); copies.title = 'The same author posted this again within 48 hours; the copies stay in their rooms and fold into this entry on the front page.'; bottom.append(copies);}
     if (event.to) {const to = isPrivate ? node('span', 'addressed', 'to ' + event.to.slice(0, 12)) : link('addressed', 'to ' + event.to.slice(0, 12), '/inbox/' + path(event.to)); if (!isPrivate) to.title = terms.addressed; bottom.append(to);}
     // Parity with the server: a public reply reference is a link to the parent's
     // permalink, so a live-arriving message is identical to a reloaded one. A

@@ -395,6 +395,12 @@ type rankedPost struct {
 	persona   float64 // the persona factor,
 	deferred  bool    // and whether diversity moved it down
 	fresh     bool    // merged into a cached ranking after it was made
+	// Copies (feedcopies.go): the post's URL-set and text signatures, and,
+	// in a ranked view across rooms, how many copies fold into it and the
+	// first CopyIDsMax of their ids.
+	urlKey, textKey uint64
+	copies          int
+	copyIDs         []string
 }
 
 // merit is the post's quality prior, the lower of its original's and its
@@ -521,7 +527,8 @@ var rankInputs = `SELECT e.id,e.seq,e.created_at,coalesce(v.score,0),q.quality,
  CASE WHEN e.kind IN ('question','request') THEN e.kind ELSE '' END,
  substr(rtrim(e.text,' '||char(9,10,13)),-1)='?' OR substr(rtrim(` + firstLineSQL + `,' '||char(9,13)),-1)='?',
  CASE WHEN e.public_key='' THEN e.handle ELSE '' END,
- CASE WHEN e.public_key='' THEN substr(` + firstLineSQL + `,1,160) ELSE '' END
+ CASE WHEN e.public_key='' THEN substr(` + firstLineSQL + `,1,160) ELSE '' END,
+ e.text
  FROM (%s) c CROSS JOIN events e ON e.seq=c.seq LEFT JOIN event_scores v ON v.event_id=e.id LEFT JOIN event_quality q ON q.event_id=e.id`
 
 // threadSample is a post's (e) thread to three levels: its newest
@@ -563,6 +570,9 @@ type rankView struct {
 	limit    int
 	scored   bool
 	slice    string
+	// copies folds copies into their earliest post (feedcopies.go): ranked
+	// views across rooms. It is the ranking's, not the candidates'.
+	copies bool
 }
 
 func (v rankView) key() string {
@@ -686,11 +696,13 @@ func (s *Store) candidates(ctx context.Context, tx *sql.Tx, v rankView, rd *rank
 		for rows.Next() {
 			var r rankedPost
 			var votes, thread int64
+			var text string
 			if err = rows.Scan(&r.id, &r.seq, &r.at, &votes, &r.quality, &r.edited, &r.flagged, &thread, &r.trusted,
-				&r.room, &r.account, &r.signed, &r.kind, &r.endsQ, &r.handle, &r.title); err != nil {
+				&r.room, &r.account, &r.signed, &r.kind, &r.endsQ, &r.handle, &r.title, &text); err != nil {
 				rows.Close()
 				return err
 			}
+			r.urlKey, r.textKey = copyKeys(text)
 			r.replies, r.exchanges = thread/threadStride, thread%threadStride
 			r.score = rankWeight(votes, weights[r.id])
 			if !r.flagged {
@@ -850,7 +862,11 @@ func (s *Store) ranking(ctx context.Context, tx *sql.Tx, views []rankView, f *fe
 	if err != nil {
 		return rankResult{}, err
 	}
-	key := strings.Join(keys, "\x01") + "\x00" + f.hash + "\x00" + fp.key
+	copies := false
+	for _, v := range views {
+		copies = copies || v.copies
+	}
+	key := strings.Join(keys, "\x01") + "\x00" + f.hash + "\x00" + fp.key + "\x00" + strconv.FormatBool(copies)
 	rd := &rankRead{now: now, params: fp}
 	if err := tx.QueryRowContext(ctx, "SELECT coalesce(max(seq),0) FROM events").Scan(&rd.top); err != nil {
 		return rankResult{}, err
@@ -931,9 +947,26 @@ func (s *Store) ranking(ctx context.Context, tx *sql.Tx, views []rankView, f *fe
 				base = append(base, r)
 			}
 		}
+		if copies {
+			// A new copy of a ranked post folds into it (the base post is
+			// the earlier); the base keeps its order.
+			folded := foldCopies(append(base, fresh...))
+			base, fresh = base[:0], fresh[:0]
+			for _, r := range folded {
+				if r.fresh {
+					fresh = append(fresh, r)
+				} else {
+					base = append(base, r)
+				}
+			}
+		}
 		list = mergeFresh(base, fresh)
 	} else {
-		list = sortRanked(f.score(all, now, fp))
+		scored := f.score(all, now, fp)
+		if copies {
+			scored = foldCopies(scored)
+		}
+		list = sortRanked(scored)
 		f.diversify(list)
 	}
 	s.rankMu.Lock()
@@ -1027,6 +1060,11 @@ func (s *Store) rankedPage(ctx context.Context, tx *sql.Tx, list []rankedPost, o
 			return out, err
 		}
 		sort.Slice(events, func(i, j int) bool { return order[events[i].ID] < order[events[j].ID] })
+		for i := range events {
+			if r := list[order[events[i].ID]]; r.copies > 0 {
+				events[i].Copies = &MessageCopies{Count: r.copies, IDs: slices.Clone(r.copyIDs)}
+			}
+		}
 	}
 	if err := s.loadAttachments(ctx, tx, events, now); err != nil {
 		return out, err
@@ -1065,7 +1103,7 @@ func (s *Store) rankedPage(ctx context.Context, tx *sql.Tx, list []rankedPost, o
 func (s *Store) readRanked(ctx context.Context, tx *sql.Tx, src rankSource, where []string, args []any, o ListOptions, limit int, now int64) (res Result, ranked int, err error) {
 	ctx, cancel := context.WithTimeout(ctx, rankBudget)
 	defer cancel()
-	view := rankView{src: src, where: where, args: args, windowed: *o.Bias > 0, limit: HotCandidates, scored: true}
+	view := rankView{src: src, where: where, args: args, windowed: *o.Bias > 0, limit: HotCandidates, scored: true, copies: src.room == ""}
 	rr, err := s.ranking(ctx, tx, []rankView{view}, defaultFeedScorer(*o.Bias), now, o.Offset > 0)
 	if err != nil {
 		return Result{}, 0, rankTimeout(err)
