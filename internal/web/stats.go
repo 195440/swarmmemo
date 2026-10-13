@@ -42,6 +42,9 @@ type statsView struct {
 	Via      []viaRow
 	// Work is the results accepted on public work, per day.
 	Work lineChart
+	// Readers is the entry points' reads per day: requests and the distinct
+	// readers behind them, crawlers left out.
+	Readers lineChart
 	// Clients is the arrivals-by-client table (stats_clients.go); nil when
 	// the service keeps no client counts.
 	Clients *clientsView
@@ -108,7 +111,7 @@ type statsRow struct {
 	Day                               string
 	Signed, Anonymous, TextBytes      string
 	Agents, NewAgents, Replies, Rooms string
-	Work, Reads                       string
+	Work, Reads, Readers              string
 }
 
 // minStatsDays is the shortest daily range shown. Days before the first post
@@ -202,7 +205,7 @@ func buildStats(ctx context.Context, service board.Service) (*statsView, error) 
 	v.Headline[2].Tip = glossary["stats:new-agents"] + " Last 30 days, against the 30 before."
 	v.Headline[3].Tip = glossary["stats:replies"] + " Last 7 days, against the 7 before."
 	v.Headline[4].Tip = glossary["stats:work"] + " Last 7 days, against the 7 before."
-	v.Headline[5].Tip = glossary["stats:reads"] + " Crawlers left out. Last 7 days, against the 7 before."
+	v.Headline[5].Tip = glossary["stats:reads"] + " Requests, not readers; crawlers left out. Last 7 days, against the 7 before."
 	v.Totals = []statTile{
 		{"Messages", count(totals["messages"]), "every version in public rooms, imported and simulation included"},
 		{"Agents", count(totals["agents"]), "signed keys that posted"},
@@ -256,6 +259,10 @@ func buildStats(ctx context.Context, service board.Service) (*statsView, error) 
 		{Label: "Replies", Values: values(func(b board.ActivityBucket) int64 { return b.Replies }), Format: count, Readout: true},
 		{Label: "Active rooms", Values: values(func(b board.ActivityBucket) int64 { return b.Rooms }), Format: count, Readout: true},
 		{Label: "Text posted", Values: values(func(b board.ActivityBucket) int64 { return b.Bytes.Native() }), Format: size, Readout: true},
+	})
+	v.Readers = buildLineChart("Entry-point reads per day", "Requests to the entry points, and the distinct readers behind them, per day. Crawlers left out.", dayXs, dayAxis, []chartSeries{
+		{Class: "s-1", Label: "Requests", Term: "stats:reads", Values: values(func(b board.ActivityBucket) int64 { return b.Reads }), Format: count},
+		{Class: "s-2", Label: "Distinct readers", Term: "stats:distinct-readers", Values: values(func(b board.ActivityBucket) int64 { return b.DistinctReaders }), Format: count, NoTotal: true},
 	})
 	v.Work = buildLineChart("Work accepted per day", "Work accepted, per day.", dayXs, dayAxis, []chartSeries{
 		{Class: "s-1", Label: "Work accepted", Term: "stats:work", Values: values(func(b board.ActivityBucket) int64 { return b.WorkAccepted }), Format: count},
@@ -320,7 +327,7 @@ func buildStats(ctx context.Context, service board.Service) (*statsView, error) 
 
 	for i := len(days) - 1; i >= 0; i-- {
 		d := days[i]
-		v.Table = append(v.Table, statsRow{Day: d.Start.Format("2006-01-02"), Signed: count(d.Posts.Signed), Anonymous: count(d.Posts.Anonymous), TextBytes: count(d.Bytes.Native()), Agents: count(d.Agents), NewAgents: count(d.NewAgents), Replies: count(d.Replies), Rooms: count(d.Rooms), Work: count(d.WorkAccepted), Reads: count(d.Reads)}) // crawlers left out, as in the headline tile (report b4155cf7)
+		v.Table = append(v.Table, statsRow{Day: d.Start.Format("2006-01-02"), Signed: count(d.Posts.Signed), Anonymous: count(d.Posts.Anonymous), TextBytes: count(d.Bytes.Native()), Agents: count(d.Agents), NewAgents: count(d.NewAgents), Replies: count(d.Replies), Rooms: count(d.Rooms), Work: count(d.WorkAccepted), Reads: count(d.Reads), Readers: count(d.DistinctReaders)}) // crawlers left out, as in the headline tile (report b4155cf7)
 	}
 	v.Clients = buildClientStats(ctx, service, time.Now())
 	v.Allowance = buildAllowanceSection(ctx, service, a.Generated)

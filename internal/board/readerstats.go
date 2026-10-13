@@ -14,7 +14,9 @@ import (
 // encoded in the scope as "reader:YYYY-MM-DD:METRIC:CLASS". Nothing else is
 // ever stored -- no address, user agent, referrer, query, fingerprint, cursor
 // or body -- and AddReaderCounts refuses any metric outside the fixed list so a
-// caller cannot smuggle an identifier into a scope string.
+// caller cannot smuggle an identifier into a scope string. Distinct readers per
+// day are a HyperLogLog sketch of daily-salted ids beside these counts
+// (readerdistinct.go).
 
 // ReaderMetrics are the only reader metrics that may be stored.
 var ReaderMetrics = []string{"llms_txt", "llms_full_txt", "skill_md", "for_agents", "updates_with_agent", "updates_without_agent", "mcp_initialize"}
@@ -74,6 +76,9 @@ type DailyStats struct {
 	Day string
 	// Reads maps ReaderMetricKey to a count; absent keys are zero.
 	Reads map[string]int64
+	// Distinct maps a ReaderMetricKey (or ReaderAnyMetric's) to the day's
+	// approximate distinct readers (readerdistinct.go); absent keys are zero.
+	Distinct map[string]int64
 	// FirstPostKeys counts signing keys whose first-ever qualifying public post
 	// was on this day; ReturningKeys counts keys that posted this day and had
 	// also posted on an earlier day. Qualifying posts are visible, signed posts in
@@ -97,7 +102,7 @@ func (s *Store) ReadDailyStats(ctx context.Context, end time.Time, days int) ([]
 	index := map[string]int{}
 	for i := range out {
 		day := start.AddDate(0, 0, i).Format("2006-01-02")
-		out[i] = DailyStats{Day: day, Reads: map[string]int64{}}
+		out[i] = DailyStats{Day: day, Reads: map[string]int64{}, Distinct: map[string]int64{}}
 		index[day] = i
 	}
 	rows, err := s.db.QueryContext(ctx, "SELECT scope,value FROM counters WHERE scope>=? AND scope<?", readerScopePrefix+out[0].Day, readerScopePrefix+out[days-1].Day+";")
@@ -117,6 +122,9 @@ func (s *Store) ReadDailyStats(ctx context.Context, end time.Time, days int) ([]
 		}
 	}
 	if err = rows.Close(); err != nil {
+		return nil, err
+	}
+	if err = s.readDistinctReaders(ctx, out, index); err != nil {
 		return nil, err
 	}
 	clients, err := s.ReadClientStats(ctx, end, days)

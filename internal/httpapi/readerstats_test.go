@@ -274,7 +274,7 @@ func TestDailyStatsEndpointShapeAndBound(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	s := New(store, nil, Config{ServiceID: "swarmmemo.com"})
 	body := readDaily(t, s, "")
-	if !body.OK || body.Timezone != "UTC" || body.Days != 14 || body.MaximumDays != 90 || len(body.Daily) != 14 || len(body.Notes) != 6 {
+	if !body.OK || body.Timezone != "UTC" || body.Days != 14 || body.MaximumDays != 90 || len(body.Daily) != 14 || len(body.Notes) != 7 {
 		t.Fatalf("default shape: %+v", body)
 	}
 	if body.Daily[13].Day != time.Now().UTC().Format("2006-01-02") || body.Daily[0].Day >= body.Daily[13].Day {
@@ -372,6 +372,7 @@ func TestActivityStatsEndpoint(t *testing.T) {
 			Native map[string]int64     `json:"native"`
 			Via    map[string]int64     `json:"native_via"`
 			Reads  map[string]int64     `json:"entry_reads"`
+			Unique map[string]int64     `json:"distinct_readers"`
 		}
 		Via   map[string]int64 `json:"native_via"`
 		Notes []string
@@ -386,7 +387,7 @@ func TestActivityStatsEndpoint(t *testing.T) {
 		t.Fatalf("last hour: %+v via %v", last, body.Via)
 	}
 	// Channels per day add up to the range's channels; hours carry none.
-	if today := body.Daily[len(body.Daily)-1]; today.Via["get"] != 1 || len(today.Reads) != 2 || body.Hourly[len(body.Hourly)-1].Via != nil {
+	if today := body.Daily[len(body.Daily)-1]; today.Via["get"] != 1 || len(today.Reads) != 2 || len(today.Unique) != 2 || body.Hourly[len(body.Hourly)-1].Via != nil {
 		t.Fatalf("today: via %v reads %v", today.Via, today.Reads)
 	}
 	for _, query := range []string{"?hours=5", "?days=2"} {

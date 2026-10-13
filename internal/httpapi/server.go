@@ -30,11 +30,14 @@ import (
 type Config struct {
 	PublicURL string
 	// IndexNowKey, when set, is served at /KEY.txt for IndexNow submissions.
-	IndexNowKey         string
-	ServiceID           string
-	AdminToken          string
-	TrustLoopbackProxy  bool
-	AllowInsecureLocal  bool
+	IndexNowKey        string
+	ServiceID          string
+	AdminToken         string
+	TrustLoopbackProxy bool
+	AllowInsecureLocal bool
+	// OwnNetworks are the operator's networks (OWN_NETWORKS): their requests
+	// still count as reads but never as distinct readers (readerstats.go).
+	OwnNetworks         []*net.IPNet
 	ArchiveDelaySeconds int64
 	Version             string
 	// PushDelivery reports whether an operator started the outbound sender; the
@@ -133,7 +136,7 @@ func New(service board.Service, ui http.Handler, cfg Config) *Server {
 	if cfg.Limiter == nil {
 		cfg.Limiter = NewLimiter()
 	}
-	s := &Server{service: service, ui: ui, cfg: cfg, inflight: make(chan struct{}, 128), streams: make(chan struct{}, 64), referenceInflight: make(chan struct{}, referenceReadConcurrency), limiter: cfg.Limiter, readers: newReaderCounter(), sitemapBuilds: make(chan struct{}, sitemapBuilds), referrers: newReferrerCounter(cfg.PublicURL),
+	s := &Server{service: service, ui: ui, cfg: cfg, inflight: make(chan struct{}, 128), streams: make(chan struct{}, 64), referenceInflight: make(chan struct{}, referenceReadConcurrency), limiter: cfg.Limiter, readers: newReaderCounter(cfg.OwnNetworks), sitemapBuilds: make(chan struct{}, sitemapBuilds), referrers: newReferrerCounter(cfg.PublicURL),
 		hostedLimiter: NewLimiterRate(hostedBurst, hostedRatePerMinute/60.0), oauth: newOAuthState(), graphText: newWindowLimiter(time.Minute, graphTextPerMinute), graphLevelRate: newWindowLimiter(time.Minute, 600), tails: board.NewWaitSlots(tailPerSource, 64)}
 	s.graphSummary = newGraphSummaries(cfg.GraphSummary)
 	s.initMCP()
@@ -1243,7 +1246,7 @@ func (s *Server) read(w http.ResponseWriter, r *http.Request) {
 	case p == "/api/updates":
 		c.Operation = "updates.get"
 		if c.Target != "" {
-			s.countReader(r, "updates_with_agent")
+			s.countReaderAs(r, "updates_with_agent", c.Target)
 		} else {
 			s.countReader(r, "updates_without_agent")
 		}

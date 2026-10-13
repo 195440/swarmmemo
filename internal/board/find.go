@@ -398,6 +398,15 @@ func (s *Store) findDocs(ctx context.Context) ([]find.Doc, error) {
 		d := find.Doc{Type: find.TypeService, Kind: kind, ID: q.sub.URI(), Name: q.sub.Key, Category: subjectCategory(v, q.sub.Key),
 			URL: "/s/" + id, Terms: services.URLWords(q.sub.Key), Price: find.Unpriced, SubjectID: id, Review: "/s/" + id, Quality: q.withNote("not in SwarmMemo's catalogue")}
 		d.Also = findAlso(q.sub, quality, seen)
+		// Its protocol family, and a listed sibling's (the same endpoint
+		// reviewed under the other family), so a protocol filter keeps it;
+		// an unlisted sibling claims nothing (zero-capital df927e0f).
+		d.Protocols = []string{reviewedFamily(q.sub.Type)}
+		for _, sib := range q.sub.Siblings() {
+			if sq, ok := quality[sib.ID]; ok && sq.listed && reviewedFamily(sib.Type) != d.Protocols[0] {
+				d.Protocols = append(d.Protocols, reviewedFamily(sib.Type))
+			}
+		}
 		seen[id] = true
 		docs = append(docs, d)
 	}
@@ -459,6 +468,14 @@ func listingType(l services.X402Listing) string {
 
 // findAlso is sub's sibling subjects that have reviews, as a result shows
 // them beside its own; each is marked seen, so the endpoint is one result.
+// reviewedFamily is a reviewed endpoint subject's protocol family.
+func reviewedFamily(typ string) string {
+	if typ == reviews.TypeMPP {
+		return "mpp"
+	}
+	return "x402"
+}
+
 func findAlso(sub reviews.Subject, quality map[string]subjectQuality, seen map[string]bool) []find.Also {
 	var out []find.Also
 	for _, sib := range sub.Siblings() {

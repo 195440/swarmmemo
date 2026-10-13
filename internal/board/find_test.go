@@ -66,6 +66,19 @@ func TestFindOnTheBoard(t *testing.T) {
 		!strings.Contains(api.Why, "lab grade "+labGrade+" ("+labVerdict+")") || !strings.Contains(api.Why, "not in SwarmMemo's catalogue") {
 		t.Fatalf("x402 hit %+v %+v", api, api.Explain)
 	}
+	// A reviewed endpoint outside the catalogue keeps its protocol family, so
+	// a protocol filter finds it, and the other family does not (df927e0f).
+	inFamily := func(protocol string) bool {
+		for _, h := range run(t, s, Command{Operation: "find", Query: "weather", Data: `{"schema":1,"protocol":"` + protocol + `"}`}).Data["results"].([]find.Hit) {
+			if h.ID == reviewSubjectOf(t, apiURI).URI() {
+				return true
+			}
+		}
+		return false
+	}
+	if !inFamily("x402") || inFamily("mpp") {
+		t.Fatalf("protocol filter on a reviewed endpoint: x402 %v mpp %v", inFamily("x402"), inFamily("mpp"))
+	}
 	for _, h := range hits {
 		if strings.Contains(h.ID, "weather-unlisted") {
 			t.Fatal("an unlisted subject is never indexed")

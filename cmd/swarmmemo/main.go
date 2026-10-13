@@ -333,6 +333,9 @@ func serve() error {
 	}
 	identityChecks := os.Getenv("IDENTITY_CHECKS") == "true"
 	config := httpapi.Config{PublicURL: publicURL, IdentityChecks: identityChecks, ServiceID: env("SERVICE_ID", "swarmmemo.com"), AdminToken: admin, TrustLoopbackProxy: os.Getenv("TRUST_LOOPBACK_PROXY") == "true", AllowInsecureLocal: os.Getenv("ALLOW_INSECURE_LOCAL") == "true", PushDelivery: os.Getenv("WEBHOOK_DELIVERY") == "true", ArchiveDelaySeconds: archiveDelay, Version: version, Features: features, IndexNowKey: indexNowKey(os.Getenv("INDEXNOW_KEY"))}
+	if config.OwnNetworks, e = httpapi.ParseOwnNetworks(os.Getenv("OWN_NETWORKS")); e != nil {
+		return e
+	}
 	if referenceReader != nil {
 		config.References = referenceReader
 	}

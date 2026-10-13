@@ -49,7 +49,7 @@ func TestStatsPageRendersChartsWithoutInlineStyle(t *testing.T) {
 			t.Errorf("a chart has %d x labels", n)
 		}
 	}
-	if strings.Count(body, `<figure class="chart`) != 3 || strings.Count(body, `<div class="stat-tile">`) != 6 || strings.Count(body, "<details") != 1 {
+	if strings.Count(body, `<figure class="chart`) != 4 || strings.Count(body, `<div class="stat-tile">`) != 6 || strings.Count(body, "<details") != 1 {
 		t.Errorf("/stats draws %d charts, %d headline tiles and %d details", strings.Count(body, `<figure class="chart`), strings.Count(body, `<div class="stat-tile">`), strings.Count(body, "<details"))
 	}
 	// Every polyline and polygon carries its own fill, so none can draw as a

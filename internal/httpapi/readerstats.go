@@ -3,8 +3,14 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -23,6 +29,17 @@ import (
 // every storage error is swallowed, so it can neither fail nor slow a request.
 // The User-Agent is classified at request time and discarded; nothing that
 // identifies a reader is kept in memory or storage.
+//
+// Distinct readers: each counted request also adds a reader id to a
+// HyperLogLog sketch of its day, metric and class (board.ReaderSketch). The id
+// is "a:" and the agent for a request that names one (updates_with_agent),
+// else "h:" and 16 hex of HMAC-SHA256(daySalt, prefix || 0x00 || User-Agent),
+// prefix being the peer's IPv4 /24 or IPv6 /48 (s.peer, the address rate
+// limiting trusts). daySalt is 32 random bytes per UTC day, in memory only,
+// never logged or served, wiped a minute after its day ends; a restart makes a
+// new one. Only the sketch's registers are stored, so neither the id, nor the
+// prefix, nor the User-Agent reaches storage, and ids cannot be linked across
+// days. Requests from OwnNetworks are counted as reads but not as readers.
 
 const (
 	readerFlushInterval = 30 * time.Second
@@ -36,9 +53,22 @@ type readerStatsStore interface {
 	ReadDailyStats(context.Context, time.Time, int) ([]board.DailyStats, error)
 }
 
+// readerSketchStore keeps the distinct-reader sketches (board/readerdistinct.go).
+type readerSketchStore interface {
+	MergeReaderSketches(context.Context, string, map[string]*board.ReaderSketch) error
+	ReadReaderSketches(context.Context, string) (map[string]*board.ReaderSketch, error)
+}
+
+// readerSaltGrace is how long the previous day's salt survives its day, for a
+// request stamped just before midnight and counted just after.
+const readerSaltGrace = time.Minute
+
 type readerCounter struct {
 	mu        sync.Mutex
-	pending   map[string]map[string]int64 // UTC day -> metric:class -> count
+	pending   map[string]map[string]int64               // UTC day -> metric:class -> count
+	sketches  map[string]map[string]*board.ReaderSketch // UTC day -> metric:class -> distinct readers
+	salt      readerSalt
+	own       []*net.IPNet
 	lastFlush time.Time
 	flushing  atomic.Bool
 	flushMu   sync.Mutex // held for a whole flush, and by stats reads, so a read never double counts
@@ -46,8 +76,112 @@ type readerCounter struct {
 	now       func() time.Time
 }
 
-func newReaderCounter() *readerCounter {
-	return &readerCounter{pending: map[string]map[string]int64{}, interval: readerFlushInterval, now: time.Now}
+func newReaderCounter(own []*net.IPNet) *readerCounter {
+	return &readerCounter{pending: map[string]map[string]int64{}, sketches: map[string]map[string]*board.ReaderSketch{}, own: own, interval: readerFlushInterval, now: time.Now}
+}
+
+// readerSalt is the day's HMAC key for reader ids, and the previous day's for
+// readerSaltGrace after midnight. Memory only.
+type readerSalt struct {
+	day, prevDay string
+	key, prevKey []byte
+}
+
+// get returns the salt of day at now, making it at the day's first use, or
+// nil for a day whose salt is gone. Callers hold the counter's mu.
+func (s *readerSalt) get(day string, now time.Time) []byte {
+	if s.prevKey != nil && now.UTC().Sub(now.UTC().Truncate(24*time.Hour)) >= readerSaltGrace {
+		wipeBytes(s.prevKey)
+		s.prevKey, s.prevDay = nil, ""
+	}
+	switch {
+	case day == s.day:
+		return s.key
+	case day == s.prevDay:
+		return s.prevKey
+	case day < s.day:
+		return nil
+	}
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil
+	}
+	wipeBytes(s.prevKey)
+	s.prevDay, s.prevKey = s.day, s.key
+	s.day, s.key = day, key
+	return key
+}
+
+func wipeBytes(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
+}
+
+// ParseOwnNetworks reads OWN_NETWORKS: comma-separated CIDRs (a bare address
+// is its own /32 or /128). Empty is none.
+func ParseOwnNetworks(value string) ([]*net.IPNet, error) {
+	var out []*net.IPNet
+	for _, part := range strings.Split(value, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if !strings.Contains(part, "/") {
+			ip := net.ParseIP(part)
+			if ip == nil {
+				return nil, fmt.Errorf("OWN_NETWORKS: %q is not a CIDR or address", part)
+			}
+			bits := 128
+			if ip.To4() != nil {
+				ip, bits = ip.To4(), 32
+			}
+			out = append(out, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
+			continue
+		}
+		_, network, err := net.ParseCIDR(part)
+		if err != nil {
+			return nil, fmt.Errorf("OWN_NETWORKS: %q is not a CIDR", part)
+		}
+		out = append(out, network)
+	}
+	return out, nil
+}
+
+// readerNetwork is the peer's network prefix (IPv4 /24, IPv6 /48), or the peer
+// as given when it is not an address, and whether it is in OwnNetworks.
+func (s *Server) readerNetwork(r *http.Request) (prefix string, own bool) {
+	peer := s.peer(r)
+	ip := net.ParseIP(peer)
+	if ip == nil {
+		return peer, false
+	}
+	for _, network := range s.readers.own {
+		if network.Contains(ip) {
+			return "", true
+		}
+	}
+	if v4 := ip.To4(); v4 != nil {
+		return v4.Mask(net.CIDRMask(24, 32)).String(), false
+	}
+	return ip.Mask(net.CIDRMask(48, 128)).String(), false
+}
+
+// readerID is the request's id for the distinct-reader sketches, or "" when
+// its day's salt is already gone. Callers hold the counter's mu.
+func (c *readerCounter) readerID(prefix, account, userAgent, day string, now time.Time) string {
+	if account != "" {
+		return "a:" + account
+	}
+	salt := c.salt.get(day, now)
+	if salt == nil {
+		return ""
+	}
+	mac := hmac.New(sha256.New, salt)
+	mac.Write([]byte(prefix))
+	mac.Write([]byte{0})
+	mac.Write([]byte(userAgent))
+	return "h:" + hex.EncodeToString(mac.Sum(nil))[:16]
 }
 
 // crawlerMarkers are substrings a self-identified crawler puts in its
@@ -70,13 +204,20 @@ var discoveryReads = map[string]bool{"llms_txt": true, "llms_full_txt": true, "s
 
 // countReader records one read of metric. It must stay cheap and must never
 // panic into the request.
-func (s *Server) countReader(r *http.Request, metric string) {
+func (s *Server) countReader(r *http.Request, metric string) { s.countReaderAs(r, metric, "") }
+
+// countReaderAs records one read of metric by account, the agent the request
+// names ("" for none), which is then its distinct-reader id.
+func (s *Server) countReaderAs(r *http.Request, metric, account string) {
 	defer func() { _ = recover() }()
 	if discoveryReads[metric] {
 		s.countClient(r, "discovery")
 	}
 	c := s.readers
-	key := board.ReaderMetricKey(metric, readerClass(r.Header.Get("User-Agent")))
+	userAgent := r.Header.Get("User-Agent")
+	class := readerClass(userAgent)
+	key := board.ReaderMetricKey(metric, class)
+	prefix, own := s.readerNetwork(r)
 	now := c.now()
 	day := now.UTC().Format("2006-01-02")
 	due := func() bool {
@@ -88,6 +229,23 @@ func (s *Server) countReader(r *http.Request, metric string) {
 			c.pending[day] = counts
 		}
 		counts[key]++
+		id := ""
+		if !own {
+			id = c.readerID(prefix, account, userAgent, day, now)
+		}
+		if id != "" {
+			sketches := c.sketches[day]
+			if sketches == nil {
+				sketches = map[string]*board.ReaderSketch{}
+				c.sketches[day] = sketches
+			}
+			for _, k := range []string{key, board.ReaderMetricKey(board.ReaderAnyMetric, class)} {
+				if sketches[k] == nil {
+					sketches[k] = &board.ReaderSketch{}
+				}
+				sketches[k].Add(id)
+			}
+		}
 		if now.Sub(c.lastFlush) < c.interval {
 			return false
 		}
@@ -107,8 +265,8 @@ func (c *readerCounter) flush(store readerStatsStore) {
 	c.flushMu.Lock()
 	defer c.flushMu.Unlock()
 	c.mu.Lock()
-	batch := c.pending
-	c.pending = map[string]map[string]int64{}
+	batch, sketchBatch := c.pending, c.sketches
+	c.pending, c.sketches = map[string]map[string]int64{}, map[string]map[string]*board.ReaderSketch{}
 	c.mu.Unlock()
 	failed := map[string]map[string]int64{}
 	for day, counts := range batch {
@@ -119,13 +277,47 @@ func (c *readerCounter) flush(store readerStatsStore) {
 			failed[day] = counts
 		}
 	}
-	if len(failed) == 0 {
+	failedSketches := map[string]map[string]*board.ReaderSketch{}
+	if sketchStore, ok := store.(readerSketchStore); ok {
+		for day, sketches := range sketchBatch {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			err := sketchStore.MergeReaderSketches(ctx, day, sketches)
+			cancel()
+			if err != nil {
+				failedSketches[day] = sketches
+			}
+		}
+	}
+	if len(failed) == 0 && len(failedSketches) == 0 {
 		return
 	}
-	// Keep unwritten counts for a later attempt, but only for the most recent
-	// few days, so a storage outage cannot grow memory without bound.
+	// Keep unwritten counts and sketches for a later attempt, but only for the
+	// most recent few days, so a storage outage cannot grow memory without bound.
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	for day, sketches := range failedSketches {
+		target := c.sketches[day]
+		if target == nil {
+			target = map[string]*board.ReaderSketch{}
+			c.sketches[day] = target
+		}
+		for key, h := range sketches {
+			if target[key] == nil {
+				target[key] = h
+			} else {
+				target[key].Merge(h)
+			}
+		}
+	}
+	for len(c.sketches) > readerMaxPendingDay {
+		oldest := ""
+		for day := range c.sketches {
+			if oldest == "" || day < oldest {
+				oldest = day
+			}
+		}
+		delete(c.sketches, oldest)
+	}
 	for day, counts := range failed {
 		target := c.pending[day]
 		if target == nil {
@@ -241,8 +433,20 @@ func (s *Server) dailyStats(w http.ResponseWriter, r *http.Request) {
 		}
 		unflushed[day] = copied
 	}
+	unflushedSketches := map[string]map[string]*board.ReaderSketch{}
+	for day, sketches := range c.sketches {
+		copied := map[string]*board.ReaderSketch{}
+		for key, h := range sketches {
+			clone := *h
+			copied[key] = &clone
+		}
+		unflushedSketches[day] = copied
+	}
 	c.mu.Unlock()
 	stats, err := store.ReadDailyStats(r.Context(), c.now(), days)
+	if err == nil {
+		err = unionUnflushedReaders(r.Context(), s.service, stats, unflushedSketches)
+	}
 	c.flushMu.Unlock()
 	if err != nil {
 		writeError(w, &board.Error{Status: 503, Code: "storage_unavailable", Message: "Daily statistics are temporarily unavailable."})
@@ -287,11 +491,20 @@ func (s *Server) dailyStats(w http.ResponseWriter, r *http.Request) {
 			}
 			reads[metric] = split
 		}
+		distinct := map[string]any{}
+		for _, metric := range append(append([]string{}, board.ReaderMetrics...), board.ReaderAnyMetric) {
+			split := map[string]int64{}
+			for _, class := range board.ReaderClasses {
+				split[class] = day.Distinct[board.ReaderMetricKey(metric, class)]
+			}
+			distinct[metric] = split
+		}
 		entry := map[string]any{
-			"day":     day.Day,
-			"reads":   reads,
-			"posts":   map[string]int64{"first_post_keys": day.FirstPostKeys, "returning_keys": day.ReturningKeys},
-			"clients": clientsJSON(day.Clients),
+			"day":              day.Day,
+			"reads":            reads,
+			"distinct_readers": distinct,
+			"posts":            map[string]int64{"first_post_keys": day.FirstPostKeys, "returning_keys": day.ReturningKeys},
+			"clients":          clientsJSON(day.Clients),
 		}
 		if content != nil {
 			entry["content"] = contentJSON(content[day.Day])
@@ -317,6 +530,36 @@ func (s *Server) dailyStats(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// unionUnflushedReaders replaces the estimate of each day and key that has a
+// sketch not yet written by the estimate of its union with the stored sketch,
+// so distinct readers, like reads, include the unwritten interval.
+func unionUnflushedReaders(ctx context.Context, service any, stats []board.DailyStats, unflushed map[string]map[string]*board.ReaderSketch) error {
+	store, ok := service.(readerSketchStore)
+	if !ok || len(unflushed) == 0 {
+		return nil
+	}
+	for i := range stats {
+		pending := unflushed[stats[i].Day]
+		if len(pending) == 0 {
+			continue
+		}
+		stored, err := store.ReadReaderSketches(ctx, stats[i].Day)
+		if err != nil {
+			return err
+		}
+		if stats[i].Distinct == nil {
+			stats[i].Distinct = map[string]int64{}
+		}
+		for key, h := range pending {
+			if old := stored[key]; old != nil {
+				h.Merge(old)
+			}
+			stats[i].Distinct[key] = h.Estimate()
+		}
+	}
+	return nil
+}
+
 type contentStatsStore interface {
 	ContentStats(context.Context, int) ([]services.ContentDay, error)
 }
@@ -338,12 +581,17 @@ func contentJSON(d services.ContentDay) map[string]any {
 // unknownMCPClientsNote says what unknown_mcp_clients counts.
 var unknownMCPClientsNote = "unknown_mcp_clients counts the MCP client names no family matched: at most " + strconv.Itoa(board.ClientNamesPerDay) + " distinct names per process per UTC day; each restart resets the cap, can add up to " + strconv.Itoa(board.ClientNamesPerDay) + " more and can recount a name. Names are never published."
 
+// distinctReadersNote says how distinct_readers is computed, in the stats
+// notes and /capabilities.
+var distinctReadersNote = "reads count requests; distinct_readers counts the different readers behind them per UTC day, per entry point and over all of them (" + board.ReaderAnyMetric + "). A reader is the agent a request names (updates with agent=) or else a daily-salted hash of its network prefix (IPv4 /24, IPv6 /48) and User-Agent; the salt is random per day, kept in memory only and discarded, so readers cannot be linked across days and a restart can count an unnamed reader once more. Only a HyperLogLog sketch (about " + board.ReaderSketchError + " error) is stored, never an address, prefix, User-Agent or hash; the operator's own networks are left out."
+
 // dailyStatsNotes are /api/stats/daily's notes; its OpenAPI description
 // (dailyStatsDescription) says the same in the same words.
 var dailyStatsNotes = []string{
 	"Reader counts include crawlers and cannot distinguish operators; the crawler/other split only reflects whether a User-Agent names itself a crawler.",
 	"Post metrics (first_post_keys, returning_keys) are derived at read time from visible signed public posts, excluding kind=simulation and kind=imported; they do not know which keys the operator runs, and a rotated key counts as a new key.",
-	"No identifying data is stored: only the UTC day, a metric name and an integer.",
+	"No identifying data is stored: only the UTC day, a metric name and an integer, and for distinct readers an approximate-count sketch.",
+	distinctReadersNote,
 	"content counts paste and shared-doc use on every day, today so far: pastes created (private or unlisted), answered opens of docs and pastes (docs.open and paste.open, signed or anonymous), docs created (owned by a key or by a group) and doc versions written, a doc's first included. Counts only.",
 	"receivers counts receivers created and deliveries stored, and wakeups counts wake-ups scheduled (one_shot at a time, event on a reply, mention, message or delivery, recurring every period) and firings, each period of a recurring one included: every day, today so far, while each service is enabled. Counts only.",
 	"clients splits arrivals (discovery requests, MCP initializes, new keys, anonymous callers, first posts, service calls and returning keys) by client family, classified from the MCP clientInfo.name and the User-Agent, which are then discarded. Only written counts are served. discovery and mcp_initialize cover every day; the other client metrics and services only closed UTC days, each left out below " + strconv.Itoa(board.ClientCountMinimum) + ". " + unknownMCPClientsNote,
@@ -392,6 +640,7 @@ func (s *Server) activityStats(w http.ResponseWriter, r *http.Request) {
 				}
 				out[i]["native_via"] = via
 				out[i]["entry_reads"] = map[string]int64{"other": b.Reads, "crawler": b.CrawlerReads}
+				out[i]["distinct_readers"] = map[string]int64{"other": b.DistinctReaders, "crawler": b.CrawlerDistinctReaders}
 				out[i]["work_accepted"] = b.WorkAccepted
 			}
 		}
@@ -405,7 +654,7 @@ func (s *Server) activityStats(w http.ResponseWriter, r *http.Request) {
 		"notes": []string{
 			"Visible messages in public rooms. Every post is in one series: imported (kind=imported), simulation (kind=simulation), signed (any other post with a signing key) or anonymous (any other post without one).",
 			"native counts cover signed and anonymous posts only; native.agents counts signed accounts. A post is a message that does not replace another; an edit adds text bytes but not a post. The last bucket is still filling.",
-			"Each daily bucket also carries native_via, its native posts by the channel they arrived on (\"\" for posts older than provenance), and entry_reads, the reads of the agent entry points split by whether the reader named itself a crawler (crawler) or not (other), as in /api/stats/daily; work_accepted counts the results accepted that day on public, non-simulated work.",
+			"Each daily bucket also carries native_via, its native posts by the channel they arrived on (\"\" for posts older than provenance), and entry_reads, the reads of the agent entry points split by whether the reader named itself a crawler (crawler) or not (other), as in /api/stats/daily, and distinct_readers, the different readers of any entry point that day, split the same way (the requests are entry_reads; see /api/stats/daily's notes for how a reader is told apart); work_accepted counts the results accepted that day on public, non-simulated work.",
 			"Recomputed at most once a minute. Totals are at /api/stats; every reader metric per day at /api/stats/daily.",
 		},
 	})

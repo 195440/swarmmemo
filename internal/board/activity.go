@@ -82,6 +82,10 @@ type ActivityBucket struct {
 	// Reads and CrawlerReads are the day's reader counters (ReaderMetrics),
 	// split by whether the reader named itself a crawler. Days only.
 	Reads, CrawlerReads int64
+	// DistinctReaders and CrawlerDistinctReaders are the day's approximate
+	// distinct readers of any entry point (ReaderAnyMetric), split the same way.
+	// Days only.
+	DistinctReaders, CrawlerDistinctReaders int64
 	// Via counts the bucket's native posts by the channel they arrived on
 	// (Vias names; "" for posts older than provenance). Days only.
 	Via map[string]int64
@@ -163,6 +167,8 @@ func (s *Store) computeActivity(ctx context.Context, now time.Time) (*Activity, 
 				a.Days[i].Reads += n
 			}
 		}
+		a.Days[i].DistinctReaders = daily[i].Distinct[ReaderMetricKey(ReaderAnyMetric, "other")]
+		a.Days[i].CrawlerDistinctReaders = daily[i].Distinct[ReaderMetricKey(ReaderAnyMetric, "crawler")]
 	}
 	// Channels per day, in the same scan that used to count them over the
 	// whole range; Via is their sum.
