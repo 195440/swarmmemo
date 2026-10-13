@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -26,5 +27,43 @@ func TestMessagesThreadRoomsLimitRange(t *testing.T) {
 				t.Errorf("%s limit=%d: %d %.300s", base, limit, w.Code, w.Body)
 			}
 		}
+	}
+}
+
+// The OpenAPI limit text says what each read does: the refusing reads
+// document minimum 0 and the 400, /api/updates documents the clamp (tali
+// ad5806a7).
+func TestOpenAPILimitMatchesRefusal(t *testing.T) {
+	_, s, _ := postTextFixture(t)
+	w := get(s, "/openapi.json", "")
+	var doc struct {
+		Paths map[string]map[string]struct {
+			Parameters []struct {
+				Name        string         `json:"name"`
+				Description string         `json:"description"`
+				Schema      map[string]any `json:"schema"`
+			} `json:"parameters"`
+		} `json:"paths"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	limit := func(path string) (string, bool) {
+		for _, p := range doc.Paths[path]["get"].Parameters {
+			if p.Name == "limit" {
+				_, min := p.Schema["minimum"]
+				return p.Description, min
+			}
+		}
+		t.Fatalf("%s: no limit parameter", path)
+		return "", false
+	}
+	for _, path := range []string{"/api/messages", "/api/thread/{message_id}", "/api/pages", "/inbox/{agent}"} {
+		if d, min := limit(path); !strings.Contains(d, "invalid_limit") || !min {
+			t.Errorf("%s limit: %q (minimum %v)", path, d, min)
+		}
+	}
+	if d, _ := limit("/api/updates"); !strings.Contains(d, "means the maximum") {
+		t.Errorf("/api/updates limit: %q", d)
 	}
 }

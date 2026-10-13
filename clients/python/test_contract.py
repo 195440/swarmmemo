@@ -61,6 +61,34 @@ class MessageContract(unittest.TestCase):
             with self.assertRaises(ValueError, msg=bad):
                 memo.check_read_metadata({**signed, "copies": bad})
 
+    def test_work_marks_cover_the_server_fields(self):
+        # C264: a message's work mark names exactly the Go MessageWork fields.
+        self.assertEqual(memo.WORK_ROOT_FIELDS | memo.WORK_ROOT_OPTIONAL | memo.WORK_RESULT_FIELDS, set(CONTRACT["message_work"]))
+        work_id = "d" * 32
+        mark = {"id": work_id, "title": "Find a bug", "state": "open", "deadline": 1788566400, "eligibility": "open", "claimable": True,
+                "url": "/work/" + work_id, "simulated": True, "reward": {"amount": 5, "unit": "credit", "state": "held"},
+                "reward_usdc": {"amount": "0.20", "state": "promised"}, "reward_state": "held", "reward_note": "Paid by the poster on Polygon",
+                "reviewer": {"id": "a" * 64, "public_key": "k", "handle": "reviewer"}}
+        self.assertEqual(set(mark), memo.WORK_ROOT_FIELDS | memo.WORK_ROOT_OPTIONAL)
+        memo.check_work({"type": "message", "work": mark})
+        memo.check_work({"type": "message", "work": {k: v for k, v in mark.items() if k != "reward"}})
+        # Shaped like #bounties root 6ea0a607: a paid credit-only reward.
+        paid_id = "6ea0a607bc8d67295573129bc80ca4d3"
+        memo.check_work({"type": "message", "work": {"id": paid_id, "title": "Bounty", "state": "accepted", "deadline": 1788566400, "eligibility": "open",
+                                                     "claimable": False, "url": "/work/" + paid_id, "reward": {"amount": 6000, "unit": "credit"}, "reward_state": "paid"}})
+        result = {"result_of": work_id, "title": "Find a bug", "state": "accepted", "url": "/work/" + work_id}
+        memo.check_work({"type": "message", "reply_to": work_id, "work": result})
+        for bad in ({"reward_state": "promised"}, {"reward_state": ""}, {"reward_usdc": {"amount": 0.2, "state": "promised"}},
+                    {"reward_usdc": {"amount": "1e3", "state": "promised"}}, {"reward_usdc": {"amount": "0.20", "state": "held"}},
+                    {"reward_usdc": {"amount": "0.20"}}, {"reward_usdc": {"amount": "0.20", "state": "paid", "extra": 1}},
+                    {"reward": {"amount": 5, "unit": "credit", "state": "void"}}, {"reward": {"amount": 5, "unit": "credit", "bonus": 1}},
+                    {"reward_note": ""}, {"reward_note": " padded"}, {"reward_note": "two\nlines"}, {"reward_note": "x" * 81},
+                    {"reward_note": "rtl‮override"}, {"reward_note": 5}):
+            with self.assertRaises(ValueError, msg=bad):
+                memo.check_work({"type": "message", "work": {**mark, **bad}})
+        with self.assertRaises(ValueError):
+            memo.check_work({"type": "message", "reply_to": work_id, "work": {**result, "reward_state": "held"}})
+
     def test_private_read_metadata_and_markdown_are_accepted(self):
         key = Ed25519PrivateKey.generate()
         text = "**private** markdown"

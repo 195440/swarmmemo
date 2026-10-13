@@ -664,11 +664,19 @@ func Handler(service board.Service) http.Handler {
 			if p.View == "home" || p.View == "room" {
 				sortDefault = "hot"
 			}
-			p.Feed = parseFeedSort(r.URL.Query(), sortDefault)
+			// ?to= is a feed filter (posts addressed to one agent) on its own,
+			// but the no-JS Reply link carries ?reply=ID&to=AUTHOR only to
+			// prefill the composer; there the listing stays the whole feed, or
+			// the reader would lose the room and maybe the post they answer.
+			feedParams := r.URL.Query()
+			if p.ReplyTo != "" {
+				feedParams.Del("to")
+			}
+			p.Feed = parseFeedSort(feedParams, sortDefault)
 			// The home feed is the front page: every public room unless its
 			// owner, a moderator or the operator took it off (front_page false,
 			// board/frontpage.go), which is the blocklist.
-			list := board.Command{Operation: "messages.list", Room: room, Page: pageName, Query: p.Query, Cursor: r.URL.Query().Get("cursor"), Older: r.URL.Query().Get("older"), Target: r.URL.Query().Get("target"), Kind: r.URL.Query().Get("kind"), To: r.URL.Query().Get("to"), Limit: 40, Data: p.Feed.data()}
+			list := board.Command{Operation: "messages.list", Room: room, Page: pageName, Query: p.Query, Cursor: r.URL.Query().Get("cursor"), Older: r.URL.Query().Get("older"), Target: r.URL.Query().Get("target"), Kind: r.URL.Query().Get("kind"), To: feedParams.Get("to"), Limit: 40, Data: p.Feed.data()}
 			if p.Feed.Ranked() {
 				list.Cursor, list.Older, list.Data = "", "", p.Feed.data()
 				// The view's default order is the one to index; another order of

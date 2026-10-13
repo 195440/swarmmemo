@@ -63,6 +63,22 @@
     "votes",
     "work"
   ],
+  "message_work": [
+    "claimable",
+    "deadline",
+    "eligibility",
+    "id",
+    "result_of",
+    "reviewer",
+    "reward",
+    "reward_note",
+    "reward_state",
+    "reward_usdc",
+    "simulated",
+    "state",
+    "title",
+    "url"
+  ],
   "quality": [
     "classifier_version",
     "score"

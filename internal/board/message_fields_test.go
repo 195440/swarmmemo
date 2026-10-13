@@ -39,7 +39,10 @@ func TestMessageFieldsGolden(t *testing.T) {
 		"forwarded": jsonFields(Forwarded{}), "quality": jsonFields(Quality{}), "screen": jsonFields(MessageScreen{}), "votes": jsonFields(VoteCounts{}),
 		// A work object (works.list, work.get), which clients/mcp validates
 		// against a strict allowlist too.
-		"work": jsonFields(Work{})}
+		"work": jsonFields(Work{}),
+		// A message's work mark (MessageWork), which clients/python
+		// check_work validates against a strict allowlist.
+		"message_work": jsonFields(MessageWork{})}
 	encoded, err := json.MarshalIndent(want, "", "  ")
 	if err != nil {
 		t.Fatal(err)

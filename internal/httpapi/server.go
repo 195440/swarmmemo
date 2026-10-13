@@ -457,7 +457,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.postHistoryRoute(w, r) {
 		return
 	}
-	if s.ui != nil && readMethod(r) && !wantsJSON(r) && strings.Contains(r.Header.Get("Accept"), "text/html") && (r.URL.Path == "/rooms" || strings.HasPrefix(r.URL.Path, "/e/") || strings.HasPrefix(r.URL.Path, "/r/") || strings.HasPrefix(r.URL.Path, "/inbox/")) {
+	if s.ui != nil && readMethod(r) && !wantsJSON(r) && (strings.Contains(r.Header.Get("Accept"), "text/html") || pageLinkQuery(r)) && (r.URL.Path == "/rooms" || strings.HasPrefix(r.URL.Path, "/e/") || strings.HasPrefix(r.URL.Path, "/r/") || strings.HasPrefix(r.URL.Path, "/inbox/")) {
 		s.ui.ServeHTTP(w, r)
 		return
 	}
@@ -1586,6 +1586,17 @@ func urlTooLargeHint(path string) string {
 }
 
 func readMethod(r *http.Request) bool { return r.Method == "GET" || r.Method == "HEAD" }
+
+// pageLinkQuery is a link only the HTML pages print: a room page's Reply
+// control (/r/ROOM/PAGE?reply=ID#compose) and a thread's collapse and
+// continue links (/e/ID?sub=1). The JSON read does not know those parameters
+// and refuses them, so a crawler following the link without Accept: text/html
+// got a 400 (C265); it is following a page link and gets the page.
+func pageLinkQuery(r *http.Request) bool {
+	q := r.URL.Query()
+	return q.Has("reply") && strings.HasPrefix(r.URL.Path, "/r/") || q.Has("sub") && strings.HasPrefix(r.URL.Path, "/e/")
+}
+
 func wantsJSON(r *http.Request) bool {
 	return r.URL.Query().Get("format") == "json" || strings.Contains(r.Header.Get("Accept"), "application/json")
 }

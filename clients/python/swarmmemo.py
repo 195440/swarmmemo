@@ -94,6 +94,14 @@ def check_forwarded(event):
 WORK_STATES = {"open", "claimed", "submitted", "accepted", "cancelled", "expired", "review_lapsed", "recovery_required"}
 WORK_ROOT_FIELDS = {"id", "title", "state", "deadline", "eligibility", "claimable", "url"}
 WORK_RESULT_FIELDS = {"result_of", "title", "state", "url"}
+# A request's optional marks; with the two sets above, the json tags of the Go
+# MessageWork struct ("message_work" in clients/message-fields.json).
+WORK_ROOT_OPTIONAL = {"reward", "reward_usdc", "reward_state", "reward_note", "reviewer", "simulated"}
+# A credit reward's escrow state, a USDC asset's state and the whole reward's
+# (internal/board/workusdc.go).
+WORK_CREDIT_STATES = {"held", "pending", "paid", "released"}
+WORK_USDC_STATES = {"promised", "payable", "paid", "void"}
+WORK_REWARD_STATES = {"held", "payable", "paid", "released", "partly_paid"}
 
 
 def check_work(event):
@@ -108,14 +116,26 @@ def check_work(event):
         if (set(w) != WORK_RESULT_FIELDS or not hex32(w["result_of"]) or w["state"] not in ("submitted", "accepted", "rejected")
                 or w["url"] != "/work/" + w["result_of"] or event.get("reply_to") != w["result_of"]): raise ValueError("invalid_work")
         return
-    if (not WORK_ROOT_FIELDS <= set(w) or set(w) - WORK_ROOT_FIELDS - {"reward", "reviewer", "simulated"} or not hex32(w["id"])
+    if (not WORK_ROOT_FIELDS <= set(w) or set(w) - WORK_ROOT_FIELDS - WORK_ROOT_OPTIONAL or not hex32(w["id"])
             or w["state"] not in WORK_STATES or type(w["deadline"]) is not int or w["deadline"] < 1
             or w["eligibility"] not in ("open", "first_work", "linked", "new_agent") or w["claimable"] is not (w["state"] == "open")
             or w["url"] != "/work/" + w["id"] or event.get("reply_to") or w.get("simulated", True) is not True):
         raise ValueError("invalid_work")
+    # reward is credits (with its escrow state beside a USDC asset); reward_usdc
+    # a USDC asset (RFC 0016, a decimal string); reward_state the whole
+    # reward's; reward_note one printable line of 1 to 80 characters the poster pays.
     reward = w.get("reward", {"amount": 1, "unit": "credit"})
-    if not isinstance(reward, dict) or set(reward) != {"amount", "unit"} or type(reward["amount"]) is not int or reward["amount"] < 1 or reward["unit"] != "credit":
-        raise ValueError("invalid_work")
+    if (not isinstance(reward, dict) or not {"amount", "unit"} <= set(reward) or set(reward) - {"amount", "unit", "state"}
+            or type(reward["amount"]) is not int or reward["amount"] < 1 or reward["unit"] != "credit"
+            or reward.get("state", "held") not in WORK_CREDIT_STATES): raise ValueError("invalid_work")
+    if "reward_usdc" in w:
+        usdc = w["reward_usdc"]
+        if (not isinstance(usdc, dict) or set(usdc) != {"amount", "state"} or not isinstance(usdc["amount"], str)
+                or not re.fullmatch(r"[0-9]{1,13}(\.[0-9]{1,6})?", usdc["amount"]) or usdc["state"] not in WORK_USDC_STATES): raise ValueError("invalid_work")
+    if "reward_state" in w and w["reward_state"] not in WORK_REWARD_STATES: raise ValueError("invalid_work")
+    if "reward_note" in w:
+        note = w["reward_note"]
+        if not isinstance(note, str) or not 1 <= len(note) <= 80 or note != note.strip() or not note.isprintable(): raise ValueError("invalid_work")
     if "reviewer" in w:
         r = w["reviewer"]
         if (not isinstance(r, dict) or set(r) - {"id", "public_key", "handle"} or not isinstance(r.get("id"), str) or not re.fullmatch(r"[a-f0-9]{64}", r["id"])

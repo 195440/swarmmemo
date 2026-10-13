@@ -411,6 +411,65 @@ func TestRecipientAndReplyIntentSurviveNoJavaScriptForms(t *testing.T) {
 	}
 }
 
+// The no-JS Reply link (?reply=ID&to=AUTHOR#compose) prefills the composer
+// only: the room behind it keeps its whole listing, not just posts to AUTHOR.
+// Without ?reply, ?to= is still the "posts addressed to" filter.
+func TestReplyLinkPrefillsComposerWithoutFilteringTheRoom(t *testing.T) {
+	author, other := strings.Repeat("b", 64), strings.Repeat("c", 64)
+	memo := strings.Repeat("ab", 16)
+	newService := func() *testService {
+		return &testService{execute: func(c board.Command) (board.Result, error) {
+			if c.Operation == "room.get" {
+				return board.Result{OK: true, Room: &board.Room{Name: "lobby", Visibility: "public"}}, nil
+			}
+			if c.Operation != "messages.list" {
+				return board.Result{OK: true}, nil
+			}
+			all :=[]board.Message{
+				{ID: memo, Sequence: 1, Room: "lobby", Page: "main", Text: "the post being answered", Kind: "note", PublicKey: author},
+				{ID: "to-author", Sequence: 2, Room: "lobby", Page: "main", Text: "addressed to the author", Kind: "note", To: author},
+				{ID: "to-other", Sequence: 3, Room: "lobby", Page: "main", Text: "addressed to someone else", Kind: "note", To: other},
+			}
+			var out []board.Message
+			for _, m := range all {
+				if c.To == "" || m.To == c.To {
+					out = append(out, m)
+				}
+			}
+			return board.Result{OK: true, Messages: out}, nil
+		}}
+	}
+	s := newService()
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/r/lobby/main?reply="+memo+"&to="+author, nil)
+	req.Header.Set("Accept", "text/html")
+	Handler(s).ServeHTTP(w, req)
+	body := w.Body.String()
+	if w.Code != 200 {
+		t.Fatalf("reply link page: %d", w.Code)
+	}
+	for _, want := range []string{"the post being answered", "addressed to the author", "addressed to someone else",
+		`name="reply_to" id="reply-to" value="` + memo + `"`, `name="to" id="memo-to" value="` + author + `"`, "Public recipient: " + author} {
+		if !strings.Contains(body, want) {
+			t.Errorf("reply link page missing %q", want)
+		}
+	}
+	for _, c := range s.calls {
+		if c.Operation == "messages.list" && c.To != "" {
+			t.Fatalf("reply link filtered the room listing by to=%s", c.To)
+		}
+	}
+	// ?to= alone remains the addressed-to filter.
+	s = newService()
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest("GET", "/r/lobby/main?to="+author, nil)
+	req.Header.Set("Accept", "text/html")
+	Handler(s).ServeHTTP(w, req)
+	if body := w.Body.String(); !strings.Contains(body, "addressed to the author") || strings.Contains(body, "addressed to someone else") {
+		t.Fatal("?to= without ?reply must still filter the room to posts addressed to that agent")
+	}
+}
+
 func TestAgentDirectoryEscapesProfilesAndDistinguishesSigningHistory(t *testing.T) {
 	old, current := strings.Repeat("a", 64), strings.Repeat("b", 64)
 	expiry, renewed := time.Now().Add(time.Hour).Unix(), time.Now().Add(-72*time.Hour).Unix()

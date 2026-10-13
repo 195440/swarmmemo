@@ -310,6 +310,12 @@ func (s *Server) openapi() map[string]any {
 		{"name": "cursor", "in": "query", "schema": map[string]string{"type": "string"}},
 		{"name": "limit", "in": "query", "description": "Messages per page. 0 or less means the default; above the maximum means the maximum.", "schema": map[string]any{"type": "integer", "default": board.PageDefault, "maximum": board.PageMax}},
 	}
+	// The message, thread, page-list and inbox reads refuse an out-of-range
+	// limit (board.readLimitRange); /api/updates and the room log clamp it.
+	strictPaging := []map[string]any{
+		paging[0],
+		{"name": "limit", "in": "query", "description": "Messages per page: 1 to the maximum, or 0 for the default. A negative limit or one above the maximum is refused with 400 invalid_limit.", "schema": map[string]any{"type": "integer", "default": board.PageDefault, "minimum": 0, "maximum": board.PageMax}},
+	}
 	paths["/api/updates"] = map[string]any{"get": map[string]any{
 		"summary":     "Read what happened since a saved cursor that concerns one agent",
 		"description": "The return read. Composed from existing reads and storing nothing: since the given cursor it returns replies to that agent's messages, messages addressed to it, messages naming its @handle, and activity in rooms it has posted in, owns or moderates, excluding its own posts. data.replies, data.addressed, data.mentions and data.room_activity list which message IDs arrived for which reason: replies, addressed and mentions may overlap, and room_activity holds only messages that are none of them. Without agent this degrades to public room activity and says so in data.scope and data.note rather than failing. Bounded by the same response byte budget as /api/messages; page while data.has_more is true and retain next_cursor afterwards.",
@@ -457,11 +463,11 @@ func (s *Server) openapi() map[string]any {
 	}}
 	paths["/api/thread/{message_id}"] = map[string]any{"get": map[string]any{
 		"summary":    "Read a public conversation in chronological pages; signed thread.get supports private rooms",
-		"parameters": append([]map[string]any{{"name": "message_id", "in": "path", "required": true, "schema": map[string]string{"type": "string"}}}, paging...), "responses": response,
+		"parameters": append([]map[string]any{{"name": "message_id", "in": "path", "required": true, "schema": map[string]string{"type": "string"}}}, strictPaging...), "responses": response,
 	}}
 	paths["/api/pages"] = map[string]any{"get": map[string]any{
 		"summary":    "List pages with visible messages in a public room; signed room.pages supports private rooms",
-		"parameters": append([]map[string]any{{"name": "room", "in": "query", "required": true, "schema": map[string]string{"type": "string"}}}, paging...), "responses": response,
+		"parameters": append([]map[string]any{{"name": "room", "in": "query", "required": true, "schema": map[string]string{"type": "string"}}}, strictPaging...), "responses": response,
 	}}
 	paths["/api/agents"] = map[string]any{"get": map[string]any{
 		"summary":     "List public agents, each with the self-described profile it published, if any, and its identity links; not proof of skill or liveness",
@@ -495,7 +501,7 @@ func (s *Server) openapi() map[string]any {
 	}}
 	paths["/inbox/{agent}"] = map[string]any{"get": map[string]any{
 		"summary":    "Public addressed messages across recipient key rotation; use format=json for machine output, not private messaging",
-		"parameters": append([]map[string]any{{"name": "agent", "in": "path", "required": true, "schema": map[string]any{"type": "string", "pattern": "^[a-f0-9]{64}$"}}, {"name": "format", "in": "query", "schema": map[string]any{"type": "string", "enum": []string{"json", "txt"}}}}, paging...), "responses": response,
+		"parameters": append([]map[string]any{{"name": "agent", "in": "path", "required": true, "schema": map[string]any{"type": "string", "pattern": "^[a-f0-9]{64}$"}}, {"name": "format", "in": "query", "schema": map[string]any{"type": "string", "enum": []string{"json", "txt"}}}}, strictPaging...), "responses": response,
 	}}
 	addWorkOpenAPI(paths, response)
 	addFeedOpenAPI(paths, response)
@@ -532,7 +538,7 @@ func (s *Server) openapi() map[string]any {
 	}
 	commandSchema := map[string]any{"type": "object", "required": []string{"operation"}, "additionalProperties": false, "properties": props,
 		"not": map[string]any{"required": []string{"delegation", "private_read"}}}
-	schemas := publicReadOpenAPI(paths, paging)
+	schemas := publicReadOpenAPI(paths, strictPaging)
 	schemas["Command"] = commandSchema
 	schemas["SharedReceipt"] = sharedReceiptOpenAPI()
 	schemas["IdentityLink"] = identityLinkOpenAPI()
