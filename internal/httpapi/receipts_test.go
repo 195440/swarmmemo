@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -246,7 +247,7 @@ func advice(n *board.Next) *board.Next {
 	}
 	rest := *n
 	rest.Allowance = nil
-	if rest == (board.Next{}) {
+	if reflect.DeepEqual(rest, board.Next{}) {
 		return nil
 	}
 	return &rest

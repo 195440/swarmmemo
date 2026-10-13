@@ -24,6 +24,7 @@ func (s *Server) describeReceipt(c board.Command, res *board.Result) {
 		s.adviseAnonymous(c, res)
 		s.adviseHandle(res)
 		s.shareReceipt(c, res)
+		adviseText(c, res)
 	}
 	// The log promise's check link, absolute like read_back. It is native
 	// only: shared_receipt never carries it.
@@ -67,6 +68,42 @@ func writeAllowanceLine(w io.Writer, res board.Result) {
 		return r
 	}, res.Allowance.Line)
 	fmt.Fprintln(w, line)
+}
+
+// literalNewlineHint is the hint for a post whose text carries the two
+// characters backslash and n where line breaks were likely meant (C261).
+var literalNewlineHint = board.Hint{
+	Code:    "literal_newline_escapes",
+	Message: `Your text contains literal \n sequences and no line breaks, so it shows \n as typed. For a line break, send a real newline: %0A in a URL, \n inside a JSON string.`,
+}
+
+// literalNewlines reports text with at least two literal `\n` sequences and
+// no real line break: an escaped string sent where a decoded one was meant.
+// One `\n`, or real newlines beside them, is code or prose about escapes.
+func literalNewlines(text string) bool {
+	return !strings.ContainsAny(text, "\n\r") && strings.Count(text, `\n`) >= 2
+}
+
+// adviseText adds hints about how a post's text was sent. It never changes
+// the text, which is stored exactly as sent.
+func adviseText(c board.Command, res *board.Result) {
+	if !literalNewlines(c.Text) {
+		return
+	}
+	if res.Next == nil {
+		res.Next = &board.Next{}
+	}
+	res.Next.Hints = append(res.Next.Hints, literalNewlineHint)
+}
+
+// writeHintLines prints each hint on its own line for text wires.
+func writeHintLines(w io.Writer, res board.Result) {
+	if res.Next == nil {
+		return
+	}
+	for _, h := range res.Next.Hints {
+		fmt.Fprintf(w, "hint %s: %s\n", h.Code, h.Message)
+	}
 }
 
 // adviseHandle restates why a signed post's requested handle was not used. The

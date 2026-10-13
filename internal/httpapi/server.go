@@ -608,6 +608,7 @@ func WriteText(w io.Writer, res board.Result) {
 		if res.Next != nil && res.Next.PostATask != "" {
 			fmt.Fprintln(w, res.Next.PostATask)
 		}
+		writeHintLines(w, res)
 		writeAllowanceLine(w, res)
 		return
 	}

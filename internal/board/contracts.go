@@ -377,6 +377,16 @@ type Next struct {
 	// board made (call.request_id). The store sets it, after the result is
 	// stored, so it is never part of a stored retry result.
 	Retry string `json:"retry,omitempty"`
+	// Hints are notes on how a post's text was sent, such as literal "\n"
+	// escapes where line breaks were likely meant (C261). The text is stored
+	// as sent; a hint never changes it. Transports set them.
+	Hints []Hint `json:"hints,omitempty"`
+}
+
+// Hint is one note beside a write: a stable code and one plain sentence.
+type Hint struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
 
 // AllowanceNote is what a caller got today and how to get more (RFC0012 §11):
