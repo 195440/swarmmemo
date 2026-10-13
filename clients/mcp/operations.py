@@ -211,11 +211,37 @@ def _valid_checks(checks):
     return True
 
 
+# A work object's fields: the json tags of the Go Work struct
+# (internal/board/work.go), listed under "work" in clients/message-fields.json;
+# test_operations.py fails when the server gains a field these don't name.
+WORK_REQUIRED = frozenset("id room title capabilities simulated state stored_state generation service_generation service_id created_at updated_at deadline fence claim_expires_at requester_author requester result_available".split())
+WORK_OPTIONAL = frozenset({"worker", "result_id", "attempt_grant_id", "reward", "reward_usdc", "reward_state", "reward_receipt", "reward_note", "reviewer", "reviewer_fee", "reject_fee",
+                           "requester_may_decide_at", "eligibility", "request", "eligible", "eligible_reason", "eligible_agent", "eligible_preview", "resolved_from", "result_sha256",
+                           "result_changed_since_submit", "requester_record", "verdict_checks"})
+# The whole reward's state (Work.RewardState) and a USDC asset's own state (internal/board/workusdc.go).
+REWARD_STATES = ("held", "payable", "paid", "released", "partly_paid")
+USDC_STATES = ("promised", "payable", "paid", "void")
+
+
 def _work(profile, work, expected=None):
-    optional = {"worker", "result_id", "attempt_grant_id", "reward", "reviewer", "reviewer_fee", "reject_fee", "eligibility", "request", "eligible", "eligible_reason", "eligible_agent", "eligible_preview", "resolved_from", "result_sha256", "result_changed_since_submit", "requester_record", "verdict_checks"}
-    fields = set("id room title capabilities simulated state stored_state generation service_generation service_id created_at updated_at deadline fence claim_expires_at requester_author requester result_available".split()) | optional
-    required = fields - optional
-    if not isinstance(work, dict) or set(work) - fields or not required <= work.keys(): raise BridgeError("invalid_response")
+    if not isinstance(work, dict) or set(work) - WORK_REQUIRED - WORK_OPTIONAL or not WORK_REQUIRED <= work.keys(): raise BridgeError("invalid_response")
+    # reward_usdc is a reward's USDC asset (amount a decimal string, RFC 0016);
+    # reward_state the whole reward's; reward_note one line of display text,
+    # 1 to 80 characters, for a reward the poster pays, not the board.
+    if "reward_usdc" in work:
+        usdc = work["reward_usdc"]
+        if (not isinstance(usdc, dict) or not isinstance(usdc.get("amount"), str) or not re.fullmatch(r"[0-9]{1,13}(\.[0-9]{1,6})?", usdc["amount"])
+                or usdc.get("state") not in USDC_STATES
+                or any(name in usdc and type(usdc[name]) is not int for name in ("units", "promised_at", "accepted_at", "block", "settled_at"))):
+            raise BridgeError("invalid_response")
+    if "reward_state" in work and work["reward_state"] not in REWARD_STATES: raise BridgeError("invalid_response")
+    if "reward_receipt" in work and not isinstance(work["reward_receipt"], dict): raise BridgeError("invalid_response")
+    if "reward_note" in work:
+        note = work["reward_note"]
+        if (not isinstance(note, str) or not 1 <= len(note) <= 80 or note != note.strip()
+                or any(ord(ch) < 32 or 127 <= ord(ch) < 160 or ch in "  " for ch in note)):
+            raise BridgeError("invalid_response")
+    if "requester_may_decide_at" in work and (type(work["requester_may_decide_at"]) is not int or not 0 <= work["requester_may_decide_at"] < 2**63): raise BridgeError("invalid_response")
     # request is the task at its newest version, bounded (4096 bytes on one
     # work, an excerpt in a directory); eligible answers a signed or naming read.
     if "request" in work:

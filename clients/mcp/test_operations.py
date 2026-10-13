@@ -79,6 +79,40 @@ class OperationTests(unittest.TestCase):
             with self.subTest(record=bad), self.assertRaisesRegex(BridgeError, "invalid_response"):
                 op._work(self.profile, {**work, "requester_record": bad})
 
+    def test_work_validator_covers_the_server_fields(self):
+        # clients/message-fields.json "work" is derived from the Go Work struct's
+        # json tags (internal/board/message_fields_test.go): a work item carrying
+        # every one of them must read, or find_work/read_work fail on every item
+        # (C259: reward_usdc, reward_state and reward_note did).
+        contract = set(json.loads((Path(__file__).resolve().parents[1] / "message-fields.json").read_text())["work"])
+        self.assertEqual(contract, op.WORK_REQUIRED | op.WORK_OPTIONAL)
+        fingerprint = hashlib.sha256(op.memo.unb64(self.public)).hexdigest()
+        agent = {"id": fingerprint, "public_key": self.public, "handle": "w"}
+        credit = {"amount": 5, "unit": "credits", "state": "held"}
+        work = {"id": "b" * 32, "room": "lab", "title": "t", "capabilities": ["review"], "simulated": False, "state": "submitted", "stored_state": "submitted",
+                "generation": "a" * 32, "service_generation": "a" * 32, "service_id": self.profile.service_id, "created_at": 1, "updated_at": 2, "deadline": 9,
+                "fence": 1, "claim_expires_at": 5, "requester_author": fingerprint, "requester": agent, "worker": agent, "result_id": "c" * 32,
+                "result_available": True, "attempt_grant_id": fingerprint, "reward": credit,
+                "reward_usdc": {"amount": "0.1", "units": 100000, "unit": "usdc", "network": "base", "asset": "0x" + "1" * 40, "state": "promised", "promised_at": 1},
+                "reward_state": "held", "reward_receipt": {"statement": "{}", "hash": "d" * 64, "notary": "swarmmemo.com"},
+                "reviewer": agent, "reviewer_fee": credit, "reject_fee": credit, "requester_may_decide_at": 7, "eligibility": "open",
+                "eligible": True, "eligible_reason": "open to anyone", "eligible_agent": fingerprint, "eligible_preview": True,
+                "request": {"version_id": "e" * 32, "versions": 2, "text": "do it", "truncated": False, "thread": "/thread/" + "b" * 32},
+                "resolved_from": "e" * 32, "result_sha256": "f" * 64, "result_changed_since_submit": False,
+                "reward_note": "+0.10 USDC on Base, paid by the poster",
+                "requester_record": {"results": 0, "paid": 0, "rejected": 0, "unpaid_lapsed": 0, "cancelled_after_submit": 0, "distinct_workers": 0, "median_hours_to_verdict": None},
+                "verdict_checks": {"operation": "work.reject", "sequence": 3, "author": fingerprint, "at": 4, "checks": [{"property": "tests", "state": "fail"}]}}
+        self.assertEqual(set(work), contract, "add a sample for the new work field, then teach _work to validate it")
+        self.assertEqual(op._work(self.profile, dict(work), "e" * 32), work)
+        for state in op.REWARD_STATES: self.assertIsNotNone(op._work(self.profile, {**work, "reward_state": state}))
+        for state in op.USDC_STATES: self.assertIsNotNone(op._work(self.profile, {**work, "reward_usdc": {**work["reward_usdc"], "state": state}}))
+        for name, bad in (("reward_usdc", {"amount": 0.1, "state": "promised"}), ("reward_usdc", {"amount": "1e3", "state": "promised"}),
+                          ("reward_usdc", {"amount": "0.1", "state": "owed"}), ("reward_usdc", {"amount": "0.1", "state": "paid", "block": "7"}), ("reward_usdc", "0.1"),
+                          ("reward_state", "owed"), ("reward_state", ""), ("reward_receipt", "r"), ("reward_note", ""), ("reward_note", " x"), ("reward_note", "a\nb"),
+                          ("reward_note", "x" * 81), ("reward_note", 5), ("requester_may_decide_at", "7"), ("requester_may_decide_at", True), ("requester_may_decide_at", -1)):
+            with self.subTest(name=name, bad=bad), self.assertRaisesRegex(BridgeError, "invalid_response"):
+                op._work(self.profile, {**work, name: bad})
+
     def test_hosted_argument_names_are_aliases(self):
         # Hosted MCP's find_work takes kind and read_work message_id; the bridge
         # takes them beside its own state and work_id, and refuses both at once.

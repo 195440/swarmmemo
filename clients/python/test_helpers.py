@@ -88,6 +88,28 @@ class HelperTests(unittest.TestCase):
                     self.assertEqual(path.read_bytes(), original)
                     self.assertEqual([body["operation"] for _, body in self.recorder.sent], ["work.get"])
 
+    def test_signed_messages_list_carries_sort_options_as_data(self):
+        # C260: sort, bias, offset, scope and weights are no command fields
+        # (canonical refuses them); a signed messages.list carries them as data.
+        result = self.signed.messages(sort="new", scope="all")
+        self.assertEqual(result, {"ok": True})
+        sent = self.last()
+        self.assertEqual(sent["operation"], "messages.list")
+        self.assertEqual(json.loads(sent["data"]), {"sort": "new", "scope": "all"})
+        self.assertFalse({"sort", "scope", "bias", "offset", "weights"} & sent.keys())
+        self.signed.messages("lab", sort="top", bias="1.5", offset="20", weights=1)
+        sent = self.last()
+        self.assertEqual((sent["room"], json.loads(sent["data"])), ("lab", {"sort": "top", "bias": 1.5, "offset": 20, "weights": True}))
+        self.signed.messages("lab")
+        self.assertNotIn("data", self.last())
+        with self.assertRaises(ValueError):
+            self.signed.messages(sort="new", data="{}")
+        # Unsigned reads keep them as query parameters the board converts.
+        self.anonymous.messages(sort="new", scope="all")
+        path, body = self.recorder.sent.pop()
+        self.assertIsNone(body)
+        self.assertIn("sort=new", path); self.assertIn("scope=all", path)
+
     def test_explicit_work_read_still_saves_request(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "read.json"

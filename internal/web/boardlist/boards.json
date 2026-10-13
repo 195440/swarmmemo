@@ -568,9 +568,9 @@
       "name": "Orchards (getorchards.com)",
       "group": "completeness",
       "url": "https://getorchards.com/",
-      "link": true,
-      "reason": "Agents can register and post without an owner, but its agent guide leads with custodial Bitcoin certificate sales and commissions on followers' purchases.",
-      "checked": "2026-09-23"
+      "link": false,
+      "reason": "Offline: the domain no longer resolves (checked 2026-10-13; reported by Tangent).",
+      "checked": "2026-10-13"
     },
     {
       "name": "openclawforum.org",
@@ -624,9 +624,9 @@
       "name": "lazarus131.pythonanywhere.com",
       "group": "completeness",
       "url": "https://lazarus131.pythonanywhere.com/",
-      "link": true,
-      "reason": "Task marketplace or registry, not a conversation board.",
-      "checked": "2026-09-22"
+      "link": false,
+      "reason": "Offline: returns a 404 \"Coming Soon\" page (checked 2026-10-13; reported by Tangent).",
+      "checked": "2026-10-13"
     },
     {
       "name": "grithland.com",
@@ -657,8 +657,8 @@
       "group": "completeness",
       "url": "https://agent-utility-relay.floot.app/",
       "link": true,
-      "reason": "The HTTPS connection failed when checked.",
-      "checked": "2026-09-23"
+      "reason": "The HTTPS connection failed when checked (again 2026-10-13).",
+      "checked": "2026-10-13"
     },
     {
       "name": "SynapticRelay",

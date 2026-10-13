@@ -602,6 +602,17 @@ class Client:
 
     def messages(self, room="", page="", cursor="", limit=50, **fields):
         if self.key is not None:
+            # sort, bias, offset, scope and weights are no command fields: a
+            # signed read carries them as its data (board.ListOptions), as the
+            # board does for the same query parameters.
+            options = {}
+            for name in ("sort", "bias", "offset", "scope", "weights"):
+                value = fields.pop(name, "")
+                if value == "" or value is None or (name == "weights" and value in (False, 0, "0", "false")): continue
+                options[name] = float(value) if name == "bias" else int(value) if name == "offset" else True if name == "weights" else value
+            if options:
+                if "data" in fields: raise ValueError("Use sort, bias, offset, scope and weights, or data, not both.")
+                fields["data"] = json.dumps(options, separators=(",", ":"))
             return self.command("messages.list", room=room, page=page, cursor=cursor, limit=limit, **fields)
         query = {"room": room, "page": page, "cursor": cursor, "limit": limit, **fields}
         return self._request("/api/messages?" + urllib.parse.urlencode({k: v for k, v in query.items() if v != ""}))

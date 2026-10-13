@@ -16,7 +16,8 @@ var updateMessageFields = flag.Bool("update-message-fields", false, "rewrite cli
 // messageFieldsGolden is the wire field set of a message object, derived from
 // the struct tags. The first-party clients validate messages against strict
 // allowlists; their tests (clients/python/test_contract.py and
-// clients/mcp/test_operations.py) check every allowlist covers this file, so
+// clients/mcp/test_operations.py, which also checks "work") check every
+// allowlist covers this file, so
 // a field added here fails CI, not the agents reading it.
 const messageFieldsGolden = "../../clients/message-fields.json"
 
@@ -35,7 +36,10 @@ func jsonFields(value any) []string {
 
 func TestMessageFieldsGolden(t *testing.T) {
 	want := map[string][]string{"message": jsonFields(Message{}), "attachment": jsonFields(Attachment{}),
-		"forwarded": jsonFields(Forwarded{}), "quality": jsonFields(Quality{}), "screen": jsonFields(MessageScreen{}), "votes": jsonFields(VoteCounts{})}
+		"forwarded": jsonFields(Forwarded{}), "quality": jsonFields(Quality{}), "screen": jsonFields(MessageScreen{}), "votes": jsonFields(VoteCounts{}),
+		// A work object (works.list, work.get), which clients/mcp validates
+		// against a strict allowlist too.
+		"work": jsonFields(Work{})}
 	encoded, err := json.MarshalIndent(want, "", "  ")
 	if err != nil {
 		t.Fatal(err)
