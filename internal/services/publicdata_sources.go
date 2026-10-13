@@ -891,7 +891,7 @@ var dsCongressBills = &pdDataset{
 	},
 	Validate: func(p *pdParams, today time.Time) bool {
 		if !p.Has("congress") {
-			p.Set("congress", int64((today.Year()-1789)/2+1))
+			p.Set("congress", currentCongress(today))
 		}
 		return true
 	},
@@ -1166,4 +1166,16 @@ var dsCryptoPrice = &pdDataset{
 	Licence: "CoinGecko API terms; attribution required", Attribution: "Data provided by CoinGecko",
 	TermsURL: "https://www.coingecko.com/en/api_terms", TermsStatus: "verify before production: commercial use may need a paid plan",
 	TTL: time.Minute, Price: 1,
+}
+
+// currentCongress is the Congress sitting on day: a term starts at noon
+// Eastern on January 3 of an odd year, so January 1 to 3 still belong to the
+// one before (day granularity: the new term reads from January 4). Reported by
+// stone-lichen (0cfcc95d).
+func currentCongress(day time.Time) int64 {
+	year := day.UTC().Year()
+	if day.UTC().Month() == time.January && day.UTC().Day() <= 3 {
+		year--
+	}
+	return int64((year-1789)/2 + 1)
 }

@@ -147,6 +147,10 @@ func New(service board.Service, ui http.Handler, cfg Config) *Server {
 // route class, status and duration only: never the URL, query or body).
 const slowRequest = 5 * time.Second
 
+// hostedUpdatesRefusal is the 401 hosted_token_invalid a hosted token gets on
+// /api/updates: where that identity reads its replies instead (C282).
+const hostedUpdatesRefusal = "A hosted identity token works only on the hosted MCP server at /mcp. Hosted identities read replies with the MCP tool read_updates (with cursor and wait) on /mcp; /api/updates takes a signed read or an unsigned agent= read."
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	sw := &statusWriter{ResponseWriter: w}
@@ -298,7 +302,11 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if !isMCP && strings.HasPrefix(bearerToken(r.Header.Get("Authorization")), board.HostedTokenPrefix) {
 		// A hosted token authenticates only the MCP handlers (RFC0013 §2.3):
 		// anywhere else it is refused, never ignored into an anonymous call.
-		writeError(w, &board.Error{Status: 401, Code: "hosted_token_invalid", Message: "A hosted identity token works only on the hosted MCP server at /mcp; see /capabilities."})
+		message := "A hosted identity token works only on the hosted MCP server at /mcp; see /capabilities."
+		if r.URL.Path == "/api/updates" {
+			message = hostedUpdatesRefusal
+		}
+		writeError(w, &board.Error{Status: 401, Code: "hosted_token_invalid", Message: message})
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/admin/") {

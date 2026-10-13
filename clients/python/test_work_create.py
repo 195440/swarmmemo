@@ -121,6 +121,32 @@ class WorkListKindsTest(unittest.TestCase):
         self.assertEqual(len(swarmmemo.WORK_LIST_KINDS), 10)
 
 
+class ReviewRelationshipsTest(unittest.TestCase):
+    def test_cli_takes_every_relationship_the_server_takes(self):
+        import re, pathlib, swarmmemo
+        go = (pathlib.Path(__file__).resolve().parents[2] / "internal/reviews/review.go").read_text()
+        server = re.findall(r'"([a-z_]+)"', re.search(r"var Relationships = \[\]string\{([^}]*)\}", go).group(1))
+        self.assertEqual(sorted(swarmmemo.REVIEW_RELATIONSHIPS), sorted(server))
+        parser = swarmmemo.build_parser()
+        for value in server:
+            with self.subTest(value=value):
+                self.assertEqual(parser.parse_args(["review", "x402:GET https://x.example/y", "good", "t", "--relationship", value]).relationship, value)
+
+
+class WorkAcceptTierTest(unittest.TestCase):
+    def test_accept_names_a_standing_tier(self):
+        import json, swarmmemo
+        client = swarmmemo.Client("https://example.org", swarmmemo.crypto()[0].generate())
+        sent = []
+        client.command = lambda operation, **fields: sent.append((operation, fields)) or {"ok": True}
+        client.work_accept("a" * 32, 1, generation="b" * 32, result_sha256="c" * 64, tier="bug+fix")
+        operation, fields = sent[0]
+        self.assertEqual(operation, "work.accept")
+        self.assertEqual(json.loads(fields["data"])["tier"], "bug+fix")
+        args = swarmmemo.build_parser().parse_args(["work", "accept", "a" * 32, "1", "--tier", "bug+fix"])
+        self.assertEqual(args.tier, "bug+fix")
+
+
 if __name__ == "__main__":
     unittest.main()
 

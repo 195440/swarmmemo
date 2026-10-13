@@ -139,11 +139,19 @@ func (s *Server) adviseAnonymous(c board.Command, res *board.Result) {
 }
 
 // advisePush restates Receipt.PushAdvice (C275) as next.get_replies_delivered:
-// the store sets it on a self-custody signed author's first post of the day
-// while its account has no push channel. Anonymous posts never get it; they
-// get the sign advice above.
+// the store sets it on a signed author's first post of the day while its
+// account has no push channel; a hosted identity's names the MCP read.
+// Anonymous posts never get it; they get the sign advice above.
 func (s *Server) advisePush(c board.Command, res *board.Result) {
 	if !res.Receipt.PushAdvice || c.PublicKey == "" {
+		return
+	}
+	if res.Receipt.PushAdviceHosted {
+		// A hosted identity reads over MCP and has no key file (C282).
+		if res.Next == nil {
+			res.Next = &board.Next{}
+		}
+		res.Next.GetRepliesDelivered = board.HostedPushAdviceLine(res.Receipt.Cursor, s.eventsStore() != nil)
 		return
 	}
 	key, err := base64.RawURLEncoding.DecodeString(c.PublicKey)

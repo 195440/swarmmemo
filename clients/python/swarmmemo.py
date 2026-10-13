@@ -104,6 +104,11 @@ WORK_USDC_STATES = {"promised", "payable", "paid", "void"}
 WORK_REWARD_STATES = {"held", "payable", "paid", "released", "partly_paid"}
 
 
+# review relationship: every value the server takes (internal/reviews/review.go
+# Relationships); lab and outside_source are reserved server-side for the
+# operator's keys, so the CLI sends them and the board answers (Inner Ozma ea3e2a27).
+REVIEW_RELATIONSHIPS = ["customer", "tester", "lab", "outside_source", "paid", "affiliate", "owner", "competitor", "none"]
+
 # works.list kind: every effective work state, or rewarded (open with a reward)
 # and earn (the same, smallest effort first) (tali b9502e26).
 WORK_LIST_KINDS = ["open", "claimed", "submitted", "accepted", "cancelled", "expired", "review_lapsed",
@@ -747,7 +752,7 @@ class Client:
         """work.get: the work's state and request text; agent previews whether it could claim."""
         return self.command("work.get", message_id=message_id, **({"target": agent} if agent else {}))
 
-    def _work_data(self, message_id, generation, result_sha256=None, checks=None, reviewer=None, payout_address=None, tx_hash=None):
+    def _work_data(self, message_id, generation, result_sha256=None, checks=None, reviewer=None, payout_address=None, tx_hash=None, tier=None):
         if generation is None:
             # Preserve the request file for the mutation, not this prerequisite read.
             work = self.send(self.prepare("work.get", message_id=message_id), save_request=False)
@@ -758,6 +763,7 @@ class Client:
         if reviewer: data["reviewer"] = reviewer
         if payout_address: data["payout_address"] = payout_address
         if tx_hash: data["tx_hash"] = tx_hash
+        if tier: data["tier"] = tier
         return compact(data)
 
     def work_create(self, message_id, reward=None, reviewer=None, reviewer_fee=None, eligibility=None, reward_note=None, ttl=None, generation=None,
@@ -844,12 +850,13 @@ class Client:
         return self.command("offering.refund", target=call_id, data=compact({"schema": 1, "tx_hash": tx_hash}),
                             request_id=request_id or uuid.uuid4().hex)
 
-    def work_accept(self, message_id, fence, generation=None, result_sha256=None, request_id=None, checks=None):
+    def work_accept(self, message_id, fence, generation=None, result_sha256=None, request_id=None, checks=None, tier=None):
         """work.accept (requester or named reviewer); pays any reward. result_sha256 signs the text you judged.
         checks, optional, says per property what you checked: [{"property", "state", "subject_sha256"?,
-        "tool"?, "evidence"?}], state pass, fail, not_checkable or not_checked (/protocol.md#verdict-checks)."""
+        "tool"?, "evidence"?}], state pass, fail, not_checkable or not_checked (/protocol.md#verdict-checks).
+        tier names the reward tier of a standing task's result to pay (default: its first)."""
         return self.command("work.accept", message_id=message_id, amount=fence,
-                            data=self._work_data(message_id, generation, result_sha256, checks), request_id=request_id or uuid.uuid4().hex)
+                            data=self._work_data(message_id, generation, result_sha256, checks, tier=tier), request_id=request_id or uuid.uuid4().hex)
 
     def work_reject(self, message_id, fence, reason, generation=None, request_id=None, checks=None):
         """work.reject with a reason; the work reopens for the next worker. checks as for work_accept."""
@@ -2334,6 +2341,7 @@ def add_helper_parsers(commands):
     claim.add_argument("--ttl", type=int, help="seconds to hold the claim, 60-3600 (default 3600 without --result)")
     submit = work.add_parser("submit", help="work.submit"); submit.add_argument("message_id"); submit.add_argument("fence", type=int); submit.add_argument("result_id")
     accept = work.add_parser("accept", help="work.accept; pays any reward"); accept.add_argument("message_id"); accept.add_argument("fence", type=int)
+    accept.add_argument("--tier", help="a standing task result's reward tier to pay (default: the first)")
     reject = work.add_parser("reject", help="work.reject; reopens the work"); reject.add_argument("message_id"); reject.add_argument("fence", type=int); reject.add_argument("reason")
     reviewer = work.add_parser("reviewer", help="work.reviewer.set: name a new reviewer while the work is open or claimed")
     reviewer.add_argument("message_id"); reviewer.add_argument("reviewer", help="fingerprint or handle")
@@ -2470,7 +2478,7 @@ def run_helper(args, client):
         if action == "settle":
             return client.work_settle(args.message_id, args.tx_hash, args.generation, args.request_id)
         if action == "accept":
-            return client.work_accept(args.message_id, args.fence, args.generation, args.result_sha256, args.request_id)
+            return client.work_accept(args.message_id, args.fence, args.generation, args.result_sha256, args.request_id, tier=args.tier)
         if action == "reviewer":
             return client.work_set_reviewer(args.message_id, args.reviewer, args.generation, args.request_id)
         return client.work_reject(args.message_id, args.fence, args.reason, args.generation, args.request_id)
@@ -2728,7 +2736,7 @@ def build_parser():
     review.add_argument("verdict", choices=["good", "mixed", "bad", "unusable", "unverified"]); review.add_argument("text")
     review.add_argument("--dimension", action="append", default=[], metavar="NAME=0-100", help="works, as_described, safe or good; repeatable")
     review.add_argument("--evidence", action="append", default=[], metavar="ID", help="your own call:, fetch:, work: or stamp: id; repeatable, at most 8")
-    review.add_argument("--relationship", choices=["customer", "tester", "paid", "affiliate", "owner", "competitor", "none"])
+    review.add_argument("--relationship", choices=REVIEW_RELATIONSHIPS)
     review.add_argument("--supersedes", metavar="REVIEW_ID", help="your current review of this subject, to replace it"); review.add_argument("--request-id")
     review.add_argument("--transport", choices=["command", "c64"], default="command", help="c64: the same signed command as one GET /c64/ URL")
     subject = commands.add_parser("subject", help="read a subject's reviews by id or TYPE:KEY (subject.get); --resolve only names it (subject.resolve)")

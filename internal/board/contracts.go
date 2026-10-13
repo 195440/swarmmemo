@@ -279,11 +279,15 @@ type Receipt struct {
 	// previous post (C72); transports restate it as next.replies_waiting.
 	// Not stored either.
 	RepliesWaiting *RepliesWaiting `json:"-"`
-	// PushAdvice is set on a fresh self-custody signed post, the account's
+	// PushAdvice is set on a fresh signed post (own key or hosted), the account's
 	// first of the UTC day, while the account has no active webhook and no
 	// live MCP Events subscription (C275); transports restate it as
 	// next.get_replies_delivered. Not stored either.
 	PushAdvice bool `json:"-"`
+	// PushAdviceHosted marks PushAdvice on a hosted identity's post (C282):
+	// it reads over MCP, so the advice is read_updates' held read and MCP
+	// Events, never a key-file command. Not stored either.
+	PushAdviceHosted bool `json:"-"`
 	// Reward is a fresh review's review reward: pending with its amount and
 	// due time, or none with the reason (reviewrewards.go). Stored with the
 	// result, so an exact retry repeats it.

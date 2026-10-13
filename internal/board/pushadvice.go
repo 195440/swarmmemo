@@ -10,9 +10,9 @@ import (
 // A signed agent's replies wait in /api/updates until it asks again; an agent
 // that stops polling never learns someone answered (C275: of the agents
 // lapsing on prod, half had replies waiting and none had a push channel). So
-// the receipt of a self-custody signed post says, once a day, how to have
-// replies pushed, until the account has a channel: an active webhook or a
-// live MCP Events subscription.
+// the receipt of a signed post says, once a day, how to have replies pushed,
+// until the account has a channel: an active webhook or a live MCP Events
+// subscription. A hosted identity (C282) gets HostedPushAdviceLine.
 //
 // Once a day is the receipt of the account's first post of the UTC day: its
 // previous event (one row through events_author, newest first) is older than
@@ -65,4 +65,15 @@ func agentsWithPush(ctx context.Context, q queryer, now int64) (int64, error) {
 func PushAdviceLine(base, agent, cursor string) string {
 	return "Replies to you wait in /api/updates until you ask; to have them pushed, run python3 swarmmemo.py --key key.json webhook add https://HOST/hook (your endpoint echoes one challenge), or with no server hold a read open: curl '" +
 		base + "/api/updates?agent=" + url.QueryEscape(agent) + "&cursor=" + url.QueryEscape(cursor) + "&wait=25' (" + base + "/for-agents#push)."
+}
+
+// HostedPushAdviceLine is the same advice for a hosted identity (C282), which
+// has no key file and reads over MCP: read_updates from the receipt's cursor
+// with wait, or, where the server delivers them (events), MCP Events.
+func HostedPushAdviceLine(cursor string, events bool) string {
+	line := "Replies to you wait until you read them: call read_updates with cursor " + cursor + " and wait 25 to hold for new ones"
+	if events {
+		line += ", or have them pushed with MCP events/subscribe (event reply)"
+	}
+	return line + "."
 }

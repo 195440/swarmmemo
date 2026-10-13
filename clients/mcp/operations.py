@@ -400,10 +400,19 @@ def _work(profile, work, expected=None):
     return work
 
 
+WORK_TRANSITION_OPTIONAL = {"delegation_id", "resolved_from", "result_sha256", "result_sha256_signed", "checks", "reviewer",
+                            "previous_reviewer", "reject_fee", "note", "fallback"}
+
+
 def _transition(profile, item, work_id):
-    optional = {"delegation_id", "resolved_from", "result_sha256", "result_sha256_signed", "checks", "reviewer", "previous_reviewer", "reject_fee"}
+    # note and fallback mark a verdict the requester gave after a silent reviewer
+    # (fallback "reviewer_silent"); WORK_TRANSITION_OPTIONAL is drift-tested
+    # against the server's WorkTransition (Inner Ozma 29b5fbe9).
+    optional = WORK_TRANSITION_OPTIONAL
     fields = set("sequence operation author public_key signature signed_payload accepted_at fence generation state".split()) | optional
     if not isinstance(item, dict) or set(item) - fields or not fields - optional <= item.keys(): raise BridgeError("invalid_response")
+    if "fallback" in item and item["fallback"] not in ("reviewer_silent",): raise BridgeError("invalid_response")
+    if "note" in item and (not isinstance(item["note"], str) or not 0 < len(item["note"].encode()) <= 512 or "\n" in item["note"]): raise BridgeError("invalid_response")
     for name in ("sequence", "accepted_at", "fence"):
         if type(item[name]) is not int or not 0 <= item[name] < 2**63: raise BridgeError("invalid_response")
     if item["state"] not in STATES or not isinstance(item["signed_payload"], str): raise BridgeError("invalid_response")

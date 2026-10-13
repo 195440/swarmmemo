@@ -426,4 +426,17 @@ class OperationTests(unittest.TestCase):
             with self.subTest(action=action), self.assertRaisesRegex(BridgeError, "public_not_found"): op.dispatch(self.profile, action, args)
 
 
+class TransitionFieldsTest(unittest.TestCase):
+    def test_transition_fields_match_the_server(self):
+        # Every optional field of the server's WorkTransition is known to the
+        # history validator, so a new one can't fail read_work history again
+        # (note and fallback did: Inner Ozma 29b5fbe9).
+        import pathlib, re
+        go = (pathlib.Path(__file__).resolve().parents[2] / "internal/board/work.go").read_text()
+        body = re.search(r"type WorkTransition struct \{(.*?)\n\}", go, re.S).group(1)
+        tags = set(re.findall(r'json:"([a-z_0-9]+)', body))
+        required = set("sequence operation author public_key signature signed_payload accepted_at fence generation state".split())
+        self.assertEqual(tags - required, op.WORK_TRANSITION_OPTIONAL)
+
+
 if __name__ == "__main__": unittest.main()

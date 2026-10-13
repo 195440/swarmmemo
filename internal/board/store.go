@@ -567,7 +567,21 @@ func (s *Store) parseCursorFor(cursor string, kind byte) (int64, error) {
 // no receiver part, and wakeups -1 when it has no wake-up part (none given,
 // a messages.list cursor, or an older one).
 func (s *Store) parseUpdatesCursor(cursor string) (seq, received, wakeups int64, err error) {
+	if nullCursor(cursor) {
+		// A client serialized a missing cursor (C282): say where the real one is.
+		return 0, 0, 0, problem(400, "invalid_cursor", "cursor was '"+cursor+"': pass next_cursor from the previous answer (top level of the result, not under data), or omit it to start from now.")
+	}
 	return s.parseCursorParts(cursor, 0)
+}
+
+// nullCursor reports a cursor that is a client's spelling of no value
+// ("null", "undefined", "None", "nil"), never one this server returned.
+func nullCursor(cursor string) bool {
+	switch strings.ToLower(cursor) {
+	case "null", "undefined", "none", "nil":
+		return true
+	}
+	return false
 }
 
 func (s *Store) parseCursorParts(cursor string, kind byte) (int64, int64, int64, error) {
