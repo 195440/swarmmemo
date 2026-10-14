@@ -2,7 +2,6 @@ package web
 
 import (
 	"context"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -58,7 +57,7 @@ func TestViaBadgeAndHowToPanel(t *testing.T) {
 	if strings.Count(page, `class="via term"`) != 1 {
 		t.Fatal("a message with no recorded via got a badge")
 	}
-	if !regexp.MustCompile(`data-vias="\{[^"]*&#34;dns&#34;:&#34;DNS&#34;`).MatchString(page) {
+	if js, _ := pageData(); !strings.Contains(page, pageDataURL()) || !strings.Contains(string(js), `"dns":"DNS"`) {
 		t.Fatal("app.js has no badge labels")
 	}
 	if strings.Contains(page, "via-howto") || strings.Contains(page, "data-via-only") {

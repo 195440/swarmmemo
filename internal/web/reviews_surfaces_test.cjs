@@ -76,9 +76,12 @@ const freePort = () => new Promise((ok, fail) => {
       const block = page.locator('section#reviews');
       await block.waitFor();
       assert.match(await block.textContent(), /2 reviews from 2 accounts/);
-      assert.equal(await block.locator('.review-card').count(), 2, 'two review cards on the agent page');
-      assert.equal(await block.locator('.review-card img, .review-card script').count(), 0, 'review text is inert');
-      assert.equal(await block.locator('a.review-message[href^="/me/messages/new?to="]').count(), 2, 'Message the reviewer on each card');
+      // Each review is shown once on the agent page (C315): in the storefront's
+      // list; the block keeps the counts and links the cards on /s/ID.
+      assert.equal(await block.locator('.review-card').count(), 0, 'no second copy of the storefront reviews');
+      assert.equal(await page.locator('#storefront-reviews li').count(), 2, 'both reviews in the storefront');
+      assert.equal(await page.locator('#storefront-reviews img, #storefront-reviews script').count(), 0, 'review text is inert');
+      assert.equal(await block.locator('a[href="/s/' + subject.id + '"]', {hasText: 'All reviews'}).count(), 1, 'the way to every card');
       const preview = block.locator('.section-heading img.badge-preview');
       await preview.waitFor();
       assert.ok(await preview.evaluate(img => img.complete && img.naturalWidth > 0), 'the badge renders');
@@ -106,6 +109,9 @@ const freePort = () => new Promise((ok, fail) => {
       const smd = page.locator('code[data-copy-label="Copy Markdown"]');
       assert.match(await smd.textContent(), new RegExp('\\(https://swarmmemo\\.com/s/' + subject.id + '\\)$'));
       assert.ok(await page.locator('img.badge-preview').evaluate(img => img.complete && img.naturalWidth > 0));
+      assert.equal(await page.locator('.review-card').count(), 2, 'two review cards on the subject page');
+      assert.equal(await page.locator('.review-card img, .review-card script').count(), 0, 'review text is inert');
+      assert.equal(await page.locator('a.review-message[href^="/me/messages/new?to="]').count(), 2, 'Message the reviewer on each card');
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), width + 'px subject page overflow');
 
       // The embed in reviews mode, on the operator's own origin.
@@ -128,8 +134,8 @@ const freePort = () => new Promise((ok, fail) => {
     const plain = await browser.newContext({javaScriptEnabled: false, viewport: {width: 360, height: 800}});
     const plainPage = await plain.newPage();
     await plainPage.goto(origin + '/agent/' + fp);
-    assert.match(await plainPage.locator('section#reviews').textContent(), /right answer, terse/);
+    assert.match(await plainPage.locator('section#storefront').textContent(), /right answer, terse/);
     await plain.close();
-    console.log('PASS: agent page reviews block and badge copy UI at 360px and 1280px (cards, Message the reviewer, inert text, copy to clipboard, no overflow), /s/ID badge, badge SVG, embed reviews widget on another origin, no-JS view.');
+    console.log('PASS: agent page reviews block and badge copy UI at 360px and 1280px (each review once, in the storefront; inert text, copy to clipboard, no overflow), /s/ID cards with Message the reviewer and badge, badge SVG, embed reviews widget on another origin, no-JS view.');
   } finally {await browser.close(); server.kill(); site.close();}
 })().catch(error => {console.error(error); process.exitCode = 1;});

@@ -296,7 +296,7 @@ func TestStalePhrasesStayGone(t *testing.T) {
 // opt-in): a limit of 1000 or more may not appear as a bare number, a smaller
 // one may not appear next to its unit ("500 bytes", "64 characters"), and no
 // form field states its own maxlength: it reads {{limit}}/{{inputMax}} in a
-// template, the page's data-limits (or a data- attribute the template filled)
+// template, page-data.js's limits (or a data- attribute the template filled)
 // in a script.
 func TestCopyStatesLimitsThroughConstants(t *testing.T) {
 	var sources []string

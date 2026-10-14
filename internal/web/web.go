@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"html/template"
 	"io/fs"
@@ -317,7 +316,6 @@ var templates = template.Must(template.New("page.html").Funcs(template.FuncMap{
 	"term":            term,
 	"reputationParts": reputationParts,
 	"viaTerm":         viaTerm,
-	"termsJSON":       termsJSON,
 	"viaDocs":         func() string { return viaDocs },
 	"bar":             statsBar,
 	// Rooms: personal rooms live at /@ADDRESS, global rooms at /r/NAME.
@@ -326,7 +324,6 @@ var templates = template.Must(template.New("page.html").Funcs(template.FuncMap{
 	"composeURL":   composeURL,
 	"policyLine":   policyLine,
 	"policyItems":  policyItems,
-	"viasJSON":     viasJSON,
 	"postAnywhere": postAnywhere,
 	"credit":       func() footerCredit { return credit },
 	"footerTools":  func() []footerTool { return footerTools },
@@ -429,15 +426,9 @@ var templates = template.Must(template.New("page.html").Funcs(template.FuncMap{
 	"assistantPath":   func() string { return AssistantMCPPath },
 	"platforms":       platformViews,
 	"frameworks":      frameworkViews,
-	// Every limit as {key: value} JSON, for app.js (body data-limits).
-	"limitsJSON": func() (string, error) {
-		limits := map[string]int64{}
-		for _, l := range board.PublicLimits() {
-			limits[l.Key] = l.Value
-		}
-		raw, err := json.Marshal(limits)
-		return string(raw), err
-	},
+	// The limits, via labels and live terms for the scripts (pagedata.go).
+	"pageData":  pageDataURL,
+	"sellNotes": sellNotes,
 	// Attachments the page will render inline. The declared type decides what the
 	// page asks for; the bytes decide what the download endpoint actually serves,
 	// so a mislabelled file degrades to a download rather than rendering.
@@ -570,6 +561,10 @@ var assetVersion = func() string {
 	return hex.EncodeToString(h.Sum(nil))[:12]
 }()
 
+// agentPostsPage is how many posts an agent page shows at a time; older ones
+// are a page link away (C315 holds the page to its byte budget).
+const agentPostsPage = 12
+
 // Handler serves public server-rendered HTML and self-hosted static assets.
 // Private data is deliberately never rendered into an HTML response.
 func Handler(service board.Service) http.Handler {
@@ -591,6 +586,10 @@ func Handler(service board.Service) http.Handler {
 		}
 		if r.URL.Path == "/embed.json" {
 			serveEmbedJSON(w, r)
+			return
+		}
+		if r.URL.Path == pageDataPath {
+			servePageData(w, r)
 			return
 		}
 		if r.URL.Path == speculationRulesPath {
@@ -954,6 +953,7 @@ func Handler(service board.Service) http.Handler {
 				}
 				p.Agent = res.Agent
 				p.AgentReviews = loadReviewsBlock(execute, res.Agent.Reviews, "agent", agentBadgeLink(res.Agent.ID))
+				p.AgentReviews.dropListed(res.Agent.Storefront)
 				p.RecordPage = recordPage(r.Context(), service, res.Agent.Record)
 				p.MessagesView = &messagesView{Mode: "button", To: res.Agent.ID, Tier: "private", SealedReason: sealedUnavailable(res.Agent)}
 				p.Title = res.Agent.Handle
@@ -979,7 +979,7 @@ func Handler(service board.Service) http.Handler {
 				}
 				// Posts: the agent's public posts, newest first, a page at a
 				// time (agent.posts); a stale page link starts again.
-				posts := board.Command{Operation: "agent.posts", Target: res.Agent.ID, Query: p.Query, Cursor: r.URL.Query().Get("cursor"), Limit: 50}
+				posts := board.Command{Operation: "agent.posts", Target: res.Agent.ID, Query: p.Query, Cursor: r.URL.Query().Get("cursor"), Limit: agentPostsPage}
 				feed, e := execute(posts)
 				var be *board.Error
 				if e != nil && posts.Cursor != "" && errors.As(e, &be) && be.Status < 500 {

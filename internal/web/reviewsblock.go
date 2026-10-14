@@ -32,6 +32,30 @@ type reviewsBlock struct {
 	Embed            *badgeEmbed
 }
 
+// dropListed leaves out the cards the agent page's storefront already lists
+// (C315): each review is shown once, in the storefront's latest reviews, and
+// the block keeps the counts, the way to write one and the badge. Its own
+// subject page has every card in full.
+func (b *reviewsBlock) dropListed(front *board.Storefront) {
+	if b == nil || front == nil || len(front.Reviews) == 0 {
+		return
+	}
+	listed := map[string]bool{}
+	for _, r := range front.Reviews {
+		listed[r.ID] = true
+	}
+	kept := b.Cards[:0:0]
+	for _, c := range b.Cards {
+		if !listed[c.ID] {
+			kept = append(kept, c)
+		}
+	}
+	if len(kept) < len(b.Cards) {
+		b.More = true
+	}
+	b.Cards = kept
+}
+
 // loadReviewsBlock reads sum's subject for a block; nil while reviews are
 // off (sum nil) or when the read fails, so the page loses only the block.
 func loadReviewsBlock(execute func(board.Command) (board.Result, error), sum *board.SubjectReviews, noun, badgeLink string) *reviewsBlock {

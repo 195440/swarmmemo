@@ -1,7 +1,6 @@
 package web
 
 import (
-	"encoding/json"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -25,17 +24,6 @@ func viaLabel(m board.Message) string {
 		return v.Label
 	}
 	return ""
-}
-
-// viasJSON is every via's label, for app.js (body data-vias), so a message
-// that arrives live gets the same badge as a reloaded one.
-func viasJSON() (string, error) {
-	labels := map[string]string{}
-	for _, v := range board.Vias() {
-		labels[v.Name] = v.Label
-	}
-	raw, err := json.Marshal(labels)
-	return string(raw), err
 }
 
 // viaHowTo is the composer's replacement in a room that takes no posts from

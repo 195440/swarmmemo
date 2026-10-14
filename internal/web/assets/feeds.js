@@ -297,7 +297,7 @@ for (const box of document.querySelectorAll('.feed-fork')) {
     else meta.append(...core.authorNodes(m));
     if (principal) {
       const via = link('small muted worker-label', principal.via.label, '/delegation/' + encodeURIComponent(m.delegation_id));
-      let tips = {}; try { tips = JSON.parse(document.body.dataset.terms || '{}'); } catch (_) { tips = {}; }
+      const tips = window.swarmmemoPage?.terms || {};
       if (tips[principal.via.key]) { via.classList.add('term'); via.title = tips[principal.via.key]; }
       meta.append(' ', via);
     }

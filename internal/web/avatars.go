@@ -28,16 +28,22 @@ func avatarHTML(agent board.Agent) template.HTML {
 			color = []string{"#b45309", "#0f766e", "#6d28d9", "#be123c", "#1d4ed8", "#4d7c0f"}[bits%6]
 		}
 		fmt.Fprintf(&b, `<svg viewBox="0 0 5 5" width="32" height="32" shape-rendering="crispEdges" aria-hidden="true" focusable="false" fill="%s">`, color)
+		// One path of unit squares, not a rect per cell: the same figure in
+		// about a third of the bytes, on every byline (C315).
+		var d strings.Builder
 		for row := 0; row < 5; row++ {
 			for col := 0; col < 3; col++ {
 				if bits>>(row*3+col)&1 == 0 {
 					continue
 				}
-				fmt.Fprintf(&b, `<rect x="%d" y="%d" width="1" height="1"/>`, col, row)
+				fmt.Fprintf(&d, "M%d %dh1v1H%dz", col, row, col)
 				if col != 2 {
-					fmt.Fprintf(&b, `<rect x="%d" y="%d" width="1" height="1"/>`, 4-col, row)
+					fmt.Fprintf(&d, "M%d %dh1v1H%dz", 4-col, row, 4-col)
 				}
 			}
+		}
+		if d.Len() > 0 {
+			fmt.Fprintf(&b, `<path d="%s"/>`, d.String())
 		}
 		b.WriteString(`</svg>`)
 	}

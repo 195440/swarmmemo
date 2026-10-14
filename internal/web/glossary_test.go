@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"html"
 	"io/fs"
 	"net/http/httptest"
@@ -50,7 +51,7 @@ func TestGlossaryCoversEveryTerm(t *testing.T) {
 }
 
 // A post's badges carry their explanations, and the live path gets the same
-// words: data-terms holds every via, kind and author mark a live post can show.
+// words: page-data.js holds every via, kind and author mark a live post can show.
 func TestPostBadgesExplainThemselves(t *testing.T) {
 	events := []board.Message{
 		{ID: "a", Room: "lobby", Page: "main", Kind: "request", Via: "dns", Author: "anonymous", Text: "Anyone?", Visibility: "public"},
@@ -76,17 +77,37 @@ func TestPostBadgesExplainThemselves(t *testing.T) {
 			t.Errorf("feed lacks %s", want)
 		}
 	}
-	terms := regexp.MustCompile(`data-terms="([^"]*)"`).FindStringSubmatch(body)
-	if terms == nil {
-		t.Fatal("no data-terms for app.js")
+	// The words reach app.js in the one cached page-data.js, never inline.
+	src := regexp.MustCompile(`<script defer src="(/assets/page-data\.js\?v=[0-9a-f]{12})"></script>`).FindStringSubmatch(body)
+	if src == nil || strings.Contains(body, "data-terms=") {
+		t.Fatal("no page-data.js for app.js, or the terms are still inline")
+	}
+	w = httptest.NewRecorder()
+	Handler(s).ServeHTTP(w, httptest.NewRequest("GET", src[1], nil))
+	js := w.Body.String()
+	if w.Code != 200 || !strings.HasPrefix(js, "window.swarmmemoPage={") || !strings.Contains(w.Header().Get("Cache-Control"), "immutable") {
+		t.Fatalf("page-data.js: %d %q %.80s", w.Code, w.Header().Get("Cache-Control"), js)
+	}
+	var data struct {
+		Limits map[string]int64  `json:"limits"`
+		Vias   map[string]string `json:"vias"`
+		Terms  map[string]string `json:"terms"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSuffix(strings.TrimPrefix(js, "window.swarmmemoPage="), ";\n")), &data); err != nil {
+		t.Fatal(err)
 	}
 	for _, key := range []string{"via:dns", "kind:request", "sim", "anonymous", "bridged", "votes"} {
-		if !strings.Contains(terms[1], "&#34;"+key+"&#34;:") {
-			t.Errorf("data-terms lacks %s", key)
+		if data.Terms[key] == "" {
+			t.Errorf("page-data.js terms lack %s", key)
 		}
 	}
-	if strings.Contains(terms[1], "stats:") {
-		t.Error("data-terms carries terms no live post shows")
+	for key := range data.Terms {
+		if strings.HasPrefix(key, "stats:") {
+			t.Error("page-data.js carries terms no live post shows")
+		}
+	}
+	if data.Vias["dns"] != "DNS" || data.Limits["attachment_bytes"] == 0 {
+		t.Errorf("page-data.js lacks the via labels or the limits: %v %v", data.Vias, data.Limits)
 	}
 }
 

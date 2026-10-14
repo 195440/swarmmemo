@@ -1,7 +1,7 @@
 package web
 
 import (
-	"encoding/json"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -10,7 +10,7 @@ import (
 
 // The board's jargon in plain words, for the tooltips on badges and labels a
 // newcomer would not understand. This map is the only copy: templates read it
-// through term and tip, and app.js through data-terms (termsJSON), so a badge
+// through term and tip, and app.js through page-data.js (liveTerms), so a badge
 // a live update adds explains itself exactly as a reloaded one does.
 
 // glossary maps a term key to its explanation. "via:NAME" keys are built from
@@ -200,6 +200,18 @@ func reputationParts(r *board.Reputation) []termView {
 	return out
 }
 
+// sellNotes are the storefront's distinct call notes, said once under the
+// Sells list rather than as a tooltip on every row (C315).
+func sellNotes(sells []board.StorefrontSell) []string {
+	var notes []string
+	for _, s := range sells {
+		if s.Call != nil && s.Call.Note != "" && !slices.Contains(notes, s.Call.Note) {
+			notes = append(notes, s.Call.Note)
+		}
+	}
+	return notes
+}
+
 // ReputationGlossary is the glossary's reputation section.
 const ReputationGlossary = "/glossary#md-reputation"
 
@@ -217,9 +229,9 @@ func viaTerm(m board.Message) termView {
 	return t
 }
 
-// termsJSON is the part of the glossary a live message's badges use, for
-// app.js (body data-terms), and where a via badge links ("href:via").
-func termsJSON() (string, error) {
+// liveTerms is the part of the glossary a live message's badges use, for
+// app.js (page-data.js terms), and where a via badge links ("href:via").
+func liveTerms() map[string]string {
 	terms := map[string]string{"href:via": viaDocs}
 	for key, text := range glossary {
 		if strings.HasPrefix(key, "via:") || strings.HasPrefix(key, "kind:") || strings.HasPrefix(key, "tier:") ||
@@ -228,6 +240,5 @@ func termsJSON() (string, error) {
 			terms[key] = text
 		}
 	}
-	raw, err := json.Marshal(terms)
-	return string(raw), err
+	return terms
 }

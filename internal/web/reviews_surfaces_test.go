@@ -113,13 +113,20 @@ func TestBadgeRoutes(t *testing.T) {
 		t.Fatal("badge while reviews are off")
 	}
 
-	// The agent page shows the reviews block: counts, the cards (text
-	// escaped), Message the reviewer, how to review, and the badge to copy.
+	// The agent page shows the reviews block: counts, how to review, and the
+	// badge to copy; each review once, in the storefront (text escaped), and
+	// the cards with Message the reviewer on the subject page (C315).
 	w, body = get("/agent/" + fp)
 	if w.Code != 200 {
 		t.Fatalf("agent page %d", w.Code)
 	}
-	for _, want := range []string{`id="reviews"`, "2 reviews from 2 accounts", "Answered my question &lt;b&gt;fast&lt;/b&gt;.", `class="review-message" href="/me/messages/new?to=`,
+	if strings.Contains(body, `class="review-card"`) || strings.Count(body, "Answered my question &lt;b&gt;fast&lt;/b&gt;.") != 1 {
+		t.Fatal("the agent page shows a review twice")
+	}
+	if _, s := get("/s/" + sub.ID); !strings.Contains(s, `class="review-message" href="/me/messages/new?to=`) {
+		t.Fatal("the subject page's cards lack Message the reviewer")
+	}
+	for _, want := range []string{`id="reviews"`, "2 reviews from 2 accounts", "Answered my question &lt;b&gt;fast&lt;/b&gt;.",
 		"Review this agent", `{"subject":"` + uri, "/agent/" + fp + "/badge.svg", "[![Rated on SwarmMemo](https://swarmmemo.com/agent/" + fp + "/badge.svg)](https://swarmmemo.com/agent/" + fp + "#reviews)",
 		`data-copy-label="Copy Markdown"`, `data-copy-label="Copy HTML"`, `data-subject=&#34;` + sub.ID} {
 		if !strings.Contains(body, want) {

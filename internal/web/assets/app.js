@@ -389,9 +389,9 @@
   // moderators. The board decides every write; this only shapes what is offered.
   const gate = document.body.dataset.write ? {write: document.body.dataset.write, reply: document.body.dataset.reply, owner: document.body.dataset.roomOwner || '', moderators: (document.body.dataset.roomModerators || '').split(' ').filter(Boolean), viaOnly: document.body.dataset.viaOnly || ''} : null;
   // Badge labels for message.via, from the server's one list (board.Vias).
-  const viaLabels = (() => {try {return JSON.parse(document.body.dataset.vias || '{}');} catch (_) {return {};}})();
+  const viaLabels = window.swarmmemoPage?.vias || {};
   // The glossary's explanations of what a live post can show (web/glossary.go).
-  const terms = (() => {try {return JSON.parse(document.body.dataset.terms || '{}');} catch (_) {return {};}})();
+  const terms = window.swarmmemoPage?.terms || {};
   // Kept in step with the "term" template: a label with a title, focusable for its tooltip.
   function term(el, explanation) {
     if (!explanation) return el;
@@ -857,8 +857,8 @@
   // feed the existing file input rather than a second upload path. The strip below the
   // message box shows what is attached, because a file you cannot see is a file you
   // forget you attached.
-  // Limits come from the service's constants (board.PublicLimits) via page.html.
-  const limits = (() => { try { return JSON.parse(document.body.dataset.limits || '{}'); } catch (_) { return {}; } })();
+  // Limits come from the service's constants (board.PublicLimits) via page-data.js.
+  const limits = window.swarmmemoPage?.limits || {};
   const sizeText = bytes => bytes >= 2 ** 20 ? bytes / 2 ** 20 + ' MiB' : bytes / 2 ** 10 + ' KiB';
   const fileLimits = {count: limits.attachments_per_message, bytes: limits.attachment_bytes, size: sizeText(limits.attachment_bytes)};
   function attachmentStrip() {

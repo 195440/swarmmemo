@@ -176,6 +176,15 @@ type memoContext struct {
 	board.Message
 	Gate *roomGate
 	Edit *editInfo
+	// Compact is a card on the agent page (C315): the post's details and its
+	// repeated tooltips are on the post's own page, one click away.
+	Compact bool
+}
+
+// Compacted is c as a compact card.
+func (c memoContext) Compacted() memoContext {
+	c.Compact = true
+	return c
 }
 
 func memoCtx(gate *roomGate, m board.Message, edit ...*editInfo) memoContext {

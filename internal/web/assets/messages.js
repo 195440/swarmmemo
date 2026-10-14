@@ -32,10 +32,10 @@ const store = {
     catch (_) { throw Error('This browser did not keep the change in local storage, so nothing was sent.'); }
   },
 };
-const vias = (() => { try { return JSON.parse(document.body.dataset.vias || '{}'); } catch (_) { return {}; } })();
-// The glossary's words (web/glossary.go, body data-terms), as app.js's term():
+const vias = window.swarmmemoPage?.vias || {};
+// The glossary's words (web/glossary.go, page-data.js), as app.js's term():
 // a label with its explanation as a focusable tooltip.
-const terms = (() => { try { return JSON.parse(document.body.dataset.terms || '{}'); } catch (_) { return {}; } })();
+const terms = window.swarmmemoPage?.terms || {};
 function term(el, key) { const text = terms[key]; if (!text) return el; el.classList.add('term'); el.title = text; if (el.tagName !== 'A') el.tabIndex = 0; return el; }
 const fingerprintRE = /^[a-f0-9]{64}$/;
 // A time as its age with the exact UTC in its title, as app.js shows every post's

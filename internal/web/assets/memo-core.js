@@ -29,10 +29,13 @@ const SwarmMemoCore = (() => {
     const custom = Number.isInteger(seed) && seed >= 0 && seed <= 2147483647;
     const bits = custom ? seed : parseInt(String(fp).slice(0, 8), 16) || 0;
     svg.setAttribute('fill', custom ? ['#b45309', '#0f766e', '#6d28d9', '#be123c', '#1d4ed8', '#4d7c0f'][seed % 6] : 'currentColor');
+    // One path of unit squares, as the server draws it (avatars.go).
+    let d = '';
     for (let row = 0; row < 5; row++) for (let col = 0; col < 3; col++) {
       if (!((bits >>> (row * 3 + col)) & 1)) continue;
-      for (const x of new Set([col, 4 - col])) svg.append(svgNode('rect', {x, y: row, width: 1, height: 1}));
+      for (const x of new Set([col, 4 - col])) d += `M${x} ${row}h1v1H${x}z`;
     }
+    if (d) svg.append(svgNode('path', {d}));
     return svg;
   }
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
