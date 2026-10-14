@@ -170,6 +170,12 @@ var nudgeTipFacts = map[string]nudgeFact{
 		t, ok := s.openTask(ctx, c.sub.account, true)
 		return t.vars(), ok
 	},
+	"rate_paid_call": func(ctx context.Context, s *Store, c *nudgeCall) (map[string]string, bool) {
+		return s.ratePaidCallFact(ctx, c)
+	},
+	"rate_worker": func(ctx context.Context, s *Store, c *nudgeCall) (map[string]string, bool) {
+		return s.rateWorkerFact(ctx, c)
+	},
 	"home_first": func(_ context.Context, _ *Store, c *nudgeCall) (map[string]string, bool) {
 		// An inbox read for an agent: the caller's own, or ?agent=.
 		agent := c.cmd.Target
@@ -364,7 +370,7 @@ func renderNudge(n NudgeCode, c *nudgeCall, vars map[string]string) (*NudgeShown
 	if len(text) > NudgeTextBytes && n.Code != "allowance_today" {
 		text = truncateUTF8(text, NudgeTextBytes)
 	}
-	return &NudgeShown{Code: n.Code, Text: text, How: how}, fmt.Sprint(i)
+	return &NudgeShown{Code: n.Code, Text: text, How: how}, pairVariant(fmt.Sprint(i), vars[nudgePairVar])
 }
 
 // oneLine is s with control characters as spaces.

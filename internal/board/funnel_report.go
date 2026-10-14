@@ -2,6 +2,8 @@ package board
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -65,6 +67,7 @@ type FunnelReport struct {
 	Expansion   FunnelExpansion   `json:"expansion"`
 	Lapsing     []FunnelLapsing   `json:"lapsing"`
 	Nudges      []FunnelNudge     `json:"nudges"`
+	Loop        FunnelLoop        `json:"loop"`
 	Feedback    FunnelFeedback    `json:"feedback"`
 }
 
@@ -624,6 +627,9 @@ func (s *Store) FunnelReport(ctx context.Context, q FunnelQuery) (*FunnelReport,
 	if rep.Nudges, err = s.funnelNudges(ctx, q, today, all, active); err != nil {
 		return nil, err
 	}
+	if rep.Loop, err = s.funnelLoop(ctx, q, now, rep.Nudges); err != nil {
+		return nil, err
+	}
 
 	// 7. Feedback.
 	rep.Feedback.ByAbout = map[string]Count{}
@@ -858,6 +864,158 @@ func (s *Store) funnelNudges(ctx context.Context, q FunnelQuery, today int64, al
 		out = append(out, n)
 	}
 	return out, nil
+}
+
+// FunnelLoop is the judgement loop (C306, RFC 0020 §9: a score needs more
+// judges per subject): organic judgements per week, the share of paid
+// calls and accepted works their party rated within FunnelLoopRateDays,
+// and the rating prompts (NudgeCodes with Feature reviews) against the
+// holdout. The exclude list's accounts are left out throughout.
+type FunnelLoop struct {
+	Weeks []FunnelLoopWeek `json:"weeks"`
+	// PaidCalls: offering calls answered and relayed x402 calls done at a
+	// cost, whose caller reviewed them citing call:ID within the window.
+	PaidCalls Rate `json:"paid_calls_rated"`
+	// Works: work.accept verdicts whose requester reviewed the worker
+	// citing work:ID (a rated accept, or a review later) within the window.
+	Works    Rate          `json:"accepted_works_rated"`
+	RateDays int           `json:"rate_days"`
+	Nudges   []FunnelNudge `json:"nudges"`
+}
+
+// FunnelLoopWeek is one week's organic judgements: reviews (not by an
+// importer or the lab), rated accepts (counted apart from reviews) and
+// vouches.
+type FunnelLoopWeek struct {
+	Week         string `json:"week"`
+	Reviews      int    `json:"reviews"`
+	RatedAccepts int    `json:"rated_accepts"`
+	Vouches      int    `json:"vouches"`
+	Total        int    `json:"total"`
+}
+
+// funnelLoopSQL are the loop's reads; ?1 from, ?2 to, ?3 the exclude list
+// as JSON, ?4 the rate window in seconds.
+const (
+	funnelLoopExcluded = `(SELECT value FROM json_each(?3))`
+	// A rated accept's review is posted in the accept's transaction, at its
+	// time, by the requester, citing the work.
+	funnelLoopReviewsSQL = `SELECT r.created_at, EXISTS(SELECT 1 FROM review_evidence v JOIN works w ON v.evidence='work:'||w.id
+ JOIN work_transitions t ON t.work_id=w.id AND t.operation='work.accept' AND t.accepted_at=r.created_at
+ WHERE v.event_id=r.event_id AND w.requester=r.account)
+ FROM reviews r WHERE r.created_at BETWEEN ?1 AND ?2 AND r.relationship NOT IN ('outside_source','lab') AND r.account NOT IN ` + funnelLoopExcluded
+	funnelLoopVouchesSQL = `SELECT created_at FROM endorsement_records WHERE kind='vouch' AND value=1 AND created_at BETWEEN ?1 AND ?2 AND voter_account NOT IN ` + funnelLoopExcluded
+	funnelLoopRatedSQL   = `EXISTS(SELECT 1 FROM review_evidence v JOIN reviews r ON r.event_id=v.event_id WHERE v.evidence=%s AND r.account=%s AND r.created_at<=%s+?4)`
+	funnelLoopCallsSQL   = `SELECT x.rated FROM (
+ SELECT ` + `%[1]s` + ` AS rated, i.account AS who FROM offering_calls c JOIN identities i ON i.id=c.caller
+  WHERE c.caller<>'' AND c.answered_at>0 AND c.answered_at BETWEEN ?1 AND ?2
+ UNION ALL
+ SELECT ` + `%[2]s` + `, s.account FROM service_calls s
+  WHERE s.service='x402' AND s.state='done' AND s.cost>0 AND coalesce(json_extract(s.public,'$.http_status'),0)<400 AND s.created_at BETWEEN ?1 AND ?2
+ ) x WHERE x.who NOT IN ` + funnelLoopExcluded
+	funnelLoopWorksSQL = `SELECT ` + `%s` + ` FROM work_transitions t JOIN works w ON w.id=t.work_id
+ WHERE t.operation='work.accept' AND t.accepted_at BETWEEN ?1 AND ?2 AND w.worker<>'' AND w.worker<>w.requester AND w.requester NOT IN ` + funnelLoopExcluded
+)
+
+// funnelLoop is FunnelReport.Loop: judgements per week over the range,
+// rated shares over the transactions in the range whose window is over,
+// and the rating prompts' rows of nudges.
+func (s *Store) funnelLoop(ctx context.Context, q FunnelQuery, now int64, nudges []FunnelNudge) (FunnelLoop, error) {
+	loop := FunnelLoop{RateDays: FunnelLoopRateDays, Weeks: []FunnelLoopWeek{}}
+	excluded, err := s.funnelExcluded(ctx)
+	if err != nil {
+		return loop, err
+	}
+	excl, _ := json.Marshal(funnelSortedKeys(excluded))
+	window := int64(FunnelLoopRateDays) * 86400
+	weeks := map[int64]*FunnelLoopWeek{}
+	week := func(at int64) *FunnelLoopWeek {
+		w := weekOf(at / 86400)
+		if weeks[w] == nil {
+			weeks[w] = &FunnelLoopWeek{Week: dayString(w)}
+		}
+		return weeks[w]
+	}
+	for d := weekOf(q.From / 86400); d <= q.To/86400; d += 7 {
+		week(d * 86400)
+	}
+	scan := func(query string, to int64, each func(*sql.Rows) error) error {
+		rows, err := s.db.QueryContext(ctx, query, q.From, to, string(excl), window)
+		if err != nil {
+			return fmt.Errorf("funnel loop: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			if err = each(rows); err != nil {
+				return err
+			}
+		}
+		return rows.Err()
+	}
+	var at int64
+	var flag bool
+	if err = scan(funnelLoopReviewsSQL, q.To, func(r *sql.Rows) error {
+		if err := r.Scan(&at, &flag); err != nil {
+			return err
+		}
+		if flag {
+			week(at).RatedAccepts++
+		} else {
+			week(at).Reviews++
+		}
+		return nil
+	}); err != nil {
+		return loop, err
+	}
+	if err = scan(funnelLoopVouchesSQL, q.To, func(r *sql.Rows) error {
+		if err := r.Scan(&at); err != nil {
+			return err
+		}
+		week(at).Vouches++
+		return nil
+	}); err != nil {
+		return loop, err
+	}
+	for _, d := range sortedInt64(weeks) {
+		w := weeks[d]
+		w.Total = w.Reviews + w.RatedAccepts + w.Vouches
+		loop.Weeks = append(loop.Weeks, *w)
+	}
+	// The rated shares: only transactions whose window is over.
+	closed := min(q.To, now-window)
+	tally := func(query string) (Rate, error) {
+		k, n := 0, 0
+		if closed < q.From {
+			return rate(0, 0), nil
+		}
+		err := scan(query, closed, func(r *sql.Rows) error {
+			if err := r.Scan(&flag); err != nil {
+				return err
+			}
+			n++
+			if flag {
+				k++
+			}
+			return nil
+		})
+		return rate(k, n), err
+	}
+	calls := fmt.Sprintf(funnelLoopCallsSQL,
+		fmt.Sprintf(funnelLoopRatedSQL, "'call:'||c.id", "i.account", "c.answered_at"),
+		fmt.Sprintf(funnelLoopRatedSQL, "'call:'||s.id", "s.account", "coalesce(nullif(s.finished_at,0),s.created_at)"))
+	if loop.PaidCalls, err = tally(calls); err != nil {
+		return loop, err
+	}
+	if loop.Works, err = tally(fmt.Sprintf(funnelLoopWorksSQL, fmt.Sprintf(funnelLoopRatedSQL, "'work:'||w.id", "w.requester", "t.accepted_at"))); err != nil {
+		return loop, err
+	}
+	codes := rateCodes()
+	for _, n := range nudges {
+		if slices.Contains(codes, n.Code) {
+			loop.Nudges = append(loop.Nudges, n)
+		}
+	}
+	return loop, nil
 }
 
 func orNone(v string) string {

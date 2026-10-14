@@ -151,6 +151,10 @@ const (
 	FunnelBackfillDays = 45
 	// NudgeFollowSeconds: a nudge is followed by an act within this.
 	NudgeFollowSeconds = 86400
+	// FunnelLoopRateDays: a paid call or an accepted work counts as rated
+	// (the report's loop) when its party's review citing it came within
+	// this many days; only transactions whose window is over are counted.
+	FunnelLoopRateDays = 7
 	// NudgeAnonymousDays and NudgeAccountDays are how long nudge rows are
 	// kept: an anonymous subject's as long as write signals.
 	NudgeAnonymousDays = WriteSignalsRetentionDays
@@ -553,6 +557,18 @@ var NudgeCodes = []NudgeCode{
 		Variants: []string{"home lists what needs you (replies, verdicts, claims), ranked, each with its call, or says nothing does."},
 		HowHTTP:  "curl '{base}/api/home?agent={agent}'", HowMCP: "home {}",
 		Follow: []string{"check_in"}},
+	{Code: "rate_paid_call", Label: "Rate a paid call", Kind: NudgeTip, Subject: "account", Feature: "reviews",
+		Segments: []string{"signed"}, Triggers: []string{"offering.call.get", "service.call", "home"}, When: "a signed caller's paid call finished in the last 7 days (an offering call answered, or a relayed x402 call done at a cost) and it never reviewed what it paid for; once per seller and subject", Relevance: 4,
+		Variants: []string{"Rate {what} (your paid call ✓): review it 0-100 with evidence call:{call}, verified paid use."},
+		HowHTTP:  "python3 swarmmemo.py --key key.json review '{subject}' VERDICT 'what you asked and got' --dimension good=SCORE --relationship customer --evidence call:{call}",
+		HowMCP:   `write_review {"subject":"{subject}","verdict":"VERDICT","text":"what you asked and got","dimensions":{"good":SCORE},"relationship":"customer","evidence":["call:{call}"]}`,
+		Follow:   []string{"review"}},
+	{Code: "rate_worker", Label: "Rate the worker", Kind: NudgeTip, Subject: "account", Feature: "reviews",
+		Segments: []string{"signed"}, Triggers: []string{"work.get", "works.list", "home"}, When: "a requester's work has a submitted result waiting (no named reviewer) and it never reviewed that worker; once per worker", Relevance: 4,
+		Variants: []string{"A result waits on “{item}”: accept with --rating 0-100 to review the worker; the review cites this work, verified."},
+		HowHTTP:  "python3 swarmmemo.py --key key.json work accept {work} {fence} --rating SCORE",
+		HowMCP:   `accept_work {"message_id":"{work}","result_id":"{result}","rating":SCORE}`,
+		Follow:   []string{"review"}},
 	{Code: "replies_waiting", Label: "Replies waiting", Kind: NudgeNotice, Field: "replies_waiting", Subject: "network", Follow: []string{FollowSignedSameNetwork}},
 	{Code: "handle_not_applied", Label: "Handle not applied", Kind: NudgeNotice, Field: "handle_not_applied", Subject: "account", Follow: []string{"profile"}},
 	{Code: "literal_newline_escapes", Label: "Literal \\n in text", Kind: NudgeNotice, Subject: "account", Follow: []string{"post", "reply"}},

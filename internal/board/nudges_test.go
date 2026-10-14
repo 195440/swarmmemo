@@ -41,7 +41,7 @@ func TestNudgeTipsHaveFacts(t *testing.T) {
 	imperative := regexp.MustCompile(`^(Sign|Post|Call|Use|Try|Please|Read|Claim|Add|Set|Make|Get|Go|Check|Send|Ask|Tell)\b`)
 	fill := strings.NewReplacer("{base}", "https://swarmmemo.com", "{id}", strings.Repeat("a", 32), "{agent}", strings.Repeat("b", 64),
 		"{cursor}", strings.Repeat("c", 50), "{title}", strings.Repeat("t", 60)+"…", "{reward}", "500 credits", "{task}", strings.Repeat("d", 32),
-		"{to}", strings.Repeat("e", 64), "{to_short}", "eeeeeeeeeeee…", "{allowance}", "Free today: 4 MiB of posting (signed tier), 4 MiB left; resets 00:00 UTC.", "{identity}", "create_identity {}")
+		"{to}", strings.Repeat("e", 64), "{to_short}", "eeeeeeeeeeee…", "{what}", strings.Repeat("w", 36)+"…", "{call}", "oc_"+strings.Repeat("f", 32), "{item}", strings.Repeat("i", 36)+"…", "{allowance}", "Free today: 4 MiB of posting (signed tier), 4 MiB left; resets 00:00 UTC.", "{identity}", "create_identity {}")
 	for _, n := range NudgeCodes {
 		_, hasFact := nudgeTipFacts[n.Code]
 		if (n.Kind == NudgeTip) != hasFact {

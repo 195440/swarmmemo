@@ -18,7 +18,7 @@
 .dash-bars th[scope=row]{white-space:normal;min-width:7em}
 .dash-bars tr.worst .via-bar rect{fill:var(--alert)}
 .dash-bars tr.worst .dash-conv{color:var(--alert);font-weight:600}
-.dash-bars tr.est .via-bar rect,.dash-bars tr.low{opacity:.5}
+.dash-bars tr.est .via-bar rect,.dash-bars tr.low,.dash-rank li.low{opacity:.5}
 /* Retention squares: the cell's ink is its percent (--heat), blank when not yet eligible. */
 .heat{width:auto;border-collapse:separate;border-spacing:3px}
 .heat th,.heat td{border:0;padding:var(--s-1) var(--s-2);white-space:nowrap}

@@ -44,6 +44,7 @@ type funnelDashboard struct {
 	Candidates                    []dashRow
 	Paths                         []dashRow
 	Nudges                        []dashNudge
+	Loop                          dashLoop
 	Feedback, FeedbackTexts       []dashRow
 	LapsingRoles                  []dashRow
 	Lapsing                       []dashLapse
@@ -88,6 +89,23 @@ type dashRow struct {
 }
 
 type dashNudge struct{ Label, Shown, Followed, Holdout, D7 string }
+
+// dashLoop is the judgement loop (board.FunnelLoop): organic judgements per
+// week, the rated shares (Low dimmed below the minimum), and the rating
+// prompts against the holdout.
+type dashLoop struct {
+	Weeks    []dashLoopWeek
+	Rated    []dashLoopRate
+	Nudges   []dashNudge
+	RateDays int
+}
+
+type dashLoopWeek struct{ Week, Reviews, RatedAccepts, Vouches, Total string }
+
+type dashLoopRate struct {
+	Label, Value string
+	Low          bool
+}
 
 type dashLapse struct{ Name, Last, Role, Client string }
 
@@ -169,6 +187,7 @@ func buildFunnelDashboard(rep *board.FunnelReport) *funnelDashboard {
 	d.buildAcquisition(rep)
 	segs := d.buildConverts(rep)
 	d.buildNudges(rep.Nudges)
+	d.buildLoop(rep.Loop)
 	d.buildFeedback(rep.Feedback)
 	d.buildLapsing(rep.Lapsing)
 	d.Takeaways = funnelTakeaways(rep, worst, segs, cohorts)
@@ -633,6 +652,12 @@ func (d *funnelDashboard) buildConverts(rep *board.FunnelReport) []convertSegmen
 }
 
 func (d *funnelDashboard) buildNudges(nudges []board.FunnelNudge) {
+	d.Nudges = nudgeRows(nudges)
+}
+
+// nudgeRows are the nudges that were shown or held out, as table rows.
+func nudgeRows(nudges []board.FunnelNudge) []dashNudge {
+	var out []dashNudge
 	for _, n := range nudges {
 		if n.Shown == 0 && n.HoldoutRows == 0 && n.NetworkShown == 0 && n.NetworkHoldoutRows == 0 {
 			continue
@@ -641,8 +666,31 @@ func (d *funnelDashboard) buildNudges(nudges []board.FunnelNudge) {
 		if n.NetworkShown > 0 {
 			row.Shown += fmt.Sprintf(" + %d anonymous", n.NetworkShown)
 		}
-		d.Nudges = append(d.Nudges, row)
+		out = append(out, row)
 	}
+	return out
+}
+
+func (d *funnelDashboard) buildLoop(l board.FunnelLoop) {
+	d.Loop.RateDays = l.RateDays
+	some := false
+	for _, w := range l.Weeks {
+		some = some || w.Total > 0
+	}
+	if some {
+		for _, w := range l.Weeks {
+			d.Loop.Weeks = append(d.Loop.Weeks, dashLoopWeek{Week: w.Week, Reviews: count(int64(w.Reviews)), RatedAccepts: count(int64(w.RatedAccepts)), Vouches: count(int64(w.Vouches)), Total: count(int64(w.Total))})
+		}
+	}
+	for _, r := range []struct {
+		label string
+		rate  board.Rate
+	}{{"Paid calls rated by their caller", l.PaidCalls}, {"Accepted works rated by their requester", l.Works}} {
+		if r.rate.N > 0 {
+			d.Loop.Rated = append(d.Loop.Rated, dashLoopRate{Label: r.label, Value: rateText(r.rate), Low: r.rate.Low})
+		}
+	}
+	d.Loop.Nudges = nudgeRows(l.Nudges)
 }
 
 func (d *funnelDashboard) buildFeedback(f board.FunnelFeedback) {

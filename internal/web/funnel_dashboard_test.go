@@ -74,7 +74,7 @@ func renderFunnel(t *testing.T, rep *board.FunnelReport) string {
 // Every section is drawn, with its caption, and nothing loads a script.
 func TestFunnelDashboardSections(t *testing.T) {
 	page := renderFunnel(t, funnelFixture())
-	for _, want := range []string{`id="dash-takeaways"`, `class="stat-tiles"`, `id="funnel"`, `id="retention"`, `id="acquisition"`, `id="converts"`, `id="nudges"`, `id="feedback"`, `id="lapsing"`, `class="heat"`, `class="chart-svg"`, `class="spark"`} {
+	for _, want := range []string{`id="dash-takeaways"`, `class="stat-tiles"`, `id="funnel"`, `id="retention"`, `id="acquisition"`, `id="converts"`, `id="nudges"`, `id="loop"`, `id="feedback"`, `id="lapsing"`, `class="heat"`, `class="chart-svg"`, `class="spark"`} {
 		if !strings.Contains(page, want) {
 			t.Errorf("page lacks %s", want)
 		}
@@ -208,7 +208,7 @@ func TestFunnelDashboardTakeaways(t *testing.T) {
 // Empty panels say so in one line instead of an empty table.
 func TestFunnelDashboardNoData(t *testing.T) {
 	page := renderFunnel(t, funnelFixture())
-	for _, want := range []string{"No data yet: no nudge was shown", "No data yet: no feedback"} {
+	for _, want := range []string{"No data yet: no nudge was shown", "No data yet: no feedback", "No data yet: no organic judgement", "No data yet: no rating prompt"} {
 		if strings.Count(page, want) != 1 {
 			t.Errorf("want one %q", want)
 		}
@@ -268,5 +268,23 @@ func TestBarChartPartial(t *testing.T) {
 	}
 	if c.Max != "5" || c.Legend[len(c.Legend)-1].Label != "Partial weeks" {
 		t.Fatalf("scale %s legend %+v", c.Max, c.Legend)
+	}
+}
+
+// The judgement loop panel: weeks with judgements, the rated shares (a
+// low-n one dimmed) and the rating prompts against the holdout.
+func TestFunnelDashboardLoop(t *testing.T) {
+	rep := funnelFixture()
+	rep.Loop = board.FunnelLoop{RateDays: board.FunnelLoopRateDays,
+		Weeks:     []board.FunnelLoopWeek{{Week: "2026-09-21"}, {Week: "2026-09-28", Reviews: 3, RatedAccepts: 2, Vouches: 1, Total: 6}},
+		PaidCalls: board.RateOf(1, 4), Works: board.RateOf(6, 12),
+		Nudges: []board.FunnelNudge{{Code: "rate_paid_call", Label: "Rate a paid call", Shown: 5, Followed: board.RateOf(2, 5), HoldoutRows: 1}}}
+	page := renderFunnel(t, rep)
+	for _, want := range []string{`<a href="#loop">`, `<th scope="row">2026-09-28</th><td class="num">3</td><td class="num">2</td><td class="num">1</td><td class="num">6</td>`,
+		`<li class="low"><span>Paid calls rated by their caller</span><b>25% (1/4)</b>`, `<li><span>Accepted works rated by their requester</span><b>50% (6/12)</b>`,
+		`<th scope="row">Rate a paid call</th><td class="num">5</td><td class="num">40% (2/5)</td>`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("loop panel lacks %s", want)
+		}
 	}
 }

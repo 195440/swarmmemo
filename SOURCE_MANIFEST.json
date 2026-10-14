@@ -1,5 +1,5 @@
 {
-  "allowlist_sha256": "367cbabae02a282a82e954a43625cc97bcdb5397e2981382e77e8322309a05fe",
+  "allowlist_sha256": "a8960c12304e2ee8ea8da1e357ea6fc90b8447555e418cbc16fed82a8b0854f2",
   "files": [
     {
       "mode": "0644",
@@ -346,8 +346,8 @@
     {
       "mode": "0644",
       "path": "cmd/swarmmemo/funnel.go",
-      "sha256": "c40b4bbfce1be4c30566004463e29121827d416b0d10f6aceb22323a07d62049",
-      "size": 6270
+      "sha256": "20f0cde75953a53dbed5c040d5e12620efd0e1e54cdd95d6d689189eb5c92569",
+      "size": 7076
     },
     {
       "mode": "0644",
@@ -688,8 +688,8 @@
     {
       "mode": "0644",
       "path": "docs/PROTOCOL.md",
-      "sha256": "64ef8847dbf382c49c06c0bd85f4164510fb744ae5bb8d601901f880f29330d2",
-      "size": 484481
+      "sha256": "fd90287b397e19a2f33acad317ecee651b2851126f9d05db283dc9b7fab5e5b3",
+      "size": 485074
     },
     {
       "mode": "0644",
@@ -1576,8 +1576,8 @@
     {
       "mode": "0644",
       "path": "internal/board/funnel.go",
-      "sha256": "1abdebab58e6a333f27ad3b3d7fbb6123e4c8e924b253415686d9c4e9f6072b7",
-      "size": 32973
+      "sha256": "62aa0a4f3876780d60bb294db5a042145d4799ce1e913a4b7c7a73a262aba223",
+      "size": 34837
     },
     {
       "mode": "0644",
@@ -1588,20 +1588,20 @@
     {
       "mode": "0644",
       "path": "internal/board/funnel_report.go",
-      "sha256": "6c151c72b701e25242a1cb0f3008ee56c94955c1bc14a36fe01715b518238bfc",
-      "size": 33665
+      "sha256": "526009423e58fe1cb884becbd1ca4514d3275d5eb0b99170a91dd9c6e95ed78c",
+      "size": 39822
     },
     {
       "mode": "0644",
       "path": "internal/board/funnel_store.go",
-      "sha256": "18e128c59d9d6a9aef493e6f84247b87982a05ffc4782adc14b7199f0f7410f6",
-      "size": 48428
+      "sha256": "adf3843e9217f66787862a516fbeee315390cf874d8c3573f1b9701a88c36f7f",
+      "size": 49053
     },
     {
       "mode": "0644",
       "path": "internal/board/funnel_test.go",
-      "sha256": "4471d5c31ce3317b81c8cd225e62a7183dedfcef5a27fffedb50986eb2a5665c",
-      "size": 46439
+      "sha256": "230e5b37431dc298317a8e9d540df33e44de96e474d8ac5b7ea18ae6c62ef0b7",
+      "size": 46469
     },
     {
       "mode": "0644",
@@ -2026,14 +2026,26 @@
     {
       "mode": "0644",
       "path": "internal/board/nudges.go",
-      "sha256": "d015665879f3a29566db563e7270a2fd765cd82032920ce07afb59651673eea8",
-      "size": 17726
+      "sha256": "fb4940cab786087849a541fa39c6ff416007f9fab766b274e36597ddaf8add4a",
+      "size": 18028
+    },
+    {
+      "mode": "0644",
+      "path": "internal/board/nudges_judgements.go",
+      "sha256": "6043e7a3b0e61cc19b80648bb2223aa1e3b0f3cc6d8a75f4bee15cd6fcbf3dca",
+      "size": 11232
+    },
+    {
+      "mode": "0644",
+      "path": "internal/board/nudges_judgements_test.go",
+      "sha256": "dd53ee6fd1a7daada18964a5de9c3150f27816a71e10a192835bd5c1b7a2082f",
+      "size": 15231
     },
     {
       "mode": "0644",
       "path": "internal/board/nudges_test.go",
-      "sha256": "4edf604691ae78d4bc56974412ac5975692e8069cf9269b82fa36efe6a0d3210",
-      "size": 15952
+      "sha256": "6addf0de5cf8fcaff1ff323a0322caa698c3047fdc0c7ced0562c08cc75e8a47",
+      "size": 16075
     },
     {
       "mode": "0644",
@@ -7006,8 +7018,8 @@
     {
       "mode": "0644",
       "path": "internal/web/assets/funnel.css",
-      "sha256": "070711cccce9a9223cdc0dbc5f8d198476e060234bf4be1b9663dde695c8cae1",
-      "size": 2935
+      "sha256": "15d8afe7123a45aef455698266b792daf2d588f3ddd718da1d26236e8de04982",
+      "size": 2953
     },
     {
       "mode": "0644",
@@ -7432,8 +7444,8 @@
     {
       "mode": "0644",
       "path": "internal/web/funnel_dashboard.go",
-      "sha256": "7a6bef6864f4aa7bc2ed99bf8879299c9dda078951df98a1c340b6e1d454c1d4",
-      "size": 27772
+      "sha256": "b9ea57889a161af8a0ea0f02ba1e477d5877e69be205a061e52db4c3789b4fee",
+      "size": 29237
     },
     {
       "mode": "0644",
@@ -7444,8 +7456,8 @@
     {
       "mode": "0644",
       "path": "internal/web/funnel_dashboard_test.go",
-      "sha256": "99d8aeddbaafa9c32763b3a23df6f2059670a2c35880d2027760e7cb1c433ee0",
-      "size": 12388
+      "sha256": "25072148e2b0c884c2375422db973641d03cc270b43bd5c482c69282b4d6b018",
+      "size": 13624
     },
     {
       "mode": "0644",
@@ -8080,8 +8092,8 @@
     {
       "mode": "0644",
       "path": "internal/web/templates/funnel.html",
-      "sha256": "103fe3347fb55a09e38524b15a381293fd8922a882777fcbf6091da2295ddaa1",
-      "size": 8654
+      "sha256": "6d7689a514c8a7f95f313d1b3483390ef3ca8df984ba656bb5fbe53d97642891",
+      "size": 10667
     },
     {
       "mode": "0644",

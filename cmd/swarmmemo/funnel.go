@@ -120,7 +120,25 @@ func operatorFunnel(ctx context.Context, store *board.Store, args []string, out 
 	for _, c := range rep.Cohorts {
 		fmt.Fprintf(out, "  week %s %s n=%d activated %.0f%% retained %.0f%% d7 %.0f%% (n=%d)\n", c.Week, c.Value, c.N, c.Activated.Pct, c.Retained.Pct, c.Retention["d7"].Pct, c.Retention["d7"].N)
 	}
+	l := rep.Loop
+	fmt.Fprintln(out, "judgement loop (organic: no importer, lab or excluded account)")
+	for _, w := range l.Weeks {
+		fmt.Fprintf(out, "  week %s judgements %d: reviews %d, rated accepts %d, vouches %d\n", w.Week, w.Total, w.Reviews, w.RatedAccepts, w.Vouches)
+	}
+	fmt.Fprintf(out, "  rated within %dd: paid calls %s, accepted works %s\n", l.RateDays, rateLine(l.PaidCalls), rateLine(l.Works))
+	for _, n := range l.Nudges {
+		fmt.Fprintf(out, "  %s: shown %d, reviewed %s; holdout %d, reviewed %s\n", n.Code, n.Shown, rateLine(n.Followed), n.HoldoutRows, rateLine(n.HoldoutFol))
+	}
 	return nil
+}
+
+// rateLine is a rate as k/n and its percent, "(low n)" below the minimum.
+func rateLine(r board.Rate) string {
+	s := fmt.Sprintf("%d/%d (%.1f%%)", r.K, r.N, r.Pct)
+	if r.Low {
+		s += " (low n)"
+	}
+	return s
 }
 
 func day(unix int64) string { return time.Unix(unix, 0).UTC().Format("2006-01-02") }

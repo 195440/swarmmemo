@@ -182,6 +182,10 @@ func (s *Store) recordAct(ctx context.Context, a actor, cmd Command, res Result,
 			bits |= ActBit("check_in")
 		}
 	}
+	if a.signed && reviewCommand(cmd) {
+		// Seen live too, so a rating prompt's follow is matched (C306).
+		bits |= ActBit("review")
+	}
 	family := ClientFamilyFrom(ctx)
 	client := ClientNameOf(RequestSignalsFrom(ctx).UserAgent)
 	ref := ""
@@ -253,6 +257,21 @@ func (s *Store) funnelFlushSoon(due bool) {
 			}
 		}()
 	}
+}
+
+// reviewCommand reports whether an accepted command wrote a review: a post
+// of kind review in room reviews, or a rated work.accept (data review).
+func reviewCommand(cmd Command) bool {
+	switch cmd.Operation {
+	case "post":
+		return cmd.Room == ReviewsRoom && cmd.Kind == "review"
+	case "work.accept":
+		var d struct {
+			Review json.RawMessage `json:"review"`
+		}
+		return json.Unmarshal([]byte(cmd.Data), &d) == nil && len(d.Review) > 0 && string(d.Review) != "null"
+	}
+	return false
 }
 
 // liveKinds are the act kinds a command shows at once, for nudge follow

@@ -11,7 +11,7 @@ drawn with the /stats templates (stat-tiles, line-chart). Never public. */}}
 <h1>Funnel</h1>
 <p class="dash-meta">{{.Range}} · generated {{.Generated}} · {{.Scope}}</p>
 <section class="dash-takeaways" aria-labelledby="dash-takeaways"><h2 id="dash-takeaways">Key takeaways</h2><ul>{{range .Takeaways}}<li>{{.}}</li>{{end}}</ul></section>
-<nav class="stats-toc" aria-label="On this page"><a href="#funnel">Funnel</a><a href="#retention">Retention</a><a href="#acquisition">Acquisition</a><a href="#converts">What converts</a><a href="#nudges">Nudges</a><a href="#feedback">Feedback</a><a href="#lapsing">Lapsing</a></nav>
+<nav class="stats-toc" aria-label="On this page"><a href="#funnel">Funnel</a><a href="#retention">Retention</a><a href="#acquisition">Acquisition</a><a href="#converts">What converts</a><a href="#nudges">Nudges</a><a href="#loop">Judgement loop</a><a href="#feedback">Feedback</a><a href="#lapsing">Lapsing</a></nav>
 {{template "stat-tiles" .Tiles}}
 
 <section class="stats-section" aria-labelledby="funnel"><h2 id="funnel">Funnel</h2>
@@ -59,6 +59,19 @@ drawn with the /stats templates (stat-tiles, line-chart). Never public. */}}
 <thead><tr><th scope="col">Nudge</th><th scope="col" class="num">Shown</th><th scope="col" class="num">Followed</th><th scope="col" class="num">Holdout followed</th><th scope="col" class="num">D7 shown / holdout</th></tr></thead>
 <tbody>{{range .Nudges}}<tr><th scope="row">{{.Label}}</th><td class="num">{{.Shown}}</td><td class="num">{{.Followed}}</td><td class="num">{{.Holdout}}</td><td class="num">{{.D7}}</td></tr>{{end}}</tbody>
 </table></div>{{else}}<p class="dash-empty">No data yet: no nudge was shown in this range.</p>{{end}}
+</section>
+
+<section class="stats-section" aria-labelledby="loop"><h2 id="loop">Judgement loop</h2>
+<p class="dash-caption">Organic judgements per week: reviews (not by the importer or the lab), rated accepts and vouches, operator accounts left out. Then the share of paid calls and accepted works their party reviewed within {{.Loop.RateDays}} days, counting only those whose window is over, and the rating prompts against the holdout.</p>
+{{if .Loop.Weeks}}<div class="table-scroll"><table class="via-table">
+<thead><tr><th scope="col">Week of</th><th scope="col" class="num">Reviews</th><th scope="col" class="num">Rated accepts</th><th scope="col" class="num">Vouches</th><th scope="col" class="num">Total</th></tr></thead>
+<tbody>{{range .Loop.Weeks}}<tr><th scope="row">{{.Week}}</th><td class="num">{{.Reviews}}</td><td class="num">{{.RatedAccepts}}</td><td class="num">{{.Vouches}}</td><td class="num">{{.Total}}</td></tr>{{end}}</tbody>
+</table></div>{{else}}<p class="dash-empty">No data yet: no organic judgement in this range.</p>{{end}}
+{{if .Loop.Rated}}<ul class="dash-rank">{{range .Loop.Rated}}<li{{if .Low}} class="low"{{end}}><span>{{.Label}}</span><b>{{.Value}}</b></li>{{end}}</ul>{{else}}<p class="dash-empty">No data yet: no paid call or accepted work whose {{.Loop.RateDays}}-day window is over.</p>{{end}}
+{{if .Loop.Nudges}}<div class="table-scroll"><table class="via-table">
+<thead><tr><th scope="col">Prompt</th><th scope="col" class="num">Shown</th><th scope="col" class="num">Reviewed within a day</th><th scope="col" class="num">Holdout reviewed</th><th scope="col" class="num">D7 shown / holdout</th></tr></thead>
+<tbody>{{range .Loop.Nudges}}<tr><th scope="row">{{.Label}}</th><td class="num">{{.Shown}}</td><td class="num">{{.Followed}}</td><td class="num">{{.Holdout}}</td><td class="num">{{.D7}}</td></tr>{{end}}</tbody>
+</table></div>{{else}}<p class="dash-empty">No data yet: no rating prompt was shown or held out in this range.</p>{{end}}
 </section>
 
 <section class="stats-section" aria-labelledby="feedback"><h2 id="feedback">Feedback</h2>
