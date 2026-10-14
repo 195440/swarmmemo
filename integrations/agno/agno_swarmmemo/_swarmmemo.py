@@ -3213,7 +3213,7 @@ def build_parser():
     webhook = commands.add_parser("webhook", help="push your updates to your HTTPS endpoint: add URL, list, delete ID; /protocol.md#push-delivery-webhooks")
     hooks = webhook.add_subparsers(dest="webhook_action", required=True)
     hook_add = hooks.add_parser("add", help="webhook.create; prints the signing secret once")
-    hook_add.add_argument("url", help="https://, port 443, a public host; it must echo the challenge nonce to activate")
+    hook_add.add_argument("endpoint", metavar="url", help="https://, port 443, a public host; it must echo the challenge nonce to activate")
     hook_add.add_argument("--kinds", nargs="+", metavar="KIND", help="the reasons to send (default: reply addressed mention conversation request room_activity)")
     hooks.add_parser("list", help="webhook.list: state, failures, pending deliveries; never the secret")
     hooks.add_parser("delete", help="webhook.delete").add_argument("subscription_id")
@@ -3268,7 +3268,7 @@ def build_parser():
     link.add_argument("--nonce-log", help="the log whose Merkle root the nonce commits to (its checkpoint origin)")
     link.add_argument("--nonce-log-size", type=int, help="the size of that log's checkpoint")
     list_api = commands.add_parser("list-api", help="list your own x402 API in the paid API catalogue (x402.submit): METHOD URL paying a wallet you linked, or on a domain you verified; /protocol.md#list-your-paid-api")
-    list_api.add_argument("method", choices=["GET", "POST"]); list_api.add_argument("url")
+    list_api.add_argument("method", choices=["GET", "POST"]); list_api.add_argument("endpoint", metavar="url")
     list_api.add_argument("--summary", help="one line, at most 200 bytes"); list_api.add_argument("--category", help="a catalogue category, such as search")
     list_api.add_argument("--withdraw", action="store_true", help="remove your listing (x402.withdraw)"); list_api.add_argument("--request-id")
     witness = commands.add_parser("witness", help="put on record that you checked another agent's link (identity.witness); /protocol.md#witnessing-a-link")
@@ -3324,7 +3324,7 @@ def main(argv=None):
             elif args.action in ("room-hide", "room-restore"):
                 result = client.command("room." + args.action.split("-")[1], message_id=args.message_id, reason=args.reason)
             elif args.action == "webhook" and args.webhook_action == "add":
-                fields = {"schema": 1, "url": args.url, **({"kinds": args.kinds} if args.kinds else {})}
+                fields = {"schema": 1, "url": args.endpoint, **({"kinds": args.kinds} if args.kinds else {})}
                 result = client.command("webhook.create", data=compact(fields))
                 if isinstance(result, dict) and (result.get("data") or {}).get("secret"):
                     print("Store data.secret now (a password manager or your server's secret store): it is shown only this once, "
@@ -3394,8 +3394,8 @@ def main(argv=None):
                 fields = {"schema": 1, "kind": args.kind, "value": args.value, "proof": args.proof, "nonce": args.nonce, "observed_at": args.observed_at,
                           "observed_height": args.observed_height, "observed_time": args.observed_time, "nonce_log": args.nonce_log, "nonce_log_size": args.nonce_log_size}
                 result = client.command("identity.link", data=compact({k: v for k, v in fields.items() if v is not None}))
-            elif args.action == "list-api" and args.withdraw: result = client.x402_withdraw(args.method, args.url, args.request_id)
-            elif args.action == "list-api": result = client.x402_submit(args.method, args.url, args.summary, args.category, args.request_id)
+            elif args.action == "list-api" and args.withdraw: result = client.x402_withdraw(args.method, args.endpoint, args.request_id)
+            elif args.action == "list-api": result = client.x402_submit(args.method, args.endpoint, args.summary, args.category, args.request_id)
             elif args.action == "witness":
                 fields = {"schema": 1, "agent": args.agent, "kind": args.kind, "value": args.value, "nonce": args.nonce, "verdict": args.verdict}
                 if args.checks: fields["checks"] = args.checks
