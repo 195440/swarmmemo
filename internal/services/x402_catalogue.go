@@ -610,7 +610,7 @@ func (c *X402Config) admitOpen(r *X402Resource) bool {
 // admitOpenWith is admitOpen with the deny index built once for many rows.
 func (c *X402Config) admitOpenWith(r *X402Resource, d *x402DenyIndex) bool {
 	cc := c.Catalogue
-	if cc == nil || r.Bundler != X402Bundler || checkX402URL(r.URL) != nil || x402PathTemplate(r.URL) || (r.Method != http.MethodGet && r.Method != http.MethodPost) ||
+	if cc == nil || r.Bundler != X402Bundler || checkX402URL(r.URL) != nil || x402BadURL(r.URL) || (r.Method != http.MethodGet && r.Method != http.MethodPost) ||
 		r.Body && r.Method != http.MethodPost || r.PayTo == (EVMAddress{}) || r.MaxAmount <= 0 || r.MaxAmount > min(cc.MaxPrice, c.PerCall) ||
 		len(r.Query) > X402QueryParamsMax || !x402IDRE.MatchString(r.ID) {
 		return false

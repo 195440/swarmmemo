@@ -59,6 +59,36 @@ func glossaryBanned(t *testing.T) []bannedPhrase {
 	return out
 }
 
+// glossaryDontSay parses the entries' "Don't say:" lists into banned
+// phrases, the entry's word being what to say instead. A one-word synonym
+// ("user", "event", "order") is also an everyday word, and a synonym with a
+// qualifier ("bot (for a persona)") is banned only in that sense, so only
+// the unqualified phrases of two or more words are enforced: those can only
+// mean the concept.
+func glossaryDontSay(t *testing.T) []bannedPhrase {
+	t.Helper()
+	entry := regexp.MustCompile(`(?m)^- \*\*([^*]+)\*\*:.*Don't say: ([^.]*)\.`)
+	var out []bannedPhrase
+	for _, m := range entry.FindAllStringSubmatch(string(publicdocs.Glossary()), -1) {
+		for _, phrase := range strings.Split(m[2], ",") {
+			phrase = strings.TrimSpace(phrase)
+			if strings.ContainsAny(phrase, "()`") || !strings.Contains(phrase, " ") {
+				continue
+			}
+			words := strings.Fields(phrase)
+			for i, w := range words {
+				words[i] = regexp.QuoteMeta(w)
+			}
+			re := regexp.MustCompile(`(?i)(?:^|[^\w\-./#@~])` + strings.Join(words, `\s+`) + `(?:$|[^\w\-])`)
+			out = append(out, bannedPhrase{phrase, m[1], re})
+		}
+	}
+	if len(out) < 5 {
+		t.Fatalf("docs/GLOSSARY.md: only %d \"Don't say\" phrases parsed; the parser is broken", len(out))
+	}
+	return out
+}
+
 var (
 	htmlDropped = regexp.MustCompile(`(?is)<script\b.*?</script>|<style\b.*?</style>|<!--.*?-->`)
 	htmlTag     = regexp.MustCompile(`(?s)<[^>]*>`)
@@ -75,7 +105,7 @@ func visibleText(body string) string {
 }
 
 func TestGlossaryBannedPhrases(t *testing.T) {
-	banned := glossaryBanned(t)
+	banned := append(glossaryBanned(t), glossaryDontSay(t)...)
 	sources := map[string]string{}
 	for source, body := range publicCopy(t) {
 		switch source {

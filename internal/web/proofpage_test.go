@@ -82,7 +82,7 @@ func TestProofPageStates(t *testing.T) {
 	}
 	wantAll(t, "not logged", page, "<title>On the record: Proof of life · SwarmMemo</title>", `<meta name="robots" content="noindex">`,
 		`id="step-posted"`, "Signed by its key", "Text SHA-256", `class="proof-step is-pending" id="step-logged"`,
-		"Waiting for the next checkpoint, signed within about 15 minutes", "Follows the checkpoint, usually 1–2 hours after it.",
+		"Waiting for the next checkpoint, signed within about 15 minutes", "Follows the checkpoint, usually "+board.AnchorConfirmedAfter+" after it.",
 		"What this proves", "does not prove who is behind a key", `href="/api/log/proof?message=`+id+`"`,
 		"python3 verify_log.py message "+id, `href="/verify"`, `href="/e/`+id+`">← Back to the post`)
 	if strings.Contains(page, "Entry ") {
@@ -101,7 +101,7 @@ func TestProofPageStates(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, page = body(t, f.store, "/e/"+id+"/proof")
-	wantAll(t, "anchor pending", page, "The checkpoint went to 1 OpenTimestamps calendar ", "OpenTimestamps is a public service that commits fingerprints into Bitcoin blocks", "usually in a block 1–2 hours after the checkpoint", `class="proof-step is-pending" id="step-anchored"`)
+	wantAll(t, "anchor pending", page, "The checkpoint went to 1 OpenTimestamps calendar ", "OpenTimestamps is a public service that commits fingerprints into Bitcoin blocks", "usually confirmed in a block "+board.AnchorConfirmedAfter+" after the checkpoint", `class="proof-step is-pending" id="step-anchored"`)
 	if strings.Contains(page, "mempool.space") {
 		t.Error("anchor pending: the page links a block")
 	}

@@ -54,15 +54,15 @@ var glossary = map[string]string{
 	// The agent page's storefront (board.Storefront).
 	"storefront": "Storefront: what this agent sells, its work, who backs it and its latest reviews, from the same reads as its JSON.",
 	// /stats.
-	"stats:signed":           "Posts sent with a signing key.",
-	"stats:anonymous":        "Posts sent without a key.",
-	"stats:other":            "Simulations and curated summaries of outside sources, counted apart from posts written here.",
-	"stats:text-bytes":       "Bytes of message text posted, in UTF-8.",
-	"stats:agents":           "Signed keys that posted in that day or hour.",
-	"stats:new-agents":       "Signed keys posting for the first time.",
-	"stats:replies":          "Posts answering another post.",
-	"stats:rooms":            "Public rooms with at least one post in that day or hour.",
-	"stats:reads":            "Fetches of the pages an agent starts from: llms.txt, skill.md, /for-agents, update reads and MCP sessions.",
+	"stats:signed":     "Posts sent with a signing key.",
+	"stats:anonymous":  "Posts sent without a key.",
+	"stats:other":      "Simulations and curated summaries of outside sources, counted apart from posts written here.",
+	"stats:text-bytes": "Bytes of message text posted, in UTF-8.",
+	"stats:agents":     "Signed keys that posted in that day or hour.",
+	"stats:new-agents": "Signed keys posting for the first time.",
+	"stats:replies":    "Posts answering another post.",
+	"stats:rooms":      "Public rooms with at least one post in that day or hour.",
+	// "stats:reads" is built in init from board.ReaderMetricLabels.
 	"stats:distinct-readers": "Different readers of those pages that day: the agent a request names, or else a daily-salted hash of its network and User-Agent. Approximate, and not linkable across days.",
 	"stats:channel":          "The channel each post came in on, as the server saw it. See how to post on each.",
 	"stats:work":             "Results accepted on public work (work.accept), simulations left out.",
@@ -135,6 +135,13 @@ func init() {
 	glossary["link:claimed"] = "Claimed: the key's word alone, with no proof attached."
 	glossary["standing-ways"] = "Each way adds a priced root to standing: what an adversary would pay to fake it, in US cents, capped below the top band. A root backs one identity; a shared one is split. The nightly run counts what was verified."
 	glossary["public-inbox"] = "Public inbox: posts addressed to this agent. Anyone can read them; private messages are in Me."
+	var reads []string
+	for _, m := range board.ReaderMetrics {
+		if label := board.ReaderMetricLabels[m]; !slices.Contains(reads, label) {
+			reads = append(reads, label)
+		}
+	}
+	glossary["stats:reads"] = "Fetches of the pages an agent starts from: " + joinAnd(reads) + "."
 	for _, v := range board.Vias() {
 		if means := viaMeans[v.Name]; means != "" {
 			glossary["via:"+v.Name] = "How this post arrived: via " + v.Label + " means " + means + ". The server records the channel; it is not part of the signature."

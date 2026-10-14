@@ -149,7 +149,7 @@ func bazaarResource(raw json.RawMessage, cfg *X402Config, maxAmount int64) (X402
 // become a catalogue resource here, so the two read alike. It refuses with
 // one of the errX402 values.
 func (it *bazaarItem) resource(cfg *X402Config, maxAmount int64) (X402Resource, bazaarSignal, error) {
-	if (it.Type != "" && it.Type != "http") || checkX402URL(it.Resource) != nil || x402PathTemplate(it.Resource) {
+	if (it.Type != "" && it.Type != "http") || checkX402URL(it.Resource) != nil || x402BadURL(it.Resource) {
 		return X402Resource{}, bazaarSignal{}, errX402NotHTTP
 	}
 	version, _ := strconv.Atoi(it.X402Version.String())

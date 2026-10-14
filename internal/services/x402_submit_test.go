@@ -564,3 +564,65 @@ func TestSubmitPathTemplate(t *testing.T) {
 		t.Fatalf("the refresh probed a templated row: %d %d", tmpl.hits, concrete.hits)
 	}
 }
+
+// An ephemeral tunnel host (C316): trycloudflare.com and the rest change
+// their hostname on every restart, so a listing on one dies within hours. A
+// submission is refused before any probe, suffix matching is label-exact, a
+// crawled item on one is not admitted, and a row stored before the refusal
+// is marked stale at the refresh (last_seen 0, kept), never probed and
+// never listed, exactly as a path template is (TestSubmitPathTemplate).
+func TestSubmitEphemeralHost(t *testing.T) {
+	concrete := newChallenge("company registry", 1000)
+	h, x := submitHarness(t, map[string]http.Handler{"/ares/27074358": concrete})
+	for _, u := range []string{
+		"https://abc123.trycloudflare.com/ares/27074358", "https://a.b.trycloudflare.com/x", "https://foo.ngrok-free.app/x",
+		"https://foo.ngrok.app/x", "https://foo.ngrok.io/x", "https://foo.loca.lt/x", "https://foo.localtunnel.me/x",
+		"https://foo.serveo.net/x", "https://foo.localhost.run/x", "https://foo.lhr.life/x", "https://foo.pinggy.link/x", "https://foo.bore.pub/x",
+	} {
+		if _, err := h.submit(X402Submission{URL: u}); errCode(err) != "x402_listing_ephemeral_host" {
+			t.Errorf("%s: %v, want x402_listing_ephemeral_host", u, err)
+		}
+	}
+	if concrete.hits != 0 {
+		t.Fatalf("an ephemeral host was probed %d times", concrete.hits)
+	}
+	if _, _, err := ParseX402Target("GET https://abc123.trycloudflare.com/x"); err != nil {
+		t.Fatalf("withdrawing an ephemeral-host listing must still parse: %v", err)
+	}
+	// Label-exact: a suffix only matches on a label boundary.
+	if x402EphemeralHost("https://xtrycloudflare.com/x") {
+		t.Fatal("xtrycloudflare.com was matched as trycloudflare.com")
+	}
+	if !x402EphemeralHost("https://a.b.trycloudflare.com/x") || !x402EphemeralHost("https://trycloudflare.com/x") {
+		t.Fatal("a.b.trycloudflare.com or the bare suffix was not matched")
+	}
+
+	item := bazaarItemJSON("https://abc123.trycloudflare.com/ares/27074358", "GET", 1000, testPayTo, "eip155:8453", "company registry", "")
+	if _, _, ok := bazaarResource(json.RawMessage(item), x.cfg, min(x.cfg.Catalogue.MaxPrice, x.cfg.PerCall)); ok {
+		t.Fatal("a crawled item on an ephemeral tunnel host was admitted")
+	}
+
+	// A row stored before the refusal, as the live one was.
+	if _, err := h.submit(X402Submission{URL: "https://example.com/ares/27074358"}); err != nil {
+		t.Fatal(err)
+	}
+	id := openIDFor("/ares/27074358", "GET")
+	if _, err := h.db.Exec("UPDATE x402_catalogue SET url='https://abc123.trycloudflare.com/ares/27074358' WHERE id=?", id); err != nil {
+		t.Fatal(err)
+	}
+	concrete.hits = 0
+	h.now += 3600
+	if _, err := x.reprobeSubmitted(context.Background(), h.now); err != nil {
+		t.Fatal(err)
+	}
+	var lastSeen int64
+	if err := h.db.QueryRow("SELECT last_seen FROM x402_catalogue WHERE id=?", id).Scan(&lastSeen); err != nil || lastSeen != 0 {
+		t.Fatalf("the ephemeral-host row is kept and marked stale: last_seen %d, %v", lastSeen, err)
+	}
+	if _, ok := x.cat.snap.Load().byID[id]; ok {
+		t.Fatal("an ephemeral-host row is still listed")
+	}
+	if concrete.hits != 0 {
+		t.Fatalf("the refresh probed an ephemeral-host row: %d", concrete.hits)
+	}
+}

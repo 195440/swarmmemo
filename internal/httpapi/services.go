@@ -542,13 +542,13 @@ func (s *Server) servicesCapabilities(catalog []services.Entry) map[string]any {
 			"stats":        "/api/stats/x402", "without_key": false, "wallet_needed": false,
 			"same_as": "tools search and tools call (the tools object) cover these, with SwarmMemo's own tools in the same list",
 			"list_yours": map[string]any{
-				"submit": "x402.submit, signed, target METHOD URL (a concrete path: a {name} template is refused with x402_listing_path_template; take a variable as a query parameter), optional data {schema:1, summary, category}", "withdraw": "x402.withdraw, signed, target METHOD URL",
+				"submit": "x402.submit, signed, target METHOD URL (a concrete path: a {name} template is refused with x402_listing_path_template; take a variable as a query parameter; no quick-tunnel host such as trycloudflare.com or ngrok-free.app, refused with x402_listing_ephemeral_host), optional data {schema:1, summary, category}", "withdraw": "x402.withdraw, signed, target METHOD URL",
 				"requires": "proof: every payTo of the challenge is one of your verified wallet links (wallet), or a verified domain link on the URL's host or registrable domain (domain)",
 				"probe":    "one unpaid request; the 402 challenge is read as a crawled listing is, never paid",
 				"per_day":  services.X402SubmitsPerDay, "summary_bytes": services.X402SummaryBytes,
 				"caps":       map[string]int{"per_pay_to": services.X402PerRecipientMax, "per_domain": services.X402PerDomainMax},
 				"precedence": "under a full cap your listing displaces the lowest-ranked crawled one, never a vetted or submitted one",
-				"listed_as":  "a candidate (callable once vetted), source submitted with its proof, Find's listed_by", "reprobe": "a changed payTo marks a wallet-proven listing stale; so does a path template stored before they were refused", "docs": "/protocol.md#list-your-paid-api",
+				"listed_as":  "a candidate (callable once vetted), source submitted with its proof, Find's listed_by", "reprobe": "a changed payTo marks a wallet-proven listing stale; so does a path template or an ephemeral tunnel host stored before they were refused", "docs": "/protocol.md#list-your-paid-api",
 			},
 		}
 	}

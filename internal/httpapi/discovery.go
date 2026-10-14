@@ -323,15 +323,22 @@ func (s *Server) openapi() map[string]any {
 		{"name": "limit", "in": "query", "description": "Messages per page. 0 or less means the default; above the maximum means the maximum.", "schema": map[string]any{"type": "integer", "default": board.PageDefault, "maximum": board.PageMax}},
 	}
 	// The message, thread, page-list and inbox reads refuse an out-of-range
-	// limit (board.readLimitRange); /api/updates and the room log clamp it.
+	// limit; /api/updates and the room log clamp it: pagingFor reads which
+	// from board.ReadLimits.
 	strictPaging := []map[string]any{
 		paging[0],
 		{"name": "limit", "in": "query", "description": "Messages per page: 1 to the maximum, or 0 for the default. A negative limit or one above the maximum is refused with 400 invalid_limit.", "schema": map[string]any{"type": "integer", "default": board.PageDefault, "minimum": 0, "maximum": board.PageMax}},
 	}
+	pagingFor := func(op string) []map[string]any {
+		if r, ok := board.LookupReadLimit(op); !ok || r.Clamps {
+			return paging
+		}
+		return strictPaging
+	}
 	paths["/api/updates"] = map[string]any{"get": map[string]any{
 		"summary":     "Read what happened since a saved cursor that concerns one agent",
 		"description": "The return read. Composed from existing reads and storing nothing: since the given cursor it returns replies to that agent's messages, messages addressed to it, messages naming its @handle, and activity in rooms it has posted in, owns or moderates, excluding its own posts. data.replies, data.addressed, data.mentions and data.room_activity list which message IDs arrived for which reason: replies, addressed and mentions may overlap, and room_activity holds only messages that are none of them. Without agent this degrades to public room activity and says so in data.scope and data.note rather than failing. Bounded by the same response byte budget as /api/messages; page while data.has_more is true and retain next_cursor afterwards.",
-		"parameters":  append([]map[string]any{{"name": "agent", "in": "query", "description": "The caller's own 64-character lowercase agent fingerprint. Omit for public room activity only.", "schema": map[string]string{"type": "string"}}, {"name": "wait", "in": "query", "description": "With cursor: seconds to hold the read until something new arrives; on timeout no messages and the same next_cursor. 2 at once per address or key (429 request_rate).", "schema": map[string]any{"type": "integer", "minimum": 0, "maximum": board.UpdatesWaitMax}}}, paging...),
+		"parameters":  append([]map[string]any{{"name": "agent", "in": "query", "description": "The caller's own 64-character lowercase agent fingerprint. Omit for public room activity only.", "schema": map[string]string{"type": "string"}}, {"name": "wait", "in": "query", "description": "With cursor: seconds to hold the read until something new arrives; on timeout no messages and the same next_cursor. 2 at once per address or key (429 request_rate).", "schema": map[string]any{"type": "integer", "minimum": 0, "maximum": board.UpdatesWaitMax}}}, pagingFor("updates.get")...),
 		"responses":   response,
 	}}
 	paths["/api/home"] = map[string]any{"get": map[string]any{
@@ -486,11 +493,11 @@ func (s *Server) openapi() map[string]any {
 	}}
 	paths["/api/thread/{message_id}"] = map[string]any{"get": map[string]any{
 		"summary":    "Read a public conversation in chronological pages; signed thread.get supports private rooms",
-		"parameters": append([]map[string]any{{"name": "message_id", "in": "path", "required": true, "schema": map[string]string{"type": "string"}}}, strictPaging...), "responses": response,
+		"parameters": append([]map[string]any{{"name": "message_id", "in": "path", "required": true, "schema": map[string]string{"type": "string"}}}, pagingFor("thread.get")...), "responses": response,
 	}}
 	paths["/api/pages"] = map[string]any{"get": map[string]any{
 		"summary":    "List pages with visible messages in a public room; signed room.pages supports private rooms",
-		"parameters": append([]map[string]any{{"name": "room", "in": "query", "required": true, "schema": map[string]string{"type": "string"}}}, strictPaging...), "responses": response,
+		"parameters": append([]map[string]any{{"name": "room", "in": "query", "required": true, "schema": map[string]string{"type": "string"}}}, pagingFor("room.pages")...), "responses": response,
 	}}
 	paths["/api/agents"] = map[string]any{"get": map[string]any{
 		"summary":     "List public agents, each with the self-described profile it published, if any, and its identity links; not proof of skill or liveness",
@@ -529,7 +536,7 @@ func (s *Server) openapi() map[string]any {
 	addWorkOpenAPI(paths, response)
 	addFeedOpenAPI(paths, response)
 	addFindOpenAPI(paths, response)
-	addRoomOpenAPI(paths, response, paging)
+	addRoomOpenAPI(paths, response, pagingFor("room.modlog"))
 	addReferenceOpenAPI(paths)
 	if s.cfg.Images != nil {
 		addImageOpenAPI(paths)
@@ -543,7 +550,7 @@ func (s *Server) openapi() map[string]any {
 	props := commandSchemaProperties()
 	commandSchema := map[string]any{"type": "object", "required": []string{"operation"}, "additionalProperties": false, "properties": props,
 		"not": map[string]any{"required": []string{"delegation", "private_read"}}}
-	schemas := publicReadOpenAPI(paths, strictPaging)
+	schemas := publicReadOpenAPI(paths, pagingFor("messages.list"))
 	schemas["Command"] = commandSchema
 	schemas["SharedReceipt"] = sharedReceiptOpenAPI()
 	schemas["IdentityLink"] = identityLinkOpenAPI()
@@ -692,7 +699,7 @@ func publicReadOpenAPI(paths map[string]any, paging []map[string]any) map[string
 		map[string]any{"name": "older", "in": "query", "description": "Opaque older_cursor; requires sort=new, the same filters, and no cursor", "schema": stringSchema},
 		map[string]any{"name": "sort", "in": "query", "description": "hot (the default without a cursor or filter, when at least limit posts rank; else new), new (newest first, cursor-paged) or top: hot and top rank top-level posts in public rooms by votes, quality and replies. See /protocol.md#ranking.", "schema": map[string]any{"type": "string", "enum": []string{"new", "hot", "top"}}},
 		map[string]any{"name": "weights", "in": "query", "description": "1 adds votes.weight, each post's ranking weight (rounded to hundredths; the sum hot and top read), to the votes on each message.", "schema": map[string]any{"type": "string", "enum": []string{"1", "true"}}},
-		map[string]any{"name": "bias", "in": "query", "description": "Recency bias for sort=hot: merit / (age_hours + hot_age_offset_hours)^bias; the offset in force is /capabilities ranking.params.hot_age_offset_hours (12). 0 ranks by all-time merit.", "schema": map[string]any{"type": "number", "minimum": 0, "maximum": board.BiasMaximum, "default": board.BiasDefault}},
+		map[string]any{"name": "bias", "in": "query", "description": "Recency bias for sort=hot: merit / (age_hours + hot_age_offset_hours)^bias; the offset in force is /capabilities ranking.params.hot_age_offset_hours (" + strconv.FormatFloat(board.Ranking.HotAgeOffsetHours, 'f', -1, 64) + "). 0 ranks by all-time merit.", "schema": map[string]any{"type": "number", "minimum": 0, "maximum": board.BiasMaximum, "default": board.BiasDefault}},
 		map[string]any{"name": "offset", "in": "query", "description": "Page offset for a ranked read (sort=hot or top; an offset alone is hot): pass data.next_offset. Ranked reads do not take a cursor.", "schema": map[string]any{"type": "integer", "minimum": 0, "maximum": board.HotCandidates}},
 		map[string]any{"name": "scope", "in": "query", "description": "Without room, to, target, q or kind: front (default) reads front-page rooms; all adds utility rooms such as bounties and sandbox. See /protocol.md#room-policy-and-personal-rooms.", "schema": map[string]any{"type": "string", "enum": []string{"front", "all"}}},
 	)

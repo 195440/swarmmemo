@@ -466,11 +466,18 @@ func generatedSections(t *testing.T) map[string]string {
 		}
 	}
 	sections := map[string]string{"operations": ops.String(), "limits": limits.String(), "errors": errs.String(), "hooks": wrapList("", hooks, ""), "vias": via.String(),
-		"funnel": funnelProtocolSection(), // funnel_test.go
-		"nudges": nudgeProtocolSection(),  // nudges_test.go
+		"funnel":      funnelProtocolSection(),     // funnel_test.go
+		"nudges":      nudgeProtocolSection(),      // nudges_test.go
 		"work-record": workRecordProtocolSection(), // workreputation_test.go
 		"reputation":  reputationProtocolSection(), // reputation_test.go
 		"storefront":  storefrontProtocolSection(), // storefront_test.go
+		// protocol_sections_test.go
+		"updates-reasons":   updatesReasonsProtocolSection(),
+		"ranking-params":    rankingParamsProtocolSection(),
+		"directory-ranking": directoryRankingProtocolSection(),
+		"read-limits":       readLimitsProtocolSection(),
+		// Inside its list item, like free-hooks.
+		"anchor-timeline": anchorTimelineProtocolSection(),
 		// Inside a list item: indented, and the end marker keeps its indent.
 		"free-hooks": wrapList("  ", free, "  ") + "  "}
 	// The inbox entry kinds, from InboxKindList.

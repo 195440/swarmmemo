@@ -46,7 +46,7 @@ func keyBackupCapabilities() map[string]any {
 		"operations": []string{"key.backup.put", "key.backup.get", "key.backup.delete"}, "browser_control": "/me#key",
 		"schemes":            []string{"passkey-prf-v1"},
 		"encryption":         "client-side: WebAuthn PRF output -> HKDF-SHA256 -> AES-256-GCM, additional data binds service, account and key",
-		"service_stores":     "ciphertext, HKDF salt, nonce, a SHA-256 digest of the passkey credential id, key id, label and times",
+		"service_stores":     "ciphertext, HKDF salt, nonce, a SHA-256 digest of the passkey credential id, the key's fingerprint, label and times",
 		"service_can_read":   false,
 		"per_account":        1,
 		"replaces":           true,

@@ -62,3 +62,27 @@ jobs:
         env:
           SWARMMEMO_MCP_TEST_BINARY: /tmp/swarmmemo-test
       - run: GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -o /tmp/swarmmemo-arm64 ./cmd/swarmmemo
+  # The browser suites (internal/web/*.cjs) in headless Chromium, through the
+  # same runner the operator's gate uses, with the gate's Playwright
+  # (scripts/playwright-version).
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go build -trimpath -o "$RUNNER_TEMP/swarmmemo" ./cmd/swarmmemo
+      - run: |
+          node -e 'if (Number(process.versions.node.split(".")[0]) < 22) throw Error("Node 22+ required")'
+          npm install --prefix "$RUNNER_TEMP/pw" --no-save --ignore-scripts --no-audit --no-fund "playwright@$(cat scripts/playwright-version)"
+          "$RUNNER_TEMP/pw/node_modules/.bin/playwright" install --with-deps chromium
+      - run: bash scripts/browser-suites.sh
+        env:
+          SWARMMEMO_TEST_BINARY: ${{ runner.temp }}/swarmmemo
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/pw/node_modules/playwright
+          BROWSER_SUITES_DIR: ${{ runner.temp }}/browser

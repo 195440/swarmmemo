@@ -751,8 +751,16 @@ const (
 // posts rises by half. With HEAT_AUTHORS the authors are signed ones and the
 // hours count from the last signed post.
 func RoomHeat(authors int64, quality *float64, idleSeconds int64) float64 {
-	return Ranking.Decay(float64(authors+1)*(0.5+Ranking.quality(quality)), idleSeconds, 1.5)
+	return Ranking.Decay(float64(authors+1)*(RoomHeatBase+Ranking.quality(quality)), idleSeconds, RoomHeatBias)
 }
+
+// RoomHeatBase is added to a room's mean quality, and RoomHeatBias is the
+// directory's decay exponent; docs/PROTOCOL.md's ranking-params section is
+// generated from them.
+const (
+	RoomHeatBase = 0.5
+	RoomHeatBias = 1.5
+)
 
 // roomHeatRows bounds the posts one room's heat reads: its newest visible
 // posts of the window.

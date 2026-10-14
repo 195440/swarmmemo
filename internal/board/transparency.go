@@ -1310,12 +1310,16 @@ const (
 	anchorPendingMax = 4096           // pending anchors one poll looks at
 )
 
+// AnchorConfirmedAfter is how long after its checkpoint a post's anchor is
+// typically confirmed; the proof page and AnchorTimeline say it from here.
+const AnchorConfirmedAfter = "1 to 1.5 hours"
+
 // AnchorTimeline is the expected path from a post to "confirmed", for
-// /api/log/anchors and /capabilities.
+// /api/log/anchors, /capabilities and docs/PROTOCOL.md (a generated section).
 const AnchorTimeline = "A post is in the next checkpoint (signed every 15 minutes by default when the log grew), submitted to the calendars at once (submitted_at). " +
 	"A calendar's Bitcoin transaction is typically mined 10 to 45 minutes later (bitcoin_height: that block's time bounds the post from above), and its proof is served once the transaction has confirmations. " +
 	"Pending anchors are checked every 10 minutes from 30 minutes to 3 hours after submission, then every 30 minutes, then every 2 hours (next_check_at); " +
-	"confirmed_at is when this service first saw the proof, typically 1 to 1.5 hours after the checkpoint; block_time is the block's own timestamp."
+	"confirmed_at is when this service first saw the proof, typically " + AnchorConfirmedAfter + " after the checkpoint; block_time is the block's own timestamp."
 
 // anchorNextCheck is when a pending anchor submitted at submitted and last
 // checked at checked (0: never) is next asked for its Bitcoin proof.

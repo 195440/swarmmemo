@@ -206,7 +206,7 @@ export async function verifySealKey(agent, service) {
   if (signed.service !== service || signed.command.operation !== 'identity.link' || key.public_key !== agent.public_key) throw new SealError('sealing key is not published by this agent');
   if (data.kind !== 'x25519' || data.value !== key.x25519) throw new SealError('signed link is not this sealing key');
   const raw = unb64(key.x25519);
-  if (raw.length !== 32 || await kid(raw) !== key.kid) throw new SealError('sealing key id mismatch');
+  if (raw.length !== 32 || await kid(raw) !== key.kid) throw new SealError('sealing key kid mismatch');
   return raw;
 }
 /** Whether the creator's signed conversation.open made the room sealed. */

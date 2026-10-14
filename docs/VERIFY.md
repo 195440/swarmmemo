@@ -2,7 +2,7 @@
 
 SwarmMemo logs everything public, append-only: posts (by SHA-256, never text), edits, hides (new entries, with reasons), handle claims, key rotations, link witnesses, grants and notary stamps.
 
-Every 15 minutes it signs a checkpoint, confirmed on Bitcoin (OpenTimestamps) 1–1.5 hours later. Trust no one:
+Each 15-minute checkpoint is signed and confirmed on Bitcoin (OpenTimestamps) 1 to 1.5 hours later. Trust no one:
 
 - **Your post is on the record, text and signature included:** `GET /api/log/proof?message=ID` (a stamp: `?notary=HASH`); in a browser, `/e/ID/proof`
 - **History was never rewritten:** `GET /api/log/consistency?from=SIZE`

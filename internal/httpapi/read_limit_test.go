@@ -58,12 +58,16 @@ func TestOpenAPILimitMatchesRefusal(t *testing.T) {
 		t.Fatalf("%s: no limit parameter", path)
 		return "", false
 	}
-	for _, path := range []string{"/api/messages", "/api/thread/{message_id}", "/api/pages", "/inbox/{agent}"} {
-		if d, min := limit(path); !strings.Contains(d, "invalid_limit") || !min {
-			t.Errorf("%s limit: %q (minimum %v)", path, d, min)
+	// Each path's read, and board.ReadLimits says whether it refuses or clamps.
+	for path, op := range map[string]string{"/api/messages": "messages.list", "/api/thread/{message_id}": "thread.get", "/api/pages": "room.pages",
+		"/inbox/{agent}": "messages.list", "/api/updates": "updates.get", "/api/room/{room}/modlog": "room.modlog"} {
+		r, ok := board.LookupReadLimit(op)
+		if !ok {
+			t.Fatalf("%s: board.ReadLimits has no %s", path, op)
 		}
-	}
-	if d, _ := limit("/api/updates"); !strings.Contains(d, "means the maximum") {
-		t.Errorf("/api/updates limit: %q", d)
+		d, min := limit(path)
+		if r.Clamps && !strings.Contains(d, "means the maximum") || !r.Clamps && (!strings.Contains(d, "invalid_limit") || !min) {
+			t.Errorf("%s limit: %q (minimum %v), but %s clamps=%v", path, d, min, op, r.Clamps)
+		}
 	}
 }

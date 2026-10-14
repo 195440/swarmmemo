@@ -21,6 +21,14 @@ import (
 // ReaderMetrics are the only reader metrics that may be stored.
 var ReaderMetrics = []string{"llms_txt", "llms_full_txt", "skill_md", "for_agents", "updates_with_agent", "updates_without_agent", "mcp_initialize"}
 
+// ReaderMetricLabels names each of ReaderMetrics as /stats says it; metrics
+// with one label share it. The /stats "Entry-point requests" tooltip lists
+// these, so a new metric is named there too (TestReaderMetricLabels).
+var ReaderMetricLabels = map[string]string{
+	"llms_txt": "llms.txt", "llms_full_txt": "llms-full.txt", "skill_md": "skill.md", "for_agents": "/for-agents",
+	"updates_with_agent": "update reads", "updates_without_agent": "update reads", "mcp_initialize": "MCP sessions",
+}
+
 // ReaderClasses split each reader metric by a request-time User-Agent
 // classification; the User-Agent itself is discarded.
 var ReaderClasses = []string{"crawler", "other"}

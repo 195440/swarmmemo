@@ -1400,3 +1400,32 @@ func checkX402URL(raw string) error {
 	}
 	return nil
 }
+
+// X402EphemeralTunnelHosts are the host suffixes of quick-tunnel services
+// whose hostnames change on every restart: a listing on one dies within
+// hours. x402.submit refuses them before any probe
+// (x402_listing_ephemeral_host, x402EphemeralHost), a crawled item on one is
+// not admitted, and a row stored before the refusal is marked stale at
+// refresh, never deleted, as a path template is (x402PathTemplate).
+var X402EphemeralTunnelHosts = []string{
+	"trycloudflare.com", "ngrok-free.app", "ngrok.app", "ngrok.io", "loca.lt",
+	"localtunnel.me", "serveo.net", "localhost.run", "lhr.life", "pinggy.link", "bore.pub",
+}
+
+// x402EphemeralHost reports whether raw's host is one of
+// X402EphemeralTunnelHosts or a subdomain of one, matched on label
+// boundaries only: xtrycloudflare.com is not matched, a.b.trycloudflare.com
+// is.
+func x402EphemeralHost(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	for _, suf := range X402EphemeralTunnelHosts {
+		if host == suf || strings.HasSuffix(host, "."+suf) {
+			return true
+		}
+	}
+	return false
+}

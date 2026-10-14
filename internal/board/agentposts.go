@@ -28,9 +28,7 @@ const agentPostsWhere = "e.account=? AND e.hidden=0 AND e.recipient='' AND r.vis
 func (s *Store) readAgentPosts(ctx context.Context, tx *sql.Tx, c Command, now int64) (Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	if c.Limit < 0 || c.Limit > PageMax {
-		return Result{}, problem(400, "invalid_limit", "Post list limit must be 1–200, or zero for the default.")
-	}
+	// An out-of-range limit was refused before this read (readLimitRange).
 	if c.Target == "" || len(c.Target) > 128 || !utf8.ValidString(c.Target) {
 		return Result{}, problem(400, "invalid_agent", "Name the agent by its fingerprint or handle: target=AGENT.")
 	}

@@ -392,8 +392,10 @@ var templates = template.Must(template.New("page.html").Funcs(template.FuncMap{
 	// Any published limit, by its /capabilities key (board.PublicLimits):
 	// {{limit "text_bytes"}} is the number, {{limitText "text_bytes"}} reads
 	// "16 KiB". Copy states limits only through these.
-	"limit":     board.LimitValue,
-	"limitText": board.LimitText,
+	"limit": board.LimitValue,
+	// How long after its checkpoint an anchor is typically confirmed.
+	"anchorConfirmedAfter": func() string { return board.AnchorConfirmedAfter },
+	"limitText":            board.LimitText,
 	// Input bounds that are not published limits (inputmax.go).
 	"inputMax": inputMax,
 	// updates.get's per-reason lists, from board.UpdatesReasons: the fields
