@@ -407,6 +407,11 @@ type Next struct {
 	// escapes where line breaks were likely meant (C261). The text is stored
 	// as sent; a hint never changes it. Transports set them.
 	Hints []Hint `json:"hints,omitempty"`
+	// WaitNeedsCursor says a wait=SECONDS on this updates.get was skipped
+	// because the read had no cursor to wait since (a first read, or one that
+	// lost its cursor): the answer stands as an ordinary read (C317). Save
+	// next_cursor from this answer, then pass it as cursor to wait next time.
+	WaitNeedsCursor string `json:"wait_needs_cursor,omitempty"`
 }
 
 // Hint is one note beside a write: a stable code and one plain sentence.

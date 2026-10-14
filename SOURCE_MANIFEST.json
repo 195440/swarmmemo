@@ -694,8 +694,8 @@
     {
       "mode": "0644",
       "path": "docs/PROTOCOL.md",
-      "sha256": "8a3eb45d3d6d781ae1635142656c74e6cbdf9e982ba70498f15d3b927631d742",
-      "size": 494935
+      "sha256": "554facaf22d5210ef00a9d0ad2afd3ab67af128d8bab9620fb83ba57174b3d1d",
+      "size": 495661
     },
     {
       "mode": "0644",
@@ -802,8 +802,8 @@
     {
       "mode": "0644",
       "path": "docs/TOOLS_UPDATES.md",
-      "sha256": "c1ecbb6f7f216ce4747fd6c30b0fcb3fa55b8c498f3adce3c7aa710e36c41c5d",
-      "size": 4477
+      "sha256": "b045a631b61026ee95679700597f5df3293299f84ca5be6911dd941abc9be3a3",
+      "size": 4791
     },
     {
       "mode": "0644",
@@ -1288,8 +1288,8 @@
     {
       "mode": "0644",
       "path": "internal/board/contracts.go",
-      "sha256": "e754f0f0b8b0c859283a78dfe6d6a7c407f2a44ca80c6c9349a08721051aac5a",
-      "size": 25955
+      "sha256": "6c4dd16d1df0f2a754a18a84ee1f0c20584541937dbb91268352fb6973f8b3ed",
+      "size": 26313
     },
     {
       "mode": "0644",
@@ -1588,8 +1588,8 @@
     {
       "mode": "0644",
       "path": "internal/board/funnel.go",
-      "sha256": "94b51ceee1556eef4161bd768465eff38892b361cdfa66edfa39e052fa0a445d",
-      "size": 34909
+      "sha256": "221af39d7b5e74156ed7616b3eb07f28727870cd72b326ed3ac16ce50bf473c1",
+      "size": 35112
     },
     {
       "mode": "0644",
@@ -1612,8 +1612,8 @@
     {
       "mode": "0644",
       "path": "internal/board/funnel_test.go",
-      "sha256": "230e5b37431dc298317a8e9d540df33e44de96e474d8ac5b7ea18ae6c62ef0b7",
-      "size": 46469
+      "sha256": "d77b513f0138a7899afd49c0bd0466f958f018cae739584df2491e1ee83cf49d",
+      "size": 46491
     },
     {
       "mode": "0644",
@@ -3076,14 +3076,14 @@
     {
       "mode": "0644",
       "path": "internal/board/waiting.go",
-      "sha256": "a7a33fba18a8914379560eed7d5815a85662318a4217295b25dba0f711b66e99",
-      "size": 5349
+      "sha256": "7a27a8fa704ef7cec10a2f40aa931b03cdd3dec78ba7d9d55c52b80d5f2b22c5",
+      "size": 6307
     },
     {
       "mode": "0644",
       "path": "internal/board/waiting_test.go",
-      "sha256": "f60bd1255ead276d2bf28c375e61367452f711dc3d5b79c7817a9cc14debf1bd",
-      "size": 7286
+      "sha256": "84e38a8f12e441cbd6d8019509a10ba880ac1a0569f53b7f6ced64f39de9e932",
+      "size": 8002
     },
     {
       "mode": "0644",
@@ -3754,8 +3754,8 @@
     {
       "mode": "0644",
       "path": "internal/httpapi/discovery.go",
-      "sha256": "48f34c22f79d267f895921b10b8c4e6ca51c198b277e191cac1751a73cd82fd1",
-      "size": 133553
+      "sha256": "9edc853abc4d254207ede9b35cb27d715fc09b0cbe63eeed9c06e697c8b1d606",
+      "size": 133658
     },
     {
       "mode": "0644",
@@ -4768,8 +4768,8 @@
     {
       "mode": "0644",
       "path": "internal/httpapi/updates_test.go",
-      "sha256": "cdb7a5e35edbf2e83831472030bcc3f49d66f1db42ed49bf1a5aefc427b28dda",
-      "size": 6647
+      "sha256": "25b4fc173a04022580318c29edb8ea3807dc84d261252e9ad5abb36859866022",
+      "size": 9534
     },
     {
       "mode": "0644",

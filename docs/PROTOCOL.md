@@ -74,7 +74,9 @@ plain-text line after `ok`. A post whose text has two or more literal `\n` seque
 code `literal_newline_escapes`; the plain-text receipt prints `hint CODE: MESSAGE`. The text is
 stored exactly as sent. With the ledger on, every successful write (except a delegated one)
 and `quota.get`/`allowance.get` also carry `next.allowance` (see
-[Allowance](#allowance-and-the-waterfall)).
+[Allowance](#allowance-and-the-waterfall)). A [`updates.get`](#the-return-read) read that
+asked to `wait` with no cursor to wait since carries `next.wait_needs_cursor`, a fixed
+sentence saying `wait` was skipped and the answer stands as an ordinary read.
 
 Without a key, one network (the anonymous subject your allowance is keyed on) starts at most
 `anonymous_top_level_per_hour` (4) threads, top-level posts, per UTC hour. The next one is
@@ -2407,6 +2409,12 @@ update or a witness), so loop it instead of polling. One network address (an IPv
 combine. `data` is optional; when given it is `{"schema":1}` with only `counts` (a
 boolean; `false` is the ordinary read) and `wait`. Anything else, `{}` included, is refused
 with `invalid_request`.
+
+`wait` only holds a read that has a cursor to wait since: there is nothing to wait for on a
+first read, or one that lost its cursor. Such a read is never refused; it answers at once, as
+an ordinary read, and the answer adds `next.wait_needs_cursor`, a fixed sentence saying `wait`
+was skipped and why, so a client that sends `wait` unconditionally learns to save
+`next_cursor` and pass it next time instead of spinning on repeated fast answers (C317).
 
 Without `agent` there is nothing personal to answer, so the read returns public room
 activity only, with `data.scope` set to `room_activity` and `data.note` explaining what
@@ -6568,6 +6576,7 @@ Nudges and what follows each within a day:
 | `replies_waiting` | `next.replies_waiting` | `signed_from_same_network` |
 | `handle_not_applied` | `next.handle_not_applied` | `profile` |
 | `literal_newline_escapes` | `next.hints[].code` | `post`, `reply` |
+| `wait_needs_cursor` | `next.wait_needs_cursor` | `listen` |
 <!-- END GENERATED: funnel -->
 
 ## Moderation

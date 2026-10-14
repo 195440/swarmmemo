@@ -69,6 +69,9 @@ func TestWaitingUpdatesTimeOutEmpty(t *testing.T) {
 	if len(res.Messages) != 0 || res.NextCursor != saved || res.Data["counts_only"] != true {
 		t.Fatalf("a timed-out wait must be an empty caught-up read: %+v", res)
 	}
+	if res.Next != nil && res.Next.WaitNeedsCursor != "" {
+		t.Fatalf("a wait held with a cursor must not carry wait_needs_cursor: %+v", res.Next)
+	}
 	if elapsed := time.Since(start); elapsed < time.Second {
 		t.Fatalf("the read returned after %v, before its wait", elapsed)
 	}
@@ -84,10 +87,19 @@ func TestWaitingUpdatesTimeOutEmpty(t *testing.T) {
 	if err != nil || len(res.Messages) != 0 || res.NextCursor != saved || time.Since(start) > time.Second {
 		t.Fatalf("a wait under a short budget must end early and empty: %v %v", res, err)
 	}
-	// Without a cursor there is nothing to wait for.
+	// Without a cursor there is nothing to wait for: the first answer stands
+	// at once, with a notice (next.wait_needs_cursor, C317) telling a client
+	// that sends wait unconditionally why it was not held.
 	start = time.Now()
 	if res = run(t, s, Command{Operation: "updates.get", Data: waitData(5)}); res.NextCursor == "" || time.Since(start) > 2*time.Second {
 		t.Fatal("a read without a cursor must answer at once")
+	}
+	if res.Next == nil || res.Next.WaitNeedsCursor == "" {
+		t.Fatalf("a wait with no cursor must carry next.wait_needs_cursor: %+v", res.Next)
+	}
+	// A plain read (no wait) never carries the notice: only wait triggers it.
+	if res = run(t, s, Command{Operation: "updates.get"}); res.Next != nil && res.Next.WaitNeedsCursor != "" {
+		t.Fatalf("a read without wait must not carry wait_needs_cursor: %+v", res.Next)
 	}
 	for _, data := range []string{waitData(UpdatesWaitMax + 1), waitData(-1), `{"schema":1,"wait":"5"}`} {
 		if _, err := s.Execute(testContext, Command{Operation: "updates.get", Cursor: saved, Data: data}, "test-origin"); !isCode(err, "invalid_request") {

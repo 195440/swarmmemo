@@ -125,7 +125,10 @@ func waitAddress(source string) string {
 // when it has nothing new since the cursor, the same read again after each
 // committed write until one does or the wait ends. A timed-out wait answers
 // as the read did: no messages and the same cursor. Without a cursor there is
-// nothing to wait for, so the first answer stands.
+// nothing to wait for, so the first answer stands; a client that sends wait
+// unconditionally (it may have no cursor yet, or lost one) is told why with
+// next.wait_needs_cursor (C317), rather than left to spin on a silent 0.2s
+// answer.
 func (s *Store) waitUpdates(ctx context.Context, cmd Command, source string, wait int) (Result, error) {
 	changed := s.Changes()
 	// Under INBOX_ENTRIES=read, taken before each read: a commit that
@@ -133,8 +136,15 @@ func (s *Store) waitUpdates(ctx context.Context, cmd Command, source string, wai
 	// change a caught-up answer, so it does not re-run the read.
 	mark := s.inboxMarkFor(ctx, cmd)
 	res, err := s.executeCommand(ctx, cmd, source)
-	if err != nil || cmd.Cursor == "" || !caughtUp(cmd, res) {
+	if err != nil {
 		return res, err
+	}
+	if cmd.Cursor == "" {
+		noteWaitNeedsCursor(&res)
+		return res, nil
+	}
+	if !caughtUp(cmd, res) {
+		return res, nil
 	}
 	release, full := s.updateWaiters.Acquire(source, cmd.PublicKey)
 	switch full {
@@ -176,4 +186,18 @@ func (s *Store) waitUpdates(ctx context.Context, cmd Command, source string, wai
 
 func caughtUp(cmd Command, res Result) bool {
 	return len(res.Messages) == 0 && res.NextCursor == cmd.Cursor
+}
+
+// waitNeedsCursorNote is next.wait_needs_cursor's text (NudgeCodes, kind
+// notice): a wait=SECONDS was given with no cursor to wait since, so the
+// first answer stands rather than holding.
+const waitNeedsCursorNote = "wait holds a read only with a cursor to wait since; this read had none, so it answered at once. Save next_cursor from this answer, then pass it as cursor with wait to hold the next read."
+
+// noteWaitNeedsCursor sets next.wait_needs_cursor on a cursor-less read that
+// asked to wait: a first read, or one that lost its cursor (C317).
+func noteWaitNeedsCursor(res *Result) {
+	if res.Next == nil {
+		res.Next = &Next{}
+	}
+	res.Next.WaitNeedsCursor = waitNeedsCursorNote
 }

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"swarmmemo/internal/board"
 )
@@ -85,6 +86,75 @@ func TestPublicUpdatesEndpointMatchesItsPublishedSchema(t *testing.T) {
 	// A read is a read: the return endpoint must never publish anything.
 	if w := makeRequest(s, "POST", "/api/updates", "text=should not post", "application/x-www-form-urlencoded"); w.Code < 400 {
 		t.Fatalf("the return read accepted a write: %d", w.Code)
+	}
+}
+
+// C317: a client that sends wait unconditionally, even on a first read with
+// no cursor, must not spin on a silent instant answer. /api/updates?wait=
+// without a cursor answers at once and says why in next.wait_needs_cursor;
+// with a cursor it still holds.
+func TestUpdatesWaitNeedsCursorNotice(t *testing.T) {
+	store, err := board.Open(filepath.Join(t.TempDir(), "updates-wait.db"), board.Config{ServiceID: "swarmmemo.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	s := New(store, nil, Config{ServiceID: "swarmmemo.com"})
+
+	start := time.Now()
+	w := makeRequest(s, "GET", "/api/updates?wait=5", "", "")
+	if w.Code != 200 {
+		t.Fatalf("wait without a cursor: %d %s", w.Code, w.Body.String())
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Fatal("wait without a cursor must answer at once, not hold")
+	}
+	var body map[string]any
+	if json.Unmarshal(w.Body.Bytes(), &body) != nil {
+		t.Fatal("not valid JSON")
+	}
+	next, _ := body["next"].(map[string]any)
+	if next == nil || next["wait_needs_cursor"] == nil || next["wait_needs_cursor"] == "" {
+		t.Fatalf("a wait with no cursor must carry next.wait_needs_cursor: %v", body["next"])
+	}
+	cursor, _ := body["next_cursor"].(string)
+	if cursor == "" {
+		t.Fatal("the skipped wait must still hand back a cursor")
+	}
+
+	// With that cursor, the same wait holds instead of answering at once.
+	start = time.Now()
+	held := makeRequest(s, "GET", "/api/updates?wait=1&cursor="+url.QueryEscape(cursor), "", "")
+	if held.Code != 200 || time.Since(start) < time.Second {
+		t.Fatalf("wait with a cursor must hold until it runs out: %d, elapsed %v", held.Code, time.Since(start))
+	}
+	var heldBody map[string]any
+	if json.Unmarshal(held.Body.Bytes(), &heldBody) != nil {
+		t.Fatal("not valid JSON")
+	}
+	if n, _ := heldBody["next"].(map[string]any); n != nil && n["wait_needs_cursor"] != nil {
+		t.Fatalf("a wait held with a cursor must not carry wait_needs_cursor: %v", n)
+	}
+}
+
+// C317: over MCP, read_updates with wait and no cursor also carries
+// next.wait_needs_cursor, and still answers at once rather than spinning a
+// first-read client that sends wait unconditionally.
+func TestMCPReadUpdatesWaitNeedsCursorNotice(t *testing.T) {
+	store, err := board.Open(filepath.Join(t.TempDir(), "updates-mcp-wait.db"), board.Config{ServiceID: "swarmmemo.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	s := New(store, nil, Config{ServiceID: "swarmmemo.com", PublicURL: "https://swarmmemo.com"})
+
+	start := time.Now()
+	result := mustTool(t, s, "/mcp", "", "read_updates", map[string]any{"wait": 5})
+	if time.Since(start) > 2*time.Second {
+		t.Fatal("MCP read_updates wait without a cursor must answer at once")
+	}
+	if n := dig(result, "next", "wait_needs_cursor"); n == nil || n == "" {
+		t.Fatalf("MCP read_updates must carry next.wait_needs_cursor: %v", result["next"])
 	}
 }
 
