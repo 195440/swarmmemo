@@ -101,7 +101,7 @@ var ErrX402Off = refusal("x402_listing_off")
 
 // The refusals of a submission beyond the normaliser's (x402_bazaar.go).
 var (
-	errX402Target      = refusal("x402_listing_target")         // not METHOD https://URL
+	errX402Target      = refusal("x402_listing_target")         // target does not split into METHOD URL at all
 	errX402Template    = refusal("x402_listing_path_template")  // a {name} template in the path
 	errX402Ephemeral   = refusal("x402_listing_ephemeral_host") // a quick-tunnel host
 	errX402Unowned     = refusal("x402_listing_unowned")        // neither a domain link nor the challenge's wallets
@@ -129,12 +129,22 @@ type X402Submission struct {
 
 // ParseX402Target reads an x402.submit or x402.withdraw target: METHOD URL,
 // GET or POST and an HTTPS URL on 443 to a public DNS name, as the
-// catalogue admits (checkX402URL). It never fetches.
+// catalogue admits (checkX402URL, the same check the Bazaar normaliser
+// applies to a crawled item, x402_bazaar.go). It never fetches. target
+// itself being unparseable (no METHOD URL split) is errX402Target; a bad
+// method and a bad URL get the normaliser's own errX402Method and
+// errX402NotHTTP, so there is one validator and one code for each.
 func ParseX402Target(target string) (method, rawURL string, err error) {
 	method, rawURL, ok := strings.Cut(strings.TrimSpace(target), " ")
 	method, rawURL = strings.ToUpper(method), strings.TrimSpace(rawURL)
-	if !ok || (method != http.MethodGet && method != http.MethodPost) || checkX402URL(rawURL) != nil {
+	if !ok || method == "" || rawURL == "" {
 		return "", "", errX402Target
+	}
+	if method != http.MethodGet && method != http.MethodPost {
+		return "", "", errX402Method
+	}
+	if checkX402URL(rawURL) != nil {
+		return "", "", errX402NotHTTP
 	}
 	return method, rawURL, nil
 }

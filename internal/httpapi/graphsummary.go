@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -142,6 +143,33 @@ func (g *graphSummaries) status() (bool, string) {
 
 const graphSummaryEnded = "Summaries ended with the hackathon they were built for. Copy as prompt still works: paste the selection into any model."
 
+// graphSummarySelectionBody is one of POST /api/graph/summary's two forms:
+// a graph selection, as /api/graph/messages takes it.
+type graphSummarySelectionBody struct {
+	IDs  []string `json:"ids"`
+	Room string   `json:"room"`
+	Mode string   `json:"mode"`
+}
+
+// graphSummaryCommunityBody is the other form: a universe community, named
+// by the generation /api/graph/universe and /api/graph/children answer.
+type graphSummaryCommunityBody struct {
+	Nodes []int32 `json:"nodes"`
+	Gen   string  `json:"gen"`
+}
+
+// graphSummaryRequestBody is /api/graph/summary's OpenAPI requestBody: a
+// oneOf of its two forms, derived by reflection from the very structs
+// graphSummaryRoute decodes (reflectRequestSchema, discovery.go), so the
+// published body can never drift from what the handler accepts.
+func graphSummaryRequestBody() map[string]any {
+	selection := reflectRequestSchema(reflect.TypeOf(graphSummarySelectionBody{}), []string{"ids"})
+	community := reflectRequestSchema(reflect.TypeOf(graphSummaryCommunityBody{}), []string{"nodes"})
+	return map[string]any{"required": true, "content": map[string]any{"application/json": map[string]any{
+		"schema": map[string]any{"oneOf": []map[string]any{selection, community}},
+	}}}
+}
+
 func (s *Server) graphSummaryRoute(w http.ResponseWriter, r *http.Request) {
 	g := s.graphSummary
 	available, reason := g.status()
@@ -188,11 +216,8 @@ func (s *Server) graphSummaryRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		IDs   []string `json:"ids"`
-		Room  string   `json:"room"`
-		Mode  string   `json:"mode"`
-		Nodes []int32  `json:"nodes"`
-		Gen   string   `json:"gen"`
+		graphSummarySelectionBody
+		graphSummaryCommunityBody
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()

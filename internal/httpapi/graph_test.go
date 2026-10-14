@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -338,5 +339,54 @@ func TestGraphSummaryPromptFitsTheInputCap(t *testing.T) {
 	}
 	if !strings.Contains(user, "older messages were left out") || !strings.Contains(system, "untrusted") {
 		t.Fatal("the prompt does not say what was cut, or does not frame the data")
+	}
+}
+
+// TestGraphSummaryOpenAPIRequestBody proves POST /api/graph/summary's
+// published requestBody is a closed oneOf of exactly the two forms
+// graphSummaryRoute decodes, each with exactly its struct's own json
+// fields (C318): the document can never drift from the handler.
+func TestGraphSummaryOpenAPIRequestBody(t *testing.T) {
+	f := newGraphFixtureT(t)
+	s := New(f.store, nil, Config{ServiceID: "swarmmemo.com"})
+	var doc struct {
+		Paths map[string]map[string]any `json:"paths"`
+	}
+	if err := json.Unmarshal(makeRequest(s, "GET", "/openapi.json", "", "").Body.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	op, ok := doc.Paths["/api/graph/summary"]["post"].(map[string]any)
+	if !ok {
+		t.Fatal("no POST /api/graph/summary operation")
+	}
+	if dig(op, "requestBody", "required") != true {
+		t.Fatalf("requestBody.required: %v", op["requestBody"])
+	}
+	rawOneOf, ok := dig(op, "requestBody", "content", "application/json", "schema", "oneOf").([]any)
+	if !ok || len(rawOneOf) != 2 {
+		t.Fatalf("oneOf: %v", dig(op, "requestBody", "content", "application/json", "schema"))
+	}
+	fieldsOf := func(t reflect.Type) map[string]bool {
+		names := map[string]bool{}
+		for i := 0; i < t.NumField(); i++ {
+			name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+			names[name] = true
+		}
+		return names
+	}
+	want := []map[string]bool{fieldsOf(reflect.TypeOf(graphSummarySelectionBody{})), fieldsOf(reflect.TypeOf(graphSummaryCommunityBody{}))}
+	for i, raw := range rawOneOf {
+		schema, _ := raw.(map[string]any)
+		if schema["additionalProperties"] != false {
+			t.Fatalf("form %d is not closed: %v", i, schema)
+		}
+		props, _ := schema["properties"].(map[string]any)
+		got := map[string]bool{}
+		for name := range props {
+			got[name] = true
+		}
+		if !reflect.DeepEqual(got, want[i]) {
+			t.Fatalf("form %d fields: got %v want %v", i, got, want[i])
+		}
 	}
 }

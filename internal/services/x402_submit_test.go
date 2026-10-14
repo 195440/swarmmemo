@@ -279,9 +279,22 @@ func TestSubmitRefusals(t *testing.T) {
 	if err := CheckX402Submission(X402Submission{Category: "nonsense"}); errCode(err) != "x402_listing_category" {
 		t.Errorf("category: %v", err)
 	}
-	for _, target := range []string{"GET http://example.com/x", "PUT https://example.com/x", "https://example.com/x", "GET https://10.0.0.1/x", "GET https://example.com:8443/x"} {
+	// target that does not split into METHOD URL at all keeps the generic
+	// x402_listing_target; a bad method and a bad URL get the Bazaar
+	// normaliser's own codes (x402_bazaar.go), the one validator for both.
+	for _, target := range []string{"https://example.com/x", "", "GET"} {
 		if _, _, err := ParseX402Target(target); errCode(err) != "x402_listing_target" {
-			t.Errorf("target %q: %v", target, err)
+			t.Errorf("target %q: %v, want x402_listing_target", target, err)
+		}
+	}
+	for _, target := range []string{"PUT https://example.com/x", "DELETE https://example.com/x"} {
+		if _, _, err := ParseX402Target(target); errCode(err) != "x402_listing_method" {
+			t.Errorf("target %q: %v, want x402_listing_method", target, err)
+		}
+	}
+	for _, target := range []string{"GET http://example.com/x", "GET https://10.0.0.1/x", "GET https://example.com:8443/x"} {
+		if _, _, err := ParseX402Target(target); errCode(err) != "x402_listing_url" {
+			t.Errorf("target %q: %v, want x402_listing_url", target, err)
 		}
 	}
 	// Three per recipient and per domain: the fourth does not fit; one of

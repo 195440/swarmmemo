@@ -439,7 +439,8 @@ func (s *Server) openapi() map[string]any {
 		"responses": response,
 	}, "post": map[string]any{
 		"summary":     "An AI summary of a graph selection's public messages",
-		"description": `POST JSON {"ids":[...],"room":"","mode":"author"|"among"}: the server reads the selection's public messages itself and asks a hosted model for a neutral summary, labelled "AI summary". Capped per request (24k input tokens; older messages are left out), per network (` + strconv.Itoa(graphSummaryPerWindow) + ` per ` + strconv.Itoa(int(graphSummaryWindow/time.Minute)) + ` minutes, ` + strconv.Itoa(graphSummaryPerDay) + ` a day) and per UTC day in USD; off without a configured provider and after the date in the GET answer, when it answers 410 route_gone.`,
+		"description": `POST JSON {"ids":[...],"room":"","mode":"author"|"among"}, or {"nodes":[...],"gen":"GENERATION"} for a universe community: the server reads the selection's public messages itself and asks a hosted model for a neutral summary, labelled "AI summary". Capped per request (24k input tokens; older messages are left out), per network (` + strconv.Itoa(graphSummaryPerWindow) + ` per ` + strconv.Itoa(int(graphSummaryWindow/time.Minute)) + ` minutes, ` + strconv.Itoa(graphSummaryPerDay) + ` a day) and per UTC day in USD; off without a configured provider and after the date in the GET answer, when it answers 410 route_gone.`,
+		"requestBody": graphSummaryRequestBody(),
 		"responses":   response,
 	}}
 	if f := s.cfg.Features; f.Ledger != board.LedgerOff || f.Trust != board.TrustOff {
@@ -1336,18 +1337,56 @@ func commandSchemaProperties() map[string]any {
 			props[name] = o
 			continue
 		}
-		switch k := f.Type.Kind(); {
-		case k == reflect.String:
-			props[name] = map[string]any{"type": "string"}
-		case k == reflect.Int || k == reflect.Int64:
-			props[name] = map[string]any{"type": "integer"}
-		case k == reflect.Slice && f.Type.Elem().Kind() == reflect.String:
-			props[name] = map[string]any{"type": "array", "items": map[string]string{"type": "string"}}
-		default:
-			panic("board.Command." + f.Name + ": add its schema to commandSchemaOverrides or commandSchemaExcluded")
+		if s, ok := basicJSONSchema(f.Type); ok {
+			props[name] = s
+			continue
 		}
+		panic("board.Command." + f.Name + ": add its schema to commandSchemaOverrides or commandSchemaExcluded")
 	}
 	return props
+}
+
+// basicJSONSchema is the OpenAPI schema for t's kind, when it is plain
+// enough to need no per-field override: a string, an integer, or an array
+// of either. commandSchemaProperties and reflectRequestSchema both derive a
+// struct's ordinary fields from this one mapping, so the two reflection
+// paths never describe the same Go kind two different ways.
+func basicJSONSchema(t reflect.Type) (map[string]any, bool) {
+	switch k := t.Kind(); {
+	case k == reflect.String:
+		return map[string]any{"type": "string"}, true
+	case k == reflect.Int || k == reflect.Int32 || k == reflect.Int64:
+		return map[string]any{"type": "integer"}, true
+	case k == reflect.Slice && t.Elem().Kind() == reflect.String:
+		return map[string]any{"type": "array", "items": map[string]string{"type": "string"}}, true
+	case k == reflect.Slice && (t.Elem().Kind() == reflect.Int || t.Elem().Kind() == reflect.Int32 || t.Elem().Kind() == reflect.Int64):
+		return map[string]any{"type": "array", "items": map[string]string{"type": "integer"}}, true
+	}
+	return nil, false
+}
+
+// reflectRequestSchema derives a POST body's closed object schema from a
+// request struct's own json tags, the same reflection
+// commandSchemaProperties uses for board.Command: a documented body can
+// never drift from what the handler decodes (C318).
+func reflectRequestSchema(t reflect.Type, required []string) map[string]any {
+	props := map[string]any{}
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		if name == "" || name == "-" {
+			continue
+		}
+		s, ok := basicJSONSchema(f.Type)
+		if !ok {
+			panic(t.Name() + "." + f.Name + ": add its schema kind to basicJSONSchema")
+		}
+		props[name] = s
+	}
+	return map[string]any{"type": "object", "additionalProperties": false, "required": required, "properties": props}
 }
 
 // commandSchemaOverrides are the Command properties whose schema says more

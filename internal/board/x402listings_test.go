@@ -88,7 +88,7 @@ func TestX402SubmitOnTheBoard(t *testing.T) {
 	// Unsigned, a bad target, no domain link: refused before anything is
 	// fetched.
 	fails(t, s, Command{Operation: "x402.submit", Target: target, RequestID: randomID()}, "signature_required")
-	fails(t, s, cmd("x402.submit", "GET http://example.com/api", "", 91), "x402_listing_target")
+	fails(t, s, cmd("x402.submit", "GET http://example.com/api", "", 91), "x402_listing_url")
 	fails(t, s, cmd("x402.submit", target, "", 91), "x402_listing_unowned")
 	fails(t, s, cmd("x402.submit", target, `{"schema":1,"extra":1}`, 91), "x402_listing_data")
 	// A claimed (unverified) link is not ownership; a verified one on the

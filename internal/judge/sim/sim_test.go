@@ -6,7 +6,40 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+
+	"swarmmemo/internal/trust"
 )
+
+// RFC 0021 §6: one half-life. The score's judgement decay (180 days) set to
+// standing's (90) keeps the C303s score targets; the numbers are cited in
+// the RFC.
+func TestOneHalfLife(t *testing.T) {
+	if testing.Short() {
+		t.Skip("RFC 0021 simulation")
+	}
+	cfg := Config{Params: func(p *trust.Params) {
+		jp := *p.Standing.Judgements
+		jp.HalfLifeDays, jp.DayFactorPPM = p.Standing.HalfLifeDays, p.Standing.DayFactorPPM
+		p.Standing.Judgements = &jp
+	}}
+	for _, name := range []string{"baseline", "griefing", "funded", "thin"} {
+		sc, _ := ScenarioByName(name)
+		r, err := Simulate(context.Background(), sc, 1, testSeeds, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		base := reportsFor(t)[name]
+		t.Logf("%s: |score − q| %.1f → %.1f; griefed lift %.1f → %.1f; funded lift %.0f → %.0f; informed final %+.2f → %+.2f¢; conserved %v",
+			name, mean(t, base, MetricAccuracy), mean(t, r, MetricAccuracy), base.Stats["lift.griefed"].Mean, r.Stats["lift.griefed"].Mean,
+			base.Stats["lift.funded"].Mean, r.Stats["lift.funded"].Mean, mean(t, base, MetricMarkFinal+string(Informed)), mean(t, r, MetricMarkFinal+string(Informed)), r.Conserved)
+		if !r.Conserved {
+			t.Errorf("%s: minted", name)
+		}
+		if v, b := mean(t, r, MetricAccuracy), mean(t, base, MetricAccuracy); v > b+2 {
+			t.Errorf("%s: |score − q| %.1f with one half-life, %.1f with two", name, v, b)
+		}
+	}
+}
 
 // The scenario invariants of RFC 0020 under rule 4 (C303b: trust parameter
 // version 7, each run reading the previous run's carry): the acceptance

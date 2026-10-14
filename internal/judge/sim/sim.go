@@ -135,6 +135,9 @@ type planned struct {
 // Config tunes a run (zero values are the defaults).
 type Config struct {
 	Cadence int64 // days between trust runs (default 7)
+	// Params, when set, edits the trust parameters (version 7) before the
+	// world is built: RFC 0021's parameter experiments.
+	Params func(*trust.Params)
 }
 
 // Result is one (scenario, seed) run's metrics, by name (Metric*).
@@ -170,6 +173,9 @@ func Run(ctx context.Context, sc Scenario, seed uint64, cfg Config) (Result, err
 	}
 	params := trust.JudgementsParams() // rule 4: RFC 0020 is the rule (C303b)
 	params.Seeds, params.ServiceAccounts, params.WindowDays = nil, nil, 90
+	if cfg.Params != nil {
+		cfg.Params(&params)
+	}
 	operators := map[Kind]string{} // a ring's operator: its members' judgements route standing to it
 	st := params.Standing
 	snap := trust.Snapshot{Params: params}
