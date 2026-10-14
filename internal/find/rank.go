@@ -265,7 +265,7 @@ func (s scored) hit(explain bool) Hit {
 	d := s.doc
 	h := Hit{Type: d.Type, Kind: d.Kind, ID: d.ID, Name: d.Name, Description: d.Description, Category: d.Category, URL: d.URL,
 		PriceText: d.PriceText, Network: d.Network, Output: d.Output, Protocols: d.Protocols, SubjectID: d.SubjectID, ReviewURL: d.Review, Also: d.Also, State: d.Quality.State,
-		Standing: d.Quality.Standing, AcceptedTasks: d.Quality.AcceptedTasks, Untrusted: d.Untrusted, ListedBy: d.ListedBy, Score: round4(s.score)}
+		Standing: d.Quality.Standing, AcceptedTasks: d.Quality.AcceptedTasks, Reputation: d.Quality.Reputation, Untrusted: d.Untrusted, ListedBy: d.ListedBy, Score: round4(s.score)}
 	if h.Category == "other" {
 		h.Category = ""
 	}

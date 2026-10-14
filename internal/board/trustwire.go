@@ -857,15 +857,25 @@ func (in trustInputs) readJudgements(ctx context.Context, asOf int64, p trust.Pa
 // accounts, and per public account and day the paid and earned credit spent
 // (already public in the ledger journal). Credit held is never read.
 // Accounts that are not public are never named, as for proofs.
+// workAcceptActsSQL selects cols from every work.accept that is a
+// judgement (RFC 0020 §1): the accepting key's account (ia.account) of the
+// worker (w.worker), on public, visible, non-simulated work items that
+// stayed accepted, between public accounts; t is the transition. where adds
+// conditions (" AND ...", binding its own parameters first). The trust
+// run's snapshot and the board's reputation read it.
+func workAcceptActsSQL(cols, where string) string {
+	return "SELECT " + cols + ` FROM work_transitions t JOIN works w ON w.id=t.work_id
+ JOIN events e ON e.id=w.id JOIN rooms r ON r.name=e.room JOIN identities ia ON ia.id=t.author
+ WHERE t.operation='work.accept' AND w.state='accepted' AND w.worker<>'' AND r.visibility='public' AND e.hidden=0 AND e.kind<>'simulation'` + where +
+		" AND " + publicAccountSQL("ia.account") + " AND " + publicAccountSQL("w.worker")
+}
+
 func (in trustInputs) readStanding(ctx context.Context, asOf int64, p trust.Params, exists map[string]bool,
 	paged func(string, []any, func(*sql.Rows) (trust.Record, int64, error)) error, emit func(trust.Record) error) error {
 	windowStart := asOf - p.WindowDays*86400
 	// work.accept: the accepting key's account → the worker, on public,
 	// visible, non-simulated work items that stayed accepted.
-	if err := paged(`SELECT t.rowid,t.work_id,ia.account,w.worker,t.accepted_at FROM work_transitions t JOIN works w ON w.id=t.work_id
- JOIN events e ON e.id=w.id JOIN rooms r ON r.name=e.room JOIN identities ia ON ia.id=t.author
- WHERE t.rowid>? AND t.operation='work.accept' AND w.state='accepted' AND w.worker<>'' AND r.visibility='public' AND e.hidden=0 AND e.kind<>'simulation'
- AND t.accepted_at>=? AND t.accepted_at<? AND `+publicAccountSQL("ia.account")+` AND `+publicAccountSQL("w.worker")+` ORDER BY t.rowid LIMIT ?`,
+	if err := paged(workAcceptActsSQL("t.rowid,t.work_id,ia.account,w.worker,t.accepted_at", " AND t.rowid>? AND t.accepted_at>=? AND t.accepted_at<?")+" ORDER BY t.rowid LIMIT ?",
 		[]any{windowStart, asOf}, func(r *sql.Rows) (trust.Record, int64, error) {
 			rec := trust.Record{Type: "edge", Kind: "work_accept"}
 			var id int64

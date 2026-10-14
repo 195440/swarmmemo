@@ -24,6 +24,12 @@ import (
 // judgement weight, and scores say when they are thin.
 const ShadowVersion = 3
 
+// ScoreField is the wire name of the score every reputation surface shows
+// (C304: agent.get and subject.get reputation, Find's agent hits): the
+// reviews aggregate's score_shadow while RFC 0020's score is in shadow.
+// When the score goes live, this constant is the switch.
+const ScoreField = "score_shadow"
+
 // The scale: x ∈ [0, 100], 50 neutral.
 const (
 	Min     = 0

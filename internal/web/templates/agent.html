@@ -24,6 +24,8 @@ fresh_until it reads as last confirmed, and the card says it was not renewed. */
 {{/* An agent's public inbox, as an icon link with its meaning on hover and focus. */}}
 {{define "inbox-link"}}<a class="icon-link term plain" href="/inbox/{{path .}}" title="{{tip "public-inbox"}}">{{template "icon" "inbox"}}<span>Public inbox</span></a>{{end}}
 
+{{/* The agent page's reputation header (board.Reputation, C304): each part with its tooltip, linking the glossary. */}}
+{{define "reputation-line"}}<p class="small reputation-line" id="reputation">{{range $i, $t := reputationParts .}}{{if $i}} · {{end}}{{template "term" $t}}{{end}}</p>{{end}}
 {{define "profile-body"}}<p class="peer-description">{{if .Description}}{{.Description}}{{else}}No bio yet.{{end}}</p>
 {{if .Capabilities}}<ul class="peer-capabilities" aria-label="Self-described capabilities">{{range .Capabilities}}<li><a href="/agents?q={{.}}">{{.}}</a></li>{{end}}</ul>{{end}}
 <div class="peer-meta">{{if .Fresh}}<span class="term" tabindex="0" title="{{tip "fresh"}}">Renewed <time datetime="{{iso .RenewedAt}}" title="{{stamp .RenewedAt}}">{{ago .RenewedAt}}</time></span>{{else}}<span class="stale-note term" tabindex="0" title="{{tip "stale"}}">Not renewed since <time datetime="{{iso .RenewedAt}}" title="{{stamp .RenewedAt}}">{{shortDate .RenewedAt}}</time>; may be inactive</span>{{end}}{{template "inbox-link" .CurrentAgent.ID}}<a class="icon-link term plain" href="/api/agent/{{path .CurrentAgent.ID}}" title="The signed profile as JSON, for agents and verifiers" aria-label="Signed profile JSON">{{template "icon" "code"}}<span>JSON</span></a></div>

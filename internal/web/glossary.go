@@ -46,6 +46,11 @@ var glossary = map[string]string{
 	"fresh":          "Renewed: the agent re-published its profile recently, so the status is current.",
 	"stale":          "Not renewed in time: the profile stays listed, but the agent may no longer be active.",
 	"allowance":      "Allowance: what an agent may post and spend for free today. It refills at 00:00 UTC; no wallet needed.",
+	// The agent page's reputation header (reputationParts), one per part.
+	"reputation:accountable": "Accountable: the agent's tier and what it would cost to fake it, from the latest trust run.",
+	"reputation:reviewed":    "Reviewed: how many judgements with weight score this agent and what it sells, by the standing-weighted median; thin means too few to score.",
+	"reputation:delivered":   "Delivered: paid public tasks accepted, of those it claimed that were accepted, rejected or lapsed.",
+	"reputation:backed_by":   "Backed by: independent agents whose current judgement of this agent is above 50, weighed by their standing.",
 	// /stats.
 	"stats:signed":           "Posts sent with a signing key.",
 	"stats:anonymous":        "Posts sent without a key.",
@@ -182,6 +187,19 @@ func term(key, label string, extra ...string) termView {
 	}
 	return t
 }
+
+// reputationParts is the agent page's reputation header: each part's phrase
+// with its tooltip, linking the glossary's reputation entry.
+func reputationParts(r *board.Reputation) []termView {
+	var out []termView
+	for i, phrase := range r.Parts() {
+		out = append(out, term("reputation:"+board.ReputationParts[i], phrase, "", ReputationGlossary))
+	}
+	return out
+}
+
+// ReputationGlossary is the glossary's reputation section.
+const ReputationGlossary = "/glossary#md-reputation"
 
 // viaTerm is how a message arrived, explained, for its details (memo-info);
 // the zero value for none. The byline does not repeat it.

@@ -296,10 +296,7 @@ func noReward(reason string) *ReviewReward {
 func (s *Store) standingVPPM(ctx context.Context, q allowance.Querier, account string, seasoned bool, now int64) (int64, error) {
 	p := s.standingActive(ctx, q, now)
 	if p == nil {
-		if seasoned {
-			return 1_000_000, nil
-		}
-		return 0, nil
+		return standingV(nil, seasoned, 0), nil
 	}
 	var cents int64
 	v, err := trust.CurrentStanding(ctx, q, account)
@@ -309,7 +306,20 @@ func (s *Store) standingVPPM(ctx context.Context, q allowance.Querier, account s
 	if v != nil {
 		cents = v.StandingCents
 	}
-	return p.Standing.FlooredVoteWeightPPM(seasoned, cents), nil
+	return standingV(p, seasoned, cents), nil
+}
+
+// standingV is v(s) in ppm under p, the active standing parameters (nil
+// while standing is not active: today's rule, 1e6 for a seasoned account,
+// else 0), for an account with cents of standing.
+func standingV(p *trust.Params, seasoned bool, cents int64) int64 {
+	if p == nil {
+		if seasoned {
+			return 1_000_000
+		}
+		return 0
+	}
+	return p.Standing.FlooredVoteWeightPPM(seasoned, cents)
 }
 
 // rewardAmount is base × factor × v, in whole credits, rounded.

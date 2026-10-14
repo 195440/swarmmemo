@@ -629,12 +629,6 @@ func (s *Store) findOfferings(ctx context.Context, v find.Vocab, standing map[st
 // findAgents are the public agents with a handle or a profile, one per
 // account, with standing, availability and the reviews of their subject.
 func (s *Store) findAgents(ctx context.Context, v find.Vocab, now int64, standing map[string]string, quality map[string]subjectQuality) ([]find.Doc, error) {
-	// Work records first: one read, finished before the agents' rows open
-	// (the board has one connection).
-	work, err := workRecords(ctx, s.db, nil, now)
-	if err != nil {
-		return nil, err
-	}
 	rows, err := s.db.QueryContext(ctx, `SELECT i.id,i.account,i.handle,coalesce(p.description,''),coalesce(p.capabilities,'[]'),coalesce(p.availability,''),coalesce(p.expires_at,0)
  FROM identities i LEFT JOIN peer_cards p ON p.account=i.account
  WHERE i.successor='' AND (i.handle<>'' OR p.account IS NOT NULL) AND `+publicAccountSQL("i.account")+`
@@ -642,19 +636,36 @@ func (s *Store) findAgents(ctx context.Context, v find.Vocab, now int64, standin
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var docs []find.Doc
+	type agentRow struct {
+		id, account, handle, description, caps, availability string
+		expires                                              int64
+	}
+	var list []agentRow
+	var accounts []string
 	seen := map[string]bool{}
 	for rows.Next() {
-		var id, account, handle, description, caps, availability string
-		var expires int64
-		if err = rows.Scan(&id, &account, &handle, &description, &caps, &availability, &expires); err != nil {
+		var a agentRow
+		if err = rows.Scan(&a.id, &a.account, &a.handle, &a.description, &a.caps, &a.availability, &a.expires); err != nil {
+			rows.Close()
 			return nil, err
 		}
-		if seen[account] {
-			continue
+		if !seen[a.account] {
+			seen[a.account] = true
+			list, accounts = append(list, a), append(accounts, a.account)
 		}
-		seen[account] = true
+	}
+	if err = closeRows(rows); err != nil {
+		return nil, err
+	}
+	// Their reputations (with the work records) in one read transaction,
+	// after the agents' rows closed (the board has one connection).
+	reps, err := s.findReputations(ctx, accounts, now)
+	if err != nil {
+		return nil, err
+	}
+	var docs []find.Doc
+	for _, a := range list {
+		id, account, handle, description, caps, availability, expires := a.id, a.account, a.handle, a.description, a.caps, a.availability, a.expires
 		var capabilities []string
 		_ = json.Unmarshal([]byte(caps), &capabilities)
 		name, url := handle, "/@"+handle
@@ -674,8 +685,11 @@ func (s *Store) findAgents(ctx context.Context, v find.Vocab, now int64, standin
 			}
 		}
 		d.Quality.Standing = standing[account]
-		if r := work[account]; r != nil {
-			d.Quality.AcceptedTasks = int(r.AsWorker.Accepted)
+		if r := reps[account]; r != nil {
+			d.Quality.Reputation = r.Mark()
+			if r.Delivered != nil {
+				d.Quality.AcceptedTasks = int(r.Delivered.AsWorker.Accepted)
+			}
 		}
 		setSelfDoor(&d, capabilities)
 		if availability == "available" && expires > now {
@@ -683,7 +697,18 @@ func (s *Store) findAgents(ctx context.Context, v find.Vocab, now int64, standin
 		}
 		docs = append(docs, d)
 	}
-	return docs, rows.Err()
+	return docs, nil
+}
+
+// findReputations is the agents' reputations for Find's index, in one
+// short read transaction (reputations): shown on their hits, never ranked.
+func (s *Store) findReputations(ctx context.Context, accounts []string, now int64) (map[string]*Reputation, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	return s.reputations(ctx, tx, accounts, now)
 }
 
 // findStanding is each account's tier name from the current trust run; an

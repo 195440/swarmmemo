@@ -647,15 +647,7 @@ func (in trustInputs) readSignalLinks(ctx context.Context, asOf, days int64, emi
 	}
 	pairs := map[[2]string]bool{}
 	for _, accounts := range groups {
-		if len(accounts) < 2 || len(accounts) > SignalLinkGroupMax {
-			continue
-		}
-		list := signalSet(accounts)
-		for i := range list {
-			for j := i + 1; j < len(list); j++ {
-				pairs[[2]string{list[i], list[j]}] = true
-			}
-		}
+		signalGroupPairs(accounts, func(a, b string) { pairs[[2]string{a, b}] = true })
 	}
 	keys := make([][2]string, 0, len(pairs))
 	for p := range pairs {
@@ -673,6 +665,21 @@ func (in trustInputs) readSignalLinks(ctx context.Context, asOf, days int64, emi
 		}
 	}
 	return nil
+}
+
+// signalGroupPairs calls pair(a, b), a < b, for each two accounts of one
+// network-and-User-Agent group the trust run treats as linked: a group of 2
+// to SignalLinkGroupMax accounts (a larger one is shared infrastructure).
+func signalGroupPairs(accounts map[string]bool, pair func(a, b string)) {
+	if len(accounts) < 2 || len(accounts) > SignalLinkGroupMax {
+		return
+	}
+	list := signalSet(accounts)
+	for i := range list {
+		for j := i + 1; j < len(list); j++ {
+			pair(list[i], list[j])
+		}
+	}
 }
 
 // readSignalNetworks is, for each network hash under hashKey, the signed
@@ -705,4 +712,52 @@ func signalSet(m map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// signalLinksOf adds to linked (both orders) the trust run's signal links
+// (signalGroupPairs) between the accounts named and any other, from the
+// writes in [from, to) under the current signals key.
+func (s *Store) signalLinksOf(ctx context.Context, tx *sql.Tx, accounts []string, from, to int64, linked map[[2]string]bool) error {
+	type key struct{ net, ua string }
+	var keys []key
+	seen := map[key]bool{}
+	err := inChunks(accounts, func(marks string, args []any) error {
+		return scanAll(ctx, tx, `SELECT DISTINCT ip_hash_24,user_agent FROM write_signals WHERE account IN (`+marks+`) AND created_at>=? AND created_at<? AND hash_key=? AND ip_hash_24<>'' AND user_agent<>''`,
+			append(args, from, to, s.signals.id), func(r *sql.Rows) error {
+				var k key
+				if err := r.Scan(&k.net, &k.ua); err != nil {
+					return err
+				}
+				if !seen[k] {
+					seen[k] = true
+					keys = append(keys, k)
+				}
+				return nil
+			})
+	})
+	if err != nil {
+		return err
+	}
+	named := map[string]bool{}
+	for _, a := range accounts {
+		named[a] = true
+	}
+	for _, k := range keys {
+		group := map[string]bool{}
+		if err = scanAll(ctx, tx, `SELECT DISTINCT account FROM write_signals WHERE ip_hash_24=? AND user_agent=? AND created_at>=? AND created_at<? AND hash_key=? AND account<>''`,
+			[]any{k.net, k.ua, from, to, s.signals.id}, func(r *sql.Rows) error {
+				var a string
+				err := r.Scan(&a)
+				group[a] = true
+				return err
+			}); err != nil {
+			return err
+		}
+		signalGroupPairs(group, func(a, b string) {
+			if named[a] || named[b] {
+				linked[[2]string{a, b}], linked[[2]string{b, a}] = true, true
+			}
+		})
+	}
+	return nil
 }

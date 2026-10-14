@@ -405,6 +405,15 @@ func FlooredShareWeightPPM(today, cents int64, p Params) int64 {
 	return max(today, ShareWeightPPM(cents, p))
 }
 
+// Independent is the independence test of rule 3 and RFC 0020, the one
+// copy (the trust run and the board's reputation read it): two accounts are
+// independent when they differ, their roots differ, neither funded the other
+// (a transfer either way within funded_days: funded holds both orders) and
+// they share no signal link (linked holds both orders).
+func Independent(a, b string, rootOf func(string) string, funded, linked map[[2]string]bool) bool {
+	return a != b && rootOf(a) != rootOf(b) && !funded[[2]string{a, b}] && !linked[[2]string{a, b}]
+}
+
 // Band is the tier band of C: 1, 2 or 3.
 func (st *StandingParams) Band(cents int64) int64 {
 	switch {
@@ -851,9 +860,7 @@ func computeStanding(in standingInput) standingResult {
 		}
 		// Independent: another root, no transfer either way within
 		// funded_days, no signal link. Rule 3 and RFC 0020 read the same test.
-		indep := func(a, b string) bool {
-			return a != b && in.rootOf(a) != in.rootOf(b) && !funded[[2]string{a, b}] && !linked[[2]string{a, b}]
-		}
+		indep := func(a, b string) bool { return Independent(a, b, in.rootOf, funded, linked) }
 		if st.Rule >= 4 {
 			stakeOut, judgements = runJudgementRule(ruleInput{st: st, p: p, set: set, carry: in.carry, asOf: in.asOf, D: in.D, ws: ws,
 				nodes: nodes, index: index, seed: seed, pen: pen, penalty: in.penalty, indep: indep})

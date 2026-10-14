@@ -1427,6 +1427,11 @@ func (s *Store) readSubject(ctx context.Context, tx *sql.Tx, c Command, now int6
 	if work != nil {
 		data["work_record"] = work
 	}
+	if sub.Type == reviews.TypeAgent {
+		if data["reputation"], err = s.reputation(ctx, tx, sub.Key, now); err != nil {
+			return Result{}, err
+		}
+	}
 	if !info.Exists {
 		data["reviews"], data["aggregate"], data["has_more"] = []ReviewCard{}, emptyAggregate(), false
 		return Result{Data: data}, nil
@@ -1584,7 +1589,7 @@ var communityWeights = sync.OnceValue(func() string {
 	burst, capped := strconv.Itoa(ReviewBurstDays*86400), sqlNumber(ReviewBurstCap)
 	from := ` FROM reviews r JOIN events e ON e.id=r.event_id%s WHERE r.subject=?2 AND r.current=1 AND e.hidden=0 AND r.relationship NOT IN ('lab','outside_source') AND ` + aboutCurrentVersion
 	return `WITH days AS MATERIALIZED (SELECT r.created_at/86400 AS day, sum(` + cw + `*r.seasoned*` + rf + `*` + decay + `) AS total` + fmt.Sprintf(from, "") + ` AND r.created_at>?1-` + burst + ` GROUP BY day),
-parts AS (SELECT r.event_id,r.verdict,r.evidence_class,r.works,r.as_described,r.safe,r.good,r.score,r.created_at,
+parts AS (SELECT r.event_id,r.account,r.verdict,r.evidence_class,r.works,r.as_described,r.safe,r.good,r.score,r.created_at,
  ` + cw + ` AS cw, r.seasoned AS v, ` + rf + ` AS rf, ` + decay + ` AS decay, ` + sqlCase("r.verdict", verdicts, "NULL") + ` AS value,
  CASE WHEN ?1-r.created_at<` + burst + ` AND days.total>` + capped + ` THEN ` + capped + `/days.total ELSE 1.0 END AS burst` + fmt.Sprintf(from, " LEFT JOIN days ON days.day=r.created_at/86400") + `),
 w AS (SELECT parts.*, round(cw*v*rf*decay*burst, 6) AS w FROM parts)
@@ -1614,10 +1619,7 @@ func communityReviews(ctx context.Context, tx *sql.Tx, subject string, now int64
 	for _, d := range reviews.Dimensions {
 		cols = append(cols, "coalesce(sum(CASE WHEN w>0 AND "+d+">=0 THEN w*"+d+" END),0)", "coalesce(sum(CASE WHEN w>0 AND "+d+">=0 THEN w END),0)")
 	}
-	// The weight and count per distinct (verdict, score, good), for
-	// judge.ScoreGrouped: the mapping to x is judge.FromReview's, never
-	// repeated in SQL.
-	cols = append(cols, "(SELECT json_group_array(json_array(verdict,score,good,sw,n)) FROM (SELECT verdict,score,good,sum(w) AS sw,count(*) AS n FROM x WHERE w>0 GROUP BY verdict,score,good))")
+	cols = append(cols, reviewGroupsSQL(""))
 	rows, err := tx.QueryContext(ctx, communityWeights()+`, x AS MATERIALIZED (SELECT * FROM w),
 agg AS (SELECT `+strings.Join(cols, ",")+` FROM x),
 page AS (SELECT event_id,created_at,evidence_class,cw,v,rf,decay,burst,w FROM x ORDER BY w DESC, created_at DESC, event_id LIMIT ?3 OFFSET ?4)
@@ -1706,15 +1708,52 @@ SELECT agg.*,page.event_id,page.evidence_class,page.cw,page.v,page.rf,page.decay
 	return agg, page, nil
 }
 
+// reviewGroupsSQL is the weight and count per distinct (verdict, score,
+// good) of the reviews in x (communityWeights' rows, materialized) that have
+// weight, as one JSON array, for judge.ScoreGrouped (reviewPoints): the
+// mapping to x is judge.FromReview's, never repeated in SQL. filter narrows
+// the reviews (" AND ...", over x's columns); "" for every one.
+func reviewGroupsSQL(filter string) string {
+	return "(SELECT json_group_array(json_array(verdict,score,good,sw,n)) FROM (SELECT verdict,score,good,sum(w) AS sw,count(*) AS n FROM x WHERE w>0" + filter + " GROUP BY verdict,score,good))"
+}
+
+// subjectJudgements is a subject's community reviews as judge points (its
+// weight groups, reviewPoints) and the weighted judgements they stand for,
+// from the one weighting statement (communityWeights), leaving out the
+// reviews of the accounts in exclude. With none excluded its score is the
+// aggregate's score_shadow.
+func subjectJudgements(ctx context.Context, tx *sql.Tx, subject string, now int64, exclude []string) ([]judge.Point, int64, error) {
+	if exclude == nil {
+		exclude = []string{}
+	}
+	ex, err := json.Marshal(exclude)
+	if err != nil {
+		return nil, 0, err
+	}
+	var groups sql.NullString
+	if err = tx.QueryRowContext(ctx, communityWeights()+", x AS MATERIALIZED (SELECT * FROM w) SELECT "+reviewGroupsSQL(" AND account NOT IN (SELECT value FROM json_each(?3))"),
+		now, subject, string(ex)).Scan(&groups); err != nil {
+		return nil, 0, err
+	}
+	points, n := reviewPoints(groups.String)
+	return points, n, nil
+}
+
 // reviewScoreShadow is judge.ScoreGrouped over the aggregate's weight groups
-// ([verdict, score, good, weight, count] rows): each group's x is
-// judge.FromReview's and its weight the summed w in ppm. thin is
-// judge.Thin of the weighted judgements counted (RFC 0020 §2).
+// (reviewPoints). thin is judge.Thin of the weighted judgements counted
+// (RFC 0020 §2).
 func reviewScoreShadow(groups string) (score int64, thin bool) {
+	points, n := reviewPoints(groups)
+	return judge.ScoreGrouped(points, n), judge.Thin(n)
+}
+
+// reviewPoints reads weight groups ([verdict, score, good, weight, count]
+// rows, reviewGroupsSQL) as judge points: each group's x is
+// judge.FromReview's and its weight the summed w in ppm; n is how many
+// weighted judgements they stand for.
+func reviewPoints(groups string) (points []judge.Point, n int64) {
 	var rows [][5]json.RawMessage
 	_ = json.Unmarshal([]byte(groups), &rows)
-	var points []judge.Point
-	var n int64
 	for _, g := range rows {
 		var verdict string
 		var score, good, count int64
@@ -1728,7 +1767,7 @@ func reviewScoreShadow(groups string) (score int64, thin bool) {
 			n += max(1, count)
 		}
 	}
-	return judge.ScoreGrouped(points, n), judge.Thin(n)
+	return points, n
 }
 
 // reviewThread counts a review's replies and finds its owner's pinned reply.

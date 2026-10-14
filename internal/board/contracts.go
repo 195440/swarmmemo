@@ -240,6 +240,10 @@ type Agent struct {
 	// counts, a verified lab assessment, where to read and write them, its
 	// badge and the reward offer; on agent.get only while reviews are on.
 	Reviews *SubjectReviews `json:"reviews,omitempty"`
+	// Reputation is the agent's reputation (reputation.go): accountable,
+	// reviewed, delivered and backed by, shown and never ranked; on
+	// agent.get only.
+	Reputation *Reputation `json:"reputation,omitempty"`
 }
 
 // AgentURLs link an agent's views by fingerprint: Web its page, JSON the

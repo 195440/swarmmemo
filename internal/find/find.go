@@ -180,6 +180,9 @@ type Quality struct {
 	// AcceptedTasks is an agent's paid work accepted as worker, from its
 	// work record (the board's workRecords); shown, never ranked.
 	AcceptedTasks int
+	// Reputation is an agent's compact reputation (the board's Reputation);
+	// shown, never ranked.
+	Reputation *ReputationMark
 }
 
 // HasLab reports whether a lab assessment is known.
@@ -264,13 +267,16 @@ type Hit struct {
 	Standing    string   `json:"standing,omitempty"`
 	// AcceptedTasks is an agent's paid work accepted as worker (its
 	// work_record's as_worker.accepted on agent.get).
-	AcceptedTasks int       `json:"accepted_tasks,omitempty"`
-	Door          *DoorMark `json:"door,omitempty"`
-	Why           string    `json:"why"`
-	Score         float64   `json:"score"`
-	Untrusted     bool      `json:"description_is_untrusted,omitempty"`
-	ListedBy      string    `json:"listed_by,omitempty"`
-	Explain       *Explain  `json:"explain,omitempty"`
+	AcceptedTasks int `json:"accepted_tasks,omitempty"`
+	// Reputation is an agent's compact reputation (reputation on agent.get):
+	// tier, score, thin, accepted_tasks, backers. Shown, never ranked.
+	Reputation *ReputationMark `json:"reputation,omitempty"`
+	Door       *DoorMark       `json:"door,omitempty"`
+	Why        string          `json:"why"`
+	Score      float64         `json:"score"`
+	Untrusted  bool            `json:"description_is_untrusted,omitempty"`
+	ListedBy   string          `json:"listed_by,omitempty"`
+	Explain    *Explain        `json:"explain,omitempty"`
 	// ReviewReward is the board's standing offer for reviewing this
 	// subject while it has slots left; set by the board after the search.
 	ReviewReward any `json:"review_reward,omitempty"`

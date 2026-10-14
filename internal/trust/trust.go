@@ -287,23 +287,57 @@ func LatestCarry(ctx context.Context, q allowance.Querier) (*JudgementCarry, err
 // Current reads an account's score in the latest done run; ok is false when
 // that run has no row for it.
 func Current(ctx context.Context, q allowance.Querier, account string) (score Score, ok bool, err error) {
-	var parts string
-	var tier int64
-	err = q.QueryRowContext(ctx, `SELECT s.run_id,s.account,s.root,s.proof_collateral,s.flow_a,s.flow_b,s.flow,s.collateral,s.tier,s.weight_ppm,s.parts
- FROM trust_current c JOIN trust_scores s ON s.run_id=c.run_id AND s.account=c.account
- WHERE c.account=? AND c.run_id=(SELECT max(id) FROM trust_runs WHERE state='done')`, account).
-		Scan(&score.RunID, &score.Account, &score.Root, &score.ProofCollateral, &score.FlowA, &score.FlowB, &score.Flow, &score.Collateral, &tier, &score.WeightPPM, &parts)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Score{}, false, nil
-	}
+	m, err := CurrentScores(ctx, q, []string{account})
 	if err != nil {
 		return Score{}, false, err
 	}
-	score.Tier = allowance.Tier(tier)
-	if err = json.Unmarshal([]byte(parts), &score.Parts); err != nil {
-		return Score{}, false, err
+	score, ok = m[account]
+	return score, ok, nil
+}
+
+// currentScoresChunk bounds the accounts one CurrentScores query names.
+const currentScoresChunk = 200
+
+// CurrentScores is Current for many accounts in a few reads: each named
+// account's score in the latest done run, absent when that run has no row
+// for it.
+func CurrentScores(ctx context.Context, q allowance.Querier, accounts []string) (map[string]Score, error) {
+	out := map[string]Score{}
+	for start := 0; start < len(accounts); start += currentScoresChunk {
+		chunk := accounts[start:min(len(accounts), start+currentScoresChunk)]
+		args := make([]any, len(chunk))
+		for i, a := range chunk {
+			args[i] = a
+		}
+		rows, err := q.QueryContext(ctx, `SELECT s.run_id,s.account,s.root,s.proof_collateral,s.flow_a,s.flow_b,s.flow,s.collateral,s.tier,s.weight_ppm,s.parts
+ FROM trust_current c JOIN trust_scores s ON s.run_id=c.run_id AND s.account=c.account
+ WHERE c.account IN (?`+strings.Repeat(",?", len(chunk)-1)+`) AND c.run_id=(SELECT max(id) FROM trust_runs WHERE state='done')`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var score Score
+			var parts string
+			var tier int64
+			if err = rows.Scan(&score.RunID, &score.Account, &score.Root, &score.ProofCollateral, &score.FlowA, &score.FlowB, &score.Flow, &score.Collateral, &tier, &score.WeightPPM, &parts); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			score.Tier = allowance.Tier(tier)
+			if err = json.Unmarshal([]byte(parts), &score.Parts); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out[score.Account] = score
+		}
+		if err = rows.Close(); err != nil {
+			return nil, err
+		}
+		if err = rows.Err(); err != nil {
+			return nil, err
+		}
 	}
-	return score, true, nil
+	return out, nil
 }
 
 // latestRuns reads the latest done run and the latest run of any state.

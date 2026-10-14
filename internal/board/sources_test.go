@@ -469,6 +469,7 @@ func generatedSections(t *testing.T) map[string]string {
 		"funnel": funnelProtocolSection(), // funnel_test.go
 		"nudges": nudgeProtocolSection(),  // nudges_test.go
 		"work-record": workRecordProtocolSection(), // workreputation_test.go
+		"reputation":  reputationProtocolSection(), // reputation_test.go
 		// Inside a list item: indented, and the end marker keeps its indent.
 		"free-hooks": wrapList("  ", free, "  ") + "  "}
 	// The inbox entry kinds, from InboxKindList.
