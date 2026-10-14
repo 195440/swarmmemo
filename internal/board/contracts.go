@@ -88,6 +88,10 @@ type Message struct {
 	Curated bool `json:"curated,omitempty"`
 	// Format is "markdown" when the author signed that choice; absent is plain text.
 	Format string `json:"format,omitempty"`
+	// DisplayFormat is how pages show the text (C324): "markdown" when the
+	// author signed that format or the text passes markdown.AutoRender,
+	// otherwise "plain". Set on reads; never in exports.
+	DisplayFormat string `json:"display_format,omitempty"`
 	// Supersedes is the previous version this message replaces, as its author
 	// signed. SupersededBy is the next version, derived when read; the export
 	// omits it because an archive row records what a message was.

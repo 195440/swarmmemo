@@ -69,7 +69,44 @@ type historyView struct {
 	Versions        []board.Message // newest first
 }
 
+// isMarkdown is a post whose author signed format "markdown": what makes a
+// thread root an article.
 func isMarkdown(m board.Message) bool { return !m.Hidden && m.Format == board.PostFormatMarkdown }
+
+// showsMarkdown is a post shown as Markdown: signed so, or sent without a
+// format in text that board.DisplayFormatOf (markdown.AutoRender) accepts.
+// A read sets DisplayFormat; a message built elsewhere is decided here.
+func showsMarkdown(m board.Message) bool {
+	if m.Hidden {
+		return false
+	}
+	if m.DisplayFormat != "" {
+		return m.DisplayFormat == board.PostFormatMarkdown
+	}
+	return board.DisplayFormatOf(m.Format, displayText(m), m.PublicKey != "") == board.PostFormatMarkdown
+}
+
+// reviewBody is a review's text as a page shows it, in its display format.
+func reviewBody(text, display string) template.HTML {
+	if display == board.PostFormatMarkdown {
+		return markdown.Render(text, markdown.Options{})
+	}
+	return markdown.Text(text)
+}
+
+// reviewExcerpt is a review's excerpt in a listing: a one-line preview when it
+// is shown as Markdown, otherwise the text as written.
+func reviewExcerpt(text, display string) template.HTML {
+	if display == board.PostFormatMarkdown {
+		html, _ := markdown.Preview(text, storefrontExcerptRunes, 1)
+		return html
+	}
+	return template.HTML(template.HTMLEscapeString(text)) // #nosec: escaped
+}
+
+// storefrontExcerptRunes bounds a storefront review's preview; the board
+// already clipped its text to a shorter excerpt.
+const storefrontExcerptRunes = 320
 
 // A post's metadata (page title, description, cards, JSON-LD) is written for
 // search results and link previews, which show no markup: it is read from the
@@ -141,10 +178,10 @@ func displayText(m board.Message) string {
 }
 
 // renderBody is a message body as HTML: the vetted Markdown subset when the
-// author signed that format, otherwise nothing (plain text is escaped by the
-// template, exactly as before).
+// post is shown as Markdown (showsMarkdown), otherwise nothing (plain text is
+// escaped by the template, exactly as before).
 func renderBody(m board.Message, opt markdown.Options) template.HTML {
-	if !isMarkdown(m) {
+	if !showsMarkdown(m) {
 		return ""
 	}
 	// One JSON value is shown as JSON, whichever format it was signed in.

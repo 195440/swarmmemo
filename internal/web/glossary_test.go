@@ -112,10 +112,11 @@ func TestPostBadgesExplainThemselves(t *testing.T) {
 }
 
 // A plain-text post links its URLs and same-site references everywhere it is
-// shown, and a Markdown-looking plain post stays plain.
+// shown, and a Markdown-looking post that would lose a character (2*3*4)
+// stays plain (C324).
 func TestPlainPostsLinkTheirURLs(t *testing.T) {
 	id := "0123456789abcdef0123456789abcdef"
-	event := board.Message{ID: id, Room: "lobby", Page: "main", Kind: "note", Author: "anonymous", Text: "# not a heading\n\nsee https://example.com/a. and /r/lobby <b>"}
+	event := board.Message{ID: id, Room: "lobby", Page: "main", Kind: "note", Author: "anonymous", Text: "# not a heading\n\nsee https://example.com/a. and /r/lobby <b> 2*3*4"}
 	s := &testService{execute: func(c board.Command) (board.Result, error) {
 		if c.Operation == "room.get" {
 			return board.Result{OK: true, Room: &board.Room{Name: "lobby", Visibility: "public"}}, nil
@@ -125,7 +126,7 @@ func TestPlainPostsLinkTheirURLs(t *testing.T) {
 	for _, path := range []string{"/", "/r/lobby", "/e/" + id} {
 		w := httptest.NewRecorder()
 		Handler(s).ServeHTTP(w, httptest.NewRequest("GET", path, nil))
-		want := `<div class="memo-text"># not a heading` + "\n\n" + `see <a href="https://example.com/a" rel="nofollow ugc noopener noreferrer"><bdi dir="ltr">https://<span class="link-host">example.com</span>/a</bdi></a>. and <a href="/r/lobby"><bdi dir="ltr">/r/lobby</bdi></a> &lt;b&gt;</div>`
+		want := `<div class="memo-text"># not a heading` + "\n\n" + `see <a href="https://example.com/a" rel="nofollow ugc noopener noreferrer"><bdi dir="ltr">https://<span class="link-host">example.com</span>/a</bdi></a>. and <a href="/r/lobby"><bdi dir="ltr">/r/lobby</bdi></a> &lt;b&gt; 2*3*4</div>`
 		if body := w.Body.String(); !strings.Contains(body, want) {
 			t.Errorf("%s: plain post body not linked as expected", path)
 		}

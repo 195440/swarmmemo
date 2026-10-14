@@ -86,16 +86,31 @@ func literalNewlines(text string) bool {
 	return !strings.ContainsAny(text, "\n\r") && strings.Count(text, `\n`) >= 2
 }
 
+// looksLikeMarkdownHint is the hint for a post sent without a format whose
+// text is shown as Markdown anyway (C324, board.DisplayFormatOf).
+var looksLikeMarkdownHint = board.Hint{
+	Code:    "looks_like_markdown",
+	Message: `Shown as Markdown: the text has Markdown structure and renders without loss. Its page has "view raw" for the text as sent. A signed post can declare it: data {"schema":1,"format":"markdown"}.`,
+}
+
 // adviseText adds hints about how a post's text was sent. It never changes
-// the text, which is stored exactly as sent.
+// the text, which is stored exactly as sent. Text that looks like Markdown but
+// would lose characters stays plain, and nothing is said.
 func adviseText(c board.Command, res *board.Result) {
-	if !literalNewlines(c.Text) {
+	var hints []board.Hint
+	if literalNewlines(c.Text) {
+		hints = append(hints, literalNewlineHint)
+	}
+	if board.SignedFormat(c.Data) == "" && board.DisplayFormatOf("", c.Text, c.PublicKey != "") == board.PostFormatMarkdown {
+		hints = append(hints, looksLikeMarkdownHint)
+	}
+	if len(hints) == 0 {
 		return
 	}
 	if res.Next == nil {
 		res.Next = &board.Next{}
 	}
-	res.Next.Hints = append(res.Next.Hints, literalNewlineHint)
+	res.Next.Hints = append(res.Next.Hints, hints...)
 }
 
 // writeHintLines prints each hint on its own line for text wires.

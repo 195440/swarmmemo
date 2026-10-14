@@ -134,8 +134,11 @@ type StorefrontReview struct {
 	EvidenceClass string       `json:"evidence_class"`
 	Badge         string       `json:"badge"`
 	Text          string       `json:"text"`
-	CreatedAt     int64        `json:"created_at"`
-	Thread        string       `json:"thread"`
+	// DisplayFormat is how the review's whole text is shown (C324); the
+	// storefront shows Text, an excerpt, as a preview in that format.
+	DisplayFormat string `json:"display_format"`
+	CreatedAt     int64  `json:"created_at"`
+	Thread        string `json:"thread"`
 }
 
 // StorefrontBadges are the evidence badges, by class (reviewClassRank).
@@ -297,7 +300,7 @@ func (s *Store) storefront(ctx context.Context, tx *sql.Tx, account, agent strin
 			}
 			for _, c := range cards {
 				f.Reviews = append(f.Reviews, StorefrontReview{ID: c.ID, Subject: c.Subject.URI, Page: "/s/" + c.Subject.ID, Author: c.Author, Verdict: c.Verdict,
-					EvidenceClass: c.EvidenceClass, Badge: storefrontBadge(c.EvidenceClass), Text: markdown.Clip(c.Text, storefrontReviewRunes), CreatedAt: c.CreatedAt, Thread: c.Thread})
+					EvidenceClass: c.EvidenceClass, Badge: storefrontBadge(c.EvidenceClass), Text: markdown.Clip(c.Text, storefrontReviewRunes), DisplayFormat: c.DisplayFormat, CreatedAt: c.CreatedAt, Thread: c.Thread})
 			}
 		}
 	}

@@ -8,7 +8,7 @@
 <p class="article-byline">{{template "vote-arrows" (memoCtx $.Gate $m)}}{{template "memo-author" $m}}{{if eq $m.Kind "simulation"}}{{template "sim-tag"}}{{end}}<span aria-hidden="true">·</span><a class="memo-time" href="{{.Path}}">{{template "age" $m.CreatedAt}}</a><span aria-hidden="true">·</span><span>{{.Minutes}} min read</span></p>
 </header>{{template "memo-work" $m}}
 {{$canvas := canvas $ $m}}{{if $canvas}}<div class="room-canvas"><div class="room-body">{{end}}<div class="memo-text md article-body">{{.Body}}</div>
-{{template "memo-images" $m}}{{if $canvas}}</div></div>{{end}}{{template "memo-attachments" $m}}
+{{template "memo-images" $m}}{{if $canvas}}</div></div>{{end}}{{template "view-raw" $m.Text}}{{template "memo-attachments" $m}}
 <div class="memo-bottom article-footer">{{if $m.To}}<a class="addressed" href="/inbox/{{path $m.To}}" aria-label="Public recipient {{$m.To}}">to {{short $m.To}}</a>{{end}}{{template "memo-actions" (memoCtx $.Gate $m .Edit)}}</div>
 </article>{{end}}{{end}}
 
@@ -23,7 +23,7 @@
 <ol class="version-list" reversed>{{range $i, $v := .Versions}}<li class="version" id="v-{{$v.ID}}">
 <details{{if eq $i 0}} open{{end}}>
 <summary><span class="version-label">{{if eq $i 0}}Current version{{else if not $v.Supersedes}}Original{{else}}Earlier version{{end}}</span> <time datetime="{{iso $v.CreatedAt}}">{{stamp $v.CreatedAt}}</time></summary>
-{{if $v.Hidden}}<p class="removed">This version has been removed. {{$v.Reason}}</p>{{else if isMarkdown $v}}<div class="memo-text md">{{markdown $v}}</div>{{else}}<div class="memo-text">{{plainText $v}}</div>{{end}}
+{{if $v.Hidden}}<p class="removed">This version has been removed. {{$v.Reason}}</p>{{else if showsMarkdown $v}}<div class="memo-text md">{{markdown $v}}</div>{{template "view-raw" $v.Text}}{{else}}<div class="memo-text">{{plainText $v}}</div>{{end}}
 <p class="version-meta small muted"><code title="SHA-256: {{$v.Hash}}" data-copy="{{$v.Hash}}" data-copy-label="Copy SHA-256">sha256: {{short $v.Hash}}</code> · <a href="/e/{{path $v.ID}}?format=json">Signed message JSON</a></p>
 </details>
 </li>{{end}}</ol>

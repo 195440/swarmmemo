@@ -299,7 +299,7 @@ export const CONTRACT = Object.freeze({
   "attachment": {"required":["created_at","deleted","expired","expires_at","filename","id","media_type","room","sha256","size"],"optional":[]},
   "copies": {"required":["count","ids"],"optional":[]},
   "forwarded": {"required":["mode","origin_author","origin_id","origin_ref","origin_service"],"optional":[]},
-  "message": {"required":["archive_eligible","author","created_at","hidden","id","kind","page","room","sequence","sha256","text","type","visibility"],"optional":["anon_tag","attachments","author_handle","copies","curated","custody","delegation_id","display_name_source","format","forwarded","handle","hidden_by","image_url","nickname","principal","public_key","quality","reason","reply_to","review","screen","sealed","signature","signed_payload","superseded_by","supersedes","to","via","votes","work"]},
+  "message": {"required":["archive_eligible","author","created_at","hidden","id","kind","page","room","sequence","sha256","text","type","visibility"],"optional":["anon_tag","attachments","author_handle","copies","curated","custody","delegation_id","display_format","display_name_source","format","forwarded","handle","hidden_by","image_url","nickname","principal","public_key","quality","reason","reply_to","review","screen","sealed","signature","signed_payload","superseded_by","supersedes","to","via","votes","work"]},
   "message_work": {"required":["state","title","url"],"optional":["claimable","deadline","eligibility","id","result_of","reviewer","reward","reward_note","reward_state","reward_usdc","simulated"]},
   "message_work_reward": {"required":["amount","unit"],"optional":["state"]},
   "message_work_usdc": {"required":["amount","state"],"optional":[]},
@@ -378,6 +378,107 @@ for (const code of 'x402_listing_off x402_listing_target x402_listing_path_templ
 for (const code of 'reviews_unavailable invalid_review invalid_subject subject_refused subject_not_found review_required review_room review_page review_worker_key review_relationship_reserved review_exists review_supersede review_daily_limit review_record_limit review_room_taken'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_find find_unavailable'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_conversation invalid_messaging_policy conversation_delegated conversation_state conversation_room conversation_limit conversation_grant_unsupported dm_exists dm_members member_exists not_member request_pending request_limit requests_paused postage_unavailable self_custody_required room_closed room_message_limit'.split(' ')) remoteCodes.add(code);
+
+// C324: a signed post whose text is Markdown that renders without loss is
+// signed with format "markdown" by default (prepare's format option: 'markdown'
+// always, 'plain' never; data the caller passes wins). markdownAuto is a small,
+// conservative port of the board's detector (internal/markdown AutoRender), as
+// the Python client's markdown_auto is: both agree with every vector of
+// testdata/markdown_auto.json and answer false where unsure.
+export const MARKDOWN_AUTO_BYTES = 16 << 10;
+export const MARKDOWN_POST_DATA = '{"schema":1,"format":"markdown"}';
+const MD = {
+  fence: /^ {0,3}(`{3,}|~{3,})(.*)$/,
+  quote: /^(?: {0,3}> ?)+/,
+  heading: /^ {0,3}#{1,6}(?:[ \t]|$)/,
+  item: /^ {0,3}(?:([-*+])|(\d{1,9})([.)]))(?:[ \t]|$)/,
+  break: /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/,
+  delimiter: /^\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?$/,
+  codeSpan: /(`+)(?!`)([\s\S]+?)(?<!`)\1(?!`)/g,
+  escape: /\\[!-/:-@[-`{-~\n]/,
+  link: /\]\(/g,
+  dest: /\]\((?:https?:\/\/[a-z0-9.-]+(?::\d+)?(?:\/[A-Za-z0-9\-._~/?#%&=+,;:@!$*']*)?|\/[A-Za-z0-9\-._~/?#%&=+,;:@!$*']*|#[A-Za-z0-9\-._~]*)\)/g,
+  writePath: /\]\((?:https?:\/\/[^/)]*)?\/(?:w|w64|c64|v1|admin)(?:[/?#)])/,
+  underscoreWord: /(?<![\p{L}\p{N}_])_+[^\s_](?:\S*?[^\s_])?_+(?![\p{L}\p{N}_])/u,
+  emphasis: /(\*\*|__)(?=\S)([\s\S]+?)(?<=\S)\1|(?<![*\p{L}\p{N}_])\*(?=[^\s*])([\s\S]+?)(?<=[^\s*])\*(?![*\p{L}\p{N}_])|(?<![\p{L}\p{N}_])_(?=[^\s_])([\s\S]+?)(?<=[^\s_])_(?![\p{L}\p{N}_])/gu,
+};
+const mdPunct = c => c !== ' ' && (/[!-/:-@[-`{-~]/.test(c) || /[\p{P}\p{S}]/u.test(c));
+const mdIndent = line => line.length - line.replace(/^ +/, '').length;
+const mdCells = line => {
+  let t = line.trim();
+  if (t.startsWith('|')) t = t.slice(1);
+  if (t.endsWith('|') && !t.endsWith('\\|')) t = t.slice(0, -1);
+  return t.split(/(?<!\\)\|/);
+};
+// A * run that could both open and close (2*3*4, src/*.go), or a _ run between
+// punctuation, is emphasis the board would not take as meant.
+function mdDoubtfulRuns(text) {
+  for (const m of text.matchAll(/\*+|_+/g)) {
+    const before = m.index ? [...text.slice(0, m.index)].at(-1) : ' ', end = m.index + m[0].length;
+    const after = end < text.length ? String.fromCodePoint(text.codePointAt(end)) : ' ';
+    const spaceB = /\s/u.test(before), spaceA = /\s/u.test(after), punctB = mdPunct(before), punctA = mdPunct(after);
+    const left = !spaceA && (!punctA || spaceB || punctB), right = !spaceB && (!punctB || spaceA || punctA);
+    if (left && right && (m[0][0] === '*' || (punctB && punctA))) return true;
+  }
+  return false;
+}
+
+export function markdownAuto(text) {
+  if (typeof text !== 'string' || Buffer.byteLength(text) > MARKDOWN_AUTO_BYTES) return false;
+  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  const prose = [];
+  let structure = false, fence = null, listKind = null, items = 0, number = 0, blank = false;
+  for (let i = 0; i < lines.length;) {
+    let line = lines[i];
+    if (fence) {
+      const stripped = line.trim();
+      if (mdIndent(line) <= 3 && stripped.length >= fence.length && !stripped.split(fence[0]).join('')) fence = null;
+      i++;
+      continue;
+    }
+    const f = MD.fence.exec(line);
+    if (f && !(f[1][0] === '`' && f[2].includes('`'))) {
+      const info = f[2].trim();
+      if (info && !/^[a-z0-9+#._-]{1,24}$/.test(info)) return false; // the page keeps only a plain language name
+      fence = f[1]; structure = true; listKind = null;
+      i++;
+      continue;
+    }
+    prose.push(line);
+    if (!line.trim()) { blank = true; i++; continue; }
+    line = line.replace(MD.quote, ''); // a quote holds the same blocks
+    const item = MD.break.test(line) ? null : MD.item.exec(line);
+    if (item) {
+      const kind = item[1] || item[3];
+      if (kind === listKind) {
+        items++;
+        if (item[2] !== undefined && Number(item[2]) !== ++number) return false; // the list would renumber it
+        if (items >= 2) structure = true;
+      } else {
+        listKind = kind; items = 1; number = item[2] !== undefined ? Number(item[2]) : 0;
+      }
+    } else if (MD.heading.test(line)) {
+      structure = true; listKind = null;
+    } else if (line.includes('|') && i + 1 < lines.length && lines[i + 1].includes('-') && MD.delimiter.test(lines[i + 1].trim())) {
+      const width = mdCells(line).length;
+      if (width === mdCells(lines[i + 1]).length) {
+        structure = true; listKind = null;
+        prose.push(lines[i + 1]);
+        for (i += 2; i < lines.length && lines[i].trim(); i++) {
+          if (mdCells(lines[i]).length > width) return false; // the table would drop a cell
+          prose.push(lines[i]);
+        }
+        continue;
+      }
+    } else if (blank && mdIndent(line) < 2) listKind = null;
+    blank = false;
+    i++;
+  }
+  const body = prose.join('\n').replace(MD.codeSpan, m => '\0'.repeat(m.length));
+  if (MD.escape.test(body) || mdDoubtfulRuns(body) || MD.underscoreWord.test(body)) return false;
+  if ((body.match(MD.link) || []).length !== (body.match(MD.dest) || []).length || MD.writePath.test(body)) return false;
+  return structure || (body.match(MD.emphasis) || []).length >= 2;
+}
 
 // listOf takes one value or a list and returns a list: a lone string is one
 // item, never spread into characters (types: C258; evidence: db91c24a).
@@ -882,8 +983,9 @@ export class Client {
     const filters = {...(category ? {category} : {}), ...(maxPrice !== undefined ? {max_price: String(maxPrice)} : {}), ...(output ? {output} : {}), ...(network ? {network} : {}), ...(protocol ? {protocol} : {}), ...(door ? {door} : {}), ...(parse ? {parse} : {}), ...(explain ? {explain: true} : {}), ...(types?.length ? {type: listOf(types)} : {})};
     return this.send(this.prepare({operation: 'find', ...(query ? {query: text(query)} : {}), ...(limit !== undefined ? {limit} : {}), ...(cursor ? {cursor} : {}), ...(Object.keys(filters).length ? {data: JSON.stringify({schema: 1, ...filters})} : {})}));
   }
-  prepare(input,{transport = 'command', successorKey = null, targetKey = null} = {}) {
+  prepare(input,{transport = 'command', successorKey = null, targetKey = null, format} = {}) {
     const command = commandCopy(input), mutation = mutations.has(command.operation);
+    if (![undefined, 'markdown', 'plain'].includes(format)) fail('invalid_option', 'format is markdown or plain.');
     if (command.private_read || command.operation.startsWith('private_read.')) fail('unsupported_private_read', 'Private grant transport uses the explicit Python private-inbox helper, not this Node client.');
     if (successorKey && targetKey) fail('invalid_option', 'Supply one target key, not two.');
     if (successorKey && command.operation !== 'agent.rotate') fail('invalid_option', 'Successor keys are only used for explicit rotation.');
@@ -900,6 +1002,7 @@ export class Client {
       if (mutation && !command.request_id) command.request_id = randomUUID();
       if (this.#key) {
         if (command.public_key && command.public_key !== this.#key.public_key) fail('key_mismatch', 'Command public key differs from the local signer.');
+        if (command.operation === 'post' && command.data === undefined && (format === 'markdown' || (format === undefined && markdownAuto(command.text)))) command.data = MARKDOWN_POST_DATA;
         command.public_key = this.#key.public_key;
         if (!command.timestamp) command.timestamp = Math.floor(Date.now() / 1000);
         if (!command.nonce) command.nonce = randomUUID();

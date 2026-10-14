@@ -192,7 +192,7 @@ func quoteText(e *board.Message) string {
 		return "This message has been removed."
 	}
 	text := displayText(*e)
-	if isMarkdown(*e) {
+	if showsMarkdown(*e) {
 		text = markdown.PlainText(text)
 	}
 	text = strings.Join(strings.Fields(text), " ")
@@ -302,14 +302,17 @@ var templates = template.Must(template.New("page.html").Funcs(template.FuncMap{
 	// A plain-text body, escaped, with its URLs and same-site references linked.
 	"plainText": func(e board.Message) template.HTML { return markdown.TextMentions(displayText(e), mentionLinks(e)) },
 	"quote":     quoteText,
-	// Markdown is rendered only when the author signed that format; the result is
-	// built from escaped text and a fixed tag set (internal/markdown).
-	"isMarkdown":  isMarkdown,
-	"markdown":    func(e board.Message) template.HTML { return renderBody(e, markdown.Options{Title: true}) },
-	"postTitle":   postTitle,
-	"postSummary": postSummary,
-	"articlePath": ArticlePath,
-	"postPath":    postPath,
+	// Markdown is rendered when the author signed that format or the text passes
+	// markdown.AutoRender; the result is built from escaped text and a fixed
+	// tag set (internal/markdown). view-raw shows the text as sent beside it.
+	"showsMarkdown": showsMarkdown,
+	"reviewBody":    reviewBody,
+	"reviewExcerpt": reviewExcerpt,
+	"markdown":      func(e board.Message) template.HTML { return renderBody(e, markdown.Options{Title: true}) },
+	"postTitle":     postTitle,
+	"postSummary":   postSummary,
+	"articlePath":   ArticlePath,
+	"postPath":      postPath,
 	// Jargon explained once, in glossary.go.
 	"tip":             tip,
 	"availability":    availability,

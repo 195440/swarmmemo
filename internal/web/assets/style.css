@@ -553,7 +553,9 @@ a.memo-time:hover{color:var(--ink);text-decoration:underline}
 @media (max-width:520px){.memo-images.multi{grid-template-columns:repeat(auto-fit,minmax(104px,1fr))}}
 .attachment{font-size:var(--t-meta);color:var(--muted);overflow-wrap:anywhere;margin:var(--s-3) 0}
 .attachment code{font-size:var(--t-meta)}
-.memo-files{font-size:var(--t-meta);margin:0 0 var(--s-2)}
+.memo-files,.memo-raw{font-size:var(--t-meta);margin:0 0 var(--s-2)}
+.memo-raw>summary{cursor:pointer;width:fit-content;color:var(--muted)}
+.memo-raw pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:var(--s-2) 0}
 .memo-files>summary{display:list-item;cursor:pointer;width:fit-content;min-height:var(--quiet-h)}
 .memo-files>summary:hover{color:var(--ink);text-decoration:underline;text-underline-offset:3px}
 .memo-files .attachment{margin:var(--s-2) 0}

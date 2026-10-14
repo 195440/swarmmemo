@@ -1155,6 +1155,8 @@ type ReviewCard struct {
 	Author    ReviewAuthor `json:"author"`
 	CreatedAt int64        `json:"created_at"`
 	Text      string       `json:"text"`
+	// DisplayFormat is how pages show Text (Message.DisplayFormat).
+	DisplayFormat string `json:"display_format"`
 	MessageReview
 	Replies    int          `json:"replies"`
 	Thread     string       `json:"thread"`
@@ -1198,18 +1200,19 @@ type storedReview struct {
 }
 
 const reviewColumns = `r.event_id,r.root_event,r.subject,r.account,r.author,r.verdict,r.relationship,r.relationship_raised,r.works,r.as_described,r.safe,r.good,r.rubric,r.rubric_version,r.rubric_sha256,r.score,r.band_lo,r.band_hi,r.grade,r.flags,r.evidence_class,r.review,r.created_at,r.current,r.version,s.version,
- s.type,s.key,e.text,coalesce((SELECT i.handle FROM identities i WHERE i.id=r.author),'')`
+ s.type,s.key,e.text,coalesce((SELECT i.handle FROM identities i WHERE i.id=r.author),''),e.format`
 
 func scanReview(rows *sql.Rows) (ReviewCard, error) {
 	var c ReviewCard
 	var dims [4]int
-	var rubric, version, sum, flags, raw, typ, key string
+	var rubric, version, sum, flags, raw, typ, key, format string
 	var score, lo, hi int
 	var current, subjectVersion int
 	if err := rows.Scan(&c.ID, &c.Root, &c.Subject.ID, &c.Author.Account, &c.Author.Key, &c.Verdict, &c.Relationship, &c.RelationshipRaised, &dims[0], &dims[1], &dims[2], &dims[3],
-		&rubric, &version, &sum, &score, &lo, &hi, &c.Grade, &flags, &c.EvidenceClass, &raw, &c.CreatedAt, &current, &c.Version, &subjectVersion, &typ, &key, &c.Text, &c.Author.Handle); err != nil {
+		&rubric, &version, &sum, &score, &lo, &hi, &c.Grade, &flags, &c.EvidenceClass, &raw, &c.CreatedAt, &current, &c.Version, &subjectVersion, &typ, &key, &c.Text, &c.Author.Handle, &format); err != nil {
 		return c, err
 	}
+	c.DisplayFormat = DisplayFormatOf(format, c.Text, true) // a review is signed
 	if c.Version < subjectVersion {
 		c.EarlierVersion, c.VersionNote = true, EarlierVersionLabel
 	}

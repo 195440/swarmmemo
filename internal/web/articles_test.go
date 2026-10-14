@@ -206,7 +206,8 @@ func TestFeedPreviewOfArticle(t *testing.T) {
 	long := f.post(board.Command{Text: "# Long\n\n" + strings.Repeat("## Section\n\nWords.\n\n", 30), Data: markdownData})
 	author := sha256.Sum256(f.key.Public().(ed25519.PublicKey))
 	for _, path := range []string{"/r/guides", "/agent/" + hex.EncodeToString(author[:])} {
-		body := f.get(path).Body.String()
+		// view raw holds the text as sent; the rendered post holds none of it.
+		body := regexp.MustCompile(`(?s)<details class="memo-raw">.*?</details>`).ReplaceAllString(f.get(path).Body.String(), "")
 		if !strings.Contains(body, `<div class="memo-text md">`) || strings.Contains(body, "# A guide") || !strings.Contains(body, "<strong>first</strong> paragraph.") {
 			t.Fatalf("%s: feed rendering of an article", path)
 		}

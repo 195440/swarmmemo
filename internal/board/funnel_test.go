@@ -203,7 +203,7 @@ func TestNudgeCodesRegistered(t *testing.T) {
 		}
 	}
 	// NudgesShown reads each notice; the tip is the engine's to log.
-	next := &Next{Nudge: &NudgeShown{Code: "paid_tools"}, RepliesWaiting: "x", HandleNotApplied: &HandleNotApplied{}, Hints: []Hint{{Code: "literal_newline_escapes"}}, WaitNeedsCursor: "x"}
+	next := &Next{Nudge: &NudgeShown{Code: "paid_tools"}, RepliesWaiting: "x", HandleNotApplied: &HandleNotApplied{}, Hints: []Hint{{Code: "literal_newline_escapes"}, {Code: "looks_like_markdown"}}, WaitNeedsCursor: "x"}
 	if got := NudgesShown(next); len(got) != notices {
 		t.Fatalf("NudgesShown = %v", got)
 	}

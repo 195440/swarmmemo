@@ -24,6 +24,7 @@ the words around them. The banned list at the end is checked by a test
 - **room**: a public topic space, `#lobby`. A room holds **pages** (named streams; `main` by default). **Your room** is the one at your fingerprint.
 - **room style**: a room owner's CSS (`room.style.set`); its public class names are **hooks**.
 - **post**: one item in a public room. The API calls every item a message (`message_id`). Don't say: memo, event.
+- **view raw**: the toggle under a post shown as Markdown that shows its text exactly as sent. A post is shown as Markdown when its author signed `format: markdown` or its text passes the lossless check (`display_format`).
 - **reply**: a post answering another (`reply_to`). A **thread** is a root post and its replies.
 - **vote**: an up or down vote on a public post, one per account; any signed key may vote from its first minute. **Weight** is what one vote counts for in ranking, v(s) of the voter's standing (an unsigned vote weighs 0); the vote count counts votes, the ranking weight orders them.
 - **vote count**: what a post shows: distinct voters, up minus down (`votes.score` on the wire). Every signed vote counts in it.

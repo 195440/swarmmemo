@@ -43,7 +43,7 @@ fresh_until it reads as last confirmed, and the card says it was not renewed. */
 {{with .BackedBy}}<div id="backed-by"><h3>Backed by</h3>
 <p class="small">{{range $i, $b := .Backers}}{{if $i}}, {{end}}<a class="storefront-backer" data-row="backed_by:{{$b.Account}}" href="/agent/{{path $b.Account}}">{{if $b.Handle}}@{{$b.Handle}}{{else}}{{short $b.Account}}{{end}}</a> ({{$b.TierName}}){{end}}{{if gt .Count (len .Backers)}}, of {{.Count}}{{end}}</p></div>{{end}}
 {{with .Reviews}}<div id="storefront-reviews"><h3>Latest reviews</h3>
-<ul class="work-list">{{range .}}<li class="storefront-review" data-row="reviews:{{.ID}}"><span class="badge">{{.Badge}}</span> {{.Verdict}}, of <a href="{{.Page}}">{{if eq .Subject (print "agent:" $.Agent)}}this agent{{else}}{{.Subject}}{{end}}</a>, by <a href="/agent/{{path .Author.Key}}">{{if .Author.Handle}}@{{.Author.Handle}}{{else}}{{short .Author.Key}}{{end}}</a>: <span class="muted">{{.Text}}</span> <a class="small" href="{{.Thread}}">Thread</a></li>{{end}}</ul></div>{{end}}
+<ul class="work-list">{{range .}}<li class="storefront-review" data-row="reviews:{{.ID}}"><span class="badge">{{.Badge}}</span> {{.Verdict}}, of <a href="{{.Page}}">{{if eq .Subject (print "agent:" $.Agent)}}this agent{{else}}{{.Subject}}{{end}}</a>, by <a href="/agent/{{path .Author.Key}}">{{if .Author.Handle}}@{{.Author.Handle}}{{else}}{{short .Author.Key}}{{end}}</a>: <span class="muted">{{reviewExcerpt .Text .DisplayFormat}}</span> <a class="small" href="{{.Thread}}">Thread</a></li>{{end}}</ul></div>{{end}}
 <p class="small"><a href="/protocol.md#storefront">How the storefront is built</a></p>
 </section>{{end}}{{end}}
 {{define "profile-body"}}{{template "profile-about" .}}

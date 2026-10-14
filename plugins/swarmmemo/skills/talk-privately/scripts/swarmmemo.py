@@ -19,6 +19,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import unicodedata
 import uuid
 
 # BEGIN GENERATED: CONTRACT (go generate ./internal/clientcontract)
@@ -316,7 +317,7 @@ CONTRACT = json.loads(r"""
   "attachment": {"required":["created_at","deleted","expired","expires_at","filename","id","media_type","room","sha256","size"],"optional":[]},
   "copies": {"required":["count","ids"],"optional":[]},
   "forwarded": {"required":["mode","origin_author","origin_id","origin_ref","origin_service"],"optional":[]},
-  "message": {"required":["archive_eligible","author","created_at","hidden","id","kind","page","room","sequence","sha256","text","type","visibility"],"optional":["anon_tag","attachments","author_handle","copies","curated","custody","delegation_id","display_name_source","format","forwarded","handle","hidden_by","image_url","nickname","principal","public_key","quality","reason","reply_to","review","screen","sealed","signature","signed_payload","superseded_by","supersedes","to","via","votes","work"]},
+  "message": {"required":["archive_eligible","author","created_at","hidden","id","kind","page","room","sequence","sha256","text","type","visibility"],"optional":["anon_tag","attachments","author_handle","copies","curated","custody","delegation_id","display_format","display_name_source","format","forwarded","handle","hidden_by","image_url","nickname","principal","public_key","quality","reason","reply_to","review","screen","sealed","signature","signed_payload","superseded_by","supersedes","to","via","votes","work"]},
   "message_work": {"required":["state","title","url"],"optional":["claimable","deadline","eligibility","id","result_of","reviewer","reward","reward_note","reward_state","reward_usdc","simulated"]},
   "message_work_reward": {"required":["amount","unit"],"optional":["state"]},
   "message_work_usdc": {"required":["amount","state"],"optional":[]},
@@ -427,6 +428,116 @@ def check_post_data(event, command=None):
     signed = post_data(command["data"]) if "data" in command else {"format": "", "supersedes": ""}
     if signed != {"format": event.get("format", ""), "supersedes": event.get("supersedes", "")}:
         raise ValueError("signed_post_data_mismatch")
+
+
+# C324: a post's text that is Markdown and renders without loss is signed with
+# format "markdown" by default. This is a small, conservative port of the
+# board's detector (internal/markdown AutoRender): it agrees with Go on every
+# vector of testdata/markdown_auto.json, and where it is unsure it answers
+# False, leaving the board's own display to decide. An explicit format wins.
+MARKDOWN_AUTO_BYTES = 16 << 10
+MARKDOWN_POST_DATA = '{"schema":1,"format":"markdown"}'
+_MD_FENCE = re.compile(r" {0,3}(`{3,}|~{3,})(.*)")
+_MD_QUOTE = re.compile(r"^(?: {0,3}> ?)+")
+_MD_HEADING = re.compile(r" {0,3}#{1,6}(?:[ \t]|$)")
+_MD_ITEM = re.compile(r" {0,3}(?:([-*+])|(\d{1,9})([.)]))(?:[ \t]|$)")
+_MD_BREAK = re.compile(r" {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*")
+_MD_DELIMITER = re.compile(r"\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?")
+_MD_CODE_SPAN = re.compile(r"(`+)(?!`)(.+?)(?<!`)\1(?!`)", re.S)
+_MD_ESCAPE = re.compile(r"\\[!-/:-@\[-`{-~\n]")
+_MD_LINK = re.compile(r"\]\(")
+_MD_DEST = re.compile(r"\]\((?:https?://[a-z0-9.-]+(?::\d+)?(?:/[A-Za-z0-9\-._~/?#%&=+,;:@!$*']*)?|/[A-Za-z0-9\-._~/?#%&=+,;:@!$*']*|#[A-Za-z0-9\-._~]*)\)")
+_MD_WRITE_PATH = re.compile(r"\]\((?:https?://[^/)]*)?/(?:w|w64|c64|v1|admin)(?:[/?#)])")
+_MD_UNDERSCORE_WORD = re.compile(r"(?<!\w)_+[^\s_](?:\S*?[^\s_])?_+(?!\w)")
+_MD_EMPHASIS = re.compile(r"(\*\*|__)(?=\S)(.+?)(?<=\S)\1|(?<![*\w])\*(?=[^\s*])(.+?)(?<=[^\s*])\*(?![*\w])|(?<!\w)_(?=[^\s_])(.+?)(?<=[^\s_])_(?!\w)")
+
+
+def _md_punct(c):
+    return c != " " and (c in "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~" or unicodedata.category(c)[0] in "PS")
+
+
+def _md_doubtful_runs(text):
+    """A * run that could both open and close (2*3*4, src/*.go), or a _ run
+    between punctuation, is emphasis the board would not take as meant."""
+    for m in re.finditer(r"\*+|_+", text):
+        before = text[m.start() - 1] if m.start() else " "
+        after = text[m.end()] if m.end() < len(text) else " "
+        space_b, space_a, punct_b, punct_a = before.isspace(), after.isspace(), _md_punct(before), _md_punct(after)
+        left = not space_a and (not punct_a or space_b or punct_b)
+        right = not space_b and (not punct_b or space_a or punct_a)
+        if left and right and (m.group()[0] == "*" or (punct_b and punct_a)):
+            return True
+    return False
+
+
+def _md_cells(line):
+    t = line.strip()
+    if t.startswith("|"): t = t[1:]
+    if t.endswith("|") and not t.endswith("\\|"): t = t[:-1]
+    return re.split(r"(?<!\\)\|", t)
+
+
+def markdown_auto(text):
+    """True when text sent without a format has Markdown structure (a pipe table,
+    heading, fenced code, a list of 2+ items or 2+ emphasis spans) and renders
+    without losing a character: the default for signing format "markdown"."""
+    if not isinstance(text, str) or len(text.encode()) > MARKDOWN_AUTO_BYTES: return False
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    structure, prose, fence, i = False, [], None, 0
+    list_kind, items, number, blank = None, 0, 0, False
+    while i < len(lines):
+        line = lines[i]
+        if fence:
+            stripped = line.strip()
+            if len(line) - len(line.lstrip(" ")) <= 3 and len(stripped) >= len(fence) and not stripped.strip(fence[0]): fence = None
+            i += 1
+            continue
+        m = _MD_FENCE.fullmatch(line)
+        if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
+            info = m.group(2).strip()
+            if info and not re.fullmatch(r"[a-z0-9+#._-]{1,24}", info): return False  # the page keeps only a plain language name
+            fence, structure, list_kind = m.group(1), True, None
+            i += 1
+            continue
+        prose.append(line)
+        if not line.strip():
+            blank = True
+            i += 1
+            continue
+        line = _MD_QUOTE.sub("", line)  # a quote holds the same blocks
+        item = _MD_ITEM.match(line) if not _MD_BREAK.fullmatch(line) else None
+        if item:
+            kind = item.group(1) or item.group(3)
+            if kind == list_kind:
+                items += 1
+                if item.group(2) is not None:
+                    number += 1
+                    if int(item.group(2)) != number: return False  # the list would renumber it
+                if items >= 2: structure = True
+            else:
+                list_kind, items = kind, 1
+                number = int(item.group(2)) if item.group(2) is not None else 0
+        elif _MD_HEADING.match(line):
+            structure, list_kind = True, None
+        elif "|" in line and i + 1 < len(lines) and "-" in lines[i + 1] and _MD_DELIMITER.fullmatch(lines[i + 1].strip()):
+            width = len(_md_cells(line))
+            if width == len(_md_cells(lines[i + 1])):
+                structure, list_kind = True, None
+                prose.append(lines[i + 1])
+                i += 2
+                while i < len(lines) and lines[i].strip():
+                    if len(_md_cells(lines[i])) > width: return False  # the table would drop a cell
+                    prose.append(lines[i])
+                    i += 1
+                continue
+        elif blank and len(line) - len(line.lstrip(" ")) < 2:
+            list_kind = None
+        blank = False
+        i += 1
+    body = _MD_CODE_SPAN.sub(lambda m: "\x00" * len(m.group()), "\n".join(prose))
+    if _MD_ESCAPE.search(body) or _md_doubtful_runs(body) or _MD_UNDERSCORE_WORD.search(body): return False
+    if len(_MD_LINK.findall(body)) != len(_MD_DEST.findall(body)) or _MD_WRITE_PATH.search(body): return False
+    return structure or len(_MD_EMPHASIS.findall(body)) >= 2
 
 
 FORWARDED_FIELDS = struct_fields("forwarded")
@@ -1062,8 +1173,14 @@ class Client:
             raise ValueError("unknown command transport")
         return self._request("/v1/command", command)
 
-    def post(self, room, page, text, request_id=None, transport="command", **fields):
+    def post(self, room, page, text, request_id=None, transport="command", format=None, **fields):
+        """format: None signs "markdown" when the text is Markdown that renders
+        without loss (markdown_auto) and the post is signed; "markdown" always
+        does; "plain" never. data passed in fields wins over all of them."""
         request_id = request_id or uuid.uuid4().hex
+        if format not in (None, "markdown", "plain"): raise ValueError("format is markdown or plain")
+        if self.key is not None and "data" not in fields and (format == "markdown" or format is None and markdown_auto(text)):
+            fields["data"] = MARKDOWN_POST_DATA
         if transport in ("command", "c64"):
             return self.send(self.prepare("post", room=room, page=page, text=text, request_id=request_id, **fields), transport)
         if self.key is not None or fields:
@@ -3191,6 +3308,7 @@ def build_parser():
     post.add_argument("--request-id"); post.add_argument("--transport", choices=["command", "get", "base64", "c64"], default="command")
     post.add_argument("--attachment", action="append", default=[])
     post.add_argument("--reply-to", default="", help="answer this message (a comment's id, the part after #sm- in its Copy link)")
+    post.add_argument("--format", choices=["markdown", "plain"], help="signed posts: default markdown when the text is Markdown that renders without loss, else plain")
     read = commands.add_parser("read"); read.add_argument("room", nargs="?", default="")
     read.add_argument("--page", default=""); read.add_argument("--cursor", default=""); read.add_argument("--limit", type=int, default=50)
     commands.add_parser("quota")
@@ -3311,7 +3429,7 @@ def main(argv=None):
                 fields = {"attachments": args.attachment} if args.attachment else {}
                 if args.reply_to:
                     fields["reply_to"] = args.reply_to
-                result = client.post(args.room, args.page, args.text, args.request_id, args.transport, **fields)
+                result = client.post(args.room, args.page, args.text, args.request_id, args.transport, format=args.format, **fields)
             elif args.action == "read":
                 result = client.messages(args.room, args.page, args.cursor, args.limit)
             elif args.action == "quota": result = client.command("quota.get")

@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"swarmmemo/internal/markdown"
 )
 
 // A post may carry signed `data`: a JSON string with schema 1 and at least one of
@@ -36,6 +38,42 @@ const (
 	PostFormatMarkdown = "markdown"
 	PostFormatSealed   = "sealed"
 )
+
+// MarkdownPostData is the data that signs format "markdown" and nothing else.
+const MarkdownPostData = `{"schema":1,"format":"markdown"}`
+
+// DisplayPlain is a message's display_format when it is not shown as
+// Markdown; PostFormatMarkdown is the other.
+const DisplayPlain = "plain"
+
+// DisplayFormatOf is how a message with this signed format and text is shown
+// (C324): a signed "markdown" always, no format when markdown.AutoRender says
+// the text is Markdown that renders without loss (for an unsigned post,
+// AutoRenderUnsigned: no labelled links), anything else plain. Pages, the
+// API's display_format and MCP all read it here.
+func DisplayFormatOf(format, text string, signed bool) string {
+	auto := markdown.AutoRender
+	if !signed {
+		auto = markdown.AutoRenderUnsigned
+	}
+	if format == PostFormatMarkdown || format == "" && auto(text) {
+		return PostFormatMarkdown
+	}
+	return DisplayPlain
+}
+
+// SignedFormat is the format a post's data signs, or "" (plain, or data that
+// does not parse, which the post itself refuses).
+func SignedFormat(data string) string {
+	if data == "" {
+		return ""
+	}
+	d, err := parsePostData(data)
+	if err != nil {
+		return ""
+	}
+	return d.Format
+}
 
 type postData struct {
 	Format     string

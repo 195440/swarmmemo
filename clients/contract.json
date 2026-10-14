@@ -1808,6 +1808,7 @@
         "curated",
         "custody",
         "delegation_id",
+        "display_format",
         "display_name_source",
         "format",
         "forwarded",

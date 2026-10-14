@@ -122,6 +122,9 @@ type renderer struct {
 	started   bool // a line has been written
 	glue      bool // the next flattened block follows a prefix: no space
 	truncated bool
+	// audit is set only by AutoRender (auto.go): a plain-text pass that also
+	// counts structure and writes the syntax a page shows in another form.
+	audit *audit
 }
 
 func newRenderer(text bool, opt Options) *renderer {
@@ -545,6 +548,9 @@ func (r *renderer) blocks(lines []string, depth int, bare bool) {
 			return
 		}
 		if lang, body, next, ok := fence(lines, i); ok {
+			if r.audit != nil {
+				r.auditFence(lang)
+			}
 			r.code(body, lang)
 			i = next
 			r.after(depth)
@@ -552,6 +558,9 @@ func (r *renderer) blocks(lines []string, depth int, bare bool) {
 			continue
 		}
 		if level, text, ok := atxHeading(line); ok {
+			if r.audit != nil {
+				r.audit.structure = true
+			}
 			i++
 			if top && r.opt.SkipTitle {
 				r.emitted = true
@@ -796,6 +805,9 @@ func (r *renderer) list(lines []string, i int, m marker, depth int) int {
 		if r.preview {
 			r.bullet(m, item)
 		}
+		if r.audit != nil {
+			r.auditItem(m, item)
+		}
 		r.tag("<li>")
 		r.blocks(body, depth+1, true)
 		r.tag("</li>\n")
@@ -830,6 +842,9 @@ func (r *renderer) table(lines []string, i int, header, aligns []string) int {
 			r.escape("(table)")
 		}
 		return i
+	}
+	if r.audit != nil {
+		r.audit.structure = true
 	}
 	cell := func(tag, align, text string) {
 		if align != "" {
@@ -886,18 +901,19 @@ const (
 )
 
 type token struct {
-	kind  int
-	text  string // text, code, link label (raw markdown), or link href
-	href  string
-	host  string
-	auto  bool // an autolink shows its own URL as the label
+	kind int
+	text string // text, code, link label (raw markdown), or link href
+	href string
+	host string
+	auto bool // an autolink shows its own URL as the label
+
 	// mention is an @handle linked to its agent's page (Options.Mentions).
 	mention bool
-	ch    byte
-	count int
-	orig  int // the run's length before any of it was matched
-	open  bool
-	close bool
+	ch      byte
+	count   int
+	orig    int // the run's length before any of it was matched
+	open    bool
+	close   bool
 	// closes are emitted before the literal leftover run, innermost first;
 	// opens after it, outermost first.
 	opens, closes []string
@@ -910,7 +926,10 @@ func (r *renderer) inline(s string, links bool) {
 	if links {
 		toks = r.splitMentions(toks)
 	}
-	resolveEmphasis(toks)
+	if spans, doubtful := resolveEmphasis(toks); r.audit != nil {
+		r.audit.spans += spans
+		r.audit.doubtful = r.audit.doubtful || doubtful
+	}
 	for i := range toks {
 		if r.done {
 			return
@@ -964,6 +983,11 @@ func (r *renderer) link(t *token) {
 			r.out.WriteString(t.text)
 		} else {
 			r.inline(t.text, false)
+			if r.audit != nil {
+				// The destination is not lost: the page links the label to it.
+				r.out.WriteString(" " + t.href)
+				r.audit.labelled = true
+			}
 		}
 		return
 	}
@@ -1348,8 +1372,13 @@ func urlRune(c rune, size int) bool {
 
 // resolveEmphasis pairs * and _ runs with a bounded delimiter stack. Matching a
 // closer discards unmatched openers between the pair, which keeps the emitted
-// tags properly nested.
-func resolveEmphasis(toks []token) {
+// tags properly nested. It returns the spans matched, and doubtful when a
+// match took delimiters plain text more likely meant as written: a run that
+// could both open and close (inside a word, as in 2*3*4, or between
+// punctuation, as in src/*.go), or underscores around a single word
+// (__init__). AutoRender keeps such a post plain.
+func resolveEmphasis(toks []token) (spans int, doubtful bool) {
+	var spaced []int // spaced[k]: tokens before k that hold a space (lazy)
 	stack := []int{}
 	for i := range toks {
 		t := &toks[i]
@@ -1380,6 +1409,18 @@ func resolveEmphasis(toks []token) {
 			if use == 2 {
 				open, closeTag = "<strong>", "</strong>"
 			}
+			spans++
+			if o.open && o.close || t.open && t.close {
+				doubtful = true
+			}
+			if t.ch == '_' {
+				if spaced == nil {
+					spaced = spacedTokens(toks)
+				}
+				if spaced[i] == spaced[stack[found]+1] {
+					doubtful = true
+				}
+			}
 			o.count -= use
 			t.count -= use
 			o.opens = append(o.opens, open)
@@ -1393,6 +1434,21 @@ func resolveEmphasis(toks []token) {
 			stack = append(stack, i)
 		}
 	}
+	return spans, doubtful
+}
+
+// spacedTokens counts, for each k, the tokens before k with a space or line
+// break in them: a pair of delimiters encloses one word when the count does
+// not change between them.
+func spacedTokens(toks []token) []int {
+	out := make([]int, len(toks)+1)
+	for k, t := range toks {
+		out[k+1] = out[k]
+		if t.kind == tBreak || strings.IndexFunc(t.text, unicode.IsSpace) >= 0 {
+			out[k+1]++
+		}
+	}
+	return out
 }
 
 // ---------- URLs ----------

@@ -16,7 +16,7 @@ func TestCodeAndTimesServerRendered(t *testing.T) {
 	id, jsonID := "0123456789abcdef0123456789abcdef", "fedcba9876543210fedcba9876543210"
 	at := time.Now().Add(-5 * time.Minute).Unix()
 	events := []board.Message{
-		{ID: id, Room: "lobby", Page: "main", Kind: "note", Author: "anonymous", CreatedAt: at, Text: "Try `go vet`:\n```go\nfunc f() {}\n```"},
+		{ID: id, Room: "lobby", Page: "main", Kind: "note", Author: "anonymous", CreatedAt: at, Text: "Try `go vet` on 2*3*4:\n```go\nfunc f() {}\n```"}, // 2*3*4 keeps it plain (C324),
 		{ID: jsonID, Room: "lobby", Page: "main", Kind: "note", Author: "anonymous", CreatedAt: at, Text: `{"a":[1,2]}`},
 	}
 	s := &testService{execute: func(c board.Command) (board.Result, error) {
@@ -30,7 +30,7 @@ func TestCodeAndTimesServerRendered(t *testing.T) {
 		Handler(s).ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 		body := w.Body.String()
 		for _, want := range []string{
-			`<div class="memo-text">Try <code>go vet</code>:<pre><code data-lang="go">func f() {}</code></pre></div>`,
+			`<div class="memo-text">Try <code>go vet</code> on 2*3*4:<pre><code data-lang="go">func f() {}</code></pre></div>`,
 			`<pre><code data-lang="json" data-copy-value="{&#34;a&#34;:[1,2]}">{` + "\n" + `  &#34;a&#34;: [`,
 			`<time datetime="` + iso(at) + `" title="` + time.Unix(at, 0).UTC().Format("2006-01-02 15:04 UTC") + `" data-rel>5 min ago</time>`,
 		} {

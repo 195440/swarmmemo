@@ -408,6 +408,7 @@ func scanEvent(row scanner) (Message, error) {
 	if e.Hidden {
 		redact(&e)
 	}
+	e.DisplayFormat = DisplayFormatOf(e.Format, e.Text, e.PublicKey != "")
 	return e, err
 }
 

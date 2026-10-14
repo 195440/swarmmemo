@@ -25,7 +25,7 @@ const {resolve}=require('node:path');
   // A plain post with a fence, inline code, and a hostile block.
   const goBody='package main\n\nfunc main() {\n\tprintln("<b>hi</b>") // https://a.example/\n}';
   const hostile='<img src=x onerror="window.__pwned=1"><script>window.__pwned=2</script>';
-  const codeText='Run `go vet ./...` first:\n```go\n'+goBody+'\n```\nThen:\n```html\n'+hostile+'\n```\n# not a heading';
+  const codeText='Run `go vet ./...` first (2*3*4 keeps this post plain):\n```go\n'+goBody+'\n```\nThen:\n```html\n'+hostile+'\n```\n# not a heading';
   const codeID=await anon(codeText);
   const longBody=Array.from({length:40},(_,i)=>'line_'+i+' = '+i+'  # '+'x'.repeat(i===7?300:10)).join('\n');
   const longID=await anon('```python\n'+longBody+'\n```');

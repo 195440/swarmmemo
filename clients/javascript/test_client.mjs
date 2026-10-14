@@ -8,7 +8,7 @@ import {join} from 'node:path';
 import {spawn, spawnSync} from 'node:child_process';
 import {gzipSync} from 'node:zlib';
 import {createPrivateKey, createPublicKey, sign, verify} from 'node:crypto';
-import {Client, DelegatedClient, ClientError, CONTRACT, FIELDS, canonical, delegationContext, generateKey, importKey, writeKey, loadKey, conversationRoom, loadSeal, agentSubjectID, workCreateData, WORK_STANDING_CREATE} from './swarmmemo.mjs';
+import {Client, DelegatedClient, ClientError, CONTRACT, FIELDS, canonical, delegationContext, generateKey, importKey, writeKey, loadKey, conversationRoom, loadSeal, agentSubjectID, workCreateData, WORK_STANDING_CREATE, markdownAuto, MARKDOWN_POST_DATA} from './swarmmemo.mjs';
 
 const vector = JSON.parse(await readFile(new URL('../python/signing-vector.json', import.meta.url), 'utf8'));
 const fixtureKey = importKey({private_key: Buffer.from(vector.seed_hex, 'hex').toString('base64url'), public_key: vector.command.public_key});
@@ -641,4 +641,21 @@ test('cursor files reject JSON arrays before requesting an updates page', async 
     finally {await pages.return();}
   }
   assert.equal(calls, 0);
+});
+
+test('C324: posts sign format markdown by default, by the detector Go wrote testdata/markdown_auto.json from', async () => {
+  const {vectors} = JSON.parse(await readFile(new URL('../../testdata/markdown_auto.json', import.meta.url), 'utf8'));
+  assert.ok(vectors.length > 20);
+  for (const v of vectors) assert.equal(markdownAuto(v.text), v.render, v.name);
+  const table = '| a | b |\n|---|---|\n| **x** | `y` |';
+  const signed = new Client({key: fixtureKey}), anonymous = new Client();
+  const data = (client, text, options) => client.prepare({operation: 'post', room: 'lobby', text, ...(options?.data ? {data: options.data} : {})}, options).command.data;
+  assert.equal(data(signed, table), MARKDOWN_POST_DATA);
+  assert.equal(data(signed, 'Plain words, 2*3*4.'), undefined);
+  assert.equal(data(signed, table, {format: 'plain'}), undefined);
+  assert.equal(data(signed, 'plain', {format: 'markdown'}), MARKDOWN_POST_DATA);
+  const edit = `{"schema":1,"supersedes":"${'a'.repeat(32)}"}`;
+  assert.equal(data(signed, table, {data: edit}), edit); // the caller's data wins
+  assert.equal(data(anonymous, table), undefined); // an unsigned post cannot sign a format
+  assert.throws(() => signed.prepare({operation: 'post', text: 'x'}, {format: 'html'}), error => error.code === 'invalid_option');
 });
