@@ -278,20 +278,12 @@ func buildStats(ctx context.Context, service board.Service, hourly bool) (*stats
 		v.Hourly = true
 		hours := a.Hours[max(len(a.Hours)-statsHours, 0):]
 		hourXs := make([]string, len(hours))
+		starts := make([]time.Time, len(hours))
 		for i, h := range hours {
 			hourXs[i] = h.Start.Format("Mon 2 Jan, 15:04 UTC")
+			starts[i] = h.Start
 		}
-		hourAxis := axisFor(len(hours), func(i int) string {
-			switch at := hours[i].Start; {
-			case (len(hours)-1-i)%6 != 0:
-				return ""
-			case at.Hour() == 0:
-				return at.Format("2 Jan")
-			default:
-				return at.Format("15:04")
-			}
-		})
-		v.Activity = activityChart("hour", hours, hourXs, hourAxis)
+		v.Activity = activityChart("hour", hours, hourXs, hourAxis(starts, 6))
 		readersNote = "Daily only: reads are counted per UTC day. " + readersNote
 	}
 	v.Readers = buildLineChart("Entry-point reads per day", readersNote, dayXs, dayAxis, todaySoFar, []chartSeries{

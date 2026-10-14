@@ -55,6 +55,10 @@ type Snapshot struct {
 	// judgements_shadow section does.
 	Reviews []Record
 	Owners  []Record
+	// Carry (type "carry", rule 4 only) is the previous rule 4 run's carry
+	// (JudgementCarry.Records): published in full in that run's canonical
+	// output and at /api/trust/runs/ID (inputs.judgements_carry).
+	Carry []Record
 }
 
 // Meta is the run's frame: its as-of time and the input positions it read.
@@ -101,6 +105,11 @@ type Meta struct {
 //	             (judge.FromReview), kind its evidence class, link_value its
 //	             effective relationship, state its verdict)
 //	owner        target account (an account that owns a reviewed subject)
+//	carry        kind and, by kind (rule 4: the previous run's carry):
+//	             run as_of amount (the escrow); judgement id account
+//	             created_at value amount (its author, entry time, c0 and
+//	             provisional raw mark); balance account amount; owed id
+//	             account amount
 type Record struct {
 	Type string `json:"type"`
 	// meta
@@ -211,6 +220,8 @@ func (s *Snapshot) Add(r Record) error {
 		s.Owners = append(s.Owners, r)
 	case "signal_link":
 		s.SignalLinks = append(s.SignalLinks, r)
+	case "carry":
+		s.Carry = append(s.Carry, r)
 	default:
 		return fmt.Errorf("trust input: unknown record type %q", r.Type)
 	}
@@ -226,7 +237,7 @@ func (s *Snapshot) Records() []Record {
 		{Type: "meta", Schema: m.Schema, AsOf: m.AsOf, PriorRuns: m.PriorRuns, PauseNewKeysSince: m.PauseNewKeysSince, EventsSeq: m.EventsSeq, EndorsementsSeq: m.EndorsementsSeq, LedgerSeq: m.LedgerSeq},
 		{Type: "params", Version: s.Params.Version, Body: s.Params.Body()},
 	}
-	for _, list := range [][]Record{s.Accounts, s.Posts, s.Endorsements, s.Proofs, s.Breakers, s.Transfers, s.Claims, s.Priors, s.Penalties, s.Sponsorships, s.Acts, s.Spends, s.Reviews, s.Owners} {
+	for _, list := range [][]Record{s.Accounts, s.Posts, s.Endorsements, s.Proofs, s.Breakers, s.Transfers, s.Claims, s.Priors, s.Penalties, s.Sponsorships, s.Acts, s.Spends, s.Reviews, s.Owners, s.Carry} {
 		out = append(out, sortRecords(list)...)
 	}
 	return out

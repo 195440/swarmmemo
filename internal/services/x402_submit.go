@@ -9,7 +9,8 @@ package services
 // (parseX402Required), turned into a discovery item (x402ChallengeItem) and
 // normalised by the one normaliser of crawled items (bazaarItem.resource).
 // It is then admitted by the same guardrails (admitOpenWith), checked against
-// the same per-recipient and per-domain caps, and upserted into the same
+// the same per-recipient and per-domain caps (under which it displaces
+// crawled entries, never vetted or submitted ones), and upserted into the same
 // table with source "submitted:ACCOUNT". From there it is an open resource
 // like any other: a candidate until vetted, its summary screened before it
 // is served, ranked after vetted and paid ones but before the discovery
@@ -105,7 +106,7 @@ var (
 	errX402NoChallenge = refusal("x402_listing_no_challenge") // an answer other than an x402 402
 	errX402Denied      = refusal("x402_listing_denied")       // the denylist
 	errX402Pinned      = refusal("x402_listing_pinned")       // already in the operator's allowlist
-	errX402Caps        = refusal("x402_listing_caps")         // per-recipient, per-domain or submitted caps
+	errX402Caps        = refusal("x402_listing_caps")         // caps full of vetted or submitted entries, or the submitted share
 	errX402NotListed   = refusal("x402_listing_not_found")    // nothing submitted at that METHOD URL
 	errX402Category    = refusal("x402_listing_category")     // not a catalogue category
 	errX402Summary     = refusal("x402_listing_summary")      // too long, or not one line of text
@@ -319,13 +320,14 @@ func (r *Registry) SubmitX402(ctx context.Context, s X402Submission, now int64) 
 }
 
 // roomFor reports whether r fits the caps capOpen keeps at load: fewer
-// than x402PerRecipientMax other entries to its recipient and
-// x402PerDomainMax on its registrable domain, and the submitted share of
-// the catalogue not full. Its own earlier listing does not count.
+// than x402PerRecipientMax other vetted or submitted entries to its
+// recipient and x402PerDomainMax on its registrable domain (crawled ones
+// give way to it), and the submitted share of the catalogue not full. Its
+// own earlier listing does not count.
 func (x *x402) roomFor(r *X402Resource) bool {
 	perPayTo, perDomain, submitted := 0, 0, 0
 	for _, o := range x.cat.snap.Load().open {
-		if o.ID == r.ID {
+		if o.ID == r.ID || (!o.Vetted && o.Submitter() == "") {
 			continue
 		}
 		if o.PayTo == r.PayTo {

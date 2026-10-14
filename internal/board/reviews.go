@@ -1070,10 +1070,13 @@ type ReviewAggregate struct {
 	// WithEvidence counts by verdict the reviews whose class is better than
 	// opinion: what a page states as a rating (schema.org AggregateRating).
 	WithEvidence map[string]int `json:"by_verdict_with_evidence"`
-	// ScoreShadow is RFC 0020's score (judge.Score: the weighted median of
-	// the same reviews and weights, with judge.PriorWeight pseudo-judgements
-	// at 50), 0-100, in shadow beside verdict_mean until C304.
+	// ScoreShadow is RFC 0020's score (judge.ScoreGrouped: the weighted
+	// median of the same reviews and weights, with judge.PriorWeight
+	// pseudo-judgements at 50 each weighing their mean weight), 0-100, in
+	// shadow beside verdict_mean until C304. ScoreThin is true below
+	// judge.ThinBelow weighted reviews: a page labels the score thin.
 	ScoreShadow int64 `json:"score_shadow"`
+	ScoreThin   bool  `json:"score_thin"`
 	// EarlierVersion counts the current reviews about an earlier version of
 	// the subject (an offering's, offering_versions.go): listed apart, in
 	// none of the above.
@@ -1519,7 +1522,7 @@ func (s *Store) readSubject(ctx context.Context, tx *sql.Tx, c Command, now int6
 }
 
 func emptyAggregate() ReviewAggregate {
-	return ReviewAggregate{ByClass: map[string]int{}, ByVerdict: map[string]int{}, WithEvidence: map[string]int{}, VerdictMean: ReviewPriorValue, ScoreShadow: judge.Score(nil), Prior: priorNote()}
+	return ReviewAggregate{ByClass: map[string]int{}, ByVerdict: map[string]int{}, WithEvidence: map[string]int{}, VerdictMean: ReviewPriorValue, ScoreShadow: judge.Score(nil), ScoreThin: judge.Thin(0), Prior: priorNote()}
 }
 
 func priorNote() string {
@@ -1611,9 +1614,10 @@ func communityReviews(ctx context.Context, tx *sql.Tx, subject string, now int64
 	for _, d := range reviews.Dimensions {
 		cols = append(cols, "coalesce(sum(CASE WHEN w>0 AND "+d+">=0 THEN w*"+d+" END),0)", "coalesce(sum(CASE WHEN w>0 AND "+d+">=0 THEN w END),0)")
 	}
-	// The weight per distinct (verdict, score, good), for judge.Score: the
-	// mapping to x is judge.FromReview's, never repeated in SQL.
-	cols = append(cols, "(SELECT json_group_array(json_array(verdict,score,good,sw)) FROM (SELECT verdict,score,good,sum(w) AS sw FROM x WHERE w>0 GROUP BY verdict,score,good))")
+	// The weight and count per distinct (verdict, score, good), for
+	// judge.ScoreGrouped: the mapping to x is judge.FromReview's, never
+	// repeated in SQL.
+	cols = append(cols, "(SELECT json_group_array(json_array(verdict,score,good,sw,n)) FROM (SELECT verdict,score,good,sum(w) AS sw,count(*) AS n FROM x WHERE w>0 GROUP BY verdict,score,good))")
 	rows, err := tx.QueryContext(ctx, communityWeights()+`, x AS MATERIALIZED (SELECT * FROM w),
 agg AS (SELECT `+strings.Join(cols, ",")+` FROM x),
 page AS (SELECT event_id,created_at,evidence_class,cw,v,rf,decay,burst,w FROM x ORDER BY w DESC, created_at DESC, event_id LIMIT ?3 OFFSET ?4)
@@ -1674,7 +1678,7 @@ SELECT agg.*,page.event_id,page.evidence_class,page.cw,page.v,page.rf,page.decay
 	}
 	agg.VerdictMean = math.Round((sum+ReviewPriorWeight*ReviewPriorValue)/(total+ReviewPriorWeight)*1e4) / 1e4
 	agg.WeightTotal = math.Round(total*1e6) / 1e6
-	agg.ScoreShadow = reviewScoreShadow(groups.String)
+	agg.ScoreShadow, agg.ScoreThin = reviewScoreShadow(groups.String)
 	for i, d := range reviews.Dimensions {
 		if dims[2*i+1] > 0 {
 			if agg.Dimensions == nil {
@@ -1702,25 +1706,29 @@ SELECT agg.*,page.event_id,page.evidence_class,page.cw,page.v,page.rf,page.decay
 	return agg, page, nil
 }
 
-// reviewScoreShadow is judge.Score over the aggregate's weight groups
-// ([verdict, score, good, weight] rows): each group's x is judge.FromReview's
-// and its weight the summed w in ppm.
-func reviewScoreShadow(groups string) int64 {
-	var rows [][4]json.RawMessage
+// reviewScoreShadow is judge.ScoreGrouped over the aggregate's weight groups
+// ([verdict, score, good, weight, count] rows): each group's x is
+// judge.FromReview's and its weight the summed w in ppm. thin is
+// judge.Thin of the weighted judgements counted (RFC 0020 §2).
+func reviewScoreShadow(groups string) (score int64, thin bool) {
+	var rows [][5]json.RawMessage
 	_ = json.Unmarshal([]byte(groups), &rows)
 	var points []judge.Point
+	var n int64
 	for _, g := range rows {
 		var verdict string
-		var score, good int64
+		var score, good, count int64
 		var w float64
-		if json.Unmarshal(g[0], &verdict) != nil || json.Unmarshal(g[1], &score) != nil || json.Unmarshal(g[2], &good) != nil || json.Unmarshal(g[3], &w) != nil {
+		if json.Unmarshal(g[0], &verdict) != nil || json.Unmarshal(g[1], &score) != nil || json.Unmarshal(g[2], &good) != nil || json.Unmarshal(g[3], &w) != nil ||
+			json.Unmarshal(g[4], &count) != nil {
 			continue
 		}
-		if x, ok := judge.FromReview(verdict, score, good); ok {
+		if x, ok := judge.FromReview(verdict, score, good); ok && w > 0 {
 			points = append(points, judge.Point{X: x, W: int64(math.Round(w * 1e6))})
+			n += max(1, count)
 		}
 	}
-	return judge.Score(points)
+	return judge.ScoreGrouped(points, n), judge.Thin(n)
 }
 
 // reviewThread counts a review's replies and finds its owner's pinned reply.

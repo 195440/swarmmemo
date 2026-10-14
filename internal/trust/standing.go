@@ -163,6 +163,13 @@ type StandingParams struct {
 	// signals and are not in the published snapshot, so a run with it set
 	// cannot be recomputed from the snapshot alone.
 	SignalLinkDays int64 `json:"signal_link_days,omitempty"`
+
+	// From parameter version 7 (rule 4, RFC 0020 is the rule, C303b).
+	// Absent before. Judgements are RFC 0020's numbers (internal/judge's
+	// constants are the defaults); rule 4 reads them, and stake_ppm,
+	// stake_budget_ppm and iterations, in place of rule 3's settlement
+	// (prior_min_posts is not read).
+	Judgements *judge.Params `json:"judgements,omitempty"`
 }
 
 // EdgeKinds are the kinds edge_weights prices (rule 2).
@@ -202,6 +209,26 @@ func DefaultStanding() *StandingParams {
 	st.StakeBudgetPPM = 500000
 	st.PriorMinPosts = 3
 	return st
+}
+
+// StandingJudgements is the standing section of parameter version 7, in
+// shadow: version 6's (DefaultStanding) under rule 4 (judgements_rule.go)
+// with RFC 0020's numbers, internal/judge's defaults.
+func StandingJudgements() *StandingParams {
+	st := DefaultStanding()
+	st.Rule = 4
+	jp := judge.Default
+	st.Judgements = &jp
+	return st
+}
+
+// JudgementsParams is trust parameter version 7: version 6 (DefaultParams)
+// with StandingJudgements. It is not the compiled-in default; `swarmmemo
+// trust params 7` prints its body for `swarmmemo params set trust`.
+func JudgementsParams() Params {
+	p := DefaultParams()
+	p.Version, p.Standing = JudgementsVersion, StandingJudgements()
+	return p
 }
 
 // StandingV5 is the standing section of parameter version 5, which only
@@ -268,7 +295,16 @@ func (st *StandingParams) validate(in func(string, int64, int64, int64), check f
 	in("standing.theta2_cents", st.Theta2Cents, 1, st.Theta1Cents)
 	in("standing.v0_ppm", st.V0PPM, 0, 1e6)
 	in("standing.c_ref_cents", st.CRefCents, 1, 1e9)
-	in("standing.rule", st.Rule, 0, 3)
+	in("standing.rule", st.Rule, 0, 4)
+	check(st.Rule < 4 || st.Judgements != nil, "standing.judgements is required by rule 4")
+	check(st.Rule >= 4 || st.Judgements == nil, "standing.judgements needs rule 4")
+	if jp := st.Judgements; jp != nil {
+		in("standing.judgements.k_min", jp.KMin, 1, 100)
+		in("standing.judgements.prior_weight", jp.PriorWeight, 0, 100)
+		in("standing.judgements.thin_below", jp.ThinBelow, 0, 1000)
+		in("standing.judgements.review_load", jp.ReviewLoad, 0, 1e4)
+		curve("standing.judgements", jp.HalfLifeDays, jp.DayFactorPPM)
+	}
 	in("standing.v_floor_cents", st.VFloorCents, 0, 1e9)
 	in("standing.spend_cap_cents", st.SpendCapCents, 0, 1e9)
 	in("standing.funded_days", st.FundedDays, 0, 365)
@@ -492,14 +528,16 @@ type standingInput struct {
 	scored     []string
 	tier       map[string]int64
 	collateral map[string]int64
+	carry      *JudgementCarry // rule 4: the previous run's carry (nil: none)
 }
 
 type standingResult struct {
 	parts   map[string]*StandingPart
 	summary *StandingSummary
 	extra   []string // accounts with standing that were not otherwise scored
-	// shadow is RFC 0020's judgements_shadow section (rule 3 only).
-	shadow *JudgementsShadow
+	// shadow is RFC 0020's judgements_shadow section (rule 3 only);
+	// judgements is RFC 0020's section as the rule (rule 4 only).
+	shadow, judgements *JudgementsShadow
 }
 
 func computeStanding(in standingInput) standingResult {
@@ -690,7 +728,7 @@ func computeStanding(in standingInput) standingResult {
 		} else {
 			inputs[c.kind]++
 		}
-		if st.Rule >= 3 {
+		if st.Rule == 3 {
 			staked = append(staked, stakeAct{src: c.src, dst: c.dst, kind: c.kind, item: c.item, at: c.at, against: c.oppose,
 				load: st.actWeight(c.kind, c.weight) * v})
 		}
@@ -721,6 +759,32 @@ func computeStanding(in standingInput) standingResult {
 	}
 	for _, a := range in.scored {
 		isNode[a] = true
+	}
+	// RFC 0020's judgements (rule 3: the shadow; rule 4: the rule). Under
+	// rule 4 their authors, their subjects' owners and the accounts the
+	// carry names are nodes too.
+	var set judgementSet
+	if st.Rule >= 3 {
+		jp := judge.Default
+		if st.Rule >= 4 {
+			jp = *st.Judgements
+		}
+		set = collectJudgements(st, jp, in.snap, in.asOf, ws, in.service, in.reset, in.rootOf)
+	}
+	if st.Rule >= 4 {
+		for _, s := range set.subjects {
+			for _, e := range set.bySubject[s] {
+				isNode[e.j.Author] = true
+			}
+			for o := range set.owners[s] {
+				if !in.service[o] {
+					isNode[o] = true
+				}
+			}
+		}
+		for _, a := range in.carry.accounts() {
+			isNode[a] = true
+		}
 	}
 	nodes := make([]string, 0, len(isNode))
 	for a := range isNode {
@@ -772,7 +836,7 @@ func computeStanding(in standingInput) standingResult {
 	}
 
 	var stakeOut stakeResult
-	var shadow *JudgementsShadow
+	var shadow, judgements *JudgementsShadow
 	if st.Rule >= 3 {
 		// C160: accounts that wrote from one network with one client are
 		// not independent, while signal_link_days is set.
@@ -790,9 +854,14 @@ func computeStanding(in standingInput) standingResult {
 		indep := func(a, b string) bool {
 			return a != b && in.rootOf(a) != in.rootOf(b) && !funded[[2]string{a, b}] && !linked[[2]string{a, b}]
 		}
-		stakeOut = runStakes(st, in.asOf, ws, nodes, seed, pen, staked, indep)
-		shadow = computeJudgementsShadow(shadowInput{st: st, p: p, snap: in.snap, asOf: in.asOf, D: in.D, ws: ws, service: in.service, reset: in.reset,
-			rootOf: in.rootOf, penalty: in.penalty, nodes: nodes, index: index, c: stakeOut.c, judged: stakeOut.judged, seed: seed, pen: pen, indep: indep})
+		if st.Rule >= 4 {
+			stakeOut, judgements = runJudgementRule(ruleInput{st: st, p: p, set: set, carry: in.carry, asOf: in.asOf, D: in.D, ws: ws,
+				nodes: nodes, index: index, seed: seed, pen: pen, penalty: in.penalty, indep: indep})
+		} else {
+			stakeOut = runStakes(st, in.asOf, ws, nodes, seed, pen, staked, indep)
+			shadow = computeJudgementsShadow(shadowInput{st: st, p: p, set: set, asOf: in.asOf, D: in.D,
+				penalty: in.penalty, nodes: nodes, index: index, c: stakeOut.c, judged: stakeOut.judged, seed: seed, pen: pen, indep: indep})
+		}
 	}
 
 	// Personalized PageRank from the seed mass, in integers. Each step a
@@ -938,7 +1007,11 @@ func computeStanding(in standingInput) standingResult {
 				part.Breakdown = append(part.Breakdown, StandingRoot{Root: "endorsements", Kind: "earned", Source: "edges", State: "computed", Contribution: (above - judged) / massPerCent})
 			}
 			if judged >= massPerCent {
-				part.Breakdown = append(part.Breakdown, StandingRoot{Root: "judgement", Kind: "earned", Source: "stakes", State: "computed", Contribution: judged / massPerCent})
+				source := "stakes"
+				if st.Rule >= 4 {
+					source = "final_marks" // the judgement balance (RFC 0020)
+				}
+				part.Breakdown = append(part.Breakdown, StandingRoot{Root: "judgement", Kind: "earned", Source: source, State: "computed", Contribution: judged / massPerCent})
 			}
 		case raw > seed[i]:
 			part.Breakdown = append(part.Breakdown, StandingRoot{Root: "endorsements", Kind: "earned", Source: "edges", State: "computed", Contribution: (raw - seed[i]) / massPerCent})
@@ -1045,7 +1118,7 @@ func computeStanding(in standingInput) standingResult {
 		sum.LargestMoves = append(sum.LargestMoves, m)
 	}
 	sort.Strings(extra)
-	return standingResult{parts: parts, summary: sum, extra: extra, shadow: shadow}
+	return standingResult{parts: parts, summary: sum, extra: extra, shadow: shadow, judgements: judgements}
 }
 
 // StandingScore is log₁₀(1 + C) rounded to two decimals, the displayed

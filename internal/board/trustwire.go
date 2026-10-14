@@ -763,6 +763,19 @@ func (in trustInputs) Read(ctx context.Context, asOf int64, p trust.Params, emit
 				return err
 			}
 		}
+		// Rule 4 (RFC 0020 is the rule) reads the latest done run's carry:
+		// one row, in one short read.
+		if p.Standing.Rule >= 4 {
+			var carry *trust.JudgementCarry
+			if err := in.page(ctx, func(q allowance.Querier) (err error) { carry, err = trust.LatestCarry(ctx, q); return err }); err != nil {
+				return err
+			}
+			for _, rec := range carry.Records() {
+				if err := emit(rec); err != nil {
+					return err
+				}
+			}
+		}
 		// C160: shared network and client links, only while the parameter
 		// asks for them (signals.go); never in the published snapshot.
 		if p.Standing.Rule >= 3 && p.Standing.SignalLinkDays > 0 {

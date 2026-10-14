@@ -1657,6 +1657,9 @@ func jsonResponse(w http.ResponseWriter, status int, v any) {
 func apiError(e error) *board.Error {
 	var be *board.Error
 	if !errors.As(e, &be) {
+		// The caller sees nothing of the cause; the operator log keeps it
+		// (the error text only: never the request, its body or a key).
+		slog.Error("internal error", "err", e)
 		be = &board.Error{Status: 500, Code: "internal", Message: "The request could not be completed."}
 	}
 	return be

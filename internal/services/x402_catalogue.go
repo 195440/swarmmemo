@@ -898,19 +898,37 @@ func (a x402RankKey) before(b x402RankKey) bool {
 
 // capOpen keeps, in rank order, at most limit resources and at most
 // x402PerRecipientMax candidates per recipient and x402PerDomainMax per
-// registrable domain; vetted resources are exempt (and counted).
+// registrable domain; vetted resources are exempt (and counted). Vetted and
+// submitted resources claim their places under the caps first (submitted
+// ones capped among themselves), so a listing its proven owner submitted
+// displaces the lowest-ranked crawled ones under a full cap: those are
+// left out of the snapshot, their rows kept.
 func capOpen(ranked []*X402Resource, limit int) []*X402Resource {
 	perPayTo, perDomain := map[EVMAddress]int{}, map[string]int{}
+	full := func(r *X402Resource) bool {
+		return perPayTo[r.PayTo] >= x402PerRecipientMax || perDomain[r.domain] >= x402PerDomainMax
+	}
+	held := map[*X402Resource]bool{}
+	for _, r := range ranked {
+		if !r.Vetted && (r.Submitter() == "" || full(r)) {
+			continue
+		}
+		held[r] = true
+		perPayTo[r.PayTo]++
+		perDomain[r.domain]++
+	}
 	out := make([]*X402Resource, 0, min(len(ranked), limit))
 	for _, r := range ranked {
 		if len(out) >= limit {
 			break
 		}
-		if !r.Vetted && (perPayTo[r.PayTo] >= x402PerRecipientMax || perDomain[r.domain] >= x402PerDomainMax) {
-			continue
+		if !held[r] {
+			if r.Submitter() != "" || full(r) {
+				continue
+			}
+			perPayTo[r.PayTo]++
+			perDomain[r.domain]++
 		}
-		perPayTo[r.PayTo]++
-		perDomain[r.domain]++
 		out = append(out, r)
 	}
 	return out

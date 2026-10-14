@@ -59,7 +59,8 @@ type ReplayDetected struct {
 }
 
 // Replay computes the run on snap (its window set to days when days > 0)
-// and reports rule 3 against RFC 0020. It needs a rule 3 parameter version.
+// and reports rule 3 against RFC 0020. It needs a rule 3 or rule 4
+// parameter version.
 func Replay(ctx context.Context, snap Snapshot, days int64) (ReplayReport, error) {
 	if days > 0 {
 		snap.Params.WindowDays = days
@@ -71,12 +72,22 @@ func Replay(ctx context.Context, snap Snapshot, days int64) (ReplayReport, error
 	if err != nil {
 		return ReplayReport{}, err
 	}
+	// Under rule 4 (version 7) the section is the rule: there is no rule 3
+	// to compare with, and the report shows the run itself (its final
+	// marks as the marks, its standing on both sides).
 	s := out.JudgementsShadow
+	minted := func() bool {
+		return s.Settlement.Paid > s.Settlement.Forfeited || s.StandingMassShadow > s.StandingMass
+	}
+	if s == nil {
+		s = out.Judgements
+		minted = func() bool { return s.Settlement.Paid > s.Settlement.Forfeited || s.StandingMass > s.SeedMass }
+	}
 	r := ReplayReport{AsOf: out.AsOf, ParamsVersion: out.ParamsVersion, WindowDays: snap.Params.WindowDays, OutputSHA256: sha256Hex(out.Canonical()),
 		ShadowSHA256: sha256Hex(s.Canonical()), ShadowVersion: s.Version, Judgements: s.Judgements, ByAct: s.ByAct, Subjects: s.Subjects,
 		Marked: s.Marked, Open: s.Open, Truncated: s.Truncated, Bands: s.Bands,
 		Conservation: ReplayConservation{Settlement: s.Settlement, StandingMass: s.StandingMass, StandingMassShadow: s.StandingMassShadow,
-			Minted: s.Settlement.Paid > s.Settlement.Forfeited || s.StandingMassShadow > s.StandingMass},
+			Minted: minted()},
 		TierMoves: []ShadowAccount{}, Top: []ShadowAccount{}, Bottom: []ShadowAccount{}, MostJudged: []SubjectScore{}, Detected: []ReplayDetected{}}
 	byAccount := map[string]ShadowAccount{}
 	for _, a := range s.Accounts {

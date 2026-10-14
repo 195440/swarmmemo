@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -88,11 +89,35 @@ func TestFeedProfilesOverHTTPAndMCP(t *testing.T) {
 	if dig(byAgent, "data", "profile_agent") != fp || dig(byAgent, "data", "profile_hash") != hash {
 		t.Fatalf("/api/feed?profile=FP: %v", dig(byAgent, "data"))
 	}
-	if w := makeRequest(s, "GET", "/api/feed/profile?agent="+forker["agent"].(string), "", ""); w.Code != 404 || !strings.Contains(w.Body.String(), "profile_not_found") {
-		t.Fatalf("missing profile: %d %s", w.Code, w.Body.String())
+	// The GET's errors name its parameter (agent), the 404 points to a read
+	// that works on this surface, and /openapi.json declares every status
+	// the route answers with.
+	observed := map[string]bool{"200": true}
+	for _, tc := range []struct {
+		query, status, want string
+	}{
+		{"?agent=" + forker["agent"].(string), "404", "profile_not_found"},
+		{"", "401", "agent (target in a command)"},
+		{"?agent=nope", "400", "agent (target in a command) is an agent's fingerprint"},
+	} {
+		w := makeRequest(s, "GET", "/api/feed/profile"+tc.query, "", "")
+		observed[strconv.Itoa(w.Code)] = true
+		if strconv.Itoa(w.Code) != tc.status || !strings.Contains(w.Body.String(), tc.want) || strings.Contains(w.Body.String(), "with target") || strings.Contains(w.Body.String(), "\"target is") {
+			t.Fatalf("/api/feed/profile%s: %d %s", tc.query, w.Code, w.Body.String())
+		}
+		if tc.status == "404" && !strings.Contains(w.Body.String(), "GET /api/feed?profile=default") {
+			t.Fatalf("404 hint: %s", w.Body.String())
+		}
 	}
-	if w := makeRequest(s, "GET", "/api/feed/profile", "", ""); w.Code != 401 {
-		t.Fatalf("own profile unsigned: %d %s", w.Code, w.Body.String())
+	if w := makeRequest(s, "GET", "/api/feed?profile=default", "", ""); w.Code != 200 || !strings.Contains(board.DefaultFeedRead, "GET /api/feed?profile=default)") {
+		t.Fatalf("the 404 hint's read: %d %s", w.Code, w.Body.String())
+	}
+	spec := get("/openapi.json")
+	declared, _ := dig(spec, "paths", "/api/feed/profile", "get", "responses").(map[string]any)
+	for status := range observed {
+		if declared[status] == nil {
+			t.Fatalf("/openapi.json /api/feed/profile lacks %s: %v", status, declared)
+		}
 	}
 
 	fork := mustTool(t, s, "/mcp", asForker, "tune_feed", map[string]any{"action": "fork", "agent": fp, "hash": hash})

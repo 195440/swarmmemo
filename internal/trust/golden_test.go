@@ -242,6 +242,45 @@ func TestGoldenFixture(t *testing.T) {
 	testGolden(t, "golden_standing_v4", goldenStandingV4Snapshot)
 	testGolden(t, "golden_standing_v5", goldenStandingV5Snapshot)
 	testGolden(t, "golden_standing", goldenStandingSnapshot)
+	testGolden(t, "golden_judgements", goldenJudgementsSnapshot)
+}
+
+// goldenJudgementsSnapshot is the fixture of parameter version 7 (rule 4,
+// RFC 0020 is the rule, C303b): version 6's inputs under JudgementsParams,
+// plus reviews of an owned subject (one by its owner, one low) and the
+// previous run's carry: an escrow, judgements in the window with their c0
+// and two that left it (a loss and a gain), a balance, a debt and a gain
+// still owed.
+func goldenJudgementsSnapshot() Snapshot {
+	snap := goldenStandingSnapshot()
+	p := JudgementsParams()
+	p.ServiceAccounts, p.Seeds = snap.Params.ServiceAccounts, snap.Params.Seeds
+	snap.Params = p
+	alice, bob, carol, dave := acct("alice"), acct("bob"), acct("carol"), acct("dave")
+	seeds := p.Seeds
+	subject := "subject:golden-offering"
+	snap.Owners = append(snap.Owners, Record{Type: "owner", Target: subject, Account: dave})
+	review := func(id, from string, x, daysAgo int64, class string) {
+		snap.Reviews = append(snap.Reviews, Record{Type: "review", ID: id, Account: from, Target: subject, Value: x, Kind: class, LinkValue: "customer",
+			State: "good", CreatedAt: testAsOf - daysAgo*day})
+	}
+	review("g1", seeds[0], 85, 20, "paid_use")
+	review("g2", seeds[1], 80, 15, "free_use")
+	review("g3", seeds[2], 90, 10, "paid_use")
+	review("g4", bob, 10, 9, "opinion")
+	review("g5", seeds[3], 88, 5, "paid_use")
+	review("g6", dave, 100, 4, "paid_use") // the owner's: no judgement
+	carry := &JudgementCarry{AsOf: testAsOf - 7*day, Escrow: 1234,
+		Judgements: []CarriedJudgement{
+			{ID: "review:g1", Author: seeds[0], At: testAsOf - 20*day, C0: 50, Raw: 900},
+			{ID: "review:gone-loss", Author: carol, At: testAsOf - 95*day, C0: 60, Raw: -2500},
+			{ID: "review:gone-gain", Author: alice, At: testAsOf - 93*day, C0: 40, Raw: 4000},
+		},
+		Balances: []CarriedBalance{{Account: alice, Amount: 7000}, {Account: bob, Amount: -9000}}, // with the escrow: −766 ≤ 0
+		Owed:     []CarriedOwed{{ID: "review:older", Author: seeds[4], Amount: 500}},
+	}
+	snap.Carry = carry.Records()
+	return snap
 }
 
 // goldenStandingV5Snapshot is the standing fixture of parameter version 5
@@ -373,6 +412,14 @@ func testGolden(t *testing.T, name string, build func() Snapshot) {
 			t.Fatalf("standing fixture coverage: %+v", out.Standing)
 		}
 		testRecomputePy(t, raw, out.Canonical())
+	} else if strings.HasPrefix(name, "golden_judgements") {
+		// Rule 4: recompute.py refuses it (test_recompute.py); the section
+		// is in the canonical output, with a final settlement and a carry.
+		j := out.Judgements
+		if out.Standing == nil || out.JudgementsShadow != nil || j == nil || j.Carry == nil || j.CarryIn == "" || len(j.Final) == 0 || len(j.Marks) == 0 ||
+			j.Edges.Endorse == 0 || j.Edges.Oppose == 0 || j.Settlement.Paid > j.Settlement.Forfeited || j.StandingMass > j.SeedMass {
+			t.Fatalf("judgements fixture coverage: %+v", j)
+		}
 	} else if out.Standing != nil {
 		t.Fatal("a version 1 run has a standing summary")
 	}

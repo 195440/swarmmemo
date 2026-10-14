@@ -546,8 +546,9 @@ func (s *Server) servicesCapabilities(catalog []services.Entry) map[string]any {
 				"requires": "proof: every payTo of the challenge is one of your verified wallet links (wallet), or a verified domain link on the URL's host or registrable domain (domain)",
 				"probe":    "one unpaid request; the 402 challenge is read as a crawled listing is, never paid",
 				"per_day":  services.X402SubmitsPerDay, "summary_bytes": services.X402SummaryBytes,
-				"caps":      map[string]int{"per_pay_to": services.X402PerRecipientMax, "per_domain": services.X402PerDomainMax},
-				"listed_as": "a candidate (callable once vetted), source submitted with its proof, Find's listed_by", "reprobe": "a changed payTo marks a wallet-proven listing stale", "docs": "/protocol.md#list-your-paid-api",
+				"caps":       map[string]int{"per_pay_to": services.X402PerRecipientMax, "per_domain": services.X402PerDomainMax},
+				"precedence": "under a full cap your listing displaces the lowest-ranked crawled one, never a vetted or submitted one",
+				"listed_as":  "a candidate (callable once vetted), source submitted with its proof, Find's listed_by", "reprobe": "a changed payTo marks a wallet-proven listing stale", "docs": "/protocol.md#list-your-paid-api",
 			},
 		}
 	}

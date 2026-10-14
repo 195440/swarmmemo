@@ -2,16 +2,16 @@
 // world of subjects with a hidden true quality q, judged over 90 days by
 // honest, herding, contrarian and attacking agents, scored and marked by the
 // REAL code. Every judgement is a community review in a synthetic
-// trust.Snapshot; every number comes from trust.Compute (standing from the
-// seed list and priced spend, rule 3, and the judgements_shadow section that
-// calls internal/judge). Nothing here reimplements a formula: the only
-// recombination (the finality variants) calls judge.Gain, judge.Mark and
-// judge.Settle on the run's own c0, c_T and stakes.
+// trust.Snapshot; every number comes from trust.Compute under trust
+// parameter version 7 (rule 4, C303b: standing from the seed list and priced
+// spend, moved by the judgement edges and the final marks), each run reading
+// the previous run's carry as the board does. Nothing here reimplements a
+// formula.
 //
 // Runs happen every Cadence days from day 6 to day 181 (window 90 days), so
 // every judgement (days 1-89) is marked while in the window and then leaves
-// it. Run R90 (day 90) is the one run whose window holds every judgement:
-// the shadow as built (marks recomputed every run).
+// it, which settles its mark. Run R90 (day 90) is the one run whose window
+// holds every judgement: its scores and provisional marks.
 //
 // Deterministic: one PCG stream per (scenario, seed); floats are used only to
 // draw noise and to report.
@@ -56,13 +56,6 @@ var Kinds = []Kind{Informed, Late, Herder, Contrarian, Sybil, Funded, Griefer, C
 
 // Noise is the honest judges' σ on q.
 const Noise = 10
-
-// BonusCentsPerWeek is C307's weekly pool ($3), split by r·σ (the raw mark:
-// gain × stake) among positive marks that pass the gates.
-const BonusCentsPerWeek = 300
-
-// BonusCapPPM caps an account's C307 bonus a week at 4% of its standing.
-const BonusCapPPM = 40_000
 
 // FundedCents is what a funded ring member (or a griefer, a collusive root)
 // buys through the cheapest priced root: spent credit, which seeds standing
@@ -150,7 +143,8 @@ type Result struct {
 	Seed     uint64             `json:"seed"`
 	M        map[string]float64 `json:"metrics"`
 	// Conserved is true when every run paid at most what it forfeited and
-	// never raised the total standing (and so do the finality variants).
+	// its total standing never exceeded its seed mass, and all runs together
+	// paid at most what they forfeited.
 	Conserved bool `json:"conserved"`
 	Runs      int  `json:"runs"`
 }
@@ -174,8 +168,9 @@ func Run(ctx context.Context, sc Scenario, seed uint64, cfg Config) (Result, err
 	at := func(d0, d1 int64) int64 { // a time in days [d0, d1]
 		return Epoch + d0*day + rng.Int64N((d1-d0+1)*day)
 	}
-	params := trust.DefaultParams()
+	params := trust.JudgementsParams() // rule 4: RFC 0020 is the rule (C303b)
 	params.Seeds, params.ServiceAccounts, params.WindowDays = nil, nil, 90
+	operators := map[Kind]string{} // a ring's operator: its members' judgements route standing to it
 	st := params.Standing
 	snap := trust.Snapshot{Params: params}
 	merchant := acct("merchant")
@@ -248,6 +243,7 @@ func Run(ctx context.Context, sc Scenario, seed uint64, cfg Config) (Result, err
 	// Attackers and their subjects.
 	if sc.SybilK > 0 {
 		op := acct(sc.Name + ":sybil-op")
+		operators[Sybil] = op
 		s := addSubject("sybil", op, 20, true)
 		for i := 0; i < sc.SybilK; i++ {
 			a := newAgent(Sybil, i, 0, false, Epoch+4*day)
@@ -257,6 +253,7 @@ func Run(ctx context.Context, sc Scenario, seed uint64, cfg Config) (Result, err
 	}
 	if sc.FundedK > 0 {
 		op := acct(sc.Name + ":funded-op")
+		operators[Funded] = op
 		s := addSubject("funded", op, 20, true)
 		solo := addSubject("funded-solo", op, 20, false)
 		for i := 0; i < sc.FundedK; i++ {
@@ -352,7 +349,8 @@ func Run(ctx context.Context, sc Scenario, seed uint64, cfg Config) (Result, err
 			Value: p.x, Kind: p.evidence, State: "good", CreatedAt: p.at})
 	}
 
-	// The runs.
+	// The runs: rule 4, each reading the previous run's carry, as the board
+	// does (trust.LatestCarry).
 	var runDays []int64
 	for d := int64(6); d <= 181; d += cfg.Cadence {
 		runDays = append(runDays, d)
@@ -363,29 +361,34 @@ func Run(ctx context.Context, sc Scenario, seed uint64, cfg Config) (Result, err
 	}
 	type runOut struct {
 		day   int64
-		marks map[string]trust.JudgementMark
-		sh    *trust.JudgementsShadow
+		marks map[string]trust.JudgementMark // provisional
+		sec   *trust.JudgementsShadow
+		out   trust.Output
 	}
 	runs := make([]runOut, 0, len(runDays))
 	conserved := true
+	var carry *trust.JudgementCarry
 	for _, d := range runDays {
+		snap.Carry = carry.Records()
 		out, err := compute(Epoch + d*day)
 		if err != nil {
 			return Result{}, err
 		}
-		sh := out.JudgementsShadow
-		if sh == nil {
-			return Result{}, fmt.Errorf("sim: run on day %d has no judgements_shadow", d)
+		sec := out.Judgements
+		if sec == nil || sec.Carry == nil {
+			return Result{}, fmt.Errorf("sim: run on day %d has no judgements section", d)
 		}
-		if sh.Settlement.Paid > sh.Settlement.Forfeited || sh.StandingMassShadow > sh.StandingMass {
+		if sec.Settlement.Paid > sec.Settlement.Forfeited || sec.StandingMass > sec.SeedMass {
 			conserved = false
 		}
-		m := make(map[string]trust.JudgementMark, len(sh.Marks))
-		for _, mk := range sh.Marks {
+		m := make(map[string]trust.JudgementMark, len(sec.Marks))
+		for _, mk := range sec.Marks {
 			m[mk.ID] = mk
 		}
-		runs = append(runs, runOut{d, m, sh})
+		runs = append(runs, runOut{d, m, sec, out})
+		carry = sec.Carry
 	}
+	snap.Carry = nil
 
 	res := Result{Scenario: sc.Name, Seed: seed, M: map[string]float64{}, Runs: len(runs)}
 	kindOf := map[string]Kind{}
@@ -408,87 +411,84 @@ func Run(ctx context.Context, sc Scenario, seed uint64, cfg Config) (Result, err
 		}
 	}
 
-	// R90: the shadow as built, every judgement in its window.
+	// R90: the one run whose window holds every judgement.
 	var r90 runOut
 	for _, r := range runs {
 		if r.day == 90 {
 			r90 = r
 		}
 	}
-	scoreOf := map[string]int64{}
-	for _, s := range r90.sh.Scores {
-		scoreOf[s.Subject] = s.Score
+	scoreOf := map[string]trust.SubjectScore{}
+	for _, s := range r90.sec.Scores {
+		scoreOf[s.Subject] = s
 	}
 	var errSum float64
-	var nPool int
+	var nPool, thin int
 	for _, s := range subjects {
-		sc, ok := scoreOf["subject:"+s.id]
+		ss, ok := scoreOf["subject:"+s.id]
 		if !ok {
-			sc = judge.Neutral
+			ss = trust.SubjectScore{Score: judge.Neutral, Thin: true}
 		}
 		if s.pool {
-			errSum += math.Abs(float64(sc - s.q))
+			errSum += math.Abs(float64(ss.Score - s.q))
 			nPool++
+			if ss.Thin {
+				thin++
+			}
 		}
 		switch s.id {
 		case "sybil", "funded", "funded-solo", "pair-a":
-			res.M["lift."+s.id] = float64(sc - s.q)
+			res.M["lift."+s.id] = float64(ss.Score - s.q)
 		}
 		if s.griefed {
-			res.M["lift.griefed"] += float64(sc-s.q) / 3
+			res.M["lift.griefed"] += float64(ss.Score-s.q) / 3
 		}
 	}
 	res.M[MetricAccuracy] = errSum / float64(nPool)
+	res.M[MetricThin] = float64(thin) / float64(nPool)
 	sums := map[Kind]int64{}
 	for _, m := range r90.marks {
-		sums[kindOf[m.Author]] += m.Mark
+		sums[kindOf[m.Author]] += m.Raw
 	}
 	perAgent(MetricMarkR90, sums)
-	res.M[MetricPaid] = float64(r90.sh.Settlement.Paid) / 1000
-	res.M[MetricForfeited] = float64(r90.sh.Settlement.Forfeited) / 1000
-	res.M[MetricMarked] = float64(r90.sh.Marked)
-	res.M[MetricOpen] = float64(r90.sh.Open)
+	res.M[MetricMarked] = float64(r90.sec.Marked)
+	res.M[MetricOpen] = float64(r90.sec.Open)
 
-	// Finality. last: the judgement's last run in the window; first: its
-	// first marked run.
-	lastRun := func(t int64) int {
-		idx := -1
-		for i, r := range runs {
-			asOf := Epoch + r.day*day
-			if t < asOf && t >= asOf-90*day {
-				idx = i
-			}
-		}
-		return idx
-	}
-	recompute := map[Kind]int64{}
+	// Final: what every run settled (the judgements leaving its window and
+	// the gains still owed), the rule's only effect of a mark on standing.
+	final := map[Kind]int64{}
+	var paid, forfeited int64
 	for _, r := range runs {
-		for _, m := range r.marks {
-			recompute[kindOf[m.Author]] += m.Mark
+		for _, m := range r.sec.Final {
+			final[kindOf[m.Author]] += m.Mark
+			if m.Mark > 0 {
+				paid += m.Mark
+			} else {
+				forfeited -= m.Mark
+			}
 		}
 	}
-	for _, k := range Kinds {
-		recompute[k] /= int64(len(runs)) // the time average credited
+	if paid > forfeited {
+		conserved = false
 	}
-	perAgent(MetricMarkRecomputeAvg, recompute)
-	final, fixed := map[Kind]int64{}, map[Kind]int64{}
-	var finalNet int64
-	groups := map[int][]string{}
-	firstC0 := map[string]int64{}
-	firstRun := map[string]int{}
+	perAgent(MetricMarkFinal, final)
+	res.M[MetricPaid] = float64(paid) / 1000
+	res.M[MetricForfeited] = float64(forfeited) / 1000
+	res.M[MetricEscrow] = float64(runs[len(runs)-1].sec.Carry.Escrow) / 1000
+	var owed int64
+	for _, o := range runs[len(runs)-1].sec.Carry.Owed {
+		owed += o.Amount
+	}
+	res.M[MetricOwed] = float64(owed) / 1000
+
+	// Provisional marks that change sign across runs.
 	flips, everMarked := 0, 0
-	for id, p := range planOf {
-		li := lastRun(p.at)
+	for id := range planOf {
 		signs := map[int64]bool{}
-		for i, r := range runs {
-			m, ok := r.marks[id]
-			if !ok {
-				continue
+		for _, r := range runs {
+			if m, ok := r.marks[id]; ok {
+				signs[sign(m.Raw)] = true
 			}
-			if _, seen := firstC0[id]; !seen {
-				firstC0[id], firstRun[id] = m.C0, i
-			}
-			signs[sign(m.Mark)] = true
 		}
 		if len(signs) > 0 {
 			everMarked++
@@ -496,68 +496,7 @@ func Run(ctx context.Context, sc Scenario, seed uint64, cfg Config) (Result, err
 				flips++
 			}
 		}
-		if li < 0 {
-			continue
-		}
-		if m, ok := runs[li].marks[id]; ok {
-			final[p.a.kind] += m.Mark
-			finalNet += m.Mark
-			groups[li] = append(groups[li], id)
-		}
 	}
-	perAgent(MetricMarkFinal, final)
-	// Freezing each judgement's mark from its last run's run-wide
-	// settlement does not conserve: a winner frozen in run i was paid from
-	// losers whose own marks freeze later, at other values.
-	res.M[MetricFinalNet] = float64(finalNet) / 1000
-	// The proposed finality: a judgement's raw mark is final when it leaves
-	// the window (c_T and stake from its last run in the window, c0 from
-	// its first marked run: consensus at entry), and each run settles the
-	// cohort that became final in it against an escrow of what earlier
-	// cohorts forfeited and did not pay (judge.Settle with the escrow as one
-	// more loss), so Σ paid ≤ Σ forfeited over all runs.
-	gl := make([]int, 0, len(groups))
-	for li := range groups {
-		gl = append(gl, li)
-	}
-	sort.Ints(gl)
-	var fixedPaid, fixedForfeited, escrow int64
-	owed := map[string]int64{} // gains not yet paid, carried to later cohorts
-	for _, li := range gl {
-		ids := groups[li]
-		for id := range owed {
-			ids = append(ids, id)
-		}
-		sort.Strings(ids)
-		raw := make([]int64, len(ids), len(ids)+1)
-		for i, id := range ids {
-			if o, ok := owed[id]; ok {
-				raw[i] = o
-				continue
-			}
-			m := runs[li].marks[id]
-			raw[i] = judge.Mark(m.Stake, judge.Gain(m.X, firstC0[id], m.CT, m.Coarse))
-			if raw[i] < 0 {
-				fixedForfeited -= raw[i]
-			}
-		}
-		s := judge.Settle(append(raw, -escrow))
-		escrow = s.Returned
-		fixedPaid += s.Paid
-		clear(owed)
-		for i, id := range ids {
-			fixed[planOf[id].a.kind] += s.Marks[i]
-			if raw[i] > s.Marks[i] && s.Marks[i] >= 0 {
-				owed[id] = raw[i] - s.Marks[i]
-			}
-		}
-	}
-	if fixedPaid > fixedForfeited {
-		conserved = false
-	}
-	perAgent(MetricMarkFixed, fixed)
-	res.M[MetricFixedPaid] = float64(fixedPaid) / 1000
-	res.M[MetricFixedForfeited] = float64(fixedForfeited) / 1000
 	if everMarked > 0 {
 		res.M[MetricFlips] = float64(flips) / float64(everMarked)
 	}
@@ -600,68 +539,56 @@ func Run(ctx context.Context, sc Scenario, seed uint64, cfg Config) (Result, err
 		res.M[MetricFirstMarkDays] = waits[len(waits)/2]
 	}
 
-	// C307: a weekly $3 pool split by r·σ (the raw mark) among new positive
-	// marks with paid (or work) evidence; k ≥ k_min independent later
-	// judgements is already what a mark needs. The capped variant (proposed)
-	// pays an account at most BonusCapPPM of its standing a week, below
-	// the ~5.2% a week that keeps bought (spent) standing from decaying, so
-	// a key whose standing was bought cannot earn back its upkeep; what the
-	// cap withholds stays in the operator's budget.
-	bonus, capped := map[Kind]int64{}, map[Kind]int64{}
-	pot := BonusCentsPerWeek * 1000 * cfg.Cadence / 7
-	for i, r := range runs {
-		var ids []string
-		var total int64
-		for id, m := range r.marks {
-			p := planOf[id]
-			if firstRun[id] != i || m.Raw <= 0 || (p.evidence != "paid_use" && p.evidence != "work") {
-				continue
-			}
-			ids = append(ids, id)
-			total += m.Raw
-		}
-		sort.Strings(ids)
-		byAuthor := map[string]int64{}
-		for _, id := range ids {
-			share := judge.MulDiv(pot, r.marks[id].Raw, total)
-			bonus[planOf[id].a.kind] += share
-			byAuthor[r.marks[id].Author] += share
-		}
-		for a, share := range byAuthor {
-			capped[kindOf[a]] += min(share, judge.MulDiv(cents[a]*1000, BonusCapPPM*cfg.Cadence/7, 1_000_000))
-		}
-	}
-	perAgent(MetricBonus, bonus)
-	perAgent(MetricBonusCapped, capped)
-
-	// Rings: what they capture (final marks with c0 at entry, plus the
-	// bonus) against what they spent.
+	// Rings: the most standing the ring (members and operator) held above
+	// its own seed in any run, against what it spent; and its final marks.
 	for _, k := range []Kind{Sybil, Funded, Griefer, Collusive} {
 		if count[k] == 0 {
 			continue
 		}
-		res.M[MetricCapture+string(k)] = float64(fixed[k]+bonus[k]) / 1000
-		res.M[MetricCaptureCapped+string(k)] = float64(fixed[k]+capped[k]) / 1000
+		members := map[string]bool{}
+		for _, a := range agents {
+			if a.kind == k {
+				members[a.acct] = true
+			}
+		}
+		if op := operators[k]; op != "" {
+			members[op] = true
+		}
+		var best int64
+		for _, r := range runs {
+			var above int64
+			for _, s := range r.out.Scores {
+				if st := s.Parts.Standing; members[s.Account] && st != nil {
+					above += st.Cents - st.SeedCents
+				}
+			}
+			best = max(best, above)
+		}
+		res.M[MetricCapture+string(k)] = float64(best)
 		res.M[MetricCost+string(k)] = float64(cost[k])
 	}
 
 	// Cost to fake: funded keys (200¢, paid use) needed to hold the median
-	// of a pool subject against its R90 judges and the prior, and their
-	// spend; the median subject.
+	// of a pool subject against its R90 judges and the prior (PriorWeight ×
+	// their mean weight), and their spend; the median subject.
 	vFunded := judge.Weight(judge.EvidencePPM("paid_use"), st.VoteWeight(FundedCents), 1_000_000, 1_000_000)
 	var fake []float64
 	for _, s := range subjects {
 		if !s.pool {
 			continue
 		}
-		var w int64 = judge.PriorWeightPPM
 		latest := map[string]int{}
 		for _, j := range bySubject[s.id] {
 			latest[plan[j].a.acct] = j
 		}
+		var pts []judge.Point
 		for _, j := range latest {
 			p := plan[j]
-			w += judge.Weight(judge.EvidencePPM(p.evidence), st.VoteWeight(cents[p.a.acct]), 1_000_000, decay(judge.DayFactorPPM, (Epoch+90*day-p.at)/day))
+			pts = append(pts, judge.Point{X: p.x, W: judge.Weight(judge.EvidencePPM(p.evidence), st.VoteWeight(cents[p.a.acct]), 1_000_000, decay(judge.DayFactorPPM, (Epoch+90*day-p.at)/day))})
+		}
+		w := judge.Default.PriorPPM(pts)
+		for _, p := range pts {
+			w += p.W
 		}
 		keys := w/vFunded + 1
 		fake = append(fake, float64(keys*(FundedCents+3*topUp(FundedCents))))
@@ -693,27 +620,22 @@ func sign(x int64) int64 {
 
 // Metric names. Per-type metrics append the Kind; marks are cents per agent.
 const (
-	MetricAccuracy         = "accuracy"            // mean |score − q| over pool subjects, run R90
-	MetricMarkR90          = "mark.r90."           // Σ settled mark per agent, run R90 (the shadow as built)
-	MetricMarkRecomputeAvg = "mark.recompute_avg." // per agent, averaged over all runs (marks count only while in the window)
-	MetricMarkFinal        = "mark.final."         // per agent, final when it leaves the window (as RFC 0020 §3.3 reads)
-	MetricMarkFixed        = "mark.final_c0."      // per agent, final at exit with c0 read at entry, cohorts settled against an escrow (proposed)
-	MetricFinalNet         = "final.net"           // Σ of marks frozen at exit from each run's settlement (> 0: minted)
-	MetricPaid             = "r90.paid"
-	MetricForfeited        = "r90.forfeited"
-	MetricFixedPaid        = "final_c0.paid"
-	MetricFixedForfeited   = "final_c0.forfeited"
-	MetricMarked           = "r90.marked"
-	MetricOpen             = "r90.open"
-	MetricFlips            = "sign_flips" // share of marked judgements whose mark changes sign across runs
-	MetricMarkedSubjects   = "subjects_marked_by_r90"
-	MetricFirstMarkDays    = "first_mark_days" // median days from a subject's first judgement to the first run that marks it
-	MetricBonus            = "bonus."          // C307 cents per agent (gates: paid evidence, k_min independent)
-	MetricBonusCapped      = "bonus_capped."   // C307 cents per agent, capped at BonusCapPPM of standing a week
-	MetricCapture          = "capture."        // cents: final_c0 marks + bonus
-	MetricCaptureCapped    = "capture_capped." // cents: final_c0 marks + capped bonus
-	MetricCost             = "cost."           // cents spent on standing during the 90 days
-	MetricFakeCents        = "fake_cents"      // cents of funded keys to hold the median subject's median
+	MetricAccuracy       = "accuracy"        // mean |score − q| over pool subjects, run R90
+	MetricThin           = "thin"            // share of pool subjects labelled thin at R90
+	MetricMarkR90        = "mark.r90."       // Σ provisional raw mark per agent, run R90 (never paid: recomputed every run)
+	MetricMarkFinal      = "mark.final."     // Σ settled final marks per agent over all runs: the rule
+	MetricPaid           = "final.paid"      // Σ final gains paid, all runs
+	MetricForfeited      = "final.forfeited" // Σ final losses taken, all runs
+	MetricEscrow         = "final.escrow"    // forfeited and not yet paid, after the last run
+	MetricOwed           = "final.owed"      // gains still owed after the last run
+	MetricMarked         = "r90.marked"
+	MetricOpen           = "r90.open"
+	MetricFlips          = "sign_flips" // share of marked judgements whose provisional mark changes sign across runs
+	MetricMarkedSubjects = "subjects_marked_by_r90"
+	MetricFirstMarkDays  = "first_mark_days" // median days from a subject's first judgement to the first run that marks it
+	MetricCapture        = "capture."        // cents: the most a ring (members and operator) held above its seed in any run
+	MetricCost           = "cost."           // cents spent on standing during the 90 days
+	MetricFakeCents      = "fake_cents"      // cents of funded keys to hold the median subject's median
 )
 
 // Stat is a metric over seeds.
@@ -780,13 +702,13 @@ func (r Report) Markdown() string {
 	fmt.Fprintf(&b, "| metric | mean ± sd |\n|---|---|\n")
 	for _, row := range [][2]string{
 		{"mean \\|score − q\\| (R90)", MetricAccuracy},
+		{"subjects labelled thin (R90, share)", MetricThin},
 		{"subjects marked by day 90 (share)", MetricMarkedSubjects},
 		{"days to first mark (median)", MetricFirstMarkDays},
 		{"marked / open judgements (R90)", MetricMarked},
-		{"paid / forfeited ¢ (R90)", MetricPaid},
-		{"sign flips across runs (share)", MetricFlips},
-		{"Σ marks frozen from each run's settlement (¢; > 0 minted)", MetricFinalNet},
-		{"paid / forfeited ¢ (final, c0 at entry, escrow)", MetricFixedPaid},
+		{"sign flips of provisional marks across runs (share)", MetricFlips},
+		{"final paid / forfeited ¢ (all runs)", MetricPaid},
+		{"escrow / owed ¢ after the last run", MetricEscrow},
 		{"cost to fake the median subject (¢)", MetricFakeCents},
 	} {
 		v := f(row[1])
@@ -795,28 +717,27 @@ func (r Report) Markdown() string {
 			v += " / " + f(MetricOpen)
 		case MetricPaid:
 			v += " / " + f(MetricForfeited)
-		case MetricFixedPaid:
-			v += " / " + f(MetricFixedForfeited)
+		case MetricEscrow:
+			v += " / " + f(MetricOwed)
 		}
 		fmt.Fprintf(&b, "| %s | %s |\n", row[0], v)
 	}
-	b.WriteString("\nCents per agent by type: R90 (the shadow as built: recomputed, every judgement in the window), the time average when marks count only while in the window, frozen at window exit from that run's settlement (RFC as written), final at exit with c0 at entry and an escrow (proposed), and the C307 bonus without and with the 4%-a-week cap.\n\n")
-	b.WriteString("| type | R90 | recompute avg | final (RFC) | final, c0 at entry | C307 | C307 capped |\n|---|---|---|---|---|---|---|\n")
+	b.WriteString("\nCents per agent by type: the provisional marks at R90 (recomputed every run, never paid) and the final marks every run settled (the rule).\n\n")
+	b.WriteString("| type | provisional R90 | final (settled) |\n|---|---|---|\n")
 	for _, k := range Kinds {
 		if _, ok := r.Stats[MetricMarkR90+string(k)]; !ok {
 			continue
 		}
-		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s |\n", k, f(MetricMarkR90+string(k)), f(MetricMarkRecomputeAvg+string(k)),
-			f(MetricMarkFinal+string(k)), f(MetricMarkFixed+string(k)), f(MetricBonus+string(k)), f(MetricBonusCapped+string(k)))
+		fmt.Fprintf(&b, "| %s | %s | %s |\n", k, f(MetricMarkR90+string(k)), f(MetricMarkFinal+string(k)))
 	}
 	var attack []string
 	for _, k := range []Kind{Sybil, Funded, Griefer, Collusive} {
 		if _, ok := r.Stats[MetricCapture+string(k)]; ok {
-			attack = append(attack, fmt.Sprintf("| %s | %s | %s | %s |", k, f(MetricCapture+string(k)), f(MetricCaptureCapped+string(k)), f(MetricCost+string(k))))
+			attack = append(attack, fmt.Sprintf("| %s | %s | %s |", k, f(MetricCapture+string(k)), f(MetricCost+string(k))))
 		}
 	}
 	if len(attack) > 0 {
-		b.WriteString("\n| attacker (all members) | captured ¢ (final marks + C307) | with the cap | spent ¢ |\n|---|---|---|---|\n")
+		b.WriteString("\n| attacker (members and operator) | most standing above seed in any run ¢ | spent ¢ |\n|---|---|---|\n")
 		b.WriteString(strings.Join(attack, "\n") + "\n")
 	}
 	var lifts []string

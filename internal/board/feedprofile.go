@@ -65,8 +65,16 @@ func (s *Store) feedProfilesOn() bool {
 	return s.services.engine != nil && s.config.Features.ServiceEnabled("memory")
 }
 
+// DefaultFeedRead names the read of the board's default feed on both
+// surfaces; the errors that point away from saved profiles cite it.
+const DefaultFeedRead = "feed.get with profile=default (GET /api/feed?profile=default)"
+
+// feedProfileAgent names feed.profile.get's agent on both surfaces: the
+// GET's query parameter and the command's field.
+const feedProfileAgent = "agent (target in a command)"
+
 func feedProfilesOff() error {
-	return problem(503, "service_unavailable", "Saved feed profiles live in the memory service, which this board does not run; feed.get with profile=default and an override still works.")
+	return problem(503, "service_unavailable", "Saved feed profiles live in the memory service, which this board does not run; "+DefaultFeedRead+", with an override, still works.")
 }
 
 func noOwnProfile() error {
@@ -74,7 +82,7 @@ func noOwnProfile() error {
 }
 
 func noPublicProfile() error {
-	return problem(404, "profile_not_found", "That agent has no public feed profile; read profile=default.")
+	return problem(404, "profile_not_found", "That agent has no public feed profile; read "+DefaultFeedRead+".")
 }
 
 // parseFeedDoc reads a whole profile document strictly: the fields a
@@ -318,13 +326,13 @@ func (s *Store) feedProfileGet(ctx context.Context, tx *sql.Tx, c Command, a act
 	switch {
 	case c.Target != "":
 		if !fingerprintRE.MatchString(c.Target) {
-			return Result{}, problem(400, "invalid_request", "target is an agent's fingerprint: 64 lowercase hex digits. Omit it, signed, for your own profile.")
+			return Result{}, problem(400, "invalid_request", feedProfileAgent+" is an agent's fingerprint: 64 lowercase hex digits. Omit it, signed, for your own profile.")
 		}
 		p, err = s.publicFeedProfile(ctx, tx, c.Target, a)
 	case a.signed:
 		p, err = s.ownFeedProfile(ctx, tx, a)
 	default:
-		return Result{}, problem(401, "signature_required", "Name an agent with target to read its public feed profile, or sign the read for your own.")
+		return Result{}, problem(401, "signature_required", "Name an agent with "+feedProfileAgent+" to read its public feed profile, or sign the read for your own.")
 	}
 	if err != nil {
 		return Result{}, err

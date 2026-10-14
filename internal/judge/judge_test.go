@@ -2,12 +2,74 @@ package judge_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"math/rand"
+	"os"
+	"strings"
 	"testing"
 
 	"swarmmemo/internal/judge"
 	"swarmmemo/internal/trust"
 )
+
+// TestRFCWorkedNumbers reads RFC 0020 and checks that every worked number
+// it states is what the code computes: the RFC is the single source, and
+// editing either alone fails here.
+func TestRFCWorkedNumbers(t *testing.T) {
+	raw, err := os.ReadFile("../../docs/rfcs/0020-judgements-score-accuracy.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rfc := strings.Join(strings.Fields(string(raw)), " ")
+	const w = 700_000 // any common weight
+	pts := func(xs ...int64) []judge.Point {
+		var out []judge.Point
+		for _, x := range xs {
+			out = append(out, judge.Point{X: x, W: w})
+		}
+		return out
+	}
+	thin := func(n int64) string {
+		if judge.Thin(n) {
+			return " (thin)"
+		}
+		return ""
+	}
+	gain := func(x, c0, cT int64) string { return fmt.Sprintf("%+.2f", float64(judge.Gain(x, c0, cT, false))/1e6) }
+	griefed := append(pts(80, 80, 80, 80, 80, 80), judge.Point{X: 0, W: 2 * w})
+	s1 := judge.Settle([]int64{6, -3, -1})
+	s2 := judge.Settle([]int64{6 - s1.Marks[0], -5, -s1.Returned})
+	for _, want := range []string{
+		// §2
+		fmt.Sprintf("`m = %d` pseudo-judgements at %d", judge.PriorWeight, judge.Neutral),
+		fmt.Sprintf("fewer than `thin_below` = %d judgements with weight", judge.ThinBelow),
+		fmt.Sprintf("one judge at 90 scores %d%s;", judge.Consensus(pts(90)), thin(1)),
+		fmt.Sprintf("two judges at 90 and 94 of equal weight score %d%s, whatever that weight;", judge.Consensus(pts(90, 94)), thin(2)),
+		fmt.Sprintf("a third at 92 makes it %d;", judge.Consensus(pts(90, 92, 94))),
+		fmt.Sprintf("six judges at 80 weighing 1 and a griefer at 0 weighing 2: the score stays %d.", judge.Consensus(griefed)),
+		// §3.1
+		fmt.Sprintf("75 → you say 60 → it ends at 62: %s.", gain(60, 75, 62)),
+		fmt.Sprintf("you say 99 at 80, and it ends at 99: %s.", gain(99, 80, 99)),
+		// §3.3
+		fmt.Sprintf("at least `k_min = %d` independent later judgements", judge.KMin),
+		fmt.Sprintf("a group whose raw marks are +6 and −3, with 1 in escrow, pays the +6 judgement %d, owes it %d, and leaves %d in escrow; a next group whose losses forfeit 5 pays the %d owed and leaves %d in escrow.",
+			s1.Marks[0], 6-s1.Marks[0], s1.Returned, s2.Marks[0], s2.Returned),
+		// §4: version 7's section names every tunable of judge.Params.
+		"`k_min`, `prior_weight`, `thin_below`, `half_life_days`, `review_load`",
+	} {
+		if !strings.Contains(rfc, want) {
+			t.Errorf("RFC 0020 does not say what the code computes:\n  %s", want)
+		}
+	}
+	var keys map[string]any
+	b, _ := json.Marshal(judge.Default)
+	_ = json.Unmarshal(b, &keys)
+	for k := range keys {
+		if k != "day_factor_ppm" && !strings.Contains(rfc, "`"+k+"`") {
+			t.Errorf("RFC 0020 §4 does not name judge.Params %s", k)
+		}
+	}
+}
 
 // RFC 0020 §3.1's worked examples.
 func TestGainWorkedExamples(t *testing.T) {
@@ -81,14 +143,15 @@ func TestConsensusWeightedMedianWithPrior(t *testing.T) {
 		want int64
 	}{
 		{"no judgement: the prior", nil, 50},
-		{"one judgement cannot leave the prior's half: midpoint", []judge.Point{{100, 2 * full}}, 75},
+		{"one judgement is held by the prior (2 × its own weight), whatever it weighs", []judge.Point{{100, 2 * full}}, 50},
 		{"one full judgement stays at the prior", []judge.Point{{100, full}}, 50},
-		{"three full judgements outweigh the prior", []judge.Point{{90, full}, {90, full}, {90, full}}, 90},
+		{"two equal judgements: exactly half, the midpoint", []judge.Point{{100, full}, {100, full}}, 75},
+		{"two thin opinions move it as far as two full ones", []judge.Point{{100, 200_000}, {100, 200_000}}, 75},
+		{"three judgements outweigh the prior", []judge.Point{{90, full}, {90, full}, {90, full}}, 90},
 		{"one extreme judge cannot drag it", []judge.Point{{70, full}, {72, full}, {74, full}, {76, full}, {0, full}}, 70},
 		{"an exact half: the midpoint, rounded down", []judge.Point{{70, full}, {72, full}, {74, full}, {0, full}}, 60},
-		{"weights, not counts", []judge.Point{{20, 5 * full}, {90, full}, {90, full}}, 20},
+		{"weights, not counts: two heavy judges outweigh three light ones", []judge.Point{{80, 4 * full}, {85, 4 * full}, {20, full}, {20, full}, {20, full}}, 80},
 		{"zero weight does not count", []judge.Point{{0, 0}, {0, 0}, {0, 0}}, 50},
-		{"thin opinion stays near neutral", []judge.Point{{100, 200_000}, {100, 200_000}}, 50},
 	} {
 		if got := judge.Consensus(c.pts); got != c.want {
 			t.Errorf("%s: %d, want %d", c.name, got, c.want)
@@ -102,6 +165,22 @@ func TestConsensusWeightedMedianWithPrior(t *testing.T) {
 	a := judge.Consensus(pts)
 	if b := judge.Consensus([]judge.Point{pts[2], pts[0], pts[1]}); a != b || pts[0].X != 10 {
 		t.Fatal("consensus depends on order or modified its input")
+	}
+	// The prior scales with the subject: the same judgements at any common
+	// weight give the same score (§2: 2 × their mean weight).
+	for _, w := range []int64{1, 300_000, full, 7 * full} {
+		if got := judge.Consensus([]judge.Point{{90, w}, {94, w}}); got != 70 {
+			t.Fatalf("two judges at weight %d: %d, want 70", w, got)
+		}
+	}
+	// Thin: below judge.ThinBelow weighted judgements.
+	if !judge.Thin(0) || !judge.Thin(judge.ThinBelow-1) || judge.Thin(judge.ThinBelow) {
+		t.Fatal("thin")
+	}
+	// Merged groups weigh the prior by the judgements they stand for: two
+	// judgements at 100 merged into one point are still two.
+	if g, s := judge.ScoreGrouped([]judge.Point{{100, 2 * full}}, 2), judge.Consensus([]judge.Point{{100, full}, {100, full}}); g != s || g != 75 {
+		t.Fatalf("grouped %d, ungrouped %d", g, s)
 	}
 }
 
@@ -125,12 +204,13 @@ func TestOutcomeHasNoPrior(t *testing.T) {
 			t.Errorf("%s: %d, want %d", c.name, got, c.want)
 		}
 	}
-	// Two later judges at 90 and 94 with free-use weights (0.3): the
-	// prior made c_T 50 and the early judge who said 92 at c0 = 50 lost
-	// 0.42; without it c_T is 92 and she earns 0.42. A herder (x = c0) earns 0.
+	// Two later judges at 90 and 94 with free-use weights (0.3): a prior
+	// inside c_T made it 50 and the early judge who said 92 at c0 = 50 lost
+	// 0.42; without it c_T is 92 and she earns 0.42. A herder (x = c0) earns
+	// 0. The score keeps the prior: 70, labelled thin.
 	later := []judge.Point{{90, 300_000}, {94, 300_000}}
-	if judge.Consensus(later) != 50 {
-		t.Fatal("the prior no longer dominates thin judgements in the score")
+	if judge.Consensus(later) != 70 || !judge.Thin(2) {
+		t.Fatal("the score of two thin judgements")
 	}
 	cT := judge.Outcome(later)
 	if g := judge.Gain(92, 50, cT, false); cT != 92 || g != 420_000 {

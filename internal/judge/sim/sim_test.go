@@ -8,8 +8,10 @@ import (
 	"testing"
 )
 
-// The scenario invariants of C303s. Each scenario runs three seeds (about
-// 0.3 s each); the reports are computed once and shared.
+// The scenario invariants of RFC 0020 under rule 4 (C303b: trust parameter
+// version 7, each run reading the previous run's carry): the acceptance
+// targets of §9.1. Each scenario runs three seeds (about 0.2 s each); the
+// reports are computed once and shared.
 
 const testSeeds = 3
 
@@ -47,82 +49,83 @@ func mean(t *testing.T, r Report, metric string) float64 {
 	return s.Mean
 }
 
-// Conservation, always: every run's settlement pays at most what it
-// forfeited and never raises the total standing, and so does the proposed
-// final settlement (cohorts against an escrow).
+// No minting, always: every run pays at most what it forfeits and holds at
+// most its seed mass, and all runs together pay at most what they forfeit.
 func TestConservation(t *testing.T) {
 	for name, r := range reportsFor(t) {
 		if !r.Conserved {
 			t.Errorf("%s: minted", name)
 		}
 		for _, res := range r.Results {
-			if res.M[MetricPaid] > res.M[MetricForfeited] || res.M[MetricFixedPaid] > res.M[MetricFixedForfeited] {
-				t.Errorf("%s seed %d: paid more than forfeited: %v", name, res.Seed, res.M)
+			if res.M[MetricPaid] > res.M[MetricForfeited] || res.M[MetricEscrow] < 0 {
+				t.Errorf("%s seed %d: paid %.3f¢ of %.3f¢ forfeited, escrow %.3f¢", name, res.Seed, res.M[MetricPaid], res.M[MetricForfeited], res.M[MetricEscrow])
 			}
 		}
 	}
 }
 
-// In an honest market, the early, informed judges earn (as built at R90 and
-// under the proposed finality), and herders earn about nothing.
+// In an honest market the early, informed judges earn in final marks and
+// contrarians lose.
 func TestBaselineHonestEarlyEarns(t *testing.T) {
 	r := reportsFor(t)["baseline"]
-	for _, m := range []string{MetricMarkR90, MetricMarkFixed} {
-		if v := mean(t, r, m+string(Informed)); v <= 0 {
-			t.Errorf("%s honest-informed: %.3f¢, want > 0", m, v)
-		}
-		if v := mean(t, r, m+string(Contrarian)); v >= 0 {
-			t.Errorf("%s contrarian: %.3f¢, want < 0", m, v)
-		}
+	if v := mean(t, r, MetricMarkFinal+string(Informed)); v <= 0 {
+		t.Errorf("honest-informed: %.3f¢, want > 0", v)
+	}
+	if v := mean(t, r, MetricMarkFinal+string(Contrarian)); v >= 0 {
+		t.Errorf("contrarian: %.3f¢, want < 0", v)
 	}
 }
 
+// Herders (x = c0, read at entry) earn nothing, provisional or final.
 func TestHerdersEarnAboutNothing(t *testing.T) {
-	for _, name := range []string{"baseline", "herding", "griefing"} {
-		r := reportsFor(t)[name]
-		informed := math.Abs(mean(t, r, MetricMarkR90+string(Informed)))
-		for _, m := range []string{MetricMarkR90, MetricMarkFixed} {
-			if v := math.Abs(mean(t, r, m+string(Herder))); v > 0.05 || v > informed/4 {
+	for name, r := range reportsFor(t) {
+		informed := math.Abs(mean(t, r, MetricMarkFinal+string(Informed)))
+		for _, m := range []string{MetricMarkR90, MetricMarkFinal} {
+			if v := math.Abs(mean(t, r, m+string(Herder))); v > 0.02 || v > informed/4 && informed > 0.08 {
 				t.Errorf("%s %s herder: %.3f¢ (honest-informed %.3f¢)", name, m, v, informed)
 			}
 		}
 	}
 }
 
-// Attackers never capture more than they spent, and lose or get nothing in
-// marks: sybils without standing get exactly nothing, griefers and the
-// collusive pair lose.
+// Attackers never hold more standing above their seed than they spent;
+// sybils without standing get nothing; griefers and the collusive pair
+// lose in final marks.
 func TestRingsCaptureLessThanCost(t *testing.T) {
 	for name, r := range reportsFor(t) {
 		for _, k := range []Kind{Sybil, Funded, Griefer, Collusive} {
 			if _, ok := r.Stats[MetricCapture+string(k)]; !ok {
 				continue
 			}
-			capture, capped, cost := mean(t, r, MetricCapture+string(k)), mean(t, r, MetricCaptureCapped+string(k)), mean(t, r, MetricCost+string(k))
-			if capture > 0 && capture >= cost || capped > 0 && capped >= cost/10 {
-				t.Errorf("%s %s: captured %.1f¢ (capped bonus %.1f¢) for %.1f¢", name, k, capture, capped, cost)
+			capture, cost := mean(t, r, MetricCapture+string(k)), mean(t, r, MetricCost+string(k))
+			if capture > 0 && capture >= cost {
+				t.Errorf("%s %s: held %.1f¢ above seed for %.1f¢", name, k, capture, cost)
 			}
 		}
 	}
-	if r := reportsFor(t)["sybil"]; mean(t, r, MetricMarkR90+string(Sybil)) != 0 || mean(t, r, MetricCapture+string(Sybil)) != 0 {
-		t.Error("sybil keys without standing were marked")
+	if r := reportsFor(t)["sybil"]; mean(t, r, MetricMarkFinal+string(Sybil)) != 0 || mean(t, r, MetricCapture+string(Sybil)) != 0 {
+		t.Error("sybil keys without standing were marked or gained")
 	}
-	if v := mean(t, reportsFor(t)["griefing"], MetricMarkFixed+string(Griefer)); v >= 0 {
+	if v := mean(t, reportsFor(t)["griefing"], MetricMarkFinal+string(Griefer)); v >= 0 {
 		t.Errorf("griefer: %.3f¢, want < 0", v)
 	}
-	if v := mean(t, reportsFor(t)["thin"], MetricMarkFixed+string(Collusive)); v >= 0 {
+	if v := mean(t, reportsFor(t)["thin"], MetricMarkFinal+string(Collusive)); v >= 0 {
 		t.Errorf("collusive pair: %.3f¢, want < 0", v)
 	}
 }
 
-// Freezing marks at window exit with c0 read then (as RFC 0020 §3.3 reads)
-// lets the window truncate c0 towards the prior; reading c0 at entry keeps
-// herding at zero.
-func TestFinalityKeepsC0AtEntry(t *testing.T) {
-	for _, res := range reportsFor(t)["baseline"].Results {
-		if v := res.M[MetricMarkFixed+string(Herder)]; math.Abs(v) > 0.02 {
-			t.Errorf("seed %d: herder final mark with c0 at entry %.3f¢", res.Seed, v)
-		}
+// The prior at the subject's mean weight (§2): the score finds q, and one
+// griefer moves the three best subjects much less than the 42 points a
+// full-weight prior let it.
+func TestScoreFindsQualityAndResistsGriefing(t *testing.T) {
+	if v := mean(t, reportsFor(t)["baseline"], MetricAccuracy); v > 15 {
+		t.Errorf("baseline |score − q| %.1f, want ≤ 15", v)
+	}
+	if v := mean(t, reportsFor(t)["griefing"], "lift.griefed"); v < -25 {
+		t.Errorf("griefed subjects %.1f below q, want > −25", v)
+	}
+	if v := mean(t, reportsFor(t)["thin"], MetricThin); v <= 0 {
+		t.Error("a thin market labels no subject thin")
 	}
 }
 

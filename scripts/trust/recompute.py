@@ -182,6 +182,9 @@ def check_params(body: dict) -> None:
     if "standing" in body:
         exact(body, PARAM_KEYS | {"standing"}, "body")
         st = body["standing"]
+        if isinstance(st, dict) and (st.get("rule", 0) >= 4 or "judgements" in st):
+            raise InputError("params standing: rule 4 (parameter version 7, RFC 0020 is the rule) is not verified by this script; "
+                             "recompute it with `swarmmemo trust replay --snapshot FILE --json` (output_sha256)")
         extra = STANDING_KEYS_V3 | STANDING_KEYS_V4 | STANDING_KEYS_V6
         if not isinstance(st, dict) or not STANDING_KEYS <= set(st) <= STANDING_KEYS | extra:
             raise InputError(f"params standing: fields must be {sorted(STANDING_KEYS)}, plus any of {sorted(extra)}")

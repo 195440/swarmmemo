@@ -202,9 +202,16 @@ func Run(ctx context.Context, db DB, in Inputs, p Params, asOf, now int64, compu
 			return fail(err)
 		}
 	}
-	inputs := Canonical(map[string]any{"summary": out.Inputs, "params_version": p.Version, "params_sha256": out.ParamsSHA256, "params": json.RawMessage(p.Body()),
+	record := map[string]any{"summary": out.Inputs, "params_version": p.Version, "params_sha256": out.ParamsSHA256, "params": json.RawMessage(p.Body()),
 		"seeds_a": out.SeedsA, "seeds_b": out.SeedsB, "seeds_b_used": out.SeedsBUsed, "pool_units": out.PoolUnits, "active_accounts": out.Active,
-		"snapshot_sha256": snapshot.sha256, "snapshot_bytes": snapshot.bytes, "standing": out.Standing, "judgements_shadow": shadowPublished(out.JudgementsShadow)})
+		"snapshot_sha256": snapshot.sha256, "snapshot_bytes": snapshot.bytes, "standing": out.Standing, "judgements_shadow": shadowPublished(out.JudgementsShadow)}
+	// Rule 4: the section as the rule, and its carry in full, which the
+	// next run reads back (LatestCarry) and a verifier compares with the
+	// next snapshot's carry records (both are in this run's output).
+	if out.Judgements != nil {
+		record["judgements"], record["judgements_carry"] = out.Judgements.Published(ShadowPublishedMax), out.Judgements.Carry
+	}
+	inputs := Canonical(record)
 	err = db.Write(ctx, func(q allowance.Querier) error {
 		for _, ev := range out.Evidence {
 			if _, err := q.ExecContext(ctx, "INSERT OR IGNORE INTO trust_evidence(id,run_id,kind,members,detail,detector_version,created_at) VALUES(?,?,?,?,?,?,?)",
@@ -256,6 +263,25 @@ func shadowPublished(s *JudgementsShadow) any {
 		return nil
 	}
 	return s.Published(ShadowPublishedMax)
+}
+
+// LatestCarry reads the carry of the latest done run (rule 4, RFC 0020):
+// nil when that run had none (an earlier rule, or none yet), so a run after
+// a rule 3 run starts with no balances and computes every c0 itself.
+func LatestCarry(ctx context.Context, q allowance.Querier) (*JudgementCarry, error) {
+	var raw sql.NullString
+	err := q.QueryRowContext(ctx, "SELECT json_extract(inputs,'$.judgements_carry') FROM trust_runs WHERE state='done' ORDER BY id DESC LIMIT 1").Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && (!raw.Valid || raw.String == "" || raw.String == "null") {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var c JudgementCarry
+	if err = json.Unmarshal([]byte(raw.String), &c); err != nil {
+		return nil, fmt.Errorf("trust: the latest run's judgements_carry: %w", err)
+	}
+	return &c, nil
 }
 
 // Current reads an account's score in the latest done run; ok is false when

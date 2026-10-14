@@ -273,6 +273,15 @@ class Standing(unittest.TestCase):
         with self.assertRaises(recompute.InputError):
             recompute.read_snapshot([json.dumps(bad)])
 
+    def test_rule4_is_refused_plainly(self):
+        # Version 7 (rule 4, RFC 0020 is the rule) is recomputed by
+        # `swarmmemo trust replay --snapshot`; this script says so.
+        lines = (golden_dir() / "golden_judgements_inputs.jsonl").read_text(encoding="utf-8").splitlines()
+        params = next(json.loads(line) for line in lines if '"type":"params"' in line)
+        self.assertEqual(params["body"]["standing"]["rule"], 4)
+        with self.assertRaisesRegex(recompute.InputError, "trust replay"):
+            recompute.check_params(params["body"])
+
 
 if __name__ == "__main__":
     unittest.main()

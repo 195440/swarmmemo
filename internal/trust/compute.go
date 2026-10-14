@@ -2,6 +2,7 @@ package trust
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -37,6 +38,10 @@ type Output struct {
 	// runs, judgements.go). It is not part of the canonical output, so rule
 	// 3's outputs recompute unchanged; the run records it with its inputs.
 	JudgementsShadow *JudgementsShadow `json:"-"`
+	// Judgements is RFC 0020's section when it is the rule (rule 4,
+	// parameter version 7, judgements_rule.go): part of the canonical
+	// output, with the carry the next run reads. Absent before.
+	Judgements *JudgementsShadow `json:"judgements,omitempty"`
 	// Work is the number of edge examinations; a run statistic, not output.
 	Work int64 `json:"-"`
 }
@@ -237,6 +242,17 @@ func Compute(ctx context.Context, snap Snapshot) (Output, error) {
 	ws := asOf - p.WindowDays*day
 	U := p.UnitPerShare
 	cv := curves{}
+	// Rule 4 reads the previous run's carry; no other rule reads one.
+	carry, err := carryFromRecords(snap.Carry)
+	if err != nil {
+		return Output{}, err
+	}
+	if carry != nil && (p.Standing == nil || p.Standing.Rule < 4) {
+		return Output{}, fmt.Errorf("trust input: carry records need standing.rule 4 (parameter version %d)", JudgementsVersion)
+	}
+	if carry != nil && carry.AsOf > asOf {
+		return Output{}, fmt.Errorf("trust input: the carry is as of %d, after this run's %d", carry.AsOf, asOf)
+	}
 
 	service := map[string]bool{}
 	for _, a := range p.ServiceAccounts {
@@ -899,7 +915,7 @@ func Compute(ctx context.Context, snap Snapshot) (Output, error) {
 	}
 
 	var standingSummary *StandingSummary
-	var shadow *JudgementsShadow
+	var shadow, judgements *JudgementsShadow
 	if p.Standing != nil {
 		proofParts := make(map[string][]ProofPart, len(accountProofs))
 		for a, ps := range accountProofs {
@@ -911,7 +927,7 @@ func Compute(ctx context.Context, snap Snapshot) (Output, error) {
 			tiers[sc.Account], collateral[sc.Account] = sc.Tier, sc.Collateral
 		}
 		res := computeStanding(standingInput{p: p, snap: snap, asOf: asOf, D: D, service: service, rootOf: rootOf, reset: reset, penalty: effectivePenalty,
-			posts: posts, current: current, proofs: proofParts, scored: accounts, tier: tiers, collateral: collateral})
+			posts: posts, current: current, proofs: proofParts, scored: accounts, tier: tiers, collateral: collateral, carry: carry})
 		for i := range scores {
 			scores[i].Parts.Standing = res.parts[scores[i].Account]
 		}
@@ -923,7 +939,7 @@ func Compute(ctx context.Context, snap Snapshot) (Output, error) {
 		}
 		sort.Slice(scores, func(i, j int) bool { return scores[i].Account < scores[j].Account })
 		standingSummary = res.summary
-		shadow = res.shadow
+		shadow, judgements = res.shadow, res.judgements
 	}
 
 	sponsorships, dividends := sponsor(p, snap, asOf, service, firstSeen, reset, index, ownAvg, rootOf, pairSum, flowTotal, func(invitee string) []endorserFlow {
@@ -955,7 +971,7 @@ func Compute(ctx context.Context, snap Snapshot) (Output, error) {
 		SeedsA: seedsAList, SeedsB: seedsBList, SeedsBUsed: useB,
 		CaptureBound: CaptureBound{UnitPerShare: U, EdgeCapUnits: p.EdgeCapPPM * U / 1e6, LambdaPPM: p.LambdaPPM, MaxTransitUnits: maxTransit, PoolUnits: pool,
 			Statement: "Whatever the number of sybils, a region behind k attack edges receives at most k x edge_cap_units flow units, and at most max_transit_units through any one non-seed endorser."},
-		Scores: scores, Evidence: evidence, Penalties: penaltiesOut, Sponsorships: sponsorships, Dividends: dividends, Standing: standingSummary, JudgementsShadow: shadow, Work: work,
+		Scores: scores, Evidence: evidence, Penalties: penaltiesOut, Sponsorships: sponsorships, Dividends: dividends, Standing: standingSummary, JudgementsShadow: shadow, Judgements: judgements, Work: work,
 	}, nil
 }
 

@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // The /stats charts are server-rendered SVG, so they draw without
@@ -118,10 +119,12 @@ const (
 )
 
 // axisLabel is one tick label; a Minor one is left out on narrow screens.
+// A Major one (the first tick of a UTC day on an hourly axis) never is.
 type axisLabel struct {
 	Left  float64
 	Text  string
 	Minor bool
+	Major bool
 }
 
 // chartX is where point i of n sits, in viewBox units.
@@ -150,22 +153,72 @@ func num(v float64) string { return strconv.FormatFloat(v, 'f', 1, 64) }
 // or with more than axisLabelsNarrow labels, every other label is minor, so a
 // phone shows half of them (six date labels overlap at 320px).
 func axisFor(n int, label func(int) string) []axisLabel {
+	return axisMarked(n, func(i int) (string, bool) { return label(i), false })
+}
+
+// axisMarked is axisFor where label also says whether a label is Major.
+func axisMarked(n int, label func(int) (string, bool)) []axisLabel {
 	var out []axisLabel
 	for i := range n {
-		if text := label(i); text != "" {
+		if text, major := label(i); text != "" {
 			left := 50.0
 			if n > 1 {
 				left = float64(i) * 100 / float64(n-1)
 			}
-			out = append(out, axisLabel{Left: left, Text: text})
+			out = append(out, axisLabel{Left: left, Text: text, Major: major})
 		}
 	}
-	if n > 60 || len(out) > axisLabelsNarrow {
-		for i := 1; i < len(out); i += 2 {
-			out[i].Minor = true
-		}
-	}
+	thinAxis(out, n > 60)
 	return out
+}
+
+// thinAxis marks every other label minor when crowded (or always), so a
+// phone shows half of them. A Major label stays, and its unmarked
+// neighbours become minor, as a dated label is wider than an hour.
+func thinAxis(out []axisLabel, always bool) {
+	if !always && len(out) <= axisLabelsNarrow {
+		return
+	}
+	for i := 1; i < len(out); i += 2 {
+		out[i].Minor = true
+	}
+	for i, l := range out {
+		if !l.Major {
+			continue
+		}
+		out[i].Minor = false
+		for _, j := range []int{i - 1, i + 1} {
+			if j >= 0 && j < len(out) && !out[j].Major {
+				out[j].Minor = true
+			}
+		}
+	}
+}
+
+// hourAxis labels an hourly axis every stride hours, counted back from the
+// last bucket. The first tick of each UTC day carries its date ("2 Jan",
+// or "2 Jan 15:04" when the stride misses midnight) and is Major, so a
+// phone always shows which day it is; the other ticks show the hour.
+func hourAxis(starts []time.Time, stride int) []axisLabel {
+	n := len(starts)
+	lastDay := ""
+	return axisMarked(n, func(i int) (string, bool) {
+		if (n-1-i)%stride != 0 {
+			return "", false
+		}
+		at := starts[i].UTC()
+		day := at.Format("2 Jan")
+		switch {
+		case day == lastDay:
+			return at.Format("15:04"), false
+		case at.Hour() == 0 && at.Minute() == 0:
+			lastDay = day
+			return day, true
+		default:
+			lastDay = day
+			return at.Format("2 Jan 15:04"), true
+		}
+	})
 }
 
 // axisLabelsNarrow is how many x labels a phone shows in full.
@@ -389,11 +442,7 @@ func buildBarChart(title, note string, xs, labels []string, partial []bool, part
 			c.Axis = append(c.Axis, axisLabel{Left: (float64(i) + .5) * 100 / float64(max(n, 1)), Text: l})
 		}
 	}
-	if len(c.Axis) > axisLabelsNarrow {
-		for i := 1; i < len(c.Axis); i += 2 {
-			c.Axis[i].Minor = true
-		}
-	}
+	thinAxis(c.Axis, false)
 	var b strings.Builder
 	b.WriteString(chartOpen + gridLines)
 	below := make([]float64, n)

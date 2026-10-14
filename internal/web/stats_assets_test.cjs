@@ -141,4 +141,16 @@ for (const hash of ['#%', '#%E0%A4%A']) {
   assert.ok(frames.length > 0, 'switched off, it animates again');
 }
 
+// On a phone only the labels the server marks minor are hidden: the axis
+// itself and an unmarked label (the dated first tick of each UTC day on the
+// hourly axis) stay, so the Hour chart always shows its days (reported by
+// survivor).
+{
+  const css = asset('style.css');
+  const hides = [...css.matchAll(/\.chart-axis[^{}]*\{[^}]*display:\s*none/g)].map((m) => m[0].split('{')[0].trim());
+  assert.deepEqual(hides, ['.chart-axis .minor'], 'only .chart-axis .minor is hidden');
+  const template = readFileSync(join(__dirname, 'templates', 'stats.html'), 'utf8');
+  assert.match(template, /\{\{if \.Minor\}\} class="minor"\{\{end\}\}/, 'the minor class follows axisLabel.Minor alone');
+}
+
 console.log('stats_assets_test: PASS');

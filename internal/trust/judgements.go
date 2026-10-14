@@ -10,12 +10,17 @@ import (
 // RFC 0020 in shadow (C303a): every rule 3 run also reads its acts and the
 // window's community reviews as judgements (internal/judge), scores every
 // judged subject with the standing-weighted median, and marks every
-// judgement that has at least judge.KMin independent later judgements with
+// judgement that has at least k_min independent later judgements with
 // weight, settling the marks run-wide so nothing is minted. The result is
 // the judgements_shadow section: published beside rule 3, read by nothing.
 // It never changes standing, tiers, rankings or allowances, and it is not
 // part of Output.Canonical, so rule 3's outputs (and recompute.py) are
 // unchanged; it has its own canonical bytes and sha256.
+//
+// Rule 4 (parameter version 7, C303b, judgements_rule.go) makes the same
+// judgements the rule: the section is then Output.Judgements, part of the
+// canonical output, and standing moves only through the judgement edges and
+// the final marks.
 //
 // Choices where the RFC leaves room (each stated in the section's params):
 //   - An act that is not a review weighs evidence 1 (judge.ActEvidencePPM);
@@ -27,16 +32,22 @@ import (
 //     standing cannot force a settlement at the prior.
 //   - cT is judge.Outcome: the later judgements' median without the prior
 //     (C303s simulation, RFC 0020 §9; shadow version 2).
+//   - The prior weighs PriorWeight × the subject's mean judgement weight
+//     (C303b, shadow version 3), and a score below ThinBelow weighted
+//     judgements says thin.
 //   - A penalised owner forces cT = 0 and settles whatever KMin says.
-//   - Marks are recomputed every run over the window (horizon = window, as
-//     rule 3's positions are), so a judgement's mark changes until it is
-//     closed (a newer judgement by its root) and counts while it is in the
-//     window.
+//   - In shadow, marks are recomputed every run over the window (horizon =
+//     window, as rule 3's positions are), so a judgement's mark changes
+//     until it is closed (a newer judgement by its root) and counts while it
+//     is in the window. Rule 4 settles each mark once, when its judgement
+//     leaves the window.
 //   - A judgement of a subject an account of its own root owns is no
 //     judgement (rule 3 drops acts inside one root the same way).
 
-// JudgementsShadow is the judgements_shadow section of a run (RFC 0020).
-// Amounts are in the run's mass unit (a thousandth of a cent).
+// JudgementsShadow is RFC 0020's section of a run: judgements_shadow under
+// rule 3 (published beside the output), Output.Judgements under rule 4 (the
+// rule; its Final, Carry and CarryIn fields exist only there). Amounts are
+// in the run's mass unit (a thousandth of a cent).
 type JudgementsShadow struct {
 	Version     int64            `json:"version"`
 	Rule        string           `json:"rule"`
@@ -51,13 +62,19 @@ type JudgementsShadow struct {
 	Closed      int64            `json:"closed"`
 	Penalised   int64            `json:"penalised"`
 	// Truncated is true when the run stopped marking at max_work.
-	Truncated  bool             `json:"truncated"`
+	Truncated bool `json:"truncated"`
+	// Settlement is the shadow's run-wide settlement of its marks; under
+	// rule 4 it is the settlement of the judgements that left the window
+	// (Final), with the escrow carried in as one more loss.
 	Settlement judge.Settlement `json:"settlement"`
 	// StandingMass is the run's total standing under rule 3, and
 	// StandingMassShadow the total with these marks in its settlement's
-	// place: never more (nothing minted), up to the floors.
+	// place: never more (nothing minted), up to the floors. Under rule 4
+	// both are the run's total standing and SeedMass its seed mass, which
+	// the total never exceeds.
 	StandingMass       int64 `json:"standing_mass"`
 	StandingMassShadow int64 `json:"standing_mass_shadow"`
+	SeedMass           int64 `json:"seed_mass,omitempty"`
 	// Bands compares each account's band under rule 3 with its band with
 	// these marks in place of rule 3's settlement (first order: rule 3's
 	// moved stakes kept, one step, not a fixed point).
@@ -65,13 +82,25 @@ type JudgementsShadow struct {
 	Scores   []SubjectScore   `json:"scores"`
 	Marks    []JudgementMark  `json:"marks"`
 	Accounts []ShadowAccount  `json:"accounts"`
+	// Rule 4 only (judgements_rule.go). Marks are then provisional (Mark 0:
+	// recomputed every run, settled only at exit); Final lists the marks
+	// settled in this run (the judgements that left the window, and unpaid
+	// gains carried in); Edges counts the judgement edges; CarryIn is the
+	// sha256 of the carry this run read ("" for none) and Carry what the
+	// next run reads.
+	Final   []JudgementMark `json:"final,omitempty"`
+	Edges   *EdgeTotals     `json:"edges,omitempty"`
+	CarryIn string          `json:"carry_in_sha256,omitempty"`
+	Carry   *JudgementCarry `json:"carry,omitempty"`
 }
 
-// ShadowParams are the constants the section used (internal/judge).
+// ShadowParams are the constants the section used: internal/judge's for
+// the shadow, standing.judgements under rule 4.
 type ShadowParams struct {
 	KMin                  int64            `json:"k_min"`
 	PriorWeight           int64            `json:"prior_weight"`
 	PriorValue            int64            `json:"prior_value"`
+	ThinBelow             int64            `json:"thin_below"`
 	HalfLifeDays          int64            `json:"half_life_days"`
 	DayFactorPPM          int64            `json:"day_factor_ppm"`
 	HorizonDays           int64            `json:"horizon_days"`
@@ -84,6 +113,13 @@ type ShadowParams struct {
 	ActEvidencePPM        int64            `json:"act_evidence_ppm"`
 }
 
+func shadowParams(jp judge.Params, horizon int64) ShadowParams {
+	return ShadowParams{KMin: jp.KMin, PriorWeight: jp.PriorWeight, PriorValue: judge.Neutral, ThinBelow: jp.ThinBelow, HalfLifeDays: jp.HalfLifeDays,
+		DayFactorPPM: jp.DayFactorPPM, HorizonDays: horizon, ReviewLoad: jp.ReviewLoad, VouchDefault: judge.VouchDefault,
+		WorkAcceptDefault: judge.WorkAcceptDefault, VerdictX: judge.VerdictX, EvidenceWeightPPM: judge.EvidenceWeightPPM,
+		RelationshipFactorPPM: judge.RelationshipFactorPPM, ActEvidencePPM: judge.ActEvidencePPM}
+}
+
 // SubjectScore is one judged subject's score.
 type SubjectScore struct {
 	Subject    string `json:"subject"`
@@ -91,7 +127,10 @@ type SubjectScore struct {
 	Judgements int64  `json:"judgements"` // current: one per root
 	Roots      int64  `json:"roots"`
 	Weighted   int64  `json:"weighted"` // current judgements with weight
-	Penalised  bool   `json:"penalised,omitempty"`
+	// Thin is true below thin_below weighted judgements: pages say so
+	// instead of relying on the prior.
+	Thin      bool `json:"thin,omitempty"`
+	Penalised bool `json:"penalised,omitempty"`
 }
 
 // JudgementMark is one marked judgement.
@@ -115,7 +154,9 @@ type JudgementMark struct {
 }
 
 // ShadowAccount is one account the section touches: its marks, rule 3's
-// settled part, and its standing and band under each.
+// settled part, and its standing and band under each. Under rule 4 Mark is
+// what was settled to it in this run, Balance its carried judgement balance
+// after it, and Cents its standing (CentsShadow the same).
 type ShadowAccount struct {
 	Account     string `json:"account"`
 	Judgements  int64  `json:"judgements"`
@@ -123,6 +164,7 @@ type ShadowAccount struct {
 	GainPPM     int64  `json:"gain_ppm"` // Σ gain of its marked judgements
 	Mark        int64  `json:"mark"`
 	Rule3Judged int64  `json:"rule3_judged"`
+	Balance     int64  `json:"balance,omitempty"`
 	Cents       int64  `json:"cents"`
 	CentsShadow int64  `json:"cents_shadow"`
 	Band        int64  `json:"band"`
@@ -137,12 +179,8 @@ func (s *JudgementsShadow) Canonical() []byte { return Canonical(s) }
 type shadowInput struct {
 	st        *StandingParams
 	p         Params
-	snap      Snapshot
+	set       judgementSet
 	asOf, D   int64
-	ws        int64
-	service   map[string]bool
-	reset     map[string]bool
-	rootOf    func(string) string
 	penalty   map[string]int64
 	nodes     []string
 	index     map[string]int
@@ -157,17 +195,20 @@ type shadowEntry struct {
 	closeIdx int  // index of the entry that closed it; −1 open
 }
 
-func computeJudgementsShadow(in shadowInput) *JudgementsShadow {
-	st, p := in.st, in.p
-	out := &JudgementsShadow{Version: judge.ShadowVersion, Rule: "RFC 0020", Unit: "millicent",
-		Params: ShadowParams{KMin: judge.KMin, PriorWeight: judge.PriorWeight, PriorValue: judge.Neutral, HalfLifeDays: judge.HalfLifeDays,
-			DayFactorPPM: judge.DayFactorPPM, HorizonDays: p.WindowDays, ReviewLoad: judge.ReviewLoad, VouchDefault: judge.VouchDefault,
-			WorkAcceptDefault: judge.WorkAcceptDefault, VerdictX: judge.VerdictX, EvidenceWeightPPM: judge.EvidenceWeightPPM,
-			RelationshipFactorPPM: judge.RelationshipFactorPPM, ActEvidencePPM: judge.ActEvidencePPM},
-		ByAct: map[string]int64{}, Bands: map[string]int64{"raised": 0, "lowered": 0, "same": 0},
-		Scores: []SubjectScore{}, Marks: []JudgementMark{}, Accounts: []ShadowAccount{}}
-	cv := curves{}
+// judgementSet is the window's judgements by subject, in time order, with
+// their subjects' owners: what the shadow and rule 4 both read.
+type judgementSet struct {
+	bySubject map[string][]shadowEntry
+	subjects  []string
+	owners    map[string]map[string]bool
+	rootOf    func(string) string
+}
 
+// collectJudgements reads the snapshot's acts and reviews in [ws, asOf) as
+// judgements (RFC 0020 §1), drops those of an author's own root's subject,
+// and orders each subject's judgements in time, closing a root's older
+// judgement at its newer one (§3.4).
+func collectJudgements(st *StandingParams, jp judge.Params, snap Snapshot, asOf, ws int64, service, reset map[string]bool, rootOf func(string) string) judgementSet {
 	// Owners route a judgement to an account: an agent subject's agent, a
 	// post's author, a claim's agent, a reviewed subject's owner records.
 	owners := map[string]map[string]bool{}
@@ -180,22 +221,22 @@ func computeJudgementsShadow(in shadowInput) *JudgementsShadow {
 		}
 		owners[subject][account] = true
 	}
-	for _, r := range sortRecords(in.snap.Owners) {
+	for _, r := range sortRecords(snap.Owners) {
 		own(r.Target, r.Account)
 	}
 
 	var entries []shadowEntry
 	add := func(j judge.Judgement, withdraw bool, owner string) {
-		if j.Author == "" || j.Subject == "" || in.service[j.Author] || in.reset[j.Author] || j.At < in.ws || j.At >= in.asOf {
+		if j.Author == "" || j.Subject == "" || service[j.Author] || reset[j.Author] || j.At < ws || j.At >= asOf {
 			return
 		}
 		own(j.Subject, owner)
-		j.Root = in.rootOf(j.Author)
+		j.Root = rootOf(j.Author)
 		entries = append(entries, shadowEntry{j: j, withdraw: withdraw, closeIdx: -1})
 	}
-	ends := make([]*Record, 0, len(in.snap.Endorsements))
-	for i := range in.snap.Endorsements {
-		ends = append(ends, &in.snap.Endorsements[i])
+	ends := make([]*Record, 0, len(snap.Endorsements))
+	for i := range snap.Endorsements {
+		ends = append(ends, &snap.Endorsements[i])
 	}
 	sort.Slice(ends, func(i, j int) bool { return endorsementLess(ends[i], ends[j]) })
 	for _, r := range ends {
@@ -220,7 +261,7 @@ func computeJudgementsShadow(in shadowInput) *JudgementsShadow {
 				Load: st.actWeight("vouch", r.Weight), At: r.CreatedAt}, !ok, r.Target)
 		}
 	}
-	for _, r := range sortRecords(in.snap.Acts) {
+	for _, r := range sortRecords(snap.Acts) {
 		switch {
 		case r.Kind == "work_accept":
 			x, coarse := judge.FromWorkAccept(-1)
@@ -231,9 +272,9 @@ func computeJudgementsShadow(in shadowInput) *JudgementsShadow {
 				X: judge.FromWitness(r.Value > 0), Coarse: true, Load: st.EdgeWeights["witness"], At: r.CreatedAt}, false, r.To)
 		}
 	}
-	for _, r := range sortRecords(in.snap.Reviews) {
+	for _, r := range sortRecords(snap.Reviews) {
 		add(judge.Judgement{ID: "review:" + r.ID, Act: judge.ActReview, Author: r.Account, Subject: r.Target, X: min(judge.Max, max(judge.Min, r.Value)),
-			Evidence: r.Kind, Relationship: r.LinkValue, Load: judge.ReviewLoad, At: r.CreatedAt}, false, "")
+			Evidence: r.Kind, Relationship: r.LinkValue, Load: jp.ReviewLoad, At: r.CreatedAt}, false, "")
 	}
 	// An agent subject is its agent's, whoever judged it.
 	for i := range entries {
@@ -247,7 +288,7 @@ func computeJudgementsShadow(in shadowInput) *JudgementsShadow {
 	for _, e := range entries {
 		selfOwned := false
 		for o := range owners[e.j.Subject] {
-			if o == e.j.Author || in.rootOf(o) == e.j.Root {
+			if o == e.j.Author || rootOf(o) == e.j.Root {
 				selfOwned = true
 				break
 			}
@@ -278,37 +319,73 @@ func computeJudgementsShadow(in shadowInput) *JudgementsShadow {
 		}
 	}
 	sort.Strings(subjects)
+	return judgementSet{bySubject: bySubject, subjects: subjects, owners: owners, rootOf: rootOf}
+}
 
-	v := make(map[string]int64, len(in.nodes))
-	standing := func(a string) int64 {
-		if i, ok := in.index[a]; ok {
-			return in.c[i]
-		}
-		return 0
+// sortedOwners lists a subject's owners in order.
+func (set judgementSet) sortedOwners(subject string) []string {
+	out := make([]string, 0, len(set.owners[subject]))
+	for o := range set.owners[subject] {
+		out = append(out, o)
 	}
+	sort.Strings(out)
+	return out
+}
+
+// markInput is what marking reads.
+type markInput struct {
+	st       *StandingParams
+	jp       judge.Params
+	set      judgementSet
+	asOf, D  int64
+	maxWork  int64
+	standing func(string) int64 // an account's standing in this run (mass)
+	penalty  map[string]int64
+	indep    func(a, b string) bool
+	// c0 (rule 4): the consensus at entry the previous run stored, by
+	// judgement id; a judgement it does not name is first seen here and
+	// its c0 is computed in this run.
+	c0 map[string]int64
+}
+
+// markOutput is every judgement's mark (raw: before any settlement), the
+// subjects' scores and the section's counts.
+type markOutput struct {
+	marks       []JudgementMark
+	entries     []CarriedJudgement // every judgement in the window, with c0 and its raw mark (0 unmarked)
+	scores      []SubjectScore
+	byAuthor    map[string]int64 // judgements per author
+	byAct       map[string]int64
+	judgements  int64
+	withdrawals int64
+	open        int64
+	closed      int64
+	penalised   int64
+	truncated   bool
+}
+
+// markJudgements marks every judgement of set that has at least k_min
+// independent later judgements with weight (RFC 0020 §3), and scores every
+// subject (§2).
+func markJudgements(in markInput) markOutput {
+	st, jp := in.st, in.jp
+	out := markOutput{byAuthor: map[string]int64{}, byAct: map[string]int64{}}
+	cv := curves{}
+	v := map[string]int64{}
 	vOf := func(a string) int64 {
 		w, ok := v[a]
 		if !ok {
-			w = st.VoteWeight(standing(a) / massPerCent)
+			w = st.VoteWeight(in.standing(a) / massPerCent)
 			v[a] = w
 		}
 		return w
 	}
 	weightAt := func(j judge.Judgement, t int64) int64 {
-		return judge.Weight(j.EvidencePPM(), vOf(j.Author), judge.RelationshipPPM(j.Relationship), cv.decay(judge.DayFactorPPM, dayOf(t)-dayOf(j.At)))
+		return judge.Weight(j.EvidencePPM(), vOf(j.Author), judge.RelationshipPPM(j.Relationship), cv.decay(jp.DayFactorPPM, dayOf(t)-dayOf(j.At)))
 	}
-	// The stake budget: an author's judgements are scaled down together.
-	loadOf := func(j judge.Judgement) int64 { return j.Load * cv.decay(st.DayFactorPPM, in.D-dayOf(j.At)) }
-	authorLoad := map[string]int64{}
-	for _, s := range subjects {
-		for _, e := range bySubject[s] {
-			if !e.withdraw {
-				authorLoad[e.j.Author] += loadOf(e.j)
-			}
-		}
-	}
+	load := in.set.loads(st, in.D)
 	penalised := func(subject string) bool {
-		for o := range owners[subject] {
+		for o := range in.set.owners[subject] {
 			if in.penalty[o] > 0 {
 				return true
 			}
@@ -344,58 +421,60 @@ func computeJudgementsShadow(in shadowInput) *JudgementsShadow {
 		return pts, k
 	}
 
-	type rawMark struct {
-		m      JudgementMark
-		author string
-	}
-	var raws []rawMark
-	judgements := map[string]int64{}
 	var work int64
-	for _, s := range subjects {
-		list := bySubject[s]
+	for _, s := range in.set.subjects {
+		list := in.set.bySubject[s]
 		pen := penalised(s)
 		for i, e := range list {
 			if e.withdraw {
-				out.Withdrawals++
+				out.withdrawals++
 				continue
 			}
-			out.Judgements++
-			out.ByAct[e.j.Act]++
-			judgements[e.j.Author]++
+			out.judgements++
+			out.byAct[e.j.Act]++
+			out.byAuthor[e.j.Author]++
 			if pen {
-				out.Penalised++
+				out.penalised++
 			}
 			if e.closeIdx >= 0 {
-				out.Closed++
+				out.closed++
 			}
-			if out.Truncated {
-				out.Open++
+			if out.truncated {
+				out.open++
 				continue
 			}
 			work += int64(len(list))
-			if work > p.MaxWork {
-				out.Truncated = true
-				out.Open++
+			if work > in.maxWork {
+				out.truncated = true
+				out.open++
 				continue
 			}
 			T, end := in.asOf, len(list)
 			if e.closeIdx >= 0 {
 				T, end = list[e.closeIdx].j.At, e.closeIdx
 			}
-			before, _ := latest(list, 0, i, e.j.At, func(o shadowEntry) bool { return o.j.Root != e.j.Root })
-			c0 := judge.Consensus(before)
+			c0, stored := in.c0[e.j.ID]
+			if !stored {
+				before, _ := latest(list, 0, i, e.j.At, func(o shadowEntry) bool { return o.j.Root != e.j.Root })
+				c0 = jp.Consensus(before)
+			}
+			carried := CarriedJudgement{ID: e.j.ID, Author: e.j.Author, At: e.j.At, C0: c0}
 			after, k := latest(list, i+1, end, T, func(o shadowEntry) bool { return in.indep(e.j.Author, o.j.Author) })
 			cT := judge.Outcome(after)
 			if pen {
 				cT = judge.Min
-			} else if k < judge.KMin {
-				out.Open++
+			} else if k < jp.KMin {
+				out.open++
+				out.entries = append(out.entries, carried)
 				continue
 			}
 			gain := judge.Gain(e.j.X, c0, cT, e.j.Coarse)
-			stake := st.stake(standing(e.j.Author), loadOf(e.j), st.budgetScale(authorLoad[e.j.Author]))
-			raws = append(raws, rawMark{JudgementMark{ID: e.j.ID, Act: e.j.Act, Author: e.j.Author, Subject: s, X: e.j.X, Coarse: e.j.Coarse, At: e.j.At,
-				C0: c0, CT: cT, K: k, GainPPM: gain, Stake: stake, Raw: judge.Mark(stake, gain), Closed: e.closeIdx >= 0, Penalised: pen}, e.j.Author})
+			stake := load.stake(e.j, in.standing(e.j.Author))
+			m := JudgementMark{ID: e.j.ID, Act: e.j.Act, Author: e.j.Author, Subject: s, X: e.j.X, Coarse: e.j.Coarse, At: e.j.At,
+				C0: c0, CT: cT, K: k, GainPPM: gain, Stake: stake, Raw: judge.Mark(stake, gain), Closed: e.closeIdx >= 0, Penalised: pen}
+			carried.Raw = m.Raw
+			out.marks = append(out.marks, m)
+			out.entries = append(out.entries, carried)
 		}
 		// The subject's score: its current judgements, one per root.
 		pts, k := latest(list, 0, len(list), in.asOf, func(shadowEntry) bool { return true })
@@ -404,24 +483,71 @@ func computeJudgementsShadow(in shadowInput) *JudgementsShadow {
 			for _, e := range list {
 				roots[e.j.Root] = true
 			}
-			out.Scores = append(out.Scores, SubjectScore{Subject: s, Score: judge.Score(pts), Judgements: int64(len(pts)), Roots: int64(len(roots)), Weighted: k, Penalised: pen})
+			out.scores = append(out.scores, SubjectScore{Subject: s, Score: jp.Score(pts), Judgements: int64(len(pts)), Roots: int64(len(roots)), Weighted: k,
+				Thin: jp.Thin(k), Penalised: pen})
 		}
 	}
-	out.Subjects = int64(len(out.Scores))
+	return out
+}
+
+// judgementLoads is the stake of a judgement (RFC 0020 §3.3): its act's
+// load decayed by standing's half-life, scaled by its author's stake budget
+// over all of the author's judgements in the window.
+type judgementLoads struct {
+	st     *StandingParams
+	cv     curves
+	D      int64
+	author map[string]int64
+}
+
+func (set judgementSet) loads(st *StandingParams, D int64) judgementLoads {
+	l := judgementLoads{st: st, cv: curves{}, D: D, author: map[string]int64{}}
+	for _, s := range set.subjects {
+		for _, e := range set.bySubject[s] {
+			if !e.withdraw {
+				l.author[e.j.Author] += l.of(e.j)
+			}
+		}
+	}
+	return l
+}
+
+func (l judgementLoads) of(j judge.Judgement) int64 {
+	return j.Load * l.cv.decay(l.st.DayFactorPPM, l.D-dayOf(j.At))
+}
+
+func (l judgementLoads) stake(j judge.Judgement, standing int64) int64 {
+	return l.st.stake(standing, l.of(j), l.st.budgetScale(l.author[j.Author]))
+}
+
+func computeJudgementsShadow(in shadowInput) *JudgementsShadow {
+	st, p := in.st, in.p
+	out := &JudgementsShadow{Version: judge.ShadowVersion, Rule: "RFC 0020", Unit: "millicent", Params: shadowParams(judge.Default, p.WindowDays),
+		ByAct: map[string]int64{}, Bands: map[string]int64{"raised": 0, "lowered": 0, "same": 0},
+		Scores: []SubjectScore{}, Marks: []JudgementMark{}, Accounts: []ShadowAccount{}}
+	standing := func(a string) int64 {
+		if i, ok := in.index[a]; ok {
+			return in.c[i]
+		}
+		return 0
+	}
+	mo := markJudgements(markInput{st: st, jp: judge.Default, set: in.set, asOf: in.asOf, D: in.D, maxWork: p.MaxWork, standing: standing,
+		penalty: in.penalty, indep: in.indep})
+	out.fillCounts(mo)
 
 	// Run-wide settlement: gains paid from losses, never minted.
-	raw := make([]int64, len(raws))
-	for i, r := range raws {
-		raw[i] = r.m.Raw
+	raw := make([]int64, len(mo.marks))
+	for i, m := range mo.marks {
+		raw[i] = m.Raw
 	}
 	out.Settlement = judge.Settle(raw)
 	marks, gains, marked := map[string]int64{}, map[string]int64{}, map[string]int64{}
-	for i := range raws {
-		raws[i].m.Mark = out.Settlement.Marks[i]
-		marks[raws[i].author] += raws[i].m.Mark
-		gains[raws[i].author] += raws[i].m.GainPPM
-		marked[raws[i].author]++
-		out.Marks = append(out.Marks, raws[i].m)
+	for i := range mo.marks {
+		mo.marks[i].Mark = out.Settlement.Marks[i]
+		marks[mo.marks[i].Author] += mo.marks[i].Mark
+		gains[mo.marks[i].Author] += mo.marks[i].GainPPM
+		marked[mo.marks[i].Author]++
+		out.Marks = append(out.Marks, mo.marks[i])
 	}
 	out.Marked = int64(len(out.Marks))
 
@@ -461,13 +587,23 @@ func computeJudgementsShadow(in shadowInput) *JudgementsShadow {
 		default:
 			out.Bands["same"]++
 		}
-		if judgements[a] == 0 && mark == 0 && in.judged[i] == 0 && band == bandShadow {
+		if mo.byAuthor[a] == 0 && mark == 0 && in.judged[i] == 0 && band == bandShadow {
 			continue
 		}
-		out.Accounts = append(out.Accounts, ShadowAccount{Account: a, Judgements: judgements[a], Marked: marked[a], GainPPM: gains[a], Mark: mark,
+		out.Accounts = append(out.Accounts, ShadowAccount{Account: a, Judgements: mo.byAuthor[a], Marked: marked[a], GainPPM: gains[a], Mark: mark,
 			Rule3Judged: in.judged[i], Cents: cents, CentsShadow: centsShadow, Band: band, BandShadow: bandShadow})
 	}
 	return out
+}
+
+// fillCounts copies marking's counts and scores into the section.
+func (s *JudgementsShadow) fillCounts(mo markOutput) {
+	s.Judgements, s.Withdrawals, s.Open, s.Closed, s.Penalised, s.Truncated = mo.judgements, mo.withdrawals, mo.open, mo.closed, mo.penalised, mo.truncated
+	for k, v := range mo.byAct {
+		s.ByAct[k] = v
+	}
+	s.Scores = append(s.Scores, mo.scores...)
+	s.Subjects = int64(len(s.Scores))
 }
 
 // ShadowPublishedMax bounds each list of the judgements_shadow section a run
@@ -479,7 +615,8 @@ const ShadowPublishedMax = 1000
 // Published is the section as a run records it: the totals, its sha256 and
 // size, and at most limit entries of each list (the most judged subjects,
 // the largest marks, the accounts with the largest change), each list's
-// full length beside it.
+// full length beside it. Under rule 4 the carry is recorded whole beside
+// it (Run: judgements_carry), and the final marks are listed like the marks.
 func (s *JudgementsShadow) Published(limit int) map[string]any {
 	full := s.Canonical()
 	scores := append([]SubjectScore(nil), s.Scores...)
@@ -489,14 +626,17 @@ func (s *JudgementsShadow) Published(limit int) map[string]any {
 		}
 		return scores[i].Subject < scores[j].Subject
 	})
-	marks := append([]JudgementMark(nil), s.Marks...)
-	sort.SliceStable(marks, func(i, j int) bool {
-		x, y := absInt(marks[i].Mark), absInt(marks[j].Mark)
-		if x != y {
-			return x > y
-		}
-		return marks[i].ID < marks[j].ID
-	})
+	largest := func(list []JudgementMark) []JudgementMark {
+		marks := append([]JudgementMark(nil), list...)
+		sort.SliceStable(marks, func(i, j int) bool {
+			x, y := absInt(marks[i].Mark)+absInt(marks[i].Raw), absInt(marks[j].Mark)+absInt(marks[j].Raw)
+			if x != y {
+				return x > y
+			}
+			return marks[i].ID < marks[j].ID
+		})
+		return marks[:min(limit, len(marks))]
+	}
 	accounts := append([]ShadowAccount(nil), s.Accounts...)
 	sort.SliceStable(accounts, func(i, j int) bool {
 		x, y := absInt(accounts[i].Mark-accounts[i].Rule3Judged), absInt(accounts[j].Mark-accounts[j].Rule3Judged)
@@ -505,13 +645,18 @@ func (s *JudgementsShadow) Published(limit int) map[string]any {
 		}
 		return accounts[i].Account < accounts[j].Account
 	})
-	return map[string]any{"version": s.Version, "rule": s.Rule, "unit": s.Unit, "params": s.Params, "sha256": sha256Hex(full), "bytes": len(full),
+	out := map[string]any{"version": s.Version, "rule": s.Rule, "unit": s.Unit, "params": s.Params, "sha256": sha256Hex(full), "bytes": len(full),
 		"judgements": s.Judgements, "withdrawals": s.Withdrawals, "by_act": s.ByAct, "subjects": s.Subjects, "marked": s.Marked, "open": s.Open,
 		"closed": s.Closed, "penalised": s.Penalised, "truncated": s.Truncated, "settlement": s.Settlement, "standing_mass": s.StandingMass, "standing_mass_shadow": s.StandingMassShadow, "bands": s.Bands,
 		"scores": scores[:min(limit, len(scores))], "scores_total": len(scores),
-		"marks": marks[:min(limit, len(marks))], "marks_total": len(marks),
+		"marks": largest(s.Marks), "marks_total": len(s.Marks),
 		"accounts": accounts[:min(limit, len(accounts))], "accounts_total": len(accounts),
 		"recompute": "swarmmemo trust replay --snapshot SNAPSHOT.jsonl --json recomputes the full section from the run's snapshot"}
+	if s.Carry != nil {
+		out["seed_mass"], out["edges"], out["carry_in_sha256"], out["carry_sha256"] = s.SeedMass, s.Edges, s.CarryIn, sha256Hex(Canonical(s.Carry))
+		out["final"], out["final_total"] = largest(s.Final), len(s.Final)
+	}
+	return out
 }
 
 func absInt(x int64) int64 {

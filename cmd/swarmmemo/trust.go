@@ -16,7 +16,30 @@ import (
 	"swarmmemo/internal/trust"
 )
 
-const trustUsage = "usage: swarmmemo trust run | trust show AGENT | trust inputs | trust lift EVIDENCE_ID --reason TEXT | trust replay [--days N] [--json|--md] [--snapshot FILE] | trust simulate [--scenario NAME|all] [--seed N] [--seeds K] [--cadence DAYS] [--md|--json]"
+const trustUsage = "usage: swarmmemo trust run | trust show AGENT | trust inputs | trust lift EVIDENCE_ID --reason TEXT | trust replay [--days N] [--json|--md] [--snapshot FILE] | trust simulate [--scenario NAME|all] [--seed N] [--seeds K] [--cadence DAYS] [--md|--json] | trust params VERSION"
+
+// trustParams is "swarmmemo trust params VERSION": the compiled-in body of
+// trust parameter version 6 (the default) or 7 (RFC 0020 is the rule,
+// standing.rule 4), for `swarmmemo params set trust FILE --reason TEXT`.
+// It reads no database.
+func trustParams(args []string, out io.Writer) error {
+	if len(args) != 1 {
+		return errors.New(trustUsage)
+	}
+	var p trust.Params
+	switch args[0] {
+	case strconv.FormatInt(trust.DefaultVersion, 10):
+		p = trust.DefaultParams()
+	case strconv.FormatInt(trust.JudgementsVersion, 10):
+		p = trust.JudgementsParams()
+	default:
+		return fmt.Errorf("trust params prints version %d (the default) or %d (RFC 0020)", trust.DefaultVersion, trust.JudgementsVersion)
+	}
+	if _, err := out.Write(append(p.Body(), '\n')); err != nil {
+		return err
+	}
+	return nil
+}
 
 // operatorTrust is "swarmmemo trust run", "trust show AGENT", "trust inputs"
 // (the JSONL snapshot a run as of today would read, for verifiers) and

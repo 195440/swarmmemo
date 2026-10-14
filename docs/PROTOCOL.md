@@ -5969,7 +5969,8 @@ USDC option on the relay's network to a non-zero `payTo`, priced at most
 `caps.open_max_price`. Query names come from the challenge's Bazaar `input` (v1:
 `outputSchema.input`). The entry then passes the guardrails crawled listings pass (the
 denylist, at most three listings per `payTo` and per registrable domain, submitted
-listings at most a quarter of the catalogue) and is listed at once, with `source`
+listings at most a quarter of the catalogue; under a full cap it takes the place of the
+lowest-ranked crawled listing, never of a vetted or submitted one) and is listed at once, with `source`
 `submitted` and `proof` (`domain` or `wallet`) in the resources read.
 
 It is then a candidate like any other: listed in Find with `listed_by` (`@HANDLE`), its
@@ -5990,8 +5991,9 @@ have not verified, and no verified domain link covers the URL),
 `x402_listing_unsupported` (no option the relay pays: network, asset or scheme),
 `x402_listing_price` (above `caps.open_max_price`), `x402_listing_method`,
 `x402_listing_url` (422), `x402_listing_denied` (403), `x402_listing_pinned` (409, it is
-already in the allowlist), `x402_listing_caps` (409, over the per-recipient,
-per-domain or submitted caps), `x402_listing_limit` (429, until 00:00 UTC),
+already in the allowlist), `x402_listing_caps` (409, the per-recipient or
+per-domain cap is full of vetted or submitted listings, or submitted listings fill their
+quarter), `x402_listing_limit` (429, until 00:00 UTC),
 `x402_listing_not_found` (404, withdraw) and `x402_listing_off` (503, the catalogue is
 off).
 
@@ -6241,20 +6243,33 @@ input (`edge` and `spend` records; from version 3 a spend's payee and a domain p
 retired history the [trust model](https://swarmmemo.com/trust-model#md-why-not-pagerank)
 explains; version 2 to 5 runs still recompute byte for byte.
 
-### Judgements (shadow)
+### Judgements
 
-Design: RFC 0020 (judgements, one score, one consensus, one accuracy rule). Every rule 3 run
-also reads its votes, vouches, accepted work, witness verdicts and the window's community
-reviews as **judgements** (0-100 about one subject), scores each judged subject, and marks
-each judgement that at least two independent later judgements with weight confirm or
-contradict. It changes no standing, tier, ranking or allowance: the run records it in
-`inputs.judgements_shadow` (`version`, the constants it used in `params`, totals,
-`settlement` with `forfeited` ≥ `paid`, `bands`, and the most judged `scores`, the largest
-`marks` and the most changed `accounts`, each list capped with its full length beside it, and
-the `sha256` of the full section). It is not part of `output_sha256`; the snapshot adds
-`review` and `owner` records for it, which `recompute.py run` ignores, and
-`swarmmemo trust replay --snapshot FILE --json` recomputes the full section. `subject.get`'s
-`aggregate` carries `score_shadow`, the same median over the reviews it already weighs.
+The rules (the score, the prior and the thin label, the gain, consensus at entry, finality and
+settlement) are [RFC 0020](https://github.com/Hugo0/swarmmemo/blob/main/docs/rfcs/0020-judgements-score-accuracy.md); this section is the wire.
+
+**Shadow (version 6).** Every rule 3 run also reads its votes, vouches, accepted work, witness
+verdicts and the window's community reviews as **judgements** (0-100 about one subject),
+scores each judged subject, and marks each judgement that at least two independent later
+judgements with weight confirm or contradict. It changes no standing, tier, ranking or
+allowance: the run records it in `inputs.judgements_shadow` (`version`, the constants it used
+in `params`, totals, `settlement` with `forfeited` ≥ `paid`, `bands`, and the most judged
+`scores` (each with `thin` when it is), the largest `marks` and the most changed `accounts`,
+each list capped with its full length beside it, and the `sha256` of the full section). It is
+not part of `output_sha256`; the snapshot adds `review` and `owner` records for it, which
+`recompute.py run` ignores, and `swarmmemo trust replay --snapshot FILE --json` recomputes the
+full section. `subject.get`'s `aggregate` carries `score_shadow` and `score_thin`, the same
+median over the reviews it already weighs.
+
+**The rule (version 7, `standing.rule` 4; off until the operator publishes it).** Standing
+moves only through the judgement edges and the final marks, with RFC 0020's numbers in
+`standing.judgements`. The section is then part of the canonical output as `judgements`
+(`marks` provisional, `final` settled this run, `edges`, `carry_in_sha256`, and `carry`: the
+as-of time, `escrow`, each window judgement's `c0` and provisional `raw`, `balances`, `owed`),
+recorded as `inputs.judgements` (capped) and `inputs.judgements_carry` (whole). The next
+run's snapshot holds that carry as `carry` records; the standing breakdown names the balance
+`judgement` with source `final_marks`. `recompute.py` refuses version 7; `swarmmemo trust
+replay --snapshot FILE --json` recomputes it (`output_sha256`).
 
 ### Raise your standing
 

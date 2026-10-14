@@ -109,6 +109,9 @@ func run() error {
 		if len(os.Args) >= 3 && os.Args[2] == "simulate" { // trustsim.go: reads no database
 			return trustSimulate(os.Args[3:], os.Stdout)
 		}
+		if len(os.Args) >= 3 && os.Args[2] == "params" { // trust.go: reads no database
+			return trustParams(os.Args[3:], os.Stdout)
+		}
 		return operator(command)
 	case "backup", "integrity", "reports", "moderate", "room", "recover-generation", "maintenance", "stats",
 		"tier", "params", "allowance", "lever", // RFC0012, rfc0012.go (trust above)

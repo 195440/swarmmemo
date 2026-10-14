@@ -388,3 +388,126 @@ func TestSubmitWalletProof(t *testing.T) {
 		t.Fatalf("the domain-proven listing: %+v", r)
 	}
 }
+
+// An owner-proven submission takes precedence over crawled listings under a
+// full cap (C308): per recipient and per registrable domain, the
+// lowest-ranked crawled entry gives way, its row kept; a later crawl keeps
+// the submitted entry and does not bring the displaced one back; a cap full
+// of vetted and submitted entries still refuses.
+func TestSubmittedDisplacesCrawled(t *testing.T) {
+	const otherPayTo = "0x3333333333333333333333333333333333333333"
+	for _, c := range []struct {
+		name  string
+		items func(i int) (url, payTo string)
+	}{
+		// Three crawled listings paying the submitter's wallet, on other domains.
+		{"per_pay_to", func(i int) (string, string) {
+			return "https://api.seller" + strconv.Itoa(i) + ".net/q", testPayTo
+		}},
+		// Three crawled listings on the submitter's domain, paying someone else.
+		{"per_domain", func(i int) (string, string) {
+			return "https://example.com/crawled/" + strconv.Itoa(i), otherPayTo
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			endpoints := map[string]http.Handler{"/mine": newChallenge("search", 1000), "/vetfull": newChallenge("search", 1000)}
+			h, x := submitHarness(t, endpoints)
+			var items, ids []string
+			for i := range 3 {
+				u, payTo := c.items(i)
+				// Fewer payers ranks lower: the third is the lowest.
+				items = append(items, bazaarItemJSON(u, "GET", 1000, payTo, "eip155:8453", "data api", quality(30-10*i, 100)))
+			}
+			h.fake.extra[discoveryPath] = &fakeBazaar{items: items}
+			if n, err := x.importCatalogue(context.Background(), h.now); err != nil || n != 3 {
+				t.Fatalf("import: %d, %v", n, err)
+			}
+			for _, r := range x.cat.snap.Load().open {
+				ids = append(ids, r.ID)
+			}
+			if len(ids) != 3 {
+				t.Fatalf("crawled: %v", ids)
+			}
+			lowest := ids[2]
+			// The wallet proof (the challenge pays testPayTo) for the
+			// recipient cap, the domain proof for the domain cap.
+			s := X402Submission{URL: "https://example.com/mine"}
+			if c.name == "per_pay_to" {
+				mine, _ := ParseEVMAddress(testPayTo)
+				s.Wallets = map[EVMAddress]bool{mine: true}
+			}
+			if _, err := h.submit(s); err != nil {
+				t.Fatalf("an owner-proven submission under a crawled cap: %v", err)
+			}
+			mine := openIDFor("/mine", "GET")
+			check := func(when string) {
+				t.Helper()
+				snap := x.cat.snap.Load()
+				if snap.byID[mine] == nil || snap.byID[mine].Submitter() != submitter {
+					t.Fatalf("%s: the submitted listing is not listed", when)
+				}
+				if _, ok := snap.byID[lowest]; ok {
+					t.Fatalf("%s: the lowest crawled listing was not displaced", when)
+				}
+				for _, id := range ids[:2] {
+					if _, ok := snap.byID[id]; !ok {
+						t.Fatalf("%s: crawled %s displaced too", when, id)
+					}
+				}
+				n := 0
+				for _, r := range snap.open {
+					if (c.name == "per_pay_to" && r.PayTo == snap.byID[mine].PayTo) || (c.name == "per_domain" && r.domain == snap.byID[mine].domain) {
+						n++
+					}
+				}
+				if n != 3 {
+					t.Fatalf("%s: %d listings under the cap, want 3", when, n)
+				}
+				var rows int
+				if err := h.db.QueryRow("SELECT count(*) FROM x402_catalogue WHERE id=?", lowest).Scan(&rows); err != nil || rows != 1 {
+					t.Fatalf("%s: the displaced row was deleted: %d, %v", when, rows, err)
+				}
+			}
+			check("after the submission")
+			// A later crawl lists the same three again.
+			h.now += 3600
+			if _, err := x.importCatalogue(context.Background(), h.now); err != nil {
+				t.Fatal(err)
+			}
+			if src := storedRow(t, h, mine)["source"].(string); len(src) < len(x402SubmittedPrefix) || src[:len(x402SubmittedPrefix)] != x402SubmittedPrefix {
+				t.Fatalf("the crawl overwrote the submitted row: %s", src)
+			}
+			check("after a crawl")
+			// The cap full of vetted and submitted entries: a further
+			// submission is refused.
+			vetOpen(t, h, x, ids[0], ids[1])
+			if _, err := h.submit(X402Submission{URL: "https://example.com/vetfull", Wallets: s.Wallets}); errCode(err) != "x402_listing_caps" {
+				t.Fatalf("a cap full of vetted and submitted entries: %v", err)
+			}
+		})
+	}
+}
+
+// A cap full of vetted crawled entries refuses a submission.
+func TestSubmitVettedCapRefuses(t *testing.T) {
+	h, x := submitHarness(t, map[string]http.Handler{"/mine": newChallenge("search", 1000)})
+	var items []string
+	for i := range 3 {
+		items = append(items, bazaarItemJSON("https://example.com/crawled/"+strconv.Itoa(i), "GET", 1000, testPayTo, "eip155:8453", "data api", ""))
+	}
+	h.fake.extra[discoveryPath] = &fakeBazaar{items: items}
+	if _, err := x.importCatalogue(context.Background(), h.now); err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, r := range x.cat.snap.Load().open {
+		ids = append(ids, r.ID)
+	}
+	vetOpen(t, h, x, ids...)
+	if _, err := h.submit(X402Submission{URL: "https://example.com/mine"}); errCode(err) != "x402_listing_caps" {
+		t.Fatalf("a cap full of vetted entries: %v", err)
+	}
+	if _, ok := x.cat.snap.Load().byID[openIDFor("/mine", "GET")]; ok {
+		t.Fatal("refused, yet listed")
+	}
+}

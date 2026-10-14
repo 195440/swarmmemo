@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"swarmmemo/internal/judge"
+	"swarmmemo/internal/trust"
 )
 
 // RFC 0020 in shadow (C303a): a rule 3 run reads the window's community
@@ -85,12 +86,67 @@ func TestTrustJudgementsShadow(t *testing.T) {
 }
 
 func TestReviewScoreShadow(t *testing.T) {
-	// Two weight groups: good with good=90 at 3.5, bad at 1.0, plus the
-	// prior (2 at 50): the median is 90.
-	if got := reviewScoreShadow(`[["good",-1,90,3.5],["bad",-1,-1,1.0],["unverified",-1,-1,9.0]]`); got != 90 {
-		t.Fatalf("score_shadow %d", got)
+	// Two weight groups: three reviews at good=90 weighing 3.5, one bad
+	// at 1.0, plus the prior (2 × the mean weight 4.5 / 4 at 50): the
+	// median is 90, and four reviews are not thin.
+	if got, thin := reviewScoreShadow(`[["good",-1,90,3.5,3],["bad",-1,-1,1.0,1],["unverified",-1,-1,9.0,5]]`); got != 90 || thin {
+		t.Fatalf("score_shadow %d thin %v", got, thin)
 	}
-	if got := reviewScoreShadow(`[]`); got != judge.Neutral {
+	// The same weights from one review each: the prior's mean weight is
+	// 2.25, so it holds the median at 50, and two reviews are thin.
+	if got, thin := reviewScoreShadow(`[["good",-1,90,3.5,1],["bad",-1,-1,1.0,1]]`); got != judge.Neutral || !thin {
+		t.Fatalf("two reviews: score_shadow %d thin %v", got, thin)
+	}
+	if got, thin := reviewScoreShadow(`[]`); got != judge.Neutral || !thin {
 		t.Fatalf("empty score_shadow %d", got)
+	}
+}
+
+// C303b: the operator activates trust parameter version 7 (RFC 0020 is the
+// rule) through the params store; each run records its carry, and the next
+// run's snapshot reads it back as carry records, in one short read.
+func TestTrustJudgementsRuleCarry(t *testing.T) {
+	s := openTest(t, Config{Features: Features{Trust: TrustShadow, Reviews: true}})
+	a, b := keyFor(74), keyFor(75)
+	register(t, s, a)
+	register(t, s, b)
+	run(t, s, reviewPost(t, a, reviewSubject, map[string]any{"verdict": "good"}, ""))
+	run(t, s, reviewPost(t, b, reviewSubject, map[string]any{"verdict": "bad"}, ""))
+	version, err := s.SetAllowanceParams(testContext, trust.ParamsNamespace, trust.JudgementsParams().Body(), "RFC 0020 is the rule (test)", 0)
+	if err != nil || version != trust.JudgementsVersion {
+		t.Fatalf("params set trust: version %d, %v", version, err)
+	}
+	posted := s.now()
+	s.now = func() time.Time { return posted.Add(25 * time.Hour) }
+	first, err := s.RunTrust(testContext)
+	if err != nil || first.State != "done" || first.ParamsVersion != trust.JudgementsVersion {
+		t.Fatalf("first run: %+v %v", first, err)
+	}
+	var raw string
+	if err = s.db.QueryRow("SELECT inputs FROM trust_runs WHERE id=?", first.ID).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var inputs struct {
+		Judgements map[string]any        `json:"judgements"`
+		Carry      *trust.JudgementCarry `json:"judgements_carry"`
+		Shadow     any                   `json:"judgements_shadow"`
+	}
+	if err = json.Unmarshal([]byte(raw), &inputs); err != nil {
+		t.Fatal(err)
+	}
+	if inputs.Carry == nil || inputs.Judgements == nil || inputs.Shadow != nil || len(inputs.Carry.Judgements) != 2 || inputs.Carry.AsOf != first.AsOf {
+		t.Fatalf("a rule 4 run's record: %s", raw)
+	}
+	s.now = func() time.Time { return posted.Add(49 * time.Hour) }
+	snap, err := s.TrustInputs(testContext, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Carry) != 1+len(inputs.Carry.Judgements)+len(inputs.Carry.Balances)+len(inputs.Carry.Owed) {
+		t.Fatalf("the next snapshot's carry: %+v", snap.Carry)
+	}
+	out, err := trust.Compute(testContext, snap)
+	if err != nil || out.Judgements == nil || out.Judgements.CarryIn == "" {
+		t.Fatalf("the next run did not read the carry: %v", err)
 	}
 }

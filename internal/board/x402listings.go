@@ -183,7 +183,7 @@ func x402ListingError(code string) error {
 	case "x402_listing_pinned":
 		return problem(409, "x402_listing_pinned", "This endpoint is already in the operator's allowlist: it is listed and callable as it is.")
 	case "x402_listing_caps":
-		return problem(409, "x402_listing_caps", fmt.Sprintf("The catalogue keeps at most %d unvetted listings per pay_to and %d per registrable domain, and submitted listings fill at most a quarter of it; this one does not fit now. Withdraw one of yours (x402.withdraw), or ask the operator to vet them.", services.X402PerRecipientMax, services.X402PerDomainMax))
+		return problem(409, "x402_listing_caps", fmt.Sprintf("The catalogue keeps at most %d unvetted listings per pay_to and %d per registrable domain, and submitted listings fill at most a quarter of it. A submitted listing displaces crawled ones, but here the cap is full of vetted or submitted listings. Withdraw one of yours (x402.withdraw), or ask the operator to vet them.", services.X402PerRecipientMax, services.X402PerDomainMax))
 	case "x402_listing_not_found":
 		return problem(404, "x402_listing_not_found", "No submitted listing of yours (or on a domain you verified) has that METHOD URL; a crawled listing is not withdrawn this way.")
 	}

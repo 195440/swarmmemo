@@ -7,9 +7,10 @@
 // its published snapshot. Nothing here reads a clock, a float or a database.
 //
 // Built in C303a (shadow): the trust run computes scores and marks with it
-// beside rule 3 and changes no gate. The parameters are constants here,
-// cited by the RFC; C303b moves the ones a cutover needs into a trust
-// parameter version.
+// beside rule 3 and changes no gate. C303b adds the cutover: trust parameter
+// version 7 (standing.rule 4) makes it the rule and publishes Params in its
+// standing.judgements section; the constants below are that section's
+// defaults and the shadow's values.
 package judge
 
 import (
@@ -19,7 +20,9 @@ import (
 
 // ShadowVersion is the version of the judgements_shadow section a trust run
 // publishes; it changes whenever any constant or rule below changes.
-const ShadowVersion = 2
+// Version 3 (C303b): the prior weighs PriorWeight × the subject's mean
+// judgement weight, and scores say when they are thin.
+const ShadowVersion = 3
 
 // The scale: x ∈ [0, 100], 50 neutral.
 const (
@@ -28,12 +31,14 @@ const (
 	Neutral = 50
 )
 
-// Score parameters (RFC 0020 §2): m pseudo-judgements at Neutral, each
-// weighing a full judgement (1e6 ppm), the existing Bayesian m = 2 of
-// RFC 0015 §5.4.
+// Score parameters (RFC 0020 §2): m = PriorWeight pseudo-judgements at
+// Neutral, each weighing the subject's mean judgement weight (C303b; until
+// then each weighed a full judgement, which pinned real subjects near 50).
+// A subject with fewer than ThinBelow weighted judgements is labelled thin:
+// below it the prior holds at least half of the weight.
 const (
-	PriorWeight    = 2
-	PriorWeightPPM = PriorWeight * 1_000_000
+	PriorWeight = 2
+	ThinBelow   = PriorWeight + 1
 )
 
 // Settlement parameters (RFC 0020 §3.3).
@@ -276,12 +281,78 @@ type Point struct {
 	W int64 `json:"w"`
 }
 
+// Params are RFC 0020's tunable numbers. The defaults are the constants of
+// this package; trust parameter version 7 publishes them as
+// standing.judgements and the run reads them from there.
+type Params struct {
+	KMin         int64 `json:"k_min"`
+	PriorWeight  int64 `json:"prior_weight"`
+	ThinBelow    int64 `json:"thin_below"`
+	HalfLifeDays int64 `json:"half_life_days"`
+	DayFactorPPM int64 `json:"day_factor_ppm"`
+	ReviewLoad   int64 `json:"review_load"`
+}
+
+// Default is the constants as Params: the shadow's values and version 7's.
+var Default = Params{KMin: KMin, PriorWeight: PriorWeight, ThinBelow: ThinBelow, HalfLifeDays: HalfLifeDays, DayFactorPPM: DayFactorPPM, ReviewLoad: ReviewLoad}
+
+// PriorPPM is the weight of the prior over points (RFC 0020 §2):
+// PriorWeight × their mean weight (Σ w / n over the n points with weight),
+// rounded down; 0 when no point has weight.
+func (p Params) PriorPPM(points []Point) int64 {
+	var w, n int64
+	for _, pt := range points {
+		if pt.W > 0 {
+			w = satAdd(w, pt.W)
+			n++
+		}
+	}
+	return p.priorOf(w, n)
+}
+
+func (p Params) priorOf(w, n int64) int64 {
+	if n <= 0 {
+		return 0
+	}
+	return MulDiv(w, max(0, p.PriorWeight), n)
+}
+
 // Consensus is the standing-weighted median of points with PriorWeight
-// pseudo-judgements at Neutral (RFC 0020 §2): the smallest x at which the
-// cumulative weight reaches half the total; when it reaches exactly half,
-// the midpoint of that x and the next, rounded down. Points with no weight
-// do not count. points is not modified.
-func Consensus(points []Point) int64 { return median(points, PriorWeightPPM) }
+// pseudo-judgements at Neutral, each weighing the points' mean weight
+// (RFC 0020 §2): the smallest x at which the cumulative weight reaches half
+// the total; when it reaches exactly half, the midpoint of that x and the
+// next, rounded down. Points with no weight do not count; with none it is
+// Neutral. points is not modified.
+func (p Params) Consensus(points []Point) int64 { return median(points, p.PriorPPM(points)) }
+
+// Score is the consensus of a subject's current judgements under p.
+func (p Params) Score(current []Point) int64 { return p.Consensus(current) }
+
+// ScoreGrouped is Score when the caller merged judgements of equal value
+// into points: n is how many weighted judgements they stand for, so the
+// prior's mean weight is the judgements', not the groups'.
+func (p Params) ScoreGrouped(groups []Point, n int64) int64 {
+	var w int64
+	for _, pt := range groups {
+		if pt.W > 0 {
+			w = satAdd(w, pt.W)
+		}
+	}
+	return median(groups, p.priorOf(w, n))
+}
+
+// Thin reports whether a subject with this many weighted current judgements
+// is labelled thin: pages say so instead of relying on the prior.
+func (p Params) Thin(weighted int64) bool { return weighted < p.ThinBelow }
+
+// Consensus is Default.Consensus.
+func Consensus(points []Point) int64 { return Default.Consensus(points) }
+
+// Thin is Default.Thin.
+func Thin(weighted int64) bool { return Default.Thin(weighted) }
+
+// ScoreGrouped is Default.ScoreGrouped.
+func ScoreGrouped(groups []Point, n int64) int64 { return Default.ScoreGrouped(groups, n) }
 
 // Outcome is c_T, where a judgement is marked against (RFC 0020 §3, as
 // amended by the C303s simulation): the same weighted median over the later
@@ -332,7 +403,7 @@ func median(points []Point, priorPPM int64) int64 {
 
 // Score is a subject's score (RFC 0020 §2): the consensus of its current
 // judgements, one per root. Every surface calls it.
-func Score(current []Point) int64 { return Consensus(current) }
+func Score(current []Point) int64 { return Default.Score(current) }
 
 // Gain is a judgement's accuracy (RFC 0020 §3) in ppm of [−1, 1]: entered
 // at consensus c0, the later independent consensus is cT. Numeric:
