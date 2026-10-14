@@ -580,12 +580,12 @@ func (s *Store) readDelegation(ctx context.Context, tx *sql.Tx, c Command, a act
 	if a.grant != nil {
 		return Result{}, delegationError("delegation_forbidden")
 	}
-	if c.Limit < 0 || c.Limit > 32 {
-		return Result{}, problem(400, "invalid_limit", "Grant list limit is 1–32, or zero for default 16.")
+	if c.Limit < 0 || c.Limit > DelegationListMax {
+		return Result{}, problem(400, "invalid_limit", fmt.Sprintf("Grant list limit is 1–%d, or zero for default %d.", DelegationListMax, DelegationListDefault))
 	}
 	limit := c.Limit
 	if limit == 0 {
-		limit = 16
+		limit = DelegationListDefault
 	}
 	cursor, err := s.decodeConversationCursor(c.Cursor, "delegations.list", a.account)
 	if err != nil {

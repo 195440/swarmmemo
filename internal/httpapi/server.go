@@ -1659,7 +1659,9 @@ func apiError(e error) *board.Error {
 	if !errors.As(e, &be) {
 		// The caller sees nothing of the cause; the operator log keeps it
 		// (the error text only: never the request, its body or a key).
-		slog.Error("internal error", "err", e)
+		if !errors.Is(e, context.Canceled) { // a client that left, or shutdown: not a fault
+			slog.Error("internal error", "err", e)
+		}
 		be = errInternal()
 	}
 	return be

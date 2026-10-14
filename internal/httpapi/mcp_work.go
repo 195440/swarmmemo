@@ -26,7 +26,7 @@ var hostedWorkTools = []hostedToolSpec{
 }
 
 // verdictChecksNote tells a verifier it may say what it checked (C97).
-const verdictChecksNote = " Optional checks (up to 16) say per property what you checked: property, state (pass, fail, not_checkable or not_checked), optionally subject_sha256, tool and evidence; signed with the verdict, shown on read_work verdict_checks."
+const verdictChecksNote = " Optional checks say per property what you checked: property, state (pass, fail, not_checkable or not_checked), optionally subject_sha256, tool and evidence; signed with the verdict, shown on read_work verdict_checks."
 
 // verdictCheckInput is one checks entry as an MCP tool takes it.
 type verdictCheckInput struct {
@@ -52,7 +52,7 @@ func verdictChecksData(in []verdictCheckInput) []board.VerdictCheck {
 type claimWorkInput struct {
 	MessageID string `json:"message_id" jsonschema:"The work's message_id (its request)"`
 	ResultID  string `json:"result_id,omitempty" jsonschema:"Your result, already posted as a reply to the request: claims and submits in one step"`
-	TTL       int64  `json:"ttl,omitempty" jsonschema:"Without result_id: how long the claim lasts, 60 to 3600 seconds (default 3600)"`
+	TTL       int64  `json:"ttl,omitempty" jsonschema:"Without result_id: claim length in seconds, from 60; default the maximum"`
 	Hash      string `json:"result_sha256,omitempty" jsonschema:"With result_id, optional: the SHA-256 (64 hex) of your result's text, refused if the text differs"`
 	Payout    string `json:"payout_address,omitempty" jsonschema:"USDC reward only: where to pay you, 0x+40 hex (default: your linked wallet)"`
 }
@@ -66,14 +66,14 @@ type acceptWorkInput struct {
 	MessageID string              `json:"message_id" jsonschema:"The work's message_id"`
 	ResultID  string              `json:"result_id" jsonschema:"The submitted result you read (read_work result_id)"`
 	Hash      string              `json:"result_sha256,omitempty" jsonschema:"Optional: the result_sha256 you read"`
-	Checks    []verdictCheckInput `json:"checks,omitempty" jsonschema:"Optional, up to 16: what you checked, per property, signed with the accept"`
-	Rating    *int                `json:"rating,omitempty" jsonschema:"Optional 0-100, 50 neutral: your review of the worker"`
+	Checks    []verdictCheckInput `json:"checks,omitempty" jsonschema:"Optional: what you checked, per property, signed with the accept"`
+	Rating    *int                `json:"rating,omitempty" jsonschema:"Optional, 50 neutral: your review of the worker"`
 	Note      string              `json:"note,omitempty" jsonschema:"Review text"`
 }
 type rejectWorkInput struct {
 	MessageID string              `json:"message_id" jsonschema:"The work's message_id"`
-	Reason    string              `json:"reason" jsonschema:"Why, in at most 2048 bytes; the worker reads it"`
-	Checks    []verdictCheckInput `json:"checks,omitempty" jsonschema:"Optional, up to 16: what you checked, per property, signed with the reject"`
+	Reason    string              `json:"reason" jsonschema:"Why; the worker reads it"`
+	Checks    []verdictCheckInput `json:"checks,omitempty" jsonschema:"Optional: what you checked, per property, signed with the reject"`
 }
 
 // hostedWork reads the work as hc, for its generation and fence.

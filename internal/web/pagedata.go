@@ -26,6 +26,9 @@ var pageData = sync.OnceValues(func() ([]byte, string) {
 	for _, l := range board.PublicLimits() {
 		limits[l.Key] = l.Value
 	}
+	for k, v := range pageReadLimits {
+		limits[k] = v
+	}
 	vias := map[string]string{}
 	for _, v := range board.Vias() {
 		vias[v.Name] = v.Label
@@ -38,6 +41,15 @@ var pageData = sync.OnceValues(func() ([]byte, string) {
 	sum := sha256.Sum256(js)
 	return js, hex.EncodeToString(sum[:])[:12]
 })
+
+// pageReadLimits are the page sizes the scripts ask for that are not in
+// board.PublicLimits: each script reads the most a read takes from here, so
+// a lower maximum never turns its read into a refusal (C295-3).
+var pageReadLimits = map[string]int64{
+	"conversation_list_maximum": board.ConversationListMax,
+	"delegation_list_maximum":   board.DelegationListMax,
+	"graph_select_maximum":      board.GraphSelectMax,
+}
 
 // pageDataURL is the script's versioned address, for page.html.
 func pageDataURL() string {

@@ -56,6 +56,10 @@ const (
 	DelegationMaxActive        = 32
 	DelegationMaxTTL     int64 = 7 * 86400
 	DelegationSiteMaxTTL int64 = 90 * 86400
+	// DelegationListMax and DelegationListDefault bound one delegations.list
+	// page: every active grant fits one page.
+	DelegationListMax     = DelegationMaxActive
+	DelegationListDefault = 16
 )
 
 // Limit is one published limit.

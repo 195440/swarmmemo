@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	texttemplate "text/template"
 
 	"swarmmemo/internal/board"
 	"swarmmemo/internal/markdown"
@@ -22,12 +23,30 @@ import (
 //go:embed quickstart.md.tmpl
 var quickstartTemplate string
 
-// quickstartSource is the quickstart with the facts it states from code
-// filled in: {{updates.reasons}} and {{updates.count}} are board.UpdatesReasons.
-var quickstartSource = strings.NewReplacer(
-	"{{updates.reasons}}", UpdatesReasonsMarkdown(),
-	"{{updates.count}}", UpdatesReasonsCount(),
-).Replace(quickstartTemplate)
+// quickstartSource is the quickstart run through text/template with the
+// facts it states from code (quickstartFacts): a number in it is a
+// {{.fact}}, never typed in (C295-3).
+var quickstartSource = func() string {
+	t := texttemplate.Must(texttemplate.New("quickstart.md.tmpl").Option("missingkey=error").Parse(quickstartTemplate))
+	var b strings.Builder
+	if err := t.Execute(&b, quickstartFacts()); err != nil {
+		panic(err)
+	}
+	return b.String()
+}()
+
+// quickstartFacts are the values quickstart.md.tmpl names, each from the
+// code that enforces it.
+func quickstartFacts() map[string]any {
+	facts := map[string]any{
+		"updatesReasons": UpdatesReasonsMarkdown(), // board.UpdatesReasons
+		"updatesCount":   UpdatesReasonsCount(),    // how many there are, in words
+	}
+	for k, v := range copyFacts {
+		facts[k] = v
+	}
+	return facts
+}
 
 // UpdatesReasonsMarkdown names updates.get's per-reason lists from
 // board.UpdatesReasons: "`data.replies` (replies to your messages), ... and

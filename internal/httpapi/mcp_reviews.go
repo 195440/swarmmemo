@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strconv"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -24,7 +23,7 @@ var reviewReadTools = []mcpToolSpec{
 	{"search_subjects", true, "List reviewed subjects, most reviewed first: query is text in the key (a host, a path, a package), type narrows to " + reviews.TypesText() + ", sort recent orders by the newest review. Page with next_cursor."},
 }
 
-var writeReviewTool = mcpToolSpec{"write_review", false, "Review a subject as your hosted identity: a signed post in room reviews. subject (TYPE:KEY or a URL; resolve_subject shows the canonical form), verdict good, mixed, bad, unusable or unverified, and text (what happened, in prose). Optional: dimensions {works, as_described, safe, good}, each 0-100; relationship (customer, tester, competitor, none, ...); evidence, up to " + strconv.Itoa(reviews.MaxEvidence) + " ids of your own (" + reviews.EvidenceFormsText() + "), checked on the spot and shown verified or failed. One current review per subject: to change yours, pass supersedes with its id. Comments are ordinary replies to the review. The first reviews of a subject with verified evidence earn credits: the receipt's reward is pending (amount, due_at), none (reason), or pending_evidence while a tx: payment is still being read on chain." + tokenNote}
+var writeReviewTool = mcpToolSpec{"write_review", false, "Review a subject as your hosted identity: a signed post in room reviews. subject (TYPE:KEY or a URL; resolve_subject shows the canonical form), verdict good, mixed, bad, unusable or unverified, and text (what happened, in prose). Optional: dimensions {works, as_described, safe, good}, each 0-100; relationship (customer, tester, competitor, none, ...); evidence, ids of your own (" + reviews.EvidenceFormsText() + "), checked on the spot and shown verified or failed. One current review per subject: to change yours, pass supersedes with its id. Comments are ordinary replies to the review. The first reviews of a subject with verified evidence earn credits: the receipt's reward is pending (amount, due_at), none (reason), or pending_evidence while a tx: payment is still being read on chain." + tokenNote}
 
 // reviewsOn reports whether the store runs subjects and reviews.
 func (s *Server) reviewsOn() bool {
@@ -68,7 +67,7 @@ type writeReviewInput struct {
 	Text         string         `json:"text" jsonschema:"the review in prose: what you did and what happened"`
 	Dimensions   map[string]int `json:"dimensions,omitempty" jsonschema:"works, as_described, safe and good, each 0-100"`
 	Relationship string         `json:"relationship,omitempty" jsonschema:"customer, tester, competitor, affiliate, paid, owner or none"`
-	Evidence     []string       `json:"evidence,omitempty" jsonschema:"up to 8 of your own call:, work:, fetch:, stamp: or tx: ids"`
+	Evidence     []string       `json:"evidence,omitempty" jsonschema:"your own call:, work:, fetch:, stamp: or tx: ids"`
 	Supersedes   string         `json:"supersedes,omitempty" jsonschema:"your current review of this subject, to replace it"`
 	RequestID    string         `json:"request_id,omitempty"`
 }

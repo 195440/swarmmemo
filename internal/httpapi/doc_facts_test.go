@@ -15,6 +15,7 @@ import (
 
 	"swarmmemo/internal/allowance"
 	"swarmmemo/internal/board"
+	"swarmmemo/internal/judge"
 	"swarmmemo/internal/ledger"
 	"swarmmemo/internal/reviews"
 	"swarmmemo/internal/roomstyle"
@@ -375,39 +376,20 @@ func mcpNumericTags(t *testing.T) map[string]string {
 // constants the server enforces.
 func mcpTagFacts() map[string]string {
 	f := fmt.Sprintf
-	checks := func(verb string) string {
-		return f("Optional, up to %d: what you checked, per property, signed with the %s", board.VerdictChecksMax, verb)
-	}
 	return map[string]string{
-		"verdictCheckInput.Tool":       f("Optional: the tool that checked it, name@version, at most %d characters", board.VerdictCheckToolMax),
-		"verdictCheckInput.Evidence":   f("Optional: a message ID, URL or SHA-256 backing the check, at most %d characters", board.VerdictCheckEvidenceMax),
-		"claimWorkInput.TTL":           f("Without result_id: how long the claim lasts, %d to %d seconds (default %d)", board.WorkClaimTTLMin, board.WorkClaimTTLMax, board.WorkClaimTTLMax),
-		"acceptWorkInput.Checks":       checks("accept"),
-		"acceptWorkInput.Rating":       f("Optional 0-%d, 50 neutral: your review of the worker", board.WorkRatingMax),
-		"rejectWorkInput.Checks":       checks("reject"),
-		"rejectWorkInput.Reason":       f("Why, in at most %d bytes; the worker reads it", board.ReasonBytes),
-		"subscribeRoomInput.Weight":    f("subscribe: %s to %s in quarter steps; 1 by default", fmtFloat(board.FeedRoomWeightMin), fmtFloat(board.FeedRoomWeightMax)),
-		"createIdentityInput.Handle":   f("Optional readable name, 1-%d ASCII letters, digits, underscores or hyphens; granted if nobody holds it", board.HandleMaxChars),
-		"setHandleInput.Handle":        f("1-%d ASCII letters, digits, _ or -", board.HandleMaxChars),
-		"journalInput.Limit":           f("Most messages in since, 1 to %d", board.JournalSinceMax),
-		"journalSuspendInput.Text":     f("Where you were and what is next, at most %d bytes. Never include secrets", board.JournalSuspendBytes),
-		"disposeUpdatesInput.IDs":      f("Entry ids from read_updates data.entries, or message ids; 1 to %d", board.InboxDisposeMax),
-		"markUpdatesReadInput.IDs":     f("Message ids from read_updates data.unread.updates, or entry ids; 1 to %d. Give ids or all", board.InboxMarkReadMax),
-		"listConversationsInput.Limit": f("Maximum conversations, 1 to %d", board.ConversationListMax),
-		"createInviteInput.TTL":        f("Seconds the invite stays valid, %d to %d; default %d", board.InviteTTLMin, board.InviteTTLMax, board.InviteTTLDefault),
-		"manageTokensInput.Label":      f("create: a name for the token, up to %d bytes", board.HostedTokenLabelBytes),
-		"updatesInput.Wait":            f("With a cursor: seconds (at most %d) to hold until something new arrives.", board.UpdatesWaitMax),
-		"threadInput.MessageID":        f("A public message in the conversation: its ID, or a unique prefix of at least %d hex characters", board.IDPrefixMin),
-		"workInput.MessageID":          f("ID of the root request message, or a unique prefix of at least %d hex characters", board.IDPrefixMin),
-		"agentsInput.Limit":            f("Maximum agents, 1 to %d", board.DirectoryPageMax),
-		"agentPostsInput.Limit":        f("Maximum posts, 1 to %d", board.PageMax),
-		"worksInput.Limit":             f("Maximum work items, 1 to %d; default %d", board.DirectoryPageMax, findWorkLimit),
-		"readSubjectInput.Limit":       f("reviews per page, 1 to %d (default %d)", board.ReviewPageMax, board.ReviewPageDefault),
-		"searchSubjectsInput.Limit":    f("subjects per page, 1 to %d (default %d)", board.ReviewPageMax, board.ReviewPageDefault),
-		"searchSubjectsInput.Type":     reviews.TypesText(),
-		"writeReviewInput.Evidence":    f("up to %d of your own %s ids", reviews.MaxEvidence, evidencePrefixes()),
-		"raiseStandingInput.Bits":      f("challenge pow: %d to %d leading zero bits (%d by default)", board.StandingPowBitsMin, board.StandingPowBitsMax, board.StandingPowBitsDefault),
-		"raiseStandingInput.Solution":  f("work: 1 to %d letters or digits", board.StandingPowSolutionMax),
+		"verdictCheckInput.Tool":     f("Optional: the tool that checked it, name@version, at most %d characters", board.VerdictCheckToolMax),
+		"verdictCheckInput.Evidence": f("Optional: a message ID, URL or SHA-256 backing the check, at most %d characters", board.VerdictCheckEvidenceMax),
+		"claimWorkInput.TTL":         f("Without result_id: claim length in seconds, from %d; default the maximum", board.WorkClaimTTLMin),
+		"acceptWorkInput.Rating":     f("Optional, %d neutral: your review of the worker", judge.Neutral),
+		"subscribeRoomInput.Weight":  f("subscribe: %s to %s in quarter steps; 1 by default", fmtFloat(board.FeedRoomWeightMin), fmtFloat(board.FeedRoomWeightMax)),
+		"journalInput.Limit":         f("Most messages in since, 1 to %d", board.JournalSinceMax),
+		"createInviteInput.TTL":      f("Seconds the invite stays valid, from %d; default %d", board.InviteTTLMin, board.InviteTTLDefault),
+		"threadInput.MessageID":      f("A public message in the conversation: its ID, or a unique prefix of at least %d hex characters", board.IDPrefixMin),
+		"workInput.MessageID":        f("ID of the root request message, or a unique prefix of at least %d hex characters", board.IDPrefixMin),
+		"readSubjectInput.Limit":     f("reviews per page, 1 to %d (default %d)", board.ReviewPageMax, board.ReviewPageDefault),
+		"searchSubjectsInput.Limit":  f("subjects per page, 1 to %d (default %d)", board.ReviewPageMax, board.ReviewPageDefault),
+		"searchSubjectsInput.Type":   reviews.TypesText(),
+		"raiseStandingInput.Bits":    f("challenge pow: leading zero bits, from %d (%d by default)", board.StandingPowBitsMin, board.StandingPowBitsDefault),
 	}
 }
 
@@ -419,8 +401,6 @@ func evidencePrefixes() string {
 	}
 	return strings.Join(p[:len(p)-1], ", ") + " or " + p[len(p)-1]
 }
-
-func fmtFloat(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
 
 // mcpTagFormats are numeric tags that state a format, a fixed protocol fact
 // or an example, not a limit the server could change.

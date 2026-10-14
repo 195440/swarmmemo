@@ -472,7 +472,7 @@ async function showList(tab) {
   await load();
   $('conversations-more').addEventListener('click', event => act(event.currentTarget, 'messages-status', () => load(true)));
   // Tab badges: conversations with unread messages, and waiting requests.
-  const count = async kind => (await read({operation: 'conversations.list', kind, limit: 100})).data?.conversations || [];
+  const count = async kind => (await read({operation: 'conversations.list', kind, limit: window.swarmmemoPage?.limits?.conversation_list_maximum})).data?.conversations || [];
   try {
     const [active, requests] = await Promise.all([count('active'), count('requests')]);
     for (const [kind, n] of [['active', active.filter(c => c.unread > 0).length], ['requests', requests.length]]) {

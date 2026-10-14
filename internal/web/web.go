@@ -396,6 +396,7 @@ var templates = template.Must(template.New("page.html").Funcs(template.FuncMap{
 	// How long after its checkpoint an anchor is typically confirmed.
 	"anchorConfirmedAfter": func() string { return board.AnchorConfirmedAfter },
 	"limitText":            board.LimitText,
+	"fact":                 fact,
 	// Input bounds that are not published limits (inputmax.go).
 	"inputMax": inputMax,
 	// updates.get's per-reason lists, from board.UpdatesReasons: the fields

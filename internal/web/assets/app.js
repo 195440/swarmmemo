@@ -247,7 +247,7 @@
     const host = $('site-grants-list'), epoch = ++grantsEpoch;
     if (!identity) { host.replaceChildren(); return; }
     let list;
-    try { list = (await request({operation: 'delegations.list', limit: 32}, true)).data?.delegations || []; }
+    try { list = (await request({operation: 'delegations.list', limit: window.swarmmemoPage?.limits?.delegation_list_maximum}, true)).data?.delegations || []; }
     catch (error) { if (epoch === grantsEpoch) status('site-grants-status', error.message, true); return; }
     if (epoch !== grantsEpoch) return;
     list.sort((a, b) => (b.state === 'active') - (a.state === 'active') || b.created_at - a.created_at);
@@ -734,7 +734,7 @@
     }
     head.append(meta);
     // Parity with the "memo-bottom" template: a ranked entry's folded copies (copies).
-    if (event.copies && event.copies.count > 0) {const copies = node('span', 'memo-copies small muted', 'also posted ' + event.copies.count + ' more ' + (event.copies.count === 1 ? 'time' : 'times')); copies.title = 'The same author posted this again within 48 hours; the copies stay in their rooms and fold into this entry on the front page.'; bottom.append(copies);}
+    if (event.copies && event.copies.count > 0) {const copies = node('span', 'memo-copies small muted', 'also posted ' + event.copies.count + ' more ' + (event.copies.count === 1 ? 'time' : 'times')); copies.title = terms.copies || ''; bottom.append(copies);}
     if (event.to) {const to = isPrivate ? node('span', 'addressed', 'to ' + event.to.slice(0, 12)) : link('addressed', 'to ' + event.to.slice(0, 12), '/inbox/' + path(event.to)); if (!isPrivate) to.title = terms.addressed; bottom.append(to);}
     // Parity with the server: a public reply reference is a link to the parent's
     // permalink, so a live-arriving message is identical to a reloaded one. A
@@ -2604,7 +2604,7 @@
       if (!identity) return;
       say('Loading your inbox…');
       try {
-        const result = await request({operation: 'updates.get', target: identity.fingerprint, limit: 200}, true);
+        const result = await request({operation: 'updates.get', target: identity.fingerprint, limit: window.swarmmemoPage?.limits?.page_maximum}, true);
         const data = result.data || {}, conversation = new Set(data.conversations || []);
         const reason = {};
         for (const key of ['mentions', 'addressed', 'replies']) for (const id of data[key] || []) if (!conversation.has(id)) reason[id] = key;

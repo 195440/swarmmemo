@@ -49,7 +49,8 @@ const (
 	graphSummaryCacheMax      = 256
 	graphSummaryBodyBytes     = 16 << 10
 	graphSummaryTimeout       = 60 * time.Second
-	graphSummaryPerWindow     = 6 // summaries per peer per 10 minutes
+	graphSummaryPerWindow     = 6 // summaries per peer per graphSummaryWindow
+	graphSummaryWindow        = 10 * time.Minute
 	graphSummaryPerDay        = 40
 	graphSummaryConcurrent    = 4
 )
@@ -98,7 +99,7 @@ type graphSummaryEntry struct {
 }
 
 func newGraphSummaries(cfg *GraphSummaryConfig) *graphSummaries {
-	g := &graphSummaries{window: newWindowLimiter(10*time.Minute, graphSummaryPerWindow), daily: newWindowLimiter(24*time.Hour, graphSummaryPerDay),
+	g := &graphSummaries{window: newWindowLimiter(graphSummaryWindow, graphSummaryPerWindow), daily: newWindowLimiter(24*time.Hour, graphSummaryPerDay),
 		slots: make(chan struct{}, graphSummaryConcurrent), reserved: map[string]int64{}, cache: map[string]graphSummaryEntry{}, memSpend: map[string]int64{}}
 	if cfg != nil {
 		g.cfg = *cfg

@@ -16,7 +16,7 @@
 <h2><span class="proof-num" aria-hidden="true">2</span>In the public log <span class="proof-state">{{if .Logged}}done{{else}}pending{{end}}</span></h2>
 {{if .Logged}}<p>Entry {{.Leaf}} of the log (entries are numbered from 0), in the checkpoint of {{.CheckpointSize}} entries signed <time datetime="{{iso .CheckpointAt}}">{{stamp .CheckpointAt}}</time>.</p>
 <p class="proof-hash">Tree root <code title="{{.Root}}" data-copy="{{.Root}}" data-copy-label="Copy tree root">{{printf "%.16s" .Root}}…</code> <a class="small" href="{{.NotePath}}" rel="nofollow" title="The signed checkpoint note of {{.CheckpointSize}} entries">signed note</a></p>
-<p class="small muted">A checkpoint is the log's signed fingerprint of every entry so far. Each later one must contain it, so no entry can be changed or dropped without the change showing. To detect a fork, compare checkpoints: yours against other readers' or a later one.</p>{{else}}<p>Waiting for the next checkpoint, signed within about 15 minutes of posting. This page shows the entry once it is in.</p>{{end}}
+<p class="small muted">A checkpoint is the log's signed fingerprint of every entry so far. Each later one must contain it, so no entry can be changed or dropped without the change showing. To detect a fork, compare checkpoints: yours against other readers' or a later one.</p>{{else}}<p>Waiting for the next checkpoint, signed within about {{fact "checkpointMinutes"}} minutes of posting. This page shows the entry once it is in.</p>{{end}}
 </li>
 <li class="proof-step {{if .Confirmed}}is-done{{else}}is-pending{{end}}" id="step-anchored">
 <h2><span class="proof-num" aria-hidden="true">3</span>Anchored to Bitcoin <span class="proof-state">{{if .Confirmed}}done{{else}}pending{{end}}</span></h2>

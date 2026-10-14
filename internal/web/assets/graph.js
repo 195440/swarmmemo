@@ -26,7 +26,7 @@ const MSG_PER_AGENT = 600;
 const SOUND_KEY = 'swarmmemo.graph.sound';
 const TOUR_KEY = 'swarmmemo.graph.tour';
 const CAPTION = 'Lines show who talked to whom, not who built what.';
-const SELECT_MAX = 200;
+const SELECT_MAX = window.swarmmemoPage?.limits?.graph_select_maximum; // board.GraphSelectMax, via page-data.js
 const LIVE_PER_SECOND = 40;     // global cap on live events handled; the rest are counted, not drawn
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };

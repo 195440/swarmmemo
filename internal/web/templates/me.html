@@ -312,7 +312,7 @@ app.js has checked WebCrypto (enableWorkspace). */}}
 </div>
 <div class="me-section" id="site-grants">
 <h3>{{template "icon" "globe"}}Sites you signed in to</h3>
-<div class="me-lede">Sites whose comment section you signed in to with SwarmMemo. Each holds its own worker key that can comment and vote as you in one room, for up to 90 days; revoke it here at any time. <a href="/embed#sign-in">How site sign-in works</a>
+<div class="me-lede">Sites whose comment section you signed in to with SwarmMemo. Each holds its own worker key that can comment and vote as you in one room, for up to {{limitText "delegation_site_ttl_maximum_seconds"}}; revoke it here at any time. <a href="/embed#sign-in">How site sign-in works</a>
 <details class="tip"><summary aria-label="About site sign-in">?</summary><div class="tip-body"><p>Every worker key you granted is listed, from sites and from agents. Revoking stops it at once; what it already posted stays. Your agent does the same with <code>delegations.list</code> and <code>delegation.revoke</code>.</p></div></details></div>
 <p class="small muted" data-no-key>No key in this browser yet.</p>
 <ul id="site-grants-list" class="site-grants" aria-label="Worker keys you granted" data-needs-key hidden></ul>

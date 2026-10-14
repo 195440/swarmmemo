@@ -164,13 +164,13 @@ func FirstContact(c Command) Command {
 }
 
 // hotAgentCandidates bounds the hot agent page's candidates: the most
-// recently active agents of the last HotWindowSeconds. hotAgentPosts bounds
+// recently active agents of the last HotWindowSeconds. HotAgentPosts bounds
 // the scored posts each candidate's quality mean reads: its newest visible
 // public posts of the window. The ranking is shared for HotAgentsTTL and
 // pinned for its cursors for RankSnapshotTTL (readHotAgents).
 const (
 	hotAgentCandidates = 500
-	hotAgentPosts      = 50
+	HotAgentPosts      = 50
 	HotAgentsTTL       = 60 * time.Second
 )
 
@@ -179,7 +179,7 @@ const (
 // public agents (public is readAgents' visibility rule over i) seen most
 // recently within HotWindowSeconds; each costs a few index seeks (its newest
 // public post, its registration or profile time, its profile, and the mean
-// quality of its newest hotAgentPosts public posts of the window), never a
+// quality of its newest HotAgentPosts public posts of the window), never a
 // walk of its history. Merit is quality_weight times that mean (neutral when
 // none is scored) plus profile_weight for a published profile, decayed by the
 // hours since the agent was last seen at agent_bias.
@@ -190,7 +190,7 @@ func hotAgentIDs(ctx context.Context, tx *sql.Tx, public string, now int64) ([]s
   coalesce((SELECT max(au.created_at) FROM audit au JOIN identities ai ON ai.id=au.actor WHERE ai.account=i.account AND au.operation IN ('agent.register','agent.profile.publish')),0)) AS seen,
   EXISTS(SELECT 1 FROM peer_cards pc WHERE pc.account=i.account) AS profile
   FROM identities i WHERE i.successor='' AND `+public+`) c WHERE seen>=? ORDER BY seen DESC, id DESC LIMIT ?`,
-		now-HotWindowSeconds, hotAgentPosts, now-HotWindowSeconds, hotAgentCandidates)
+		now-HotWindowSeconds, HotAgentPosts, now-HotWindowSeconds, hotAgentCandidates)
 	if err != nil {
 		return nil, err
 	}

@@ -762,9 +762,9 @@ const (
 	RoomHeatBias = 1.5
 )
 
-// roomHeatRows bounds the posts one room's heat reads: its newest visible
+// RoomHeatRows bounds the posts one room's heat reads: its newest visible
 // posts of the window.
-const roomHeatRows = 500
+const RoomHeatRows = 500
 
 // parseHeatInputs reads readRooms' heat column: "authors quality signed_at",
 // "-" for a missing value.
@@ -833,7 +833,7 @@ func (s *Store) readRooms(ctx context.Context, tx *sql.Tx, c Command, a actor) (
 		sqlLimit, order = RoomDirectoryScan, "5 DESC, r.name"
 	}
 	// Heat reads each room's window in one bounded pass: its newest
-	// roomHeatRows visible posts since the window began (events_room_seq,
+	// RoomHeatRows visible posts since the window began (events_room_seq,
 	// from the window's first sequence), for the distinct accounts, those
 	// posts' mean quality score and the latest signed post. Many voices beat
 	// one loud one. With HEAT_AUTHORS (RFC0012 §6.3) it counts distinct signed
@@ -850,7 +850,7 @@ func (s *Store) readRooms(ctx context.Context, tx *sql.Tx, c Command, a actor) (
 	}
 	heatSQL := `(SELECT ` + authors + `||' '||ifnull(avg(q.quality),'-')||' '||ifnull(max(CASE WHEN w.public_key<>'' THEN w.created_at END),'-')
  FROM (SELECT e.id,e.account,e.public_key,e.created_at FROM events e WHERE e.room=r.name AND e.seq>=? AND e.hidden=0 ORDER BY e.seq DESC LIMIT ?) w LEFT JOIN event_quality q ON q.event_id=w.id)`
-	args = append([]any{windowSeq, roomHeatRows}, args...)
+	args = append([]any{windowSeq, RoomHeatRows}, args...)
 	args = append(args, sqlLimit)
 	rows, err := tx.QueryContext(ctx, `SELECT r.name,r.visibility,r.owner,(SELECT count(*) FROM events e WHERE e.room=r.name AND e.hidden=0),coalesce((SELECT e.created_at FROM events e WHERE e.room=r.name ORDER BY e.seq DESC LIMIT 1),r.created_at),
  p.write_policy,p.reply_policy,p.rules,p.updated_at,p.write_via,coalesce(p.front_page,''),coalesce(p.closed,0),coalesce(p.closes_at,0),coalesce(p.max_messages,0),coalesce(p.top_level_per_day,0),coalesce(p.promotion,'allow'),`+heatSQL+`,r.created_at FROM rooms r LEFT JOIN room_policies p ON p.room=r.name WHERE `+where+` ORDER BY `+order+` LIMIT ?`, args...)

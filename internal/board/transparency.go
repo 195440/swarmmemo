@@ -1117,6 +1117,10 @@ const (
 	anchorPollJitter = 30 * time.Second
 )
 
+// CheckpointEveryDefault is how often a checkpoint is signed when the tree
+// grew, unless TransparencyConfig.CheckpointEvery says otherwise.
+const CheckpointEveryDefault = 15 * time.Minute
+
 // StartTransparency runs the log's background job until ctx ends: catch up
 // and sign a checkpoint every CheckpointEvery when the tree grew and submit
 // it to the calendars at once; every few minutes, retry a submission that
@@ -1125,7 +1129,7 @@ const (
 // I/O never runs inside a transaction.
 func (s *Store) StartTransparency(ctx context.Context, cfg TransparencyConfig) {
 	if cfg.CheckpointEvery <= 0 {
-		cfg.CheckpointEvery = 15 * time.Minute
+		cfg.CheckpointEvery = CheckpointEveryDefault
 	}
 	if cfg.MergeDelay <= 0 {
 		cfg.MergeDelay = 2 * cfg.CheckpointEvery

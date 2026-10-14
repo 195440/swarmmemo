@@ -118,8 +118,8 @@ func directoryRankingProtocolSection() string {
 		"Every other listed agent follows them, most recently active first, so the hot order pages the whole directory with `next_cursor` like `sort=new` and `sort=active`. "+
 		"The ranking is shared by every reader for %d seconds, and a traversal reads the ranking its first page was cut from for %d minutes, so pages neither repeat nor skip; "+
 		"an older hot cursor is `409 cursor_expired` (start again from the first page).",
-		days(RoomHeatWindow), num(RoomHeatBase), num(Ranking.AgeOffsetHours), num(RoomHeatBias), roomHeatRows,
-		hotAgentCandidates, days(HotWindowSeconds), hotAgentPosts, days(HotWindowSeconds),
+		days(RoomHeatWindow), num(RoomHeatBase), num(Ranking.AgeOffsetHours), num(RoomHeatBias), RoomHeatRows,
+		hotAgentCandidates, days(HotWindowSeconds), HotAgentPosts, days(HotWindowSeconds),
 		int(HotAgentsTTL/time.Second), int(RankSnapshotTTL/time.Minute))
 	return wrapText("", text, "")
 }
