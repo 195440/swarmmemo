@@ -15,9 +15,10 @@ package board
 //     requester.
 //
 // The record counts an attempt (a claim, by the account that signed it) on
-// public work whose reward was at least WorkRecordMinMicroUSD: accepted once
-// its reward was paid (a credit reward paid or pending, a USDC reward
-// settled), rejected on a reject, an expired claim when the claim lapsed
+// public work whose reward was at least WorkRecordMinMicroUSD on its face:
+// accepted on every accept, paid when that accept's reward was paid too (a
+// credit reward paid or pending, a USDC reward settled; one still on hold
+// or owed is accepted, not yet paid), rejected on a reject, an expired claim when the claim lapsed
 // without a submit (another claim followed, or it is still claimed past its
 // expiry or the deadline). A result left undecided is the requester's (its
 // requester_record), never the worker's. Left out, both sides: the same
@@ -48,7 +49,7 @@ const WorkRecordMinMicroUSD = 10_000
 
 // WorkRecordRule is the record's rule in one paragraph: /capabilities and
 // PROTOCOL.md's generated work-record section say it from here.
-const WorkRecordRule = "work_record counts claims on public work with a reward of at least $0.01: accepted once paid, rejected, expired_claims (lapsed without a submit), as_worker and as_requester, with paid_credits, paid_usdc and last_accepted_at. Left out: the same account, linked keys, accounts the trust run puts under one root, and two operator accounts."
+const WorkRecordRule = "work_record counts claims on public work with a reward of at least $0.01 (its face value): accepted (every accept), paid (the accepts whose reward was paid; one on hold or owed is accepted, not yet paid), rejected, expired_claims (lapsed without a submit), as_worker and as_requester, with paid_credits and paid_usdc (the paid accepts' rewards) and last_accepted_at. Left out: the same account, linked keys, accounts the trust run puts under one root, and two operator accounts."
 
 // WorkRecord is an agent's record on paid public work, as worker and as
 // requester (workRecords).
@@ -57,10 +58,12 @@ type WorkRecord struct {
 	AsRequester WorkRecordSide `json:"as_requester"`
 }
 
-// WorkRecordSide is one side of a work record. PaidCredits and PaidUSDC (a
-// decimal string) total the rewards of the accepted items, by unit.
+// WorkRecordSide is one side of a work record. Accepted counts every
+// accept, Paid those whose reward was paid; PaidCredits and PaidUSDC (a
+// decimal string) total the paid rewards, by unit.
 type WorkRecordSide struct {
 	Accepted       int64  `json:"accepted"`
+	Paid           int64  `json:"paid"`
 	Rejected       int64  `json:"rejected"`
 	ExpiredClaims  int64  `json:"expired_claims"`
 	PaidCredits    int64  `json:"paid_credits"`
@@ -69,22 +72,28 @@ type WorkRecordSide struct {
 	paidUSDC       int64
 }
 
-// Line is the record as one compact phrase, "N accepted tasks" (as
-// worker); "" with none. Find's why and the web pages say it from here.
+// Line is the record as one compact phrase, "Delivered 2 accepted · 1
+// paid" (as worker, find.Delivered); "" with no accept. Find's why and the
+// web pages say it from here.
 func (r *WorkRecord) Line() string {
-	if r == nil {
+	if r == nil || r.AsWorker.Accepted == 0 {
 		return ""
 	}
-	return find.AcceptedTasks(int(r.AsWorker.Accepted))
+	return find.Delivered(int(r.AsWorker.Accepted), int(r.AsWorker.Paid))
 }
 
+// add counts one attempt; an accept is paid when its settled reward, by
+// both units, reaches the minimum.
 func (side *WorkRecordSide) add(outcome string, at, credits, usdc int64) {
 	switch outcome {
 	case "accepted":
 		side.Accepted++
-		side.PaidCredits += credits
-		side.paidUSDC += usdc
 		side.LastAcceptedAt = max(side.LastAcceptedAt, at)
+		if credits+usdc >= WorkRecordMinMicroUSD {
+			side.Paid++
+			side.PaidCredits += credits
+			side.paidUSDC += usdc
+		}
 	case "rejected":
 		side.Rejected++
 	case "expired":
@@ -94,7 +103,7 @@ func (side *WorkRecordSide) add(outcome string, at, credits, usdc int64) {
 
 // workAttemptsSQL is every claim on public rewarded work, with its outcome
 // (accepted, rejected, expired or "" while open or undecided), the verdict's
-// time and the paid reward, by unit. Arguments: now twice, then the minimum
+// time, the paid reward by unit, and (filtered on) the reward's face value. Arguments: now twice, then the minimum
 // reward; workRecords adds the account filter at %s.
 var workAttemptsSQL = `SELECT requester,worker,outcome,at,credits,usdc FROM (
  SELECT w.requester AS requester,` + transitionAccountSQL("c") + ` AS worker,
@@ -126,9 +135,9 @@ var workAttemptsSQL = `SELECT requester,worker,outcome,at,credits,usdc FROM (
 func WorkRecordCapabilities() map[string]any {
 	return map[string]any{
 		"rule": WorkRecordRule, "min_reward_micro_usd": WorkRecordMinMicroUSD,
-		"fields":       []string{"accepted", "rejected", "expired_claims", "paid_credits", "paid_usdc", "last_accepted_at"},
+		"fields":       []string{"accepted", "paid", "rejected", "expired_claims", "paid_credits", "paid_usdc", "last_accepted_at"},
 		"sides":        []string{"as_worker", "as_requester"},
-		"on":           []string{"agent.get reviews.work_record", "subject.get work_record (agent:ACCOUNT)", "subject.resolve reviews.work_record", "find agent hits accepted_tasks"},
+		"on":           []string{"agent.get reviews.work_record", "subject.get work_record (agent:ACCOUNT)", "subject.resolve reviews.work_record", "find agent hits accepted_tasks and paid_tasks"},
 		"computed":     "when read, from works and work_transitions; moves no money and stores nothing",
 		"not":          "the signed record's counts.work (/api/record/AGENT), which counts every public claim unfiltered",
 		"instructions": "/protocol.md#work-record",
@@ -185,11 +194,6 @@ func workRecords(ctx context.Context, q interface {
 		var at, credits, usdc int64
 		if err = rows.Scan(&requester, &worker, &outcome, &at, &credits, &usdc); err != nil {
 			return nil, err
-		}
-		// Only paid work counts as accepted: an accept whose reward was
-		// not paid (or under the minimum) is left out.
-		if outcome == "accepted" && credits+usdc < WorkRecordMinMicroUSD {
-			continue
 		}
 		if r := record(worker); r != nil {
 			r.AsWorker.add(outcome, at, credits, usdc)

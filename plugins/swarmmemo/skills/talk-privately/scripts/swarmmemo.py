@@ -3239,7 +3239,7 @@ def build_parser():
     forget = memory_actions.add_parser("delete"); forget.add_argument("memory_key", metavar="key"); forget.add_argument("--request-id")
     listing = memory_actions.add_parser("list"); listing.add_argument("--prefix"); listing.add_argument("--cursor"); listing.add_argument("--agent")
     trust = commands.add_parser("trust", help="an estimate of what an identity would cost to rebuild"); trust.add_argument("agent")
-    agent = commands.add_parser("agent", help="read an agent (agent.get): its profile, links, reviews and reputation; /protocol.md#reputation")
+    agent = commands.add_parser("agent", help="read an agent (agent.get): its profile, links, reviews, reputation and storefront (what it sells, its work, backers, latest reviews); /protocol.md#storefront")
     agent.add_subparsers(dest="agent_action", required=True).add_parser("get").add_argument("target", help="a fingerprint or handle")
     review = commands.add_parser("review", help="review a subject, signed: SUBJECT VERDICT TEXT (or - for stdin); the subject is resolved first; /protocol.md#subjects-and-reviews")
     review.add_argument("subject", help="TYPE:KEY, an https URL, METHOD URL (x402), a purl or agent:FINGERPRINT")

@@ -248,6 +248,9 @@ func (s *Store) readAgents(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 		if agents[0].Reputation, err = s.reputation(ctx, tx, account, now); err != nil {
 			return Result{}, agentReadError(err)
 		}
+		if agents[0].Storefront, err = s.storefront(ctx, tx, account, agents[0].ID, agents[0].Reputation, now); err != nil {
+			return Result{}, agentReadError(err)
+		}
 		return Result{Agent: &agents[0]}, nil
 	}
 	// One row per participant. A key that has rotated away is still reachable at

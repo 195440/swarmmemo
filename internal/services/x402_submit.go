@@ -33,6 +33,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -100,16 +101,17 @@ var ErrX402Off = refusal("x402_listing_off")
 
 // The refusals of a submission beyond the normaliser's (x402_bazaar.go).
 var (
-	errX402Target      = refusal("x402_listing_target")       // not METHOD https://URL
-	errX402Unowned     = refusal("x402_listing_unowned")      // neither a domain link nor the challenge's wallets
-	errX402Unreachable = refusal("x402_listing_unreachable")  // no answer
-	errX402NoChallenge = refusal("x402_listing_no_challenge") // an answer other than an x402 402
-	errX402Denied      = refusal("x402_listing_denied")       // the denylist
-	errX402Pinned      = refusal("x402_listing_pinned")       // already in the operator's allowlist
-	errX402Caps        = refusal("x402_listing_caps")         // caps full of vetted or submitted entries, or the submitted share
-	errX402NotListed   = refusal("x402_listing_not_found")    // nothing submitted at that METHOD URL
-	errX402Category    = refusal("x402_listing_category")     // not a catalogue category
-	errX402Summary     = refusal("x402_listing_summary")      // too long, or not one line of text
+	errX402Target      = refusal("x402_listing_target")        // not METHOD https://URL
+	errX402Template    = refusal("x402_listing_path_template") // a {name} template in the path
+	errX402Unowned     = refusal("x402_listing_unowned")       // neither a domain link nor the challenge's wallets
+	errX402Unreachable = refusal("x402_listing_unreachable")   // no answer
+	errX402NoChallenge = refusal("x402_listing_no_challenge")  // an answer other than an x402 402
+	errX402Denied      = refusal("x402_listing_denied")        // the denylist
+	errX402Pinned      = refusal("x402_listing_pinned")        // already in the operator's allowlist
+	errX402Caps        = refusal("x402_listing_caps")          // caps full of vetted or submitted entries, or the submitted share
+	errX402NotListed   = refusal("x402_listing_not_found")     // nothing submitted at that METHOD URL
+	errX402Category    = refusal("x402_listing_category")      // not a catalogue category
+	errX402Summary     = refusal("x402_listing_summary")       // too long, or not one line of text
 )
 
 // X402Submission is one x402.submit: the submitter's account, the
@@ -136,10 +138,51 @@ func ParseX402Target(target string) (method, rawURL string, err error) {
 	return method, rawURL, nil
 }
 
+// x402PathTemplate reports whether raw's path holds a template such as
+// /ares/{ico}, literal or percent-escaped (%7B, %7D). The relay calls a
+// listing's URL as listed, filling query parameters only, so such a path
+// is never callable: a submission is refused, a crawled item is not
+// admitted, and a row already stored is marked stale (staleTemplated).
+func x402PathTemplate(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && strings.ContainsAny(u.Path, "{}")
+}
+
+// staleTemplated marks every catalogue row whose URL has a path template
+// stale (last_seen 0, as an unseen row becomes), never deleting it: rows
+// stored before such paths were refused. The SQL only narrows the rows;
+// x402PathTemplate decides.
+func (x *x402) staleTemplated(ctx context.Context) (int, error) {
+	type row struct{ id, url, source string }
+	rows, err := queryAll(ctx, x.db, func(q *sql.Rows) (row, error) {
+		var v row
+		return v, q.Scan(&v.id, &v.url, &v.source)
+	}, `SELECT id,url,source FROM x402_catalogue WHERE last_seen<>0 AND (instr(url,'{')>0 OR instr(url,'}')>0 OR instr(upper(url),'%7B')>0 OR instr(upper(url),'%7D')>0)`)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, v := range rows {
+		if !x402PathTemplate(v.url) {
+			continue
+		}
+		if _, err = x.db.ExecContext(ctx, "UPDATE x402_catalogue SET last_seen=0 WHERE id=? AND source=?", v.id, v.source); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
+}
+
 // CheckX402Submission checks a submission's own text before anything is
-// fetched: a summary of at most X402SummaryBytes on one line, a category
-// the catalogue names.
+// fetched: a concrete path (no template, x402PathTemplate), a summary of
+// at most X402SummaryBytes on one line, a category the catalogue names.
+// A withdrawal is never checked here: a listing stored with a template can
+// still be withdrawn.
 func CheckX402Submission(s X402Submission) error {
+	if x402PathTemplate(s.URL) {
+		return errX402Template
+	}
 	if len(s.Summary) > X402SummaryBytes || strings.ContainsAny(s.Summary, "\r\n") || cleanUntrusted(s.Summary, X402SummaryBytes) != strings.Join(strings.Fields(s.Summary), " ") {
 		return errX402Summary
 	}
@@ -407,10 +450,16 @@ func (x *x402) reprobeSubmitted(ctx context.Context, now int64) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	n := 0
+	n, err := x.staleTemplated(ctx)
+	if err != nil {
+		return n, err
+	}
 	for _, v := range rows {
 		if ctx.Err() != nil {
 			break
+		}
+		if x402PathTemplate(v.url) {
+			continue // marked stale above, never probed
 		}
 		r, payTos, err := x.probe(ctx, v.method, v.url)
 		if err != nil {

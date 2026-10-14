@@ -104,6 +104,8 @@ func (s *Server) capabilitiesWith(catalog []services.Entry) map[string]any {
 	caps["work_coordination"].(map[string]any)["work_record"] = board.WorkRecordCapabilities()
 	// C304: one reputation in three visible parts, shown and never ranked.
 	caps["reputation"] = board.ReputationCapabilities()
+	// C305: the agent profile as a shop, on agent.get and the agent page.
+	caps["storefront"] = board.StorefrontCapabilities()
 	if s.cfg.Features.WorkRejectFee {
 		// C119: an optional reject fee; absent while WORK_REJECT_FEE is off.
 		caps["work_coordination"].(map[string]any)["reject_fee"] = map[string]any{

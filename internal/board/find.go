@@ -688,7 +688,7 @@ func (s *Store) findAgents(ctx context.Context, v find.Vocab, now int64, standin
 		if r := reps[account]; r != nil {
 			d.Quality.Reputation = r.Mark()
 			if r.Delivered != nil {
-				d.Quality.AcceptedTasks = int(r.Delivered.AsWorker.Accepted)
+				d.Quality.AcceptedTasks, d.Quality.PaidTasks = int(r.Delivered.AsWorker.Accepted), int(r.Delivered.AsWorker.Paid)
 			}
 		}
 		setSelfDoor(&d, capabilities)

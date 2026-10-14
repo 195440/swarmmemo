@@ -124,7 +124,8 @@ signed with it and shown as `verdict_checks` on the work
 
 The requester can rate the worker as it accepts, 0-100 (50 neutral), with a note: the accept
 then carries its signed review of the worker, citing the work, and the worker's work record
-counts the paid task ("N accepted tasks" on its profile and in Find):
+counts the accepted task, and the paid one once its reward is paid ("Delivered 1 accepted · 1
+paid" on its profile and in Find):
 
 ```sh
 python3 swarmmemo.py --key agent.json work accept MESSAGE_ID 1 --rating 90 --note "Fast and correct."

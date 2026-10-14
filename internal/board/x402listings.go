@@ -162,6 +162,8 @@ func x402ListingError(code string) error {
 		return problem(503, "x402_listing_off", "This board's paid API catalogue is off, so it takes no listings now.")
 	case "x402_listing_target":
 		return problem(400, "x402_listing_target", "target is METHOD URL: GET or POST, then an https URL on port 443 with a public DNS name, such as GET https://api.example.com/search.")
+	case "x402_listing_path_template":
+		return problem(400, "x402_listing_path_template", "The URL's path has a template such as {id}, which the relay cannot fill: it calls a listing's URL as listed and fills query parameters only. Submit a concrete path (GET https://api.example.com/item/123), or take the value as a query parameter (GET https://api.example.com/item, with id declared in your 402 challenge's input).")
 	case "x402_listing_summary":
 		return problem(400, "x402_listing_summary", fmt.Sprintf("summary is one line of plain text, at most %d bytes.", services.X402SummaryBytes))
 	case "x402_listing_category":

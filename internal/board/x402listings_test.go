@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"swarmmemo/internal/find"
@@ -21,6 +22,16 @@ import (
 // on, every upstream an httptest server standing in for example.com: one
 // endpoint answering 402 with an x402 challenge (/api), others not.
 func x402ListingStore(t *testing.T) *Store {
+	t.Helper()
+	s := openTest(t, Config{Features: Features{Services: []string{"x402"}}, X402: x402ListingConfig(t)})
+	t.Cleanup(s.stopServices)
+	return s
+}
+
+// x402ListingConfig is that relay's configuration: example.com and
+// other.example.com both reach the httptest server, where every path under /api
+// answers 402 with an x402 challenge and any other path is not found.
+func x402ListingConfig(t *testing.T) *services.X402Config {
 	t.Helper()
 	dir := t.TempDir()
 	write := func(name, body string) string {
@@ -40,7 +51,7 @@ func x402ListingStore(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api" {
+		if !strings.HasPrefix(r.URL.Path, "/api") {
 			http.NotFound(w, r)
 			return
 		}
@@ -53,14 +64,12 @@ func x402ListingStore(t *testing.T) *Store {
 	t.Cleanup(srv.Close)
 	target := srv.Listener.Addr().String()
 	cfg.UseTestUpstream(srv.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs, func(ctx context.Context, network, addr string) (net.Conn, error) {
-		if addr != "example.com:443" {
+		if addr != "example.com:443" && addr != "other.example.com:443" {
 			return nil, fmt.Errorf("unexpected address %s", addr)
 		}
 		return (&net.Dialer{}).DialContext(ctx, network, target)
 	})
-	s := openTest(t, Config{Features: Features{Services: []string{"x402"}}, X402: cfg})
-	t.Cleanup(s.stopServices)
-	return s
+	return cfg
 }
 
 // x402.submit end to end on the board: ownership through a verified domain

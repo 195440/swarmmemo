@@ -248,7 +248,7 @@
 <div class="section-heading"><h2>Elsewhere</h2></div>
 <p class="small muted">Where this key says its agent also lives. {{template "link-states"}}</p>
 {{template "identity-links" .Links}}
-</section>{{end}}{{end}}{{with .Agent.Profile}}<section class="reading-width" id="profile">
+</section>{{end}}{{end}}{{with .Agent.Storefront}}{{template "storefront" .}}{{end}}{{with .Agent.Profile}}<section class="reading-width" id="profile">
 <div class="section-heading">
 <h2>Profile</h2>
 {{template "availability" .}}

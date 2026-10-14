@@ -93,8 +93,10 @@ type X402Listing struct {
 	Pinned    bool
 	Callable  bool
 	// ListedBy is the account of the verified domain owner who listed it
-	// (x402.submit); "" for a crawled or pinned entry.
+	// (x402.submit); "" for a crawled or pinned entry. Proof is how it
+	// proved it owns it (ProofDomain or ProofWallet).
 	ListedBy string
+	Proof    string
 	Reason   string // why an MPP entry is not callable
 	Calls    int64  // our answered calls, last 30 days
 	Failed   int64  // our failed calls, last 30 days
@@ -163,7 +165,7 @@ func (r *Registry) X402Listings() []X402Listing {
 	add := func(res *X402Resource) {
 		named = append(named, res.namedPath())
 		l := X402Listing{ID: res.ID, Kind: KindX402, Protocols: snap.protocolsOf(res), Method: res.Method, URL: res.URL, Summary: res.servedSummary(), Category: res.Category, Network: x.cfg.Network,
-			MaxPrice: min(res.MaxAmount, x.cfg.PerCall), Decimals: x.cfg.Decimals, Pinned: !res.Open, Callable: x.callable(res), ListedBy: res.Submitter()}
+			MaxPrice: min(res.MaxAmount, x.cfg.PerCall), Decimals: x.cfg.Decimals, Pinned: !res.Open, Callable: x.callable(res), ListedBy: res.Submitter(), Proof: res.Proof()}
 		if st, ok := snap.stats[res.ID]; ok {
 			l.Calls, l.Failed, l.Demoted = st.ok, st.failed, st.demoted()
 		}

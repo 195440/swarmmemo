@@ -511,3 +511,56 @@ func TestSubmitVettedCapRefuses(t *testing.T) {
 		t.Fatal("refused, yet listed")
 	}
 }
+
+// A path template (C314): the relay calls a listing's URL as listed and
+// fills query parameters only, so /ares/{ico} is never callable. A
+// submission is refused before any probe, literal or escaped; withdrawing
+// still parses; a crawled item with one is not admitted; and a row stored
+// before the refusal is marked stale at the refresh (last_seen 0, kept),
+// never probed and never listed.
+func TestSubmitPathTemplate(t *testing.T) {
+	tmpl, concrete := newChallenge("company registry", 1000), newChallenge("company registry", 1000)
+	h, x := submitHarness(t, map[string]http.Handler{"/ares/{ico}": tmpl, "/ares/27074358": concrete})
+	for _, u := range []string{"https://example.com/ares/{ico}", "https://example.com/ares/%7Bico%7D", "https://example.com/ares/%7bico%7d", "https://example.com/ares/x}"} {
+		if _, err := h.submit(X402Submission{URL: u}); errCode(err) != "x402_listing_path_template" {
+			t.Errorf("%s: %v, want x402_listing_path_template", u, err)
+		}
+	}
+	if tmpl.hits != 0 {
+		t.Fatalf("a templated path was probed %d times", tmpl.hits)
+	}
+	if _, _, err := ParseX402Target("GET https://example.com/ares/{ico}"); err != nil {
+		t.Fatalf("withdrawing a templated listing must still parse: %v", err)
+	}
+	if !x402PathTemplate("https://example.com/a/%7Bb%7D") || x402PathTemplate("https://example.com/ares/27074358?q={x}") || x402PathTemplate("https://example.com/") {
+		t.Fatal("x402PathTemplate reads the path only, escaped or not")
+	}
+	item := bazaarItemJSON("https://example.com/ares/{ico}", "GET", 1000, testPayTo, "eip155:8453", "company registry", "")
+	if _, _, ok := bazaarResource(json.RawMessage(item), x.cfg, min(x.cfg.Catalogue.MaxPrice, x.cfg.PerCall)); ok {
+		t.Fatal("a crawled item with a path template was admitted")
+	}
+
+	// A row stored before the refusal, as the live one was.
+	if _, err := h.submit(X402Submission{URL: "https://example.com/ares/27074358"}); err != nil {
+		t.Fatal(err)
+	}
+	id := openIDFor("/ares/27074358", "GET")
+	if _, err := h.db.Exec("UPDATE x402_catalogue SET url='https://example.com/ares/%7Bico%7D' WHERE id=?", id); err != nil {
+		t.Fatal(err)
+	}
+	concrete.hits = 0
+	h.now += 3600
+	if _, err := x.reprobeSubmitted(context.Background(), h.now); err != nil {
+		t.Fatal(err)
+	}
+	var lastSeen int64
+	if err := h.db.QueryRow("SELECT last_seen FROM x402_catalogue WHERE id=?", id).Scan(&lastSeen); err != nil || lastSeen != 0 {
+		t.Fatalf("the templated row is kept and marked stale: last_seen %d, %v", lastSeen, err)
+	}
+	if _, ok := x.cat.snap.Load().byID[id]; ok {
+		t.Fatal("a templated row is still listed")
+	}
+	if tmpl.hits != 0 || concrete.hits != 0 {
+		t.Fatalf("the refresh probed a templated row: %d %d", tmpl.hits, concrete.hits)
+	}
+}

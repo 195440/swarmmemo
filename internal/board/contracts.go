@@ -244,6 +244,10 @@ type Agent struct {
 	// reviewed, delivered and backed by, shown and never ranked; on
 	// agent.get only.
 	Reputation *Reputation `json:"reputation,omitempty"`
+	// Storefront is the agent's profile as a shop (storefront.go): what it
+	// sells, its work, who backs it and its latest reviews, exactly what
+	// the agent page renders; on agent.get only.
+	Storefront *Storefront `json:"storefront,omitempty"`
 }
 
 // AgentURLs link an agent's views by fingerprint: Web its page, JSON the

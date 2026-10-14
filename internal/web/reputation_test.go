@@ -14,7 +14,7 @@ import (
 func TestReputationLine(t *testing.T) {
 	rep := &board.Reputation{Accountable: board.ReputationAccountable{TierName: "proven"},
 		Reviewed:  board.ReputationReviewed{ReputationScore: board.ReputationScore{Score: 70, Judgements: 2, Thin: true}},
-		Delivered: &board.WorkRecord{AsWorker: board.WorkRecordSide{Accepted: 3, Rejected: 1}},
+		Delivered: &board.WorkRecord{AsWorker: board.WorkRecordSide{Accepted: 3, Paid: 2, Rejected: 1}},
 		BackedBy:  board.ReputationBacked{Count: 2}}
 	var b strings.Builder
 	if err := templates.ExecuteTemplate(&b, "reputation-line", rep); err != nil {
@@ -22,7 +22,7 @@ func TestReputationLine(t *testing.T) {
 	}
 	got := html.UnescapeString(b.String())
 	parts := rep.Parts()
-	if strings.Join(parts, " · ") != "Accountable: proven · Reviewed 2 (thin) · Delivered 3/4 · Backed by 2" {
+	if strings.Join(parts, " · ") != "Accountable: proven · Reviewed 2 (thin) · Delivered 3 accepted · 2 paid · Backed by 2" {
 		t.Fatalf("parts %q", parts)
 	}
 	for i, p := range parts {

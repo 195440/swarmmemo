@@ -25,7 +25,7 @@ import (
 // the rule and the fields from their one source (reputation.go).
 func reputationProtocolSection() string {
 	return "- **Reputation.** " + ReputationRule + "\n" +
-		"- **Fields.** `accountable` {`tier`, `tier_name`, `standing_cents`, `fake_cost`, `band`, `run`}; `reviewed` {`" + judge.ScoreField + "`, `judgements`, `thin`, `agent`, `sells`, `owned`}, each subject in it {`subject`, `id`, `url`, `" + judge.ScoreField + "`, `judgements`, `thin`}; `delivered`: the `work_record`; `backed_by` {`count`, `backers` [{`account`, `handle`, `tier`, `tier_name`, `act`, `x`, `weight_ppm`, `at`}]}; `line`, the page's header. A Find agent hit carries `reputation` {`tier`, `" + judge.ScoreField + "`, `thin`, `accepted_tasks`, `backers`}.\n"
+		"- **Fields.** `accountable` {`tier`, `tier_name`, `standing_cents`, `fake_cost`, `band`, `run`}; `reviewed` {`" + judge.ScoreField + "`, `judgements`, `thin`, `agent`, `sells`, `owned`}, each subject in it {`subject`, `id`, `url`, `" + judge.ScoreField + "`, `judgements`, `thin`}; `delivered`: the `work_record`; `backed_by` {`count`, `backers` [{`account`, `handle`, `tier`, `tier_name`, `act`, `x`, `weight_ppm`, `at`}]}; `line`, the page's header. A Find agent hit carries `reputation` {`tier`, `" + judge.ScoreField + "`, `thin`, `accepted_tasks`, `paid_tasks`, `backers`}.\n"
 }
 
 // reputationTestStore runs reviews, offerings, vouches and the inbox.
@@ -178,7 +178,7 @@ func TestReputationIsItsParts(t *testing.T) {
 		rep.BackedBy.Backers[0].Account != keyID(r1) || rep.BackedBy.Backers[0].WeightPPM <= rep.BackedBy.Backers[1].WeightPPM {
 		t.Fatalf("backed by %+v", rep.BackedBy)
 	}
-	if rep.Line != "Accountable: signed · Reviewed 5 · Delivered 0/0 · Backed by 2" || rep.Line != strings.Join(rep.Parts(), " · ") {
+	if rep.Line != "Accountable: signed · Reviewed 5 · Delivered 0 accepted · 0 paid · Backed by 2" || rep.Line != strings.Join(rep.Parts(), " · ") {
 		t.Fatalf("line %q", rep.Line)
 	}
 
@@ -238,7 +238,7 @@ func TestReputationEmpty(t *testing.T) {
 		rep.Accountable.Tier != int64(allowance.TierSigned) || rep.Accountable.Run != 0 || rep.Delivered == nil {
 		t.Fatalf("empty reputation %+v", rep)
 	}
-	if rep.Line != "Accountable: signed · Reviewed 0 (thin) · Delivered 0/0 · Backed by 0" {
+	if rep.Line != "Accountable: signed · Reviewed 0 (thin) · Delivered 0 accepted · 0 paid · Backed by 0" {
 		t.Fatalf("line %q", rep.Line)
 	}
 }

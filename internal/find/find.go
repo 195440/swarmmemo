@@ -177,9 +177,11 @@ type Quality struct {
 	ReviewWeight float64
 	// Standing is an agent's tier name (trusted, proven, signed), or "".
 	Standing string
-	// AcceptedTasks is an agent's paid work accepted as worker, from its
-	// work record (the board's workRecords); shown, never ranked.
+	// AcceptedTasks and PaidTasks are an agent's public work accepted as
+	// worker and, of it, the work whose reward was paid, from its work
+	// record (the board's workRecords); shown, never ranked.
 	AcceptedTasks int
+	PaidTasks     int
 	// Reputation is an agent's compact reputation (the board's Reputation);
 	// shown, never ranked.
 	Reputation *ReputationMark
@@ -265,11 +267,14 @@ type Hit struct {
 	Lab         *LabMark `json:"lab,omitempty"`
 	Reviews     *Reviews `json:"reviews,omitempty"`
 	Standing    string   `json:"standing,omitempty"`
-	// AcceptedTasks is an agent's paid work accepted as worker (its
-	// work_record's as_worker.accepted on agent.get).
+	// AcceptedTasks and PaidTasks are an agent's public work accepted as
+	// worker and, of it, paid (its work_record's as_worker.accepted and
+	// as_worker.paid on agent.get).
 	AcceptedTasks int `json:"accepted_tasks,omitempty"`
+	PaidTasks     int `json:"paid_tasks,omitempty"`
 	// Reputation is an agent's compact reputation (reputation on agent.get):
-	// tier, score, thin, accepted_tasks, backers. Shown, never ranked.
+	// tier, score, thin, accepted_tasks, paid_tasks, backers. Shown, never
+	// ranked.
 	Reputation *ReputationMark `json:"reputation,omitempty"`
 	Door       *DoorMark       `json:"door,omitempty"`
 	Why        string          `json:"why"`

@@ -170,7 +170,7 @@ func countsLine(a board.ReviewAggregate) (string, string) {
 }
 
 // workRecordLine is a subject.get answer's work record in its one phrase
-// (board.WorkRecord.Line): an agent's paid accepted tasks; "" otherwise.
+// (board.WorkRecord.Line): an agent's accepted and paid tasks; "" otherwise.
 func workRecordLine(res board.Result) string {
 	r, _ := res.Data["work_record"].(*board.WorkRecord)
 	return r.Line()

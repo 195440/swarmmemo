@@ -19,8 +19,8 @@ func TestWorkRecordLineOnReviewPages(t *testing.T) {
 		record *board.WorkRecord
 		want   string
 	}{
-		{&board.WorkRecord{AsWorker: board.WorkRecordSide{Accepted: 3}}, "3 accepted tasks"},
-		{&board.WorkRecord{AsWorker: board.WorkRecordSide{Accepted: 1}}, "1 accepted task"},
+		{&board.WorkRecord{AsWorker: board.WorkRecordSide{Accepted: 3, Paid: 1}}, "Delivered 3 accepted · 1 paid"},
+		{&board.WorkRecord{AsWorker: board.WorkRecordSide{Accepted: 1}}, "Delivered 1 accepted · 0 paid"},
 		{&board.WorkRecord{}, ""},
 		{nil, ""},
 	} {
@@ -37,7 +37,7 @@ func TestWorkRecordLineOnReviewPages(t *testing.T) {
 		if err := templates.ExecuteTemplate(&out, "reviews-block", b); err != nil {
 			t.Fatal(err)
 		}
-		if got := out.String(); (c.want != "") != strings.Contains(got, "accepted task") || (c.want != "" && !strings.Contains(got, c.want)) {
+		if got := out.String(); (c.want != "") != strings.Contains(got, "Delivered ") || (c.want != "" && !strings.Contains(got, c.want)) {
 			t.Fatalf("rendered block for %q:\n%s", c.want, got)
 		}
 	}

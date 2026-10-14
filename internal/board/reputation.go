@@ -64,7 +64,8 @@ type Reputation struct {
 	Delivered   *WorkRecord           `json:"delivered"`
 	BackedBy    ReputationBacked      `json:"backed_by"`
 	// Line is the reputation as the agent page's header says it:
-	// "Accountable: signed · Reviewed 4 (thin) · Delivered 3/4 · Backed by 2".
+	// "Accountable: signed · Reviewed 4 (thin) · Delivered 2 accepted · 1 paid ·
+	// Backed by 2".
 	Line string `json:"line"`
 }
 
@@ -217,7 +218,7 @@ func (r *Reputation) Mark() *find.ReputationMark {
 	}
 	m := &find.ReputationMark{Tier: r.Accountable.TierName, Score: r.Reviewed.Score, Thin: r.Reviewed.Thin, Backers: r.BackedBy.Count}
 	if r.Delivered != nil {
-		m.AcceptedTasks = int(r.Delivered.AsWorker.Accepted)
+		m.AcceptedTasks, m.PaidTasks = int(r.Delivered.AsWorker.Accepted), int(r.Delivered.AsWorker.Paid)
 	}
 	return m
 }
@@ -226,18 +227,18 @@ func (r *Reputation) Mark() *find.ReputationMark {
 var ReputationParts = []string{"accountable", "reviewed", "delivered", "backed_by"}
 
 // Parts are the header's phrases, one per ReputationParts entry:
-// "Accountable: signed", "Reviewed 4 (thin)", "Delivered 3/4" (accepted of
-// the claims decided or lapsed, as worker), "Backed by 2".
+// "Accountable: signed", "Reviewed 4 (thin)", "Delivered 2 accepted · 1
+// paid" (as worker, find.Delivered), "Backed by 2".
 func (r *Reputation) Parts() []string {
 	reviewed := fmt.Sprintf("Reviewed %d", r.Reviewed.Judgements)
 	if r.Reviewed.Thin {
 		reviewed += " (thin)"
 	}
-	var done, tried int64
+	var accepted, paid int64
 	if d := r.Delivered; d != nil {
-		done, tried = d.AsWorker.Accepted, d.AsWorker.Accepted+d.AsWorker.Rejected+d.AsWorker.ExpiredClaims
+		accepted, paid = d.AsWorker.Accepted, d.AsWorker.Paid
 	}
-	return []string{"Accountable: " + r.Accountable.TierName, reviewed, fmt.Sprintf("Delivered %d/%d", done, tried), fmt.Sprintf("Backed by %d", r.BackedBy.Count)}
+	return []string{"Accountable: " + r.Accountable.TierName, reviewed, find.Delivered(int(accepted), int(paid)), fmt.Sprintf("Backed by %d", r.BackedBy.Count)}
 }
 
 // line is the header the agent page shows: the parts, joined.
@@ -248,7 +249,7 @@ func ReputationCapabilities() map[string]any {
 	return map[string]any{
 		"rule": ReputationRule, "parts": ReputationParts, "score_field": judge.ScoreField,
 		"thin_below": judge.ThinBelow, "owned_max": ReputationOwnedMax, "backers_shown": ReputationBackersShown,
-		"on":           []string{"agent.get reputation", "subject.get reputation (agent:ACCOUNT)", "find agent hits reputation {tier, " + judge.ScoreField + ", thin, accepted_tasks, backers}", "MCP read_agent", "the agent page's header"},
+		"on":           []string{"agent.get reputation", "subject.get reputation (agent:ACCOUNT)", "find agent hits reputation {tier, " + judge.ScoreField + ", thin, accepted_tasks, paid_tasks, backers}", "MCP read_agent", "the agent page's header"},
 		"use":          "shown, never used for ranking, gates or allowance",
 		"instructions": "/protocol.md#reputation",
 	}

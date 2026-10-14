@@ -16,7 +16,8 @@ import (
 
 // Accepted work as reputation (C300) on the real store, ledger and reviews
 // core: the work record counts accepted (paid), rejected and expired claims
-// on both sides and leaves out tiny rewards, linked keys, one trust root and
+// on both sides (an accept counts at once, paid only once its reward is)
+// and leaves out tiny rewards, linked keys, one trust root and
 // two operator accounts; a rated accept posts exactly one real review
 // through post, with verified work evidence, idempotent on a retry; and
 // agent.get, subject.get, subject.resolve and Find show the one function's
@@ -179,20 +180,27 @@ func TestWorkRecordAndRatedAccept(t *testing.T) {
 	}
 	e := create(op1, reward)
 	acceptWork(t, s, op1, e, claimAndSubmit(t, s, op2, e, "lobby"))
+	// F: w1's accept whose credit reward is still on hold: accepted, not
+	// yet paid (its rating would already show under Backed by).
+	f := create(owner, reward)
+	acceptWork(t, s, owner, f, claimAndSubmit(t, s, w1, f, "lobby"))
+	if _, err := s.db.Exec("UPDATE work_rewards SET state='held' WHERE work_id=?", f); err != nil {
+		t.Fatal(err)
+	}
 
 	records, err := workRecords(testContext, s.db, nil, s.now().Unix())
 	if err != nil {
 		t.Fatal(err)
 	}
 	w1Rec := records[worker1]
-	if w1Rec == nil || w1Rec.AsWorker.Accepted != 1 || w1Rec.AsWorker.Rejected != 1 || w1Rec.AsWorker.ExpiredClaims != 0 ||
+	if w1Rec == nil || w1Rec.AsWorker.Accepted != 2 || w1Rec.AsWorker.Paid != 1 || w1Rec.AsWorker.Rejected != 1 || w1Rec.AsWorker.ExpiredClaims != 0 ||
 		w1Rec.AsWorker.PaidCredits != reward || w1Rec.AsWorker.PaidUSDC != "0" || w1Rec.AsWorker.LastAcceptedAt != testTime+700 {
 		t.Fatalf("w1's record %+v", w1Rec)
 	}
 	if r := records[worker2]; r == nil || r.AsWorker != (WorkRecordSide{ExpiredClaims: 1, PaidUSDC: "0"}) {
 		t.Fatalf("w2's record %+v", r)
 	}
-	if r := records[requester]; r == nil || r.AsRequester.Accepted != 1 || r.AsRequester.Rejected != 1 || r.AsRequester.ExpiredClaims != 1 || r.AsRequester.PaidCredits != reward {
+	if r := records[requester]; r == nil || r.AsRequester.Accepted != 2 || r.AsRequester.Paid != 1 || r.AsRequester.Rejected != 1 || r.AsRequester.ExpiredClaims != 1 || r.AsRequester.PaidCredits != reward {
 		t.Fatalf("the requester's record %+v", r)
 	}
 	for name, k := range map[string]ed25519.PrivateKey{"puppet": puppet, "rootmate": rootmate, "op1": op1, "op2": op2} {
@@ -214,7 +222,7 @@ func TestWorkRecordAndRatedAccept(t *testing.T) {
 	if !reflect.DeepEqual(resolved.WorkRecord, want) || resolved.Reviews != 1 {
 		t.Fatalf("subject.resolve %+v", resolved)
 	}
-	if want.Line() != "1 accepted task" {
+	if want.Line() != "Delivered 2 accepted · 1 paid" {
 		t.Fatalf("line %q", want.Line())
 	}
 	var hit *find.Hit
@@ -223,7 +231,7 @@ func TestWorkRecordAndRatedAccept(t *testing.T) {
 			hit = &h
 		}
 	}
-	if hit == nil || hit.AcceptedTasks != int(want.AsWorker.Accepted) || !strings.Contains(hit.Why, want.Line()) {
+	if hit == nil || hit.AcceptedTasks != int(want.AsWorker.Accepted) || hit.PaidTasks != int(want.AsWorker.Paid) || !strings.Contains(hit.Why, want.Line()) {
 		t.Fatalf("find hit %+v", hit)
 	}
 }

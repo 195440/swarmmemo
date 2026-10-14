@@ -61,6 +61,7 @@ func quality(d *Doc, door bool, now time.Time) (float64, map[string]any) {
 	}
 	if qd.AcceptedTasks > 0 {
 		parts["accepted_tasks"] = qd.AcceptedTasks // shown, never weighed
+		parts["paid_tasks"] = qd.PaidTasks
 	}
 	switch qd.State {
 	case "up":
@@ -265,7 +266,7 @@ func (s scored) hit(explain bool) Hit {
 	d := s.doc
 	h := Hit{Type: d.Type, Kind: d.Kind, ID: d.ID, Name: d.Name, Description: d.Description, Category: d.Category, URL: d.URL,
 		PriceText: d.PriceText, Network: d.Network, Output: d.Output, Protocols: d.Protocols, SubjectID: d.SubjectID, ReviewURL: d.Review, Also: d.Also, State: d.Quality.State,
-		Standing: d.Quality.Standing, AcceptedTasks: d.Quality.AcceptedTasks, Reputation: d.Quality.Reputation, Untrusted: d.Untrusted, ListedBy: d.ListedBy, Score: round4(s.score)}
+		Standing: d.Quality.Standing, AcceptedTasks: d.Quality.AcceptedTasks, PaidTasks: d.Quality.PaidTasks, Reputation: d.Quality.Reputation, Untrusted: d.Untrusted, ListedBy: d.ListedBy, Score: round4(s.score)}
 	if h.Category == "other" {
 		h.Category = ""
 	}
@@ -360,8 +361,8 @@ func (s scored) why() string {
 	if q.Standing != "" {
 		parts = append(parts, q.Standing+" standing")
 	}
-	if w := AcceptedTasks(q.AcceptedTasks); w != "" {
-		parts = append(parts, w)
+	if q.AcceptedTasks > 0 {
+		parts = append(parts, Delivered(q.AcceptedTasks, q.PaidTasks))
 	}
 	if w := doorWhy(d, s.now); w != "" {
 		parts = append(parts, w)
@@ -380,17 +381,12 @@ func (s scored) why() string {
 	return strings.Join(parts, " · ")
 }
 
-// AcceptedTasks says an agent's accepted paid tasks in a phrase, "3
-// accepted tasks"; "" for none. A hit's why and the board's pages say it
-// from here.
-func AcceptedTasks(n int) string {
-	switch {
-	case n <= 0:
-		return ""
-	case n == 1:
-		return "1 accepted task"
-	}
-	return fmt.Sprintf("%d accepted tasks", n)
+// Delivered says an agent's work record as worker in one phrase,
+// "Delivered 2 accepted · 1 paid": every accept counted, and those whose
+// reward was paid. The reputation header, a hit's why and the board's
+// pages say it from here.
+func Delivered(accepted, paid int) string {
+	return fmt.Sprintf("Delivered %d accepted · %d paid", accepted, paid)
 }
 
 // ReviewWord is the word for a community aggregate, given its verdict mean
