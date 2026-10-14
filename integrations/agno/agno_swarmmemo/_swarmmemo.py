@@ -327,6 +327,7 @@ CONTRACT = json.loads(r"""
   "votes": {"required":["down","score","up"],"optional":["weight"]},
   "work": {"required":["capabilities","claim_expires_at","created_at","deadline","eligibility","fence","generation","id","requester","requester_author","result_available","room","service_generation","service_id","simulated","state","stored_state","title","updated_at"],"optional":["attempt_grant_id","eligible","eligible_agent","eligible_preview","eligible_reason","reject_fee","request","requester_may_decide_at","requester_record","resolved_from","result_changed_since_submit","result_id","result_sha256","reviewer","reviewer_fee","reward","reward_note","reward_receipt","reward_state","reward_usdc","standing","standing_id","tier","verdict_checks","worker","worker_subject"]},
   "work_standing": {"required":["day_max","open","opened_today","owed","paid","per_agent_day","results","results_until","seats","submitted","tiers","verdict_ttl"],"optional":["usdc_day_max","usdc_per_agent_day"]},
+  "work_standing_tier": {"required":["credits","name"],"optional":["usdc"]},
   "work_transition": {"required":["accepted_at","author","fence","generation","operation","public_key","sequence","signature","signed_payload","state"],"optional":["checks","delegation_id","fallback","note","previous_reviewer","reject_fee","resolved_from","result_sha256","result_sha256_signed","reviewer"]}
  },
  "work_create_data": ["capabilities","day_max","eligibility","generation","per_agent_day","reject_fee","reviewer","reviewer_fee","reward","reward_note","schema","seats","tiers","title","usdc_day_max","usdc_per_agent_day"],
@@ -471,6 +472,54 @@ def list_of(value):
 # works.list kind: every effective work state, or rewarded (open with a reward)
 # and earn (the same, smallest effort first) (tali b9502e26).
 WORK_LIST_KINDS = ENUMS["work_list_kinds"]
+
+# A standing task's work.create fields (/protocol.md#standing-tasks): those of
+# work.create data a standing root's read shows too (seats, per_agent_day,
+# day_max, tiers and the USDC caps), and one tier's.
+WORK_STANDING_CREATE = tuple(name for name in CONTRACT["work_create_data"] if name in struct_fields("work_standing"))
+WORK_STANDING_TIER = CONTRACT["structs"]["work_standing_tier"]
+
+
+def standing_tier(value):
+    """One reward tier of a standing task, as work.create data takes it: a dict
+    {"name","credits"[,"usdc"]}, or the CLI's NAME:CREDITS[:USDC] (bug+fix:500:0.40)."""
+    if isinstance(value, str):
+        name, _, rest = value.partition(":")
+        credits, _, usdc = rest.partition(":")
+        if not credits.isdigit(): raise ValueError("a tier is NAME:CREDITS[:USDC], e.g. bug:500:0.20")
+        value = {"name": name, "credits": int(credits), **({"usdc": usdc} if usdc else {})}
+    if not isinstance(value, dict) or not set(WORK_STANDING_TIER["required"]) <= value.keys() <= struct_fields("work_standing_tier"):
+        raise ValueError("a tier is {name, credits[, usdc]}")
+    if not matches("standing_tier", value["name"]): raise ValueError("a tier name is 1-32 of a-z 0-9 +_.-, starting with a letter or digit")
+    if type(value["credits"]) is not int or not 1 <= value["credits"] <= LIMITS["work_reward_maximum"]: raise ValueError("a tier's credits are whole, at least 1")
+    if "usdc" in value and not isinstance(value["usdc"], str): raise ValueError("a tier's usdc is a decimal string, e.g. 0.20")
+    return {k: value[k] for k in ("name", "credits", "usdc") if k in value}
+
+
+def work_create_data(title, generation, capabilities=(), **fields):
+    """work.create data: title, generation and capabilities, then each of the other
+    fields CONTRACT["work_create_data"] lists that is not None. A standing task adds
+    seats, per_agent_day, day_max, tiers (standing_tier each) and the USDC caps; the
+    server checks how they go together."""
+    unknown = fields.keys() - (set(CONTRACT["work_create_data"]) - {"schema", "generation", "title", "capabilities"})
+    if unknown: raise ValueError("work.create data takes no " + ", ".join(sorted(unknown)))
+    data = {"schema": 1, "generation": generation, "title": title, "capabilities": list_of(capabilities)}
+    data.update((k, v) for k, v in fields.items() if v is not None and k not in WORK_STANDING_CREATE)
+    standing = {k: fields[k] for k in WORK_STANDING_CREATE if fields.get(k) is not None}
+    if standing:
+        seats = standing.get("seats")
+        if type(seats) is not int or not 1 <= seats <= LIMITS["work_standing_seats_maximum"]:
+            raise ValueError(f"a standing task's seats are 1 to {LIMITS['work_standing_seats_maximum']}")
+        if "per_agent_day" in standing and (type(standing["per_agent_day"]) is not int or not 1 <= standing["per_agent_day"] <= seats):
+            raise ValueError("per_agent_day is 1 to seats")
+        if "day_max" in standing and (type(standing["day_max"]) is not int or not 1 <= standing["day_max"] <= LIMITS["work_standing_day_maximum"]):
+            raise ValueError(f"day_max is 1 to {LIMITS['work_standing_day_maximum']}")
+        if "tiers" in standing:
+            tiers = [standing_tier(t) for t in standing["tiers"]]
+            if not 1 <= len(tiers) <= LIMITS["work_standing_tiers_maximum"]: raise ValueError(f"tiers are 1 to {LIMITS['work_standing_tiers_maximum']}")
+            standing["tiers"] = tiers
+        data.update(standing)
+    return data
 
 
 def check_work(event):
@@ -1163,18 +1212,21 @@ class Client:
         return compact(data)
 
     def work_create(self, message_id, reward=None, reviewer=None, reviewer_fee=None, eligibility=None, reward_note=None, ttl=None, generation=None,
-                    *, title, capabilities=(), request_id=None):
+                    *, title, capabilities=(), request_id=None, seats=None, tiers=None, per_agent_day=None, day_max=None,
+                    usdc_per_agent_day=None, usdc_day_max=None):
         """work.create: open your signed request (message_id, kind request) as work. reward, in credits, is
         held in escrow now (transferable credit only, else 409 not_transferable); reviewer, a fingerprint or
         public handle, judges instead of you for reviewer_fee. eligibility and reward_note as on the work;
         ttl is the deadline in seconds. generation defaults to the service's (GET /api/changes?after=-1).
+        seats makes it a standing task (/protocol.md#standing-tasks): many results, each judged and paid on
+        its own, from reward or up to 3 tiers ({"name","credits","usdc"?} or "NAME:CREDITS[:USDC]"), with
+        per_agent_day, day_max and the daily USDC caps usdc_per_agent_day and usdc_day_max (decimal strings).
         The server's own refusals (not_transferable, invalid_work_data) come through unchanged."""
         if generation is None:
             generation = self._request("/api/changes?after=-1")["generation"]
-        data = {"schema": 1, "generation": generation, "title": title, "capabilities": list_of(capabilities)}
-        fields = {"reward": reward, "reviewer": resolve_agent(self, reviewer) if reviewer else None,
-                  "reviewer_fee": reviewer_fee, "eligibility": eligibility, "reward_note": reward_note}
-        data.update({k: v for k, v in fields.items() if v is not None})
+        data = work_create_data(title, generation, capabilities, reward=reward, reviewer=resolve_agent(self, reviewer) if reviewer else None,
+                                reviewer_fee=reviewer_fee, eligibility=eligibility, reward_note=reward_note, seats=seats, tiers=tiers,
+                                per_agent_day=per_agent_day, day_max=day_max, usdc_per_agent_day=usdc_per_agent_day, usdc_day_max=usdc_day_max)
         return self.command("work.create", message_id=message_id, data=compact(data), request_id=request_id or uuid.uuid4().hex,
                             **({"ttl": ttl} if ttl is not None else {}))
 
@@ -2773,6 +2825,13 @@ def add_helper_parsers(commands):
     create.add_argument("--reward", type=int, help="credits held in escrow now"); create.add_argument("--reviewer", help="fingerprint or handle")
     create.add_argument("--reviewer-fee", type=int); create.add_argument("--eligibility"); create.add_argument("--reward-note")
     create.add_argument("--ttl", type=int, help="seconds until the deadline")
+    create.add_argument("--seats", type=int, help="a standing task: results waiting for a verdict at once (/protocol.md#standing-tasks)")
+    create.add_argument("--tier", action="append", type=standing_tier, dest="tiers", metavar="NAME:CREDITS[:USDC]",
+                        help="a standing task's reward tier, up to 3 (bug:300:0.20); the accept names one")
+    create.add_argument("--per-agent-day", type=int, help="results one agent may open a day (default 1)")
+    create.add_argument("--day-max", type=int, help="results a day in all (default seats)")
+    create.add_argument("--usdc-per-agent-day", metavar="USDC", help="USDC one agent may be owed a day")
+    create.add_argument("--usdc-day-max", metavar="USDC", help="USDC owed a day in all")
     claim = work.add_parser("claim", help="work.claim; with --result, also submits that reply"); claim.add_argument("message_id")
     claim.add_argument("--result", metavar="RESULT_ID", help="your reply, already posted: claim and submit in one step")
     claim.add_argument("--ttl", type=int, help="seconds to hold the claim, 60-3600 (default 3600 without --result)")
@@ -2914,7 +2973,8 @@ def run_helper(args, client):
             return client.work(args.message_id, args.agent)
         if action == "create":
             return client.work_create(args.message_id, args.reward, args.reviewer, args.reviewer_fee, args.eligibility, args.reward_note, args.ttl,
-                                      args.generation, title=args.title, capabilities=args.capabilities, request_id=args.request_id)
+                                      args.generation, title=args.title, capabilities=args.capabilities, request_id=args.request_id,
+                                      **{name: getattr(args, name) for name in WORK_STANDING_CREATE})
         if action == "claim":
             return client.work_claim(args.message_id, args.result, args.ttl, args.generation, args.result_sha256, args.request_id, args.payout_address)
         if action == "submit":

@@ -123,16 +123,16 @@ func TestReputationIsItsParts(t *testing.T) {
 	// Reviewed: each subject's score is the reviews core's own aggregate.
 	agentSub, _ := reviews.Canonical(reviews.TypeAgent, account, s.subjectOptions())
 	offering := reviewSubjectOf(t, offeringURI)
-	aggAgent, _, err := communityReviews(testContext, tx, agentSub.ID, now, 0, 0)
+	aggAgent, _, err := s.communityReviews(testContext, tx, agentSub, now, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	aggOffering, _, err := communityReviews(testContext, tx, offering.ID, now, 0, 0)
+	aggOffering, _, err := s.communityReviews(testContext, tx, offering, now, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pa, na, _ := subjectJudgements(testContext, tx, agentSub.ID, now, nil)
-	po, no, _ := subjectJudgements(testContext, tx, offering.ID, now, nil)
+	pa, na, _ := s.subjectJudgements(testContext, tx, agentSub, now)
+	po, no, _ := s.subjectJudgements(testContext, tx, offering, now)
 	work, err := workRecords(testContext, tx, []string{account}, now)
 	if err != nil {
 		t.Fatal(err)
@@ -240,5 +240,159 @@ func TestReputationEmpty(t *testing.T) {
 	}
 	if rep.Line != "Accountable: signed · Reviewed 0 (thin) · Delivered 0/0 · Backed by 0" {
 		t.Fatalf("line %q", rep.Line)
+	}
+}
+
+// C312 drift test: one exclusion (RFC 0020 §3.3, judge.OwnSubject through
+// ownRootReviewers) for every score. With reviews by the owner and by an
+// account of its root on an offering and on the agent subject, subject.get's
+// score_shadow (what /s/ID and the API show), the reputation's per-subject
+// scores and Find's quality all read the same judgements: exactly those
+// left when the own-root reviews are gone. The own-root reviews stay listed,
+// labelled and weightless.
+func TestOwnRootExclusionIsOneRule(t *testing.T) {
+	s := reputationTestStore(t)
+	seller, r1, r2, r3, rootmate := keyFor(170), keyFor(171), keyFor(172), keyFor(173), keyFor(174)
+	provider(t, s, seller, "augur")
+	for _, k := range []ed25519.PrivateKey{r1, r2, r3, rootmate} {
+		register(t, s, k)
+	}
+	seasoned(t, s, seller, r1, r2, r3, rootmate)
+	publish(t, s, seller, listing("forecast", nil))
+	account := keyID(seller)
+	agentURI := "agent:" + account
+	const offeringURI = "x402:POST https://swarmmemo.com/@augur/forecast"
+	trustRows(t, s, map[string][3]any{account: {"domain:augur.example", int64(3), int64(250)}, keyID(rootmate): {"domain:augur.example", int64(3), int64(0)}})
+	for _, uri := range []string{agentURI, offeringURI} {
+		run(t, s, reviewPost(t, r1, uri, map[string]any{"verdict": "good", "dimensions": map[string]int{"good": 70}}, ""))
+		run(t, s, reviewPost(t, r2, uri, map[string]any{"verdict": "mixed"}, ""))
+		run(t, s, reviewPost(t, r3, uri, map[string]any{"verdict": "good", "dimensions": map[string]int{"good": 75}}, ""))
+		run(t, s, reviewPost(t, rootmate, uri, map[string]any{"verdict": "good", "dimensions": map[string]int{"good": 100}}, ""))
+	}
+	run(t, s, reviewPost(t, seller, offeringURI, map[string]any{"verdict": "good", "dimensions": map[string]int{"good": 100}}, ""))
+
+	type surfaces struct {
+		agg     ReviewAggregate
+		points  []judge.Point
+		n       int64
+		quality subjectQuality
+	}
+	read := func(sub reviews.Subject) surfaces {
+		t.Helper()
+		var out surfaces
+		out.agg = readSubjectData(t, s, sub.ID)["aggregate"].(ReviewAggregate)
+		tx, err := s.db.BeginTx(testContext, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out.points, out.n, err = s.subjectJudgements(testContext, tx, sub, s.now().Unix())
+		tx.Rollback()
+		if err != nil {
+			t.Fatal(err)
+		}
+		q, err := s.findQuality(testContext, s.now().Unix())
+		if err != nil {
+			t.Fatal(err)
+		}
+		out.quality = q[sub.ID]
+		return out
+	}
+	agentSub, _ := reviews.Canonical(reviews.TypeAgent, account, s.subjectOptions())
+	offering := reviewSubjectOf(t, offeringURI)
+	rep := readReputation(t, s, account)
+	repScore := map[string]ReputationScore{agentSub.ID: rep.Reviewed.Agent.ReputationScore}
+	for _, o := range rep.Reviewed.Owned {
+		repScore[o.ID] = o.ReputationScore
+	}
+	with := map[string]surfaces{}
+	for _, sub := range []reviews.Subject{agentSub, offering} {
+		got := read(sub)
+		with[sub.ID] = got
+		want := scoreOf(got.points, got.n)
+		if got.agg.ScoreShadow != want.Score || got.agg.ScoreThin != want.Thin || want.Judgements != 3 {
+			t.Fatalf("%s: aggregate %d thin %v, judge.ScoreGrouped over the filtered set %+v", sub.URI(), got.agg.ScoreShadow, got.agg.ScoreThin, want)
+		}
+		if r, ok := repScore[sub.ID]; !ok || r != want {
+			t.Fatalf("%s: reputation %+v, want %+v", sub.URI(), r, want)
+		}
+		if got.quality.Reviews != got.agg.Reviews || got.quality.ReviewMean != got.agg.VerdictMean || got.quality.ReviewWeight != got.agg.WeightTotal {
+			t.Fatalf("%s: find quality %+v, aggregate %+v", sub.URI(), got.quality.Quality, got.agg)
+		}
+		// Listed, labelled and weightless: the rootmate's (and the owner's).
+		page := readSubjectData(t, s, sub.ID)["reviews"].([]ReviewCard)
+		own := 0
+		for _, c := range page {
+			if c.Author.Account == keyID(rootmate) || c.Author.Account == account {
+				own++
+				if c.Order == nil || c.Order.Weight != 0 || c.Order.RelationshipFactor != 0 {
+					t.Fatalf("%s: own-root review weighs %+v", sub.URI(), c.Order)
+				}
+				if c.Author.Account == keyID(rootmate) && (!c.Order.OwnRoot || c.Order.Note != OwnRootNote || c.Order.V == 0 || c.Order.ClassWeight == 0) {
+					t.Fatalf("%s: rootmate's review %+v", sub.URI(), c.Order)
+				}
+			} else if c.Order == nil || c.Order.OwnRoot || c.Order.Weight == 0 {
+				t.Fatalf("%s: independent review %+v", sub.URI(), c.Order)
+			}
+		}
+		if want := map[string]int{agentSub.ID: 1, offering.ID: 2}[sub.ID]; own != want || len(page) != got.agg.Reviews {
+			t.Fatalf("%s: %d own-root reviews listed of %d", sub.URI(), own, len(page))
+		}
+	}
+
+	// The filtered set is exactly the set without them: hide the own-root
+	// reviews and every number stays.
+	if _, err := s.db.Exec("UPDATE events SET hidden=1 WHERE id IN (SELECT event_id FROM reviews WHERE account IN (?,?))", keyID(rootmate), account); err != nil {
+		t.Fatal(err)
+	}
+	for _, sub := range []reviews.Subject{agentSub, offering} {
+		got, before := read(sub), with[sub.ID]
+		if got.agg.ScoreShadow != before.agg.ScoreShadow || got.agg.ScoreThin != before.agg.ScoreThin || got.agg.WeightTotal != before.agg.WeightTotal ||
+			got.agg.VerdictMean != before.agg.VerdictMean || !reflect.DeepEqual(got.agg.Dimensions, before.agg.Dimensions) || scoreOf(got.points, got.n) != scoreOf(before.points, before.n) {
+			t.Fatalf("%s: without own-root reviews %+v, with them %+v", sub.URI(), got.agg, before.agg)
+		}
+	}
+	if after := reputationJSON(t, readReputation(t, s, account)); after != reputationJSON(t, rep) {
+		t.Fatalf("hiding own-root reviews moved the reputation:\n%s\n%s", reputationJSON(t, rep), after)
+	}
+}
+
+// C312: the public backer list reads only public independence facts. With
+// signal links on (standing.signal_link_days) and a backer that wrote from
+// the agent's own network and client, the list is what it is without them:
+// a missing backer never reveals a private link.
+func TestReputationBackersIgnoreSignalLinks(t *testing.T) {
+	s := reputationTestStore(t)
+	seller, backer := keyFor(175), keyFor(176)
+	for i, k := range []ed25519.PrivateKey{seller, backer} {
+		if _, err := writeAt(t, s, "203.0.113.40", "command", "ring/1", signed(k, Command{Operation: "agent.register", Handle: []string{"vesper", "lantern"}[i]})); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seasoned(t, s, backer)
+	account := keyID(seller)
+	if _, err := vouchAs(s, backer, account, `{"schema":1,"value":1}`, randomID()); err != nil {
+		t.Fatal(err)
+	}
+	off := reputationJSON(t, readReputation(t, s, account).BackedBy)
+
+	// The link exists: the trust run's own reader names the pair.
+	var links []trust.Record
+	if err := (trustInputs{s}).readSignalLinks(testContext, s.now().Unix()+1, 30, func(r trust.Record) error { links = append(links, r); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if len(links) != 1 {
+		t.Fatalf("signal links %+v", links)
+	}
+	p := trust.DefaultParams()
+	if p.Standing == nil {
+		t.Fatal("default params have no standing section")
+	}
+	p.Standing.SignalLinkDays = 30
+	s.trust.params.mu.Lock()
+	s.trust.params.p, s.trust.params.at = &p, s.now().Unix()
+	s.trust.params.mu.Unlock()
+	on := readReputation(t, s, account).BackedBy
+	if reputationJSON(t, on) != off || on.Count != 1 || on.Backers[0].Account != keyID(backer) {
+		t.Fatalf("signal links moved the public backers:\n%s\n%s", off, reputationJSON(t, on))
 	}
 }

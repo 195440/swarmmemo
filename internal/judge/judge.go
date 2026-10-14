@@ -14,6 +14,7 @@
 package judge
 
 import (
+	"iter"
 	"math/bits"
 	"sort"
 )
@@ -161,6 +162,21 @@ func ReviewSubject(typ, key, id string) string {
 		return AgentSubject(key)
 	}
 	return "subject:" + id
+}
+
+// OwnSubject reports whether a judgement by author of a subject its owners
+// own is no judgement (RFC 0020 §3.3): an owner is the author or shares its
+// root. rootOf maps an account to its root (itself when it has none). It is
+// the one exclusion every score reads: the trust run's judgement set, the
+// subject aggregate (subject.get, /s/ID, Find quality) and the reputation.
+func OwnSubject(author string, owners iter.Seq[string], rootOf func(string) string) bool {
+	root := rootOf(author)
+	for o := range owners {
+		if o == author || rootOf(o) == root {
+			return true
+		}
+	}
+	return false
 }
 
 // Side is a coarse judgement's end point: Up above Neutral, Down below.

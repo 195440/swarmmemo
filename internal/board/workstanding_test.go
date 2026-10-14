@@ -282,6 +282,35 @@ func TestWorkStandingTiersMisplacedInReward(t *testing.T) {
 	fails(t, s, rewardCreate(s, owner, id, map[string]any{"eth": "1"}, 0), "invalid_work_reward")
 }
 
+// TestWorkStandingClientVector: the data the clients build for a standing
+// create (C311; clients/python and clients/javascript assert they build
+// exactly testdata/work_standing_create.json's data, the CLI from its argv)
+// opens that standing task on the real store, every field as sent.
+func TestWorkStandingClientVector(t *testing.T) {
+	raw, err := os.ReadFile("../../testdata/work_standing_create.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vector struct{ Generation, Data string }
+	if err = json.Unmarshal(raw, &vector); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := usdcStore(t)
+	owner := keyFor(183)
+	mintCredit(t, s, keyID(owner), allowance.Paid, 5000)
+	id := rewardRequest(t, s, owner, "lobby")
+	run(t, s, signed(owner, Command{Operation: "work.create", MessageID: id, TTL: 10 * 86400, Timestamp: s.now().Unix(),
+		Data: strings.ReplaceAll(vector.Data, `"`+vector.Generation+`"`, `"`+s.generation+`"`)}))
+	got := standingAt(t, s, id)
+	want := []WorkStandingTier{{Name: "bug", Credits: 300, USDC: "0.2"}, {Name: "bug+fix", Credits: 500, USDC: "0.4"}} // normalized
+	if got.Seats != 5 || got.PerAgentDay != 1 || got.DayMax != 5 || !reflect.DeepEqual(got.Tiers, want) || got.USDCPerAgentDay != "0.4" || got.USDCDayMax != "2" {
+		t.Fatalf("standing task from the client vector: %+v", got)
+	}
+	if held := creditIn(t, s, keyID(owner), "held"); held != 2500 {
+		t.Fatalf("pool %d, want 2500 (the largest tier times seats)", held)
+	}
+}
+
 func TestWorkStandingTiersAndUSDCCaps(t *testing.T) {
 	s, _ := usdcStore(t)
 	owner := keyFor(180)

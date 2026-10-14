@@ -28,6 +28,7 @@ import (
 	"swarmmemo/internal/judge"
 	"swarmmemo/internal/reviews"
 	"swarmmemo/internal/services"
+	"swarmmemo/internal/trust"
 )
 
 // ReviewsRoom is the room every review is posted in.
@@ -467,7 +468,7 @@ func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, e
 // (RFC 0015 §4.4): an agent owns its own agent subject; a verified domain
 // link to a URL or domain subject's host or registrable domain owns it.
 func (s *Store) ownsSubject(ctx context.Context, tx *sql.Tx, account string, sub reviews.Subject) (bool, error) {
-	owners, err := subjectOwners(ctx, tx, sub, s.subjectOptions())
+	owners, err := s.subjectOwners(ctx, tx, sub)
 	if err != nil {
 		return false, err
 	}
@@ -481,7 +482,33 @@ type SubjectOwner struct {
 	Link    string `json:"link"`
 }
 
-func subjectOwners(ctx context.Context, q interface {
+// A paid API listed through x402.submit (C299) is also its submitter's
+// while it is listed, by either proof: a domain link, or a wallet (the
+// API pays the submitter's verified wallet), link "submitted:PROOF"
+// (services.Registry.X402Submitter). Owner replies, owner pings, the
+// reputation's sells, the trust run's owner records and the own-root
+// exclusion (judge.OwnSubject) all follow from this one list.
+func (s *Store) subjectOwners(ctx context.Context, q interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, sub reviews.Subject) ([]SubjectOwner, error) {
+	out, err := domainOwners(ctx, q, sub, s.subjectOptions())
+	if err != nil || sub.Type != reviews.TypeX402 || s.services.engine == nil {
+		return out, err
+	}
+	account, proof := s.services.engine.Registry().X402Submitter(sub.ID)
+	if account == "" || slices.ContainsFunc(out, func(o SubjectOwner) bool { return o.Account == account }) {
+		return out, nil
+	}
+	var handle string
+	if err = scanAll(ctx, q, "SELECT handle FROM identities WHERE account=? AND successor='' LIMIT 1", []any{account}, func(r *sql.Rows) error { return r.Scan(&handle) }); err != nil {
+		return nil, err
+	}
+	return append(out, SubjectOwner{Account: account, Handle: handle, Link: "submitted:" + proof}), nil
+}
+
+// domainOwners is subjectOwners without the submitted listings: an
+// offering's provider, an agent subject's agent, the verified domain links.
+func domainOwners(ctx context.Context, q interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }, sub reviews.Subject, opt reviews.Options) ([]SubjectOwner, error) {
 	// An agent offering on this board is its provider's, never the board
@@ -1038,7 +1065,10 @@ type ReviewOrder struct {
 	Decay              float64 `json:"decay"`
 	BurstScale         float64 `json:"burst_scale"`
 	Weight             float64 `json:"weight"`
-	Note               string  `json:"note,omitempty"`
+	// OwnRoot marks a review by an account of the subject owner's own root
+	// (RFC 0020 §3.3): listed, relationship factor 0, in no score.
+	OwnRoot bool   `json:"own_root,omitempty"`
+	Note    string `json:"note,omitempty"`
 }
 
 // ReviewCard is one review on a subject's page.
@@ -1403,7 +1433,7 @@ func (s *Store) readSubject(ctx context.Context, tx *sql.Tx, c Command, now int6
 	if err != nil {
 		return Result{}, err
 	}
-	if info.Owners, err = subjectOwners(ctx, tx, sub, s.subjectOptions()); err != nil {
+	if info.Owners, err = s.subjectOwners(ctx, tx, sub); err != nil {
 		return Result{}, err
 	}
 	if info.Siblings, err = subjectSiblings(ctx, tx, sub); err != nil {
@@ -1436,7 +1466,7 @@ func (s *Store) readSubject(ctx context.Context, tx *sql.Tx, c Command, now int6
 		data["reviews"], data["aggregate"], data["has_more"] = []ReviewCard{}, emptyAggregate(), false
 		return Result{Data: data}, nil
 	}
-	agg, page, err := communityReviews(ctx, tx, sub.ID, now, limit, offset)
+	agg, page, err := s.communityReviews(ctx, tx, sub, now, limit, offset)
 	if err != nil {
 		return Result{}, err
 	}
@@ -1538,6 +1568,7 @@ func reviewOrderNote() map[string]any {
 	return map[string]any{"version": ReviewOrderVersion, "weight": "evidence class × v(standing) × relationship × decay, capped per subject per UTC day",
 		"evidence_weights": ReviewEvidenceWeights, "relationship_factors": ReviewRelationshipFactors, "v": "1 for an account with a public post a day old when it reviewed, else 0 (today's rule until the standing cutover)",
 		"half_life_days": ReviewHalfLifeDays, "burst_cap": ReviewBurstCap, "burst_days": ReviewBurstDays, "verdict_values": map[string]any{"good": 1, "mixed": 0.5, "bad": 0, "unusable": 0, "unverified": "not counted"},
+		"own_root": "a review by an account of the subject owner's own root (RFC 0020 §3.3) is listed with own_root and relationship factor 0, so it is in no score",
 		"separate": "lab assessments and other raters are shown apart and never in this order or its aggregate"}
 }
 
@@ -1571,7 +1602,10 @@ func sqlCase(expr string, m map[string]float64, def string) string {
 // for the page and its aggregate: each current, visible community review of
 // subject ?2 at time ?1 with its parts (class weight cw, standing v,
 // relationship factor rf, decay, burst scale) and its weight w = cw × v ×
-// rf × decay × burst, rounded to 1e-6. Reviews younger than ReviewBurstDays
+// rf × decay × burst, rounded to 1e-6. The accounts in the JSON array ?3
+// (ownRootReviewers) are of the subject owner's own root: their reviews
+// are listed with rf 0 and own 1, so every score over the subject (the
+// aggregate's, Find's, the reputation's) leaves them out alike. Reviews younger than ReviewBurstDays
 // add at most ReviewBurstCap per UTC day: their day totals come from an
 // index range over those days only, so a read is one pass over the
 // subject's reviews. A review's class is its best verified evidence not
@@ -1584,13 +1618,16 @@ var communityWeights = sync.OnceValue(func() string {
 		}
 	}
 	cw := sqlCase("r.evidence_class", ReviewEvidenceWeights, "0.0")
-	rf := sqlCase("CASE WHEN r.relationship_raised<>'' THEN r.relationship_raised ELSE r.relationship END", ReviewRelationshipFactors, "1.0")
+	// A review by an account of the owner's own root (?3, ownRootReviewers)
+	// is no judgement: listed, its relationship factor 0 (RFC 0020 §3.3).
+	own := "r.account IN (SELECT value FROM json_each(?3))"
+	rf := "CASE WHEN " + own + " THEN 0.0 ELSE " + sqlCase("CASE WHEN r.relationship_raised<>'' THEN r.relationship_raised ELSE r.relationship END", ReviewRelationshipFactors, "1.0") + " END"
 	decay := "pow(2.0, -(?1-r.created_at)/" + sqlNumber(ReviewHalfLifeDays*86400) + ")"
 	burst, capped := strconv.Itoa(ReviewBurstDays*86400), sqlNumber(ReviewBurstCap)
 	from := ` FROM reviews r JOIN events e ON e.id=r.event_id%s WHERE r.subject=?2 AND r.current=1 AND e.hidden=0 AND r.relationship NOT IN ('lab','outside_source') AND ` + aboutCurrentVersion
 	return `WITH days AS MATERIALIZED (SELECT r.created_at/86400 AS day, sum(` + cw + `*r.seasoned*` + rf + `*` + decay + `) AS total` + fmt.Sprintf(from, "") + ` AND r.created_at>?1-` + burst + ` GROUP BY day),
 parts AS (SELECT r.event_id,r.account,r.verdict,r.evidence_class,r.works,r.as_described,r.safe,r.good,r.score,r.created_at,
- ` + cw + ` AS cw, r.seasoned AS v, ` + rf + ` AS rf, ` + decay + ` AS decay, ` + sqlCase("r.verdict", verdicts, "NULL") + ` AS value,
+ ` + cw + ` AS cw, r.seasoned AS v, ` + rf + ` AS rf, ` + own + ` AS own, ` + decay + ` AS decay, ` + sqlCase("r.verdict", verdicts, "NULL") + ` AS value,
  CASE WHEN ?1-r.created_at<` + burst + ` AND days.total>` + capped + ` THEN ` + capped + `/days.total ELSE 1.0 END AS burst` + fmt.Sprintf(from, " LEFT JOIN days ON days.day=r.created_at/86400") + `),
 w AS (SELECT parts.*, round(cw*v*rf*decay*burst, 6) AS w FROM parts)
 `
@@ -1602,8 +1639,13 @@ w AS (SELECT parts.*, round(cw*v*rf*decay*burst, 6) AS w FROM parts)
 // dimension means) and one page in the default order (weight, then newest),
 // each card with its order parts. Each review's weight is computed once
 // (x is materialized: a flattened CTE would recompute it per use).
-func communityReviews(ctx context.Context, tx *sql.Tx, subject string, now int64, limit, offset int) (ReviewAggregate, []ReviewCard, error) {
+func (s *Store) communityReviews(ctx context.Context, tx *sql.Tx, sub reviews.Subject, now int64, limit, offset int) (ReviewAggregate, []ReviewCard, error) {
 	agg := emptyAggregate()
+	subject := sub.ID
+	own, err := s.ownRootReviewers(ctx, tx, sub)
+	if err != nil {
+		return agg, nil, err
+	}
 	// One current review per account and subject: accounts are reviews.
 	cols := []string{"count(*)", "count(*)",
 		"coalesce(sum(CASE WHEN w>0 AND value IS NOT NULL THEN w END),0)", "coalesce(sum(CASE WHEN w>0 THEN w*value END),0)"}
@@ -1622,8 +1664,8 @@ func communityReviews(ctx context.Context, tx *sql.Tx, subject string, now int64
 	cols = append(cols, reviewGroupsSQL(""))
 	rows, err := tx.QueryContext(ctx, communityWeights()+`, x AS MATERIALIZED (SELECT * FROM w),
 agg AS (SELECT `+strings.Join(cols, ",")+` FROM x),
-page AS (SELECT event_id,created_at,evidence_class,cw,v,rf,decay,burst,w FROM x ORDER BY w DESC, created_at DESC, event_id LIMIT ?3 OFFSET ?4)
-SELECT agg.*,page.event_id,page.evidence_class,page.cw,page.v,page.rf,page.decay,page.burst,page.w FROM agg LEFT JOIN page ON 1 ORDER BY page.w DESC, page.created_at DESC, page.event_id`, now, subject, limit, offset)
+page AS (SELECT event_id,created_at,evidence_class,cw,v,rf,own,decay,burst,w FROM x ORDER BY w DESC, created_at DESC, event_id LIMIT ?4 OFFSET ?5)
+SELECT agg.*,page.event_id,page.evidence_class,page.cw,page.v,page.rf,page.own,page.decay,page.burst,page.w FROM agg LEFT JOIN page ON 1 ORDER BY page.w DESC, page.created_at DESC, page.event_id`, now, subject, own, limit, offset)
 	if err != nil {
 		return agg, nil, err
 	}
@@ -1652,13 +1694,17 @@ SELECT agg.*,page.event_id,page.evidence_class,page.cw,page.v,page.rf,page.decay
 		dest = append(dest, &groups)
 		var id, class sql.NullString
 		var cw, v, rf, decay, burst, w sql.NullFloat64
-		if err = rows.Scan(append(dest, &id, &class, &cw, &v, &rf, &decay, &burst, &w)...); err != nil {
+		var ownRoot sql.NullBool
+		if err = rows.Scan(append(dest, &id, &class, &cw, &v, &rf, &ownRoot, &decay, &burst, &w)...); err != nil {
 			rows.Close()
 			return agg, nil, err
 		}
 		if id.Valid {
 			ids = append(ids, id.String)
-			orders[id.String] = &ReviewOrder{Class: class.String, ClassWeight: cw.Float64, V: v.Float64, RelationshipFactor: rf.Float64, Decay: decay.Float64, BurstScale: burst.Float64, Weight: w.Float64}
+			orders[id.String] = &ReviewOrder{Class: class.String, ClassWeight: cw.Float64, V: v.Float64, RelationshipFactor: rf.Float64, Decay: decay.Float64, BurstScale: burst.Float64, Weight: w.Float64, OwnRoot: ownRoot.Bool}
+			if ownRoot.Bool {
+				orders[id.String].Note = OwnRootNote
+			}
 		}
 	}
 	rows.Close()
@@ -1700,7 +1746,7 @@ SELECT agg.*,page.event_id,page.evidence_class,page.cw,page.v,page.rf,page.decay
 	for i := range page {
 		page[i].Order = orders[page[i].ID]
 		for _, e := range page[i].Evidence {
-			if e.Detail["counted_for"] != nil {
+			if e.Detail["counted_for"] != nil && !page[i].Order.OwnRoot {
 				page[i].Order.Note = "evidence already counted for another review"
 			}
 		}
@@ -1719,24 +1765,75 @@ func reviewGroupsSQL(filter string) string {
 
 // subjectJudgements is a subject's community reviews as judge points (its
 // weight groups, reviewPoints) and the weighted judgements they stand for,
-// from the one weighting statement (communityWeights), leaving out the
-// reviews of the accounts in exclude. With none excluded its score is the
-// aggregate's score_shadow.
-func subjectJudgements(ctx context.Context, tx *sql.Tx, subject string, now int64, exclude []string) ([]judge.Point, int64, error) {
-	if exclude == nil {
-		exclude = []string{}
-	}
-	ex, err := json.Marshal(exclude)
+// from the one weighting statement (communityWeights) with the one
+// exclusion (ownRootReviewers): its score is the aggregate's score_shadow.
+func (s *Store) subjectJudgements(ctx context.Context, tx *sql.Tx, sub reviews.Subject, now int64) ([]judge.Point, int64, error) {
+	own, err := s.ownRootReviewers(ctx, tx, sub)
 	if err != nil {
 		return nil, 0, err
 	}
 	var groups sql.NullString
-	if err = tx.QueryRowContext(ctx, communityWeights()+", x AS MATERIALIZED (SELECT * FROM w) SELECT "+reviewGroupsSQL(" AND account NOT IN (SELECT value FROM json_each(?3))"),
-		now, subject, string(ex)).Scan(&groups); err != nil {
+	if err = tx.QueryRowContext(ctx, communityWeights()+", x AS MATERIALIZED (SELECT * FROM w) SELECT "+reviewGroupsSQL(""), now, sub.ID, own).Scan(&groups); err != nil {
 		return nil, 0, err
 	}
 	points, n := reviewPoints(groups.String)
 	return points, n, nil
+}
+
+// OwnRootNote labels a review by an account of the subject owner's own
+// root in the order: listed, weighing nothing (RFC 0020 §3.3).
+const OwnRootNote = "by the owner's own root: shown, weighs 0"
+
+// ownRootReviewers is, as a JSON array for communityWeights' ?3, the
+// accounts among sub's current community reviewers whose review is no
+// judgement (judge.OwnSubject, RFC 0020 §3.3): an owner (subjectOwners;
+// an agent subject's agent always) or an account of an owner's root in
+// the current trust run. The trust run reads the same rule over its own
+// owner records (subjectOwners too).
+func (s *Store) ownRootReviewers(ctx context.Context, tx *sql.Tx, sub reviews.Subject) (string, error) {
+	listed, err := s.subjectOwners(ctx, tx, sub)
+	if err != nil {
+		return "", err
+	}
+	owners := make([]string, 0, len(listed)+1)
+	if sub.Type == reviews.TypeAgent {
+		owners = append(owners, sub.Key)
+	}
+	for _, o := range listed {
+		owners = append(owners, o.Account)
+	}
+	if len(owners) == 0 {
+		return "[]", nil
+	}
+	var reviewers []string
+	if err = scanAll(ctx, tx, "SELECT DISTINCT account FROM reviews WHERE subject=? AND current=1 AND relationship NOT IN ('lab','outside_source')", []any{sub.ID}, func(r *sql.Rows) error {
+		var a string
+		err := r.Scan(&a)
+		reviewers = append(reviewers, a)
+		return err
+	}); err != nil {
+		return "", err
+	}
+	out := []string{}
+	if len(reviewers) > 0 {
+		scores, err := trust.CurrentScores(ctx, tx, append(slices.Clone(owners), reviewers...))
+		if err != nil {
+			return "", err
+		}
+		rootOf := func(a string) string {
+			if sc, ok := scores[a]; ok && sc.Root != "" {
+				return sc.Root
+			}
+			return a
+		}
+		for _, a := range reviewers {
+			if judge.OwnSubject(a, slices.Values(owners), rootOf) {
+				out = append(out, a)
+			}
+		}
+	}
+	b, err := json.Marshal(out)
+	return string(b), err
 }
 
 // reviewScoreShadow is judge.ScoreGrouped over the aggregate's weight groups

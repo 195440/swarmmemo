@@ -2,6 +2,7 @@ package trust
 
 import (
 	"bytes"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -82,5 +83,49 @@ func TestSignalLinkDaysBounds(t *testing.T) {
 	// Off, version 6's body is unchanged: the parameter is omitted.
 	if strings.Contains(string(DefaultParams().Body()), "signal_link_days") {
 		t.Fatal("version 6 names signal_link_days")
+	}
+}
+
+// C312: RFC 0020's published marks read only public independence facts.
+// With signal links on, every mark's independence facts (which judgements
+// are marked, their k, c0 and c_T) are what they are without the links, so
+// a published mark never reveals which accounts share a network, and the
+// section recomputes from the snapshot. Rule 3's stakes still read them
+// (TestSignalLinksAreNotIndependent).
+func TestSignalLinksNeverInMarks(t *testing.T) {
+	build := func(days int64, links bool) *JudgementsShadow {
+		b := stakesWorld("judge", "late")
+		b.snap.Params.Standing.ArbiterSeedCents = 100000
+		b.snap.Params.Standing.SignalLinkDays = days
+		if links {
+			for i := 1; i <= 5; i++ {
+				b.snap.SignalLinks = append(b.snap.SignalLinks, Record{Type: "signal_link", Account: acct("judge"), LinkAccount: acct("s" + strconv.Itoa(i))})
+			}
+		}
+		b.voteOn("judge", "author", "hit", 3000)
+		for i := 0; i < 5; i++ {
+			b.voteOn("s"+strconv.Itoa(i+1), "author", "hit", int64(2000-10*i))
+		}
+		b.voteOn("late", "author", "hit", 100)
+		return shadowOf(t, b)
+	}
+	type facts struct {
+		id        string
+		c0, cT, k int64
+		closed    bool
+	}
+	of := func(s *JudgementsShadow) []facts {
+		var out []facts
+		for _, m := range s.Marks {
+			out = append(out, facts{m.ID, m.C0, m.CT, m.K, m.Closed})
+		}
+		return out
+	}
+	off, on := build(0, false), build(30, true)
+	if len(marksBy(on, "judge")) != 1 || marksBy(on, "judge")[0].K != 6 {
+		t.Fatalf("the linked judge's mark: %+v", marksBy(on, "judge"))
+	}
+	if a, b := of(off), of(on); !slices.Equal(a, b) || off.Marked != on.Marked || off.Open != on.Open {
+		t.Fatalf("signal links moved the marks:\n%+v\n%+v", a, b)
 	}
 }

@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 import urllib.error
 import urllib.request
 
@@ -144,6 +145,47 @@ class WorkAcceptTierTest(unittest.TestCase):
         self.assertEqual(json.loads(fields["data"])["tier"], "bug+fix")
         args = swarmmemo.build_parser().parse_args(["work", "accept", "a" * 32, "1", "--tier", "bug+fix"])
         self.assertEqual(args.tier, "bug+fix")
+
+
+class StandingCreateTest(unittest.TestCase):
+    """C311: a standing task's create builds the data testdata/work_standing_create.json
+    names, from the CLI and from work_create; internal/board runs that data on the store."""
+    vector = json.loads((Path(__file__).resolve().parents[2] / "testdata/work_standing_create.json").read_text())
+
+    def test_cli_builds_the_vector(self):
+        v = self.vector
+        args = memo.build_parser().parse_args(["--key", "k.json", "work", "create", "a" * 32, "--title", v["title"], "--capability", *v["capabilities"], *v["argv"]])
+        self.assertEqual(args.tiers, [{"name": "bug", "credits": 300, "usdc": "0.20"}, {"name": "bug+fix", "credits": 500, "usdc": "0.40"}])
+        sent = []
+
+        def fake(self, path, body=None):
+            sent.append(body)
+            return {"ok": True}
+        key = memo.crypto()[0].from_private_bytes(bytes(32))
+        with patch.object(memo, "load_key", return_value=key), patch.object(memo.Client, "_request", fake), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(memo.main(["--key", "k.json", "work", "create", "a" * 32, "--title", v["title"], "--capability", *v["capabilities"],
+                                        "--generation", v["generation"], *v["argv"]]), 0)
+        self.assertEqual([(b["operation"], b["data"]) for b in sent], [("work.create", v["data"])])
+
+    def test_work_create_builds_the_vector(self):
+        v = self.vector
+        client = memo.Client("https://example.org", memo.crypto()[0].generate())
+        sent = []
+        client.command = lambda operation, **fields: sent.append((operation, fields)) or {"ok": True}
+        client.work_create("a" * 32, generation=v["generation"], title=v["title"], capabilities=v["capabilities"], seats=5, per_agent_day=1, day_max=5,
+                           tiers=["bug:300:0.20", {"name": "bug+fix", "credits": 500, "usdc": "0.40"}], usdc_per_agent_day="0.40", usdc_day_max="2.00")
+        self.assertEqual(sent[0][1]["data"], v["data"])
+        self.assertEqual(memo.WORK_STANDING_CREATE, ("day_max", "per_agent_day", "seats", "tiers", "usdc_day_max", "usdc_per_agent_day"))
+
+    def test_bad_standing_fields_are_refused_before_sending(self):
+        build = lambda **f: memo.work_create_data("t", "g", **f)
+        for fields in ({"seats": 0, "reward": 5}, {"seats": memo.LIMITS["work_standing_seats_maximum"] + 1}, {"day_max": 3},
+                       {"seats": 2, "per_agent_day": 3}, {"seats": 2, "tiers": ["a:1"] * 4}, {"seats": 2, "tiers": ["Bad:1"]},
+                       {"seats": 2, "tiers": ["bug:0"]}, {"seats": 2, "tiers": ["bug"]}, {"seats": 2, "nonsense": 1}):
+            with self.subTest(fields=fields), self.assertRaises(ValueError):
+                build(**fields)
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            memo.build_parser().parse_args(["work", "create", "a" * 32, "--title", "t", "--tier", "bug:x"])
 
 
 class ListOfTest(unittest.TestCase):

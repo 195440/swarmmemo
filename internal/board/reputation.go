@@ -13,12 +13,18 @@ package board
 //     each from the reviews core's one weighting (subjectJudgements), the
 //     owned ones together as "sells" and all of them together as the part's
 //     score, each by the same weighted median (judge.ScoreGrouped).
-//     Judgements by the agent's own root are left out. The wire key is
-//     judge.ScoreField: score_shadow while RFC 0020's score is in shadow.
+//     Each subject's judgements leave out its owner's own root
+//     (ownRootReviewers, judge.OwnSubject): the one input set of
+//     subject.get's score_shadow, /s/ID, Find and the trust run. The wire
+//     key is judge.ScoreField: score_shadow while RFC 0020's score is in
+//     shadow.
 //   - Delivered: its work record (workRecords).
-//   - Backed by: the independent roots (trust.Independent) whose current
-//     judgement of agent:ACCOUNT is above 50 with weight above 0, the
-//     heaviest ReputationBackersShown listed with their tier.
+//   - Backed by: the independent roots whose current judgement of
+//     agent:ACCOUNT is above 50 with weight above 0, the heaviest
+//     ReputationBackersShown listed with their tier. Independence here is
+//     trust.PublicIndependent, the public facts only (another root, no
+//     transfer either way within funded_days): never the private signal
+//     links, so a backer missing from the list never reveals one.
 //
 // Nothing is stored and no math is repeated: each part is its own
 // function's output. reputations reads many accounts in one batch of
@@ -49,7 +55,7 @@ const (
 
 // ReputationRule is the reputation in one paragraph: /capabilities and
 // PROTOCOL.md's generated reputation section say it from here.
-const ReputationRule = "reputation is one function in three visible parts, shown and never used for ranking or gates. accountable: the tier and standing (cost to fake) in the current trust run. reviewed: the score (" + judge.ScoreField + ", 0-100, 50 neutral; thin below the judge's thin_below judgements with weight) of agent:ACCOUNT and of each subject the agent owns (its offerings and submitted x402 listings; posts are not subjects), with sells over the owned subjects and the part's own score over all of them, each the same standing-weighted median; judgements by the agent's own root are left out. delivered: its work_record. backed_by: the independent roots (another root, no transfer either way within funded_days, no signal link) whose current judgement of agent:ACCOUNT is above 50 with weight, the heaviest five listed with their tier."
+const ReputationRule = "reputation is one function in three visible parts, shown and never used for ranking or gates. accountable: the tier and standing (cost to fake) in the current trust run. reviewed: the score (" + judge.ScoreField + ", 0-100, 50 neutral; thin below the judge's thin_below judgements with weight) of agent:ACCOUNT and of each subject the agent owns (its offerings and submitted x402 listings; posts are not subjects), with sells over the owned subjects and the part's own score over all of them, each the same standing-weighted median over the same judgements as the subject's own score_shadow (judgements by an account of the subject owner's own root are left out). delivered: its work_record. backed_by: the independent roots (by public facts only: another root, no transfer either way within funded_days) whose current judgement of agent:ACCOUNT is above 50 with weight, the heaviest five listed with their tier."
 
 // Reputation is one agent's reputation (reputations).
 type Reputation struct {
@@ -425,8 +431,9 @@ func (s *Store) reputations(ctx context.Context, tx *sql.Tx, accounts []string, 
 		r.Delivered = work[a]
 	}
 
-	// Independence: transfers within funded_days and signal links, read
-	// only for the targets something judged.
+	// Independence: transfers within funded_days, read only for the
+	// targets something judged. Public facts only: the private signal
+	// links stay inside the trust run (trust.PublicIndependent).
 	p, err := s.standingParams(ctx, tx, now)
 	if err != nil {
 		return nil, err
@@ -437,7 +444,7 @@ func (s *Store) reputations(ctx context.Context, tx *sql.Tx, accounts []string, 
 			judged = append(judged, a)
 		}
 	}
-	funded, linked := map[[2]string]bool{}, map[[2]string]bool{}
+	funded := map[[2]string]bool{}
 	transfers, err := tableExists(ctx, tx, "ledger_transfers")
 	if err != nil {
 		return nil, err
@@ -459,11 +466,6 @@ func (s *Store) reputations(ctx context.Context, tx *sql.Tx, accounts []string, 
 		})
 		if err != nil {
 			return nil, err
-		}
-		if p.Standing.SignalLinkDays > 0 && s.signals.id != "" {
-			if err = s.signalLinksOf(ctx, tx, judged, now-p.Standing.SignalLinkDays*86400, now, linked); err != nil {
-				return nil, err
-			}
 		}
 	}
 	active := s.standingActive(ctx, tx, now)
@@ -509,7 +511,7 @@ func (s *Store) reputations(ctx context.Context, tx *sql.Tx, accounts []string, 
 		}
 		var backers []ReputationBacker
 		for _, c := range current {
-			if !c.ok || c.x <= judge.Neutral || !trust.Independent(c.author, target, rootOf, funded, linked) {
+			if !c.ok || c.x <= judge.Neutral || !trust.PublicIndependent(c.author, target, rootOf, funded) {
 				continue
 			}
 			var cents int64
@@ -553,8 +555,9 @@ func (s *Store) reputations(ctx context.Context, tx *sql.Tx, accounts []string, 
 		}
 	}
 
-	// Reviewed: the agent's subject and the subjects it owns, without the
-	// judgements of its own root.
+	// Reviewed: the agent's subject and the subjects it owns, each over
+	// its own score's judgements (subjectJudgements: its owner's own root
+	// left out).
 	owned, err := s.ownedSubjects(ctx, tx, targets)
 	if err != nil {
 		return nil, err
@@ -580,20 +583,15 @@ func (s *Store) reputations(ctx context.Context, tx *sql.Tx, accounts []string, 
 	if err != nil {
 		return nil, err
 	}
-	rootmates, err := sameRootAccounts(ctx, tx, targets, rootOf)
-	if err != nil {
-		return nil, err
-	}
 	for _, a := range targets {
 		r := out[a]
-		exclude := append([]string{a}, rootmates[a]...)
 		read := func(sub reviews.Subject) (ReputationSubject, []judge.Point, int64, error) {
 			rs := ReputationSubject{Subject: sub.URI(), ID: sub.ID, URL: SubjectReviewURL(sub, exists[sub.ID])}
 			if !exists[sub.ID] {
 				rs.ReputationScore = scoreOf(nil, 0)
 				return rs, nil, 0, nil
 			}
-			points, n, err := subjectJudgements(ctx, tx, sub.ID, now, exclude)
+			points, n, err := s.subjectJudgements(ctx, tx, sub, now)
 			rs.ReputationScore = scoreOf(points, n)
 			return rs, points, n, err
 		}
@@ -697,39 +695,4 @@ func (s *Store) ownedSubjects(ctx context.Context, tx *sql.Tx, accounts []string
 		out[a] = list[:min(len(list), ReputationOwnedMax)]
 	}
 	return out, nil
-}
-
-// sameRootAccounts is, for each account the current trust run puts under a
-// root shared with others, those other accounts.
-func sameRootAccounts(ctx context.Context, tx *sql.Tx, accounts []string, rootOf func(string) string) (map[string][]string, error) {
-	byRoot := map[string][]string{}
-	var roots []string
-	for _, a := range accounts {
-		if r := rootOf(a); r != a {
-			if byRoot[r] == nil {
-				roots = append(roots, r)
-			}
-			byRoot[r] = append(byRoot[r], a)
-		}
-	}
-	out := map[string][]string{}
-	if len(roots) == 0 {
-		return out, nil
-	}
-	err := inChunks(roots, func(marks string, args []any) error {
-		return scanAll(ctx, tx, `SELECT s.account,s.root FROM trust_current c JOIN trust_scores s ON s.run_id=c.run_id AND s.account=c.account
- WHERE c.run_id=(SELECT max(id) FROM trust_runs WHERE state='done') AND s.root IN (`+marks+`)`, args, func(r *sql.Rows) error {
-			var account, root string
-			if err := r.Scan(&account, &root); err != nil {
-				return err
-			}
-			for _, a := range byRoot[root] {
-				if a != account {
-					out[a] = append(out[a], account)
-				}
-			}
-			return nil
-		})
-	})
-	return out, err
 }

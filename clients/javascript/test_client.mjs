@@ -8,7 +8,7 @@ import {join} from 'node:path';
 import {spawn, spawnSync} from 'node:child_process';
 import {gzipSync} from 'node:zlib';
 import {createPrivateKey, createPublicKey, sign, verify} from 'node:crypto';
-import {Client, DelegatedClient, ClientError, CONTRACT, FIELDS, canonical, delegationContext, generateKey, importKey, writeKey, loadKey, conversationRoom, loadSeal, agentSubjectID} from './swarmmemo.mjs';
+import {Client, DelegatedClient, ClientError, CONTRACT, FIELDS, canonical, delegationContext, generateKey, importKey, writeKey, loadKey, conversationRoom, loadSeal, agentSubjectID, workCreateData, WORK_STANDING_CREATE} from './swarmmemo.mjs';
 
 const vector = JSON.parse(await readFile(new URL('../python/signing-vector.json', import.meta.url), 'utf8'));
 const fixtureKey = importKey({private_key: Buffer.from(vector.seed_hex, 'hex').toString('base64url'), public_key: vector.command.public_key});
@@ -386,8 +386,9 @@ test('work, updates, journal, docs, tools and /call helpers send the documented 
   const origin = await server(t, (req, res) => {
     let body = ''; req.on('data', chunk => {body += chunk;});
     req.on('end', () => {
-      const parsed = JSON.parse(body); requests.push({path: req.url, body: parsed});
-      const reply = parsed.operation === 'work.get' ? {ok: true, data: {work: {id, service_generation: generation, fence: 3, worker_subject: 'agent:' + agent}}}
+      const parsed = req.method === 'GET' ? {} : JSON.parse(body); requests.push({path: req.url, body: parsed});
+      const reply = req.url === '/api/changes?after=-1' ? {ok: true, generation, changes: []}
+        : parsed.operation === 'work.get' ? {ok: true, data: {work: {id, service_generation: generation, fence: 3, worker_subject: 'agent:' + agent}}}
         : parsed.operation === 'agent.get' ? {ok: true, agent: {id: agent}}
         : parsed.operation === 'updates.get' ? {ok: true, messages: [], next_cursor: parsed.cursor ? parsed.cursor + '+' : 'c1', data: {}}
         : parsed.operation === 'subject.resolve' ? {ok: true, data: {subject: {id: 's'.repeat(26), uri: 'site:https://example.org/', exists: false}}}
@@ -473,6 +474,27 @@ test('work, updates, journal, docs, tools and /call helpers send the documented 
   assert.deepEqual(requests.map(r => r.body.operation), ['agent.get', 'work.reviewer.set']);
   assert.equal(requests[0].body.target, 'judge');
   assert.equal(requests[1].body.data, `{"schema":1,"generation":"${generation}","reviewer":"${agent}"}`); verifySigned(requests[1].body); requests.length = 0;
+  // work.create of a standing task (C311) signs exactly the data testdata/work_standing_create.json
+  // names, as the Python client and CLI build it; options are the wire names in camelCase.
+  const standing = JSON.parse(await readFile(new URL('../../testdata/work_standing_create.json', import.meta.url), 'utf8'));
+  const options = {};
+  for (let i = 0; i < standing.argv.length; i += 2) {
+    const name = standing.argv[i].slice(2).replace(/-([a-z])/g, (_, c) => c.toUpperCase()), value = standing.argv[i + 1];
+    if (name === 'tier') (options.tiers ??= []).push(value);
+    else options[name] = name.startsWith('usdc') ? value : Number(value);
+  }
+  assert.deepEqual([...WORK_STANDING_CREATE], ['day_max', 'per_agent_day', 'seats', 'tiers', 'usdc_day_max', 'usdc_per_agent_day']);
+  assert.equal(JSON.stringify(workCreateData({title: standing.title, capabilities: standing.capabilities, generation: standing.generation, ...options})), standing.data);
+  await signed.createWork(id, {title: standing.title, capabilities: standing.capabilities, generation: standing.generation, ttl: 864000, requestId: 'w-1', ...options});
+  assert.deepEqual(requests.map(r => shown(r.body)), [{operation: 'work.create', message_id: id, ttl: 864000, request_id: 'w-1', data: standing.data}]);
+  verifySigned(requests[0].body); requests.length = 0;
+  // Left out, the generation is the service's; a handle reviewer is read once with agent.get.
+  await signed.createWork(id, {title: 'Review', reward: 300, reviewer: 'judge', reviewerFee: 20});
+  assert.deepEqual(requests.map(r => r.path === '/v1/command' ? r.body.operation : r.path), ['/api/changes?after=-1', 'agent.get', 'work.create']);
+  assert.equal(requests[2].body.data, `{"schema":1,"generation":"${generation}","title":"Review","capabilities":[],"reward":300,"reviewer":"${agent}","reviewer_fee":20}`); requests.length = 0;
+  for (const bad of [{seats: 0, reward: 5}, {dayMax: 3}, {seats: 2, perAgentDay: 3}, {seats: 2, tiers: ['a:1', 'b:1', 'c:1', 'd:1']}, {seats: 2, tiers: ['Bad:1']}, {seats: 2, tiers: ['bug:0']}, {seats: 2, tiers: ['bug']}, {seats: 2, nonsense: 1}])
+    assert.throws(() => workCreateData({title: 't', generation: 'g', ...bad}), errorCode('invalid_option'), JSON.stringify(bad));
+  assert.equal(requests.length, 0);
   // work.settle signs the transaction that paid a USDC reward.
   const paidTx = '0x' + 'b'.repeat(64);
   await signed.settleWork(id, paidTx, {generation, requestId: 't-1'});

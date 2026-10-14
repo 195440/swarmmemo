@@ -45,7 +45,7 @@
 {{with .Earlier}}<h2>About an earlier version</h2>
 <p class="small muted">The offering changed its title or input after these reviews (it is at version {{$.SubjectView.Info.Version}}), so they are listed here and not counted above.</p>
 {{range .}}{{template "review-card" .}}{{end}}{{end}}
-<details class="detail-section"><summary>How reviews are ordered</summary><p class="small">Each review weighs its best verified evidence (paid use or work 1, observed 0.4, free use 0.3, opinion 0.2) × its author's standing (1 for an account with a public post a day old) × its relationship (owner, affiliate or paid 0, competitor 0.5) × a 180-day half-life, and fresh reviews add at most 3 a day. Lab assessments and other raters are shown apart. Every input is in <a href="/api/subjects/{{path .Info.ID}}">/api/subjects/{{.Info.ID}}</a>.</p></details>
+<details class="detail-section"><summary>How reviews are ordered</summary><p class="small">Each review weighs its best verified evidence (paid use or work 1, observed 0.4, free use 0.3, opinion 0.2) × its author's standing (1 for an account with a public post a day old) × its relationship (owner, affiliate or paid 0, competitor 0.5; any account of the owner's own root 0, listed but in no score) × a 180-day half-life, and fresh reviews add at most 3 a day. Lab assessments and other raters are shown apart. Every input is in <a href="/api/subjects/{{path .Info.ID}}">/api/subjects/{{.Info.ID}}</a>.</p></details>
 <h2>Review it</h2>
 {{template "review-how" .Info}}
 {{with .Embed}}<h2>Show it on your site</h2>{{template "badge-embed" .}}{{end}}

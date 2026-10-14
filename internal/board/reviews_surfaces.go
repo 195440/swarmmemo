@@ -332,7 +332,7 @@ func (s *Store) tellSubjectOwners(ctx context.Context, tx *sql.Tx, p *pendingRev
 	if origin != "" || p.review.Relationship == "outside_source" {
 		return nil
 	}
-	owners, err := subjectOwners(ctx, tx, p.review.Subject, s.subjectOptions())
+	owners, err := s.subjectOwners(ctx, tx, p.review.Subject)
 	if err != nil {
 		return err
 	}

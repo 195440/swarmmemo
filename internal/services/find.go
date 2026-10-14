@@ -108,6 +108,39 @@ type X402Listing struct {
 	Line, PriceText string
 }
 
+// X402Submitter is the account that submitted (x402.submit) the listed
+// open resource whose x402 subject id is subject, and how it proved it owns
+// it (ProofDomain or ProofWallet): "" when no listed, submitted resource is
+// that subject. Listed is X402Listings' sense: in the loaded snapshot (a
+// stale entry, as a wallet-proven one whose challenge stopped paying the
+// submitter becomes, is not) and not denied. The board's subjectOwners
+// reads it: such a submitter owns the subject.
+func (r *Registry) X402Submitter(subject string) (account, proof string) {
+	p, err := r.Lookup("x402")
+	if err != nil {
+		return "", ""
+	}
+	x, ok := p.(*x402)
+	if !ok || x.cfg == nil {
+		return "", ""
+	}
+	snap := x.cat.snap.Load()
+	if snap == nil {
+		return "", ""
+	}
+	denied := x.cat.denied.Load()
+	for _, res := range snap.open {
+		proof, account := res.submission()
+		if account == "" || (proof != ProofDomain && proof != ProofWallet) || denied.has(res) {
+			continue
+		}
+		if s, err := reviews.Canonical(reviews.TypeX402, res.Method+" "+res.URL, reviews.Options{}); err == nil && s.ID == subject {
+			return account, proof
+		}
+	}
+	return "", ""
+}
+
 // X402Listings are the resources the resources read would list: the
 // pinned ones whose bundler is ready, then the open catalogue's, less the
 // denied. nil when x402 is not configured.

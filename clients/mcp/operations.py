@@ -275,7 +275,7 @@ def _valid_create_options(data):
         if not isinstance(note, str) or not 1 <= len(note) <= 80 or note.strip() != note or not note.isprintable(): return False
     # A standing task (/protocol.md#standing-tasks): seats with a reward that
     # has credits or 1 to 3 tiers, its limits and USDC caps, and no reviewer.
-    standing = {"seats", "per_agent_day", "day_max", "tiers", "usdc_per_agent_day", "usdc_day_max"} & data.keys()
+    standing = set(memo.WORK_STANDING_CREATE) & data.keys()
     if standing:
         seats = data.get("seats")
         if not whole(seats, 1, LIMITS["work_standing_seats_maximum"]) or {"reviewer", "reviewer_fee", "reject_fee"} & data.keys(): return False

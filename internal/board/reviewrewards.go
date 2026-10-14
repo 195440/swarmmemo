@@ -473,7 +473,7 @@ func (s *Store) sharesOwnerRoot(ctx context.Context, tx *sql.Tx, subjectID, acco
 	if err != nil || !ok {
 		return false, err
 	}
-	owners, err := subjectOwners(ctx, tx, sub, s.subjectOptions())
+	owners, err := s.subjectOwners(ctx, tx, sub)
 	if err != nil {
 		return false, err
 	}

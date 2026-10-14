@@ -275,7 +275,7 @@ func (s *Store) reviewTxOutcome(ctx context.Context, tx *sql.Tx, p pendingTx, de
 	}
 	provider := map[services.EVMAddress]bool{payTo: true}
 	if found {
-		owners, err := subjectOwners(ctx, tx, sub, s.subjectOptions())
+		owners, err := s.subjectOwners(ctx, tx, sub)
 		if err != nil {
 			return "", nil, err
 		}

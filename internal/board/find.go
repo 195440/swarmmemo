@@ -806,7 +806,7 @@ func (s *Store) findQuality(ctx context.Context, now int64) (map[string]subjectQ
 		case !errors.Is(err, sql.ErrNoRows):
 			return nil, err
 		}
-		agg, _, err := communityReviews(ctx, tx, id, now, 0, 0)
+		agg, _, err := s.communityReviews(ctx, tx, sub, now, 0, 0)
 		if err != nil {
 			return nil, err
 		}

@@ -161,7 +161,9 @@ type StandingParams struct {
 	// within that many days before the run not independent: neither
 	// confirms the other's stakes. The links come from operator-only request
 	// signals and are not in the published snapshot, so a run with it set
-	// cannot be recomputed from the snapshot alone.
+	// cannot be recomputed from the snapshot alone. Only rule 3's stakes
+	// read them: RFC 0020's published marks (judgements_shadow, rule 4)
+	// read the public independence facts (PublicIndependent).
 	SignalLinkDays int64 `json:"signal_link_days,omitempty"`
 
 	// From parameter version 7 (rule 4, RFC 0020 is the rule, C303b).
@@ -405,13 +407,20 @@ func FlooredShareWeightPPM(today, cents int64, p Params) int64 {
 	return max(today, ShareWeightPPM(cents, p))
 }
 
-// Independent is the independence test of rule 3 and RFC 0020, the one
-// copy (the trust run and the board's reputation read it): two accounts are
+// Independent is the independence test of rule 3, the one copy: two accounts are
 // independent when they differ, their roots differ, neither funded the other
 // (a transfer either way within funded_days: funded holds both orders) and
 // they share no signal link (linked holds both orders).
 func Independent(a, b string, rootOf func(string) string, funded, linked map[[2]string]bool) bool {
-	return a != b && rootOf(a) != rootOf(b) && !funded[[2]string{a, b}] && !linked[[2]string{a, b}]
+	return PublicIndependent(a, b, rootOf, funded) && !linked[[2]string{a, b}]
+}
+
+// PublicIndependent is Independent over its public facts only (another
+// root, no transfer either way within funded_days), without the private
+// signal links: what anything published reads (RFC 0020's marks, the
+// reputation's backers), so its output never reveals a signal link.
+func PublicIndependent(a, b string, rootOf func(string) string, funded map[[2]string]bool) bool {
+	return a != b && rootOf(a) != rootOf(b) && !funded[[2]string{a, b}]
 }
 
 // Band is the tier band of C: 1, 2 or 3.
@@ -859,15 +868,21 @@ func computeStanding(in standingInput) standingResult {
 			inputs["signal_links"] = int64(len(linked) / 2)
 		}
 		// Independent: another root, no transfer either way within
-		// funded_days, no signal link. Rule 3 and RFC 0020 read the same test.
+		// funded_days, no signal link. Rule 3's stakes read the whole test.
+		// RFC 0020's marks (the shadow and rule 4) read only its public
+		// facts (PublicIndependent): a published mark names its k and c_T,
+		// so a private signal link inside it would show which two accounts
+		// share a network, and the section would not recompute from the
+		// snapshot (C312).
 		indep := func(a, b string) bool { return Independent(a, b, in.rootOf, funded, linked) }
+		public := func(a, b string) bool { return PublicIndependent(a, b, in.rootOf, funded) }
 		if st.Rule >= 4 {
 			stakeOut, judgements = runJudgementRule(ruleInput{st: st, p: p, set: set, carry: in.carry, asOf: in.asOf, D: in.D, ws: ws,
-				nodes: nodes, index: index, seed: seed, pen: pen, penalty: in.penalty, indep: indep})
+				nodes: nodes, index: index, seed: seed, pen: pen, penalty: in.penalty, indep: public})
 		} else {
 			stakeOut = runStakes(st, in.asOf, ws, nodes, seed, pen, staked, indep)
 			shadow = computeJudgementsShadow(shadowInput{st: st, p: p, set: set, asOf: in.asOf, D: in.D,
-				penalty: in.penalty, nodes: nodes, index: index, c: stakeOut.c, judged: stakeOut.judged, seed: seed, pen: pen, indep: indep})
+				penalty: in.penalty, nodes: nodes, index: index, c: stakeOut.c, judged: stakeOut.judged, seed: seed, pen: pen, indep: public})
 		}
 	}
 

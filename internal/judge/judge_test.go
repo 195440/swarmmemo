@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -371,5 +372,26 @@ func checkSettle(t *testing.T, raw []int64) {
 	}
 	if paid != s.Paid || forfeited != s.Forfeited || paid > forfeited || total > 0 || s.Returned != forfeited-paid || s.Returned < 0 {
 		t.Fatalf("not conserved: paid %d forfeited %d total %d settlement %+v", paid, forfeited, total, s)
+	}
+}
+
+// OwnSubject (RFC 0020 §3.3): a judgement by an owner, or by an account of
+// an owner's root, is no judgement; another root's is.
+func TestOwnSubject(t *testing.T) {
+	roots := map[string]string{"seller": "domain:x", "mate": "domain:x", "other": "domain:y"}
+	rootOf := func(a string) string {
+		if r, ok := roots[a]; ok {
+			return r
+		}
+		return a
+	}
+	owners := slices.Values([]string{"seller"})
+	for author, want := range map[string]bool{"seller": true, "mate": true, "other": false, "fresh": false} {
+		if got := judge.OwnSubject(author, owners, rootOf); got != want {
+			t.Errorf("%s: %v, want %v", author, got, want)
+		}
+	}
+	if judge.OwnSubject("seller", slices.Values([]string(nil)), rootOf) {
+		t.Error("a subject without owners is nobody's own")
 	}
 }

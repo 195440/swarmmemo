@@ -826,12 +826,11 @@ func (in trustInputs) readJudgements(ctx context.Context, asOf int64, p trust.Pa
 		return err
 	}
 	sort.Slice(subjects, func(i, j int) bool { return subjects[i].id < subjects[j].id })
-	opt := in.s.subjectOptions()
 	for start := 0; start < len(subjects); start += 200 {
 		var batch []trust.Record
 		if err := in.page(ctx, func(q allowance.Querier) error {
 			for _, sub := range subjects[start:min(start+200, len(subjects))] {
-				owners, err := subjectOwners(ctx, q, reviews.Subject{Type: sub.typ, Key: sub.key, ID: sub.id}, opt)
+				owners, err := in.s.subjectOwners(ctx, q, reviews.Subject{Type: sub.typ, Key: sub.key, ID: sub.id})
 				if err != nil {
 					return err
 				}

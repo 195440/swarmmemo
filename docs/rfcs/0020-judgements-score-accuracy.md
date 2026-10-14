@@ -155,7 +155,13 @@ This is the same formula with `x` replaced by the end point, if it moved the jud
 - **Penalties.** A penalised owner (any active penalty: detectors, liability, moderation)
   forces `c_T = 0` for its subjects, and the judgement settles whatever `k_min` says.
 - **Own subjects.** A judgement of a subject an account of the author's own root owns is no
-  judgement (rule 3 drops acts inside one root the same way).
+  judgement (rule 3 drops acts inside one root the same way). One function says it
+  (`judge.OwnSubject`), and every score reads it: the run, `subject.get` and /s/ID, Find and the
+  reputation; a page still lists such a review, weighing 0.
+- **Public facts only.** Whatever is published (a mark's `k` and `c_T`, a reputation's backers)
+  reads independence from public facts alone (another root, a transfer within `funded_days`);
+  the operator-only signal links (`signal_link_days`) count only inside rule 3's stakes, so no
+  published number can reveal that two accounts share a network.
 
 ### 3.4 Withdrawing or changing your mind
 

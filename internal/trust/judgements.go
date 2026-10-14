@@ -1,6 +1,7 @@
 package trust
 
 import (
+	"maps"
 	"sort"
 	"strconv"
 
@@ -286,14 +287,7 @@ func collectJudgements(st *StandingParams, jp judge.Params, snap Snapshot, asOf,
 	// By subject, in time order; drop judgements of one's own root's subject.
 	bySubject := map[string][]shadowEntry{}
 	for _, e := range entries {
-		selfOwned := false
-		for o := range owners[e.j.Subject] {
-			if o == e.j.Author || rootOf(o) == e.j.Root {
-				selfOwned = true
-				break
-			}
-		}
-		if !selfOwned {
+		if !judge.OwnSubject(e.j.Author, maps.Keys(owners[e.j.Subject]), rootOf) {
 			bySubject[e.j.Subject] = append(bySubject[e.j.Subject], e)
 		}
 	}

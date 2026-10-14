@@ -1988,6 +1988,15 @@
         "usdc_per_agent_day"
       ]
     },
+    "work_standing_tier": {
+      "required": [
+        "credits",
+        "name"
+      ],
+      "optional": [
+        "usdc"
+      ]
+    },
     "work_transition": {
       "required": [
         "accepted_at",

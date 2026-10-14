@@ -159,3 +159,74 @@ func accountOf(t *testing.T, s *Store, key ed25519.PrivateKey) string {
 	}
 	return account
 }
+
+// C312: a listing proven by wallet is its submitter's (the API pays its
+// verified wallet). The submitter is among subjectOwners, so it gets the
+// owner pings, and its own review of its listing weighs 0 on every
+// surface: subject.get's score_shadow, the reputation's sells and Find.
+func TestX402WalletSubmitterOwnsItsListing(t *testing.T) {
+	s := x402ListingStore(t)
+	s.config.Features.Reviews, s.config.Features.InboxEntries = true, InboxRead
+	seller, r1, r2, r3 := keyFor(95), keyFor(96), keyFor(97), keyFor(98)
+	run(t, s, signed(seller, Command{Operation: "agent.register", Handle: "walletseller"}))
+	for _, k := range []ed25519.PrivateKey{r1, r2, r3} {
+		register(t, s, k)
+	}
+	seasoned(t, s, seller, r1, r2, r3)
+	account := accountOf(t, s, seller)
+	if _, err := s.db.Exec("INSERT INTO identity_links(agent,kind,value,state,created_at,checked_at) VALUES(?,'wallet','0x209693bc6afc0c5328ba36faf03c514ef312287c','verified',?,?)", keyID(seller), testTime, testTime); err != nil {
+		t.Fatal(err)
+	}
+	const uri = "x402:GET https://example.com/api"
+	out := run(t, s, signed(seller, Command{Operation: "x402.submit", Target: "GET https://example.com/api", RequestID: randomID()}))
+	if l, _ := out.Data["listing"].(map[string]any); l == nil || l["proof"] != services.ProofWallet {
+		t.Fatalf("wallet listing: %v", out.Data)
+	}
+	sub := reviewSubjectOf(t, uri)
+
+	run(t, s, reviewPost(t, r1, uri, map[string]any{"verdict": "good", "dimensions": map[string]int{"good": 70}}, ""))
+	run(t, s, reviewPost(t, r2, uri, map[string]any{"verdict": "mixed"}, ""))
+	run(t, s, reviewPost(t, r3, uri, map[string]any{"verdict": "good", "dimensions": map[string]int{"good": 75}}, ""))
+	run(t, s, reviewPost(t, seller, uri, map[string]any{"verdict": "good", "dimensions": map[string]int{"good": 100}}, ""))
+
+	// An owner: listed with its proof, and pinged for each other review.
+	data := readSubjectData(t, s, uri)
+	info := data["subject"].(SubjectInfo)
+	if len(info.Owners) != 1 || info.Owners[0].Account != account || info.Owners[0].Link != "submitted:"+services.ProofWallet {
+		t.Fatalf("owners %+v", info.Owners)
+	}
+	if got := inboxKinds(t, s, account, inboxReview); len(got) != 3 {
+		t.Fatalf("owner pings %v", got)
+	}
+	// Its own review weighs 0 everywhere.
+	for _, c := range data["reviews"].([]ReviewCard) {
+		if (c.Author.Account == account) != (c.Order != nil && c.Order.Weight == 0) {
+			t.Fatalf("review by %s weighs %+v", c.Author.Account, c.Order)
+		}
+	}
+	agg := data["aggregate"].(ReviewAggregate)
+	tx, err := s.db.BeginTx(testContext, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	points, n, err := s.subjectJudgements(testContext, tx, sub, s.now().Unix())
+	tx.Rollback()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := scoreOf(points, n)
+	if want.Judgements != 3 || agg.ScoreShadow != want.Score || agg.ScoreThin != want.Thin {
+		t.Fatalf("aggregate %d %v, filtered %+v", agg.ScoreShadow, agg.ScoreThin, want)
+	}
+	rep := readReputation(t, s, account)
+	if len(rep.Reviewed.Owned) == 0 || rep.Reviewed.Owned[0].ID != sub.ID || rep.Reviewed.Owned[0].ReputationScore != want || rep.Reviewed.Sells == nil || *rep.Reviewed.Sells != want {
+		t.Fatalf("reputation %+v, want %+v", rep.Reviewed, want)
+	}
+	q, err := s.findQuality(testContext, s.now().Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := q[sub.ID]; got.Reviews != agg.Reviews || got.ReviewMean != agg.VerdictMean || got.ReviewWeight != agg.WeightTotal {
+		t.Fatalf("find quality %+v, aggregate %+v", got.Quality, agg)
+	}
+}

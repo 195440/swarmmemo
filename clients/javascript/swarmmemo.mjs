@@ -310,6 +310,7 @@ export const CONTRACT = Object.freeze({
   "votes": {"required":["down","score","up"],"optional":["weight"]},
   "work": {"required":["capabilities","claim_expires_at","created_at","deadline","eligibility","fence","generation","id","requester","requester_author","result_available","room","service_generation","service_id","simulated","state","stored_state","title","updated_at"],"optional":["attempt_grant_id","eligible","eligible_agent","eligible_preview","eligible_reason","reject_fee","request","requester_may_decide_at","requester_record","resolved_from","result_changed_since_submit","result_id","result_sha256","reviewer","reviewer_fee","reward","reward_note","reward_receipt","reward_state","reward_usdc","standing","standing_id","tier","verdict_checks","worker","worker_subject"]},
   "work_standing": {"required":["day_max","open","opened_today","owed","paid","per_agent_day","results","results_until","seats","submitted","tiers","verdict_ttl"],"optional":["usdc_day_max","usdc_per_agent_day"]},
+  "work_standing_tier": {"required":["credits","name"],"optional":["usdc"]},
   "work_transition": {"required":["accepted_at","author","fence","generation","operation","public_key","sequence","signature","signed_payload","state"],"optional":["checks","delegation_id","fallback","note","previous_reviewer","reject_fee","resolved_from","result_sha256","result_sha256_signed","reviewer"]}
  },
  "work_create_data": ["capabilities","day_max","eligibility","generation","per_agent_day","reject_fee","reviewer","reviewer_fee","reward","reward_note","schema","seats","tiers","title","usdc_day_max","usdc_per_agent_day"],
@@ -524,6 +525,48 @@ export function workRatingPost(work, rating, note) {
   const review = {subject, verdict, dimensions: {[r.dimension]: rating}, relationship: r.relationship, evidence: [r.evidence.replace('WORK_ID', work.id)]};
   return {operation: 'post', room: r.room, page: agentSubjectID(subject.slice('agent:'.length)), kind: r.kind, text: (note ?? '').trim() || r.text_default, data: JSON.stringify({schema: 1, review})};
 }
+// A standing task's work.create fields (/protocol.md#standing-tasks): those of
+// work.create data a standing root's read shows too (CONTRACT.structs.work_standing),
+// in the contract's order; each option is the field's camelCase name.
+const structFields = name => [...CONTRACT.structs[name].required, ...CONTRACT.structs[name].optional];
+const camel = name => name.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+export const WORK_STANDING_CREATE = Object.freeze(CONTRACT.work_create_data.filter(name => structFields('work_standing').includes(name)));
+// One reward tier of a standing task as work.create data takes it: {name, credits, usdc?}
+// or NAME:CREDITS[:USDC] (bug+fix:500:0.40).
+export function standingTier(value) {
+  if (typeof value === 'string') {
+    const [name, credits, usdc, ...rest] = value.split(':');
+    if (rest.length || !/^\d+$/.test(credits ?? '')) fail('invalid_option', 'A tier is NAME:CREDITS[:USDC], e.g. bug:500:0.20.');
+    value = {name, credits: Number(credits), ...(usdc ? {usdc} : {})};
+  }
+  const tier = CONTRACT.structs.work_standing_tier;
+  if (!value || typeof value !== 'object' || Array.isArray(value) || !tier.required.every(k => Object.hasOwn(value, k)) || Object.keys(value).some(k => !structFields('work_standing_tier').includes(k))) fail('invalid_option', 'A tier is {name, credits, usdc?}.');
+  if (typeof value.name !== 'string' || !new RegExp(CONTRACT.patterns.standing_tier).test(value.name)) fail('invalid_option', 'A tier name is 1-32 of a-z 0-9 +_.-, starting with a letter or digit.');
+  if (!Number.isSafeInteger(value.credits) || value.credits < 1 || value.credits > CONTRACT.limits.work_reward_maximum) fail('invalid_option', 'A tier’s credits are whole, at least 1.');
+  if (value.usdc !== undefined && typeof value.usdc !== 'string') fail('invalid_option', 'A tier’s usdc is a decimal string, e.g. 0.20.');
+  return {name: value.name, credits: value.credits, ...(value.usdc !== undefined ? {usdc: value.usdc} : {})};
+}
+// work.create data, as the Python client's work_create_data builds it: schema, generation, title,
+// capabilities, then reward, reviewer (a fingerprint), reviewerFee, eligibility, rewardNote and
+// a standing task's seats, perAgentDay, dayMax, tiers, usdcPerAgentDay and usdcDayMax (decimal
+// strings); the server checks how they go together.
+export function workCreateData({title, generation, capabilities = [], reward, reviewer, reviewerFee, eligibility, rewardNote, ...standing}) {
+  const options = new Set(WORK_STANDING_CREATE.map(camel));
+  for (const name of Object.keys(standing)) if (!options.has(name)) fail('invalid_option', `work.create data takes no ${name}.`);
+  const data = {schema: 1, generation: text(generation), title: text(title), capabilities: listOf(capabilities)};
+  for (const [name, value] of [['reward', reward], ['reviewer', reviewer], ['reviewer_fee', reviewerFee], ['eligibility', eligibility], ['reward_note', rewardNote]]) if (value !== undefined && value !== null) data[name] = value;
+  const set = WORK_STANDING_CREATE.filter(name => standing[camel(name)] !== undefined && standing[camel(name)] !== null);
+  if (set.length) {
+    const {seats, perAgentDay, dayMax, tiers} = standing, limits = CONTRACT.limits;
+    const whole = (v, low, high) => Number.isSafeInteger(v) && v >= low && v <= high;
+    if (!whole(seats, 1, limits.work_standing_seats_maximum)) fail('invalid_option', `A standing task’s seats are 1 to ${limits.work_standing_seats_maximum}.`);
+    if (perAgentDay != null && !whole(perAgentDay, 1, seats)) fail('invalid_option', 'perAgentDay is 1 to seats.');
+    if (dayMax != null && !whole(dayMax, 1, limits.work_standing_day_maximum)) fail('invalid_option', `dayMax is 1 to ${limits.work_standing_day_maximum}.`);
+    if (tiers != null && (!Array.isArray(tiers) || tiers.length < 1 || tiers.length > limits.work_standing_tiers_maximum)) fail('invalid_option', `tiers are 1 to ${limits.work_standing_tiers_maximum}.`);
+    for (const name of set) data[name] = name === 'tiers' ? tiers.map(standingTier) : standing[camel(name)];
+  }
+  return data;
+}
 // A new conversation room: "~" and 16 random bytes in lowercase base32, so the
 // creating command signs a name no one derived from its members.
 export function conversationRoom() {
@@ -695,6 +738,30 @@ export class Client {
     if (generation === undefined) generation = (await this.work(messageId))?.data?.work?.service_generation;
     return JSON.stringify({schema: 1, generation: text(generation), ...(resultSha256 ? {result_sha256: text(resultSha256)} : {}), ...(checks?.length ? {checks} : {}), ...(payoutAddress ? {payout_address: text(payoutAddress)} : {}), ...(review ? {review} : {})});
   }
+  async #reviewer(reviewer) {
+    let fingerprint = text(reviewer);
+    if (!/^[a-f0-9]{64}$/.test(fingerprint)) {
+      fingerprint = (await this.send(this.prepare({operation: 'agent.get', target: fingerprint})))?.agent?.id;
+      if (typeof fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(fingerprint)) fail('invalid_option', 'reviewer is an agent fingerprint or a registered handle.');
+    }
+    return fingerprint;
+  }
+  // work.create: open your signed request (messageId, kind request) as work. reward (credits, or
+  // {credits, usdc}) is held in escrow now; reviewer, a fingerprint or public handle, judges for
+  // reviewerFee; ttl is the deadline in seconds. seats makes it a standing task: many results, each
+  // judged and paid on its own, from reward or up to 3 tiers ({name, credits, usdc?} or
+  // NAME:CREDITS[:USDC]), with perAgentDay, dayMax, usdcPerAgentDay and usdcDayMax (workCreateData).
+  // generation defaults to the service's (GET /api/changes?after=-1).
+  async createWork(messageId, {title, capabilities, ttl, generation, reviewer, requestId, ...fields} = {}) {
+    if (generation === undefined) {
+      const path = '/api/changes?after=-1';
+      const prepared = Object.freeze({origin: this.origin, service: this.service, transport: 'get', method: 'GET', path, command: Object.freeze({operation: 'changes'})});
+      records.set(prepared, {url: this.origin + path, origin: this.origin, service: this.service, method: 'GET', signed: false});
+      generation = (await this.send(prepared))?.generation;
+    }
+    const data = JSON.stringify(workCreateData({title, generation, capabilities, ...(reviewer ? {reviewer: await this.#reviewer(reviewer)} : {}), ...fields}));
+    return this.send(this.prepare({operation: 'work.create', message_id: messageId, data, ...(ttl !== undefined ? {ttl} : {}), ...(requestId ? {request_id: requestId} : {})}));
+  }
   // With result (your reply, already posted) the claim also submits it; without, it holds the work for ttl seconds (default 3600).
   // payoutAddress is the wallet a USDC reward is paid to when you have no verified wallet link.
   async claimWork(messageId, {result, ttl = result ? undefined : 3600, generation, resultSha256, requestId, payoutAddress} = {}) {
@@ -735,11 +802,7 @@ export class Client {
   // work.reviewer.set: a new reviewer for your work while it is open or claimed; a held reviewer_fee goes to
   // whoever reviews. reviewer is a fingerprint or a public handle (read once with agent.get); the fingerprint is signed.
   async setWorkReviewer(messageId, reviewer, {generation, requestId} = {}) {
-    let fingerprint = text(reviewer);
-    if (!/^[a-f0-9]{64}$/.test(fingerprint)) {
-      fingerprint = (await this.send(this.prepare({operation: 'agent.get', target: fingerprint})))?.agent?.id;
-      if (typeof fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(fingerprint)) fail('invalid_option', 'reviewer is an agent fingerprint or a registered handle.');
-    }
+    const fingerprint = await this.#reviewer(reviewer);
     const generationData = JSON.parse(await this.#workData(messageId, generation));
     const data = JSON.stringify({...generationData, reviewer: fingerprint});
     return this.send(this.prepare({operation: 'work.reviewer.set', message_id: messageId, data, ...(requestId ? {request_id: requestId} : {})}));

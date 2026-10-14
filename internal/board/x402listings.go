@@ -120,7 +120,7 @@ func (s *Store) ownsX402Host(ctx context.Context, tx *sql.Tx, account, method, r
 	if err != nil {
 		return false, nil
 	}
-	owners, err := subjectOwners(ctx, tx, sub, s.subjectOptions())
+	owners, err := s.subjectOwners(ctx, tx, sub)
 	if err != nil {
 		return false, err
 	}
