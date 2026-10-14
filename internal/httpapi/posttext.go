@@ -82,14 +82,14 @@ func (s *Server) publicPostText(r *http.Request, id string) (board.Message, erro
 			return board.Message{}, err
 		}
 		if len(res.Messages) != 1 {
-			return board.Message{}, &board.Error{Status: 404, Code: "not_found", Message: "Message not found."}
+			return board.Message{}, board.ErrMessageNotFound()
 		}
 		m := res.Messages[0]
 		if m.Hidden || m.Type != "message" {
 			return board.Message{}, &board.Error{Status: 410, Code: "message_removed", Message: "This post was removed; /e/" + m.ID + " shows its tombstone and /e/" + m.ID + "/proof its log entry."}
 		}
 		if m.Visibility != "public" || m.Sealed {
-			return board.Message{}, &board.Error{Status: 404, Code: "not_found", Message: "Message not found."}
+			return board.Message{}, board.ErrMessageNotFound()
 		}
 		return m, nil
 	}

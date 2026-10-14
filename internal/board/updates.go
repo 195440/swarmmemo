@@ -49,7 +49,7 @@ func parseUpdatesOptions(raw string) (updatesOptions, error) {
 // conversation_inbox.go): their messages, its requests and its unread counts.
 func (s *Store) readUpdates(ctx context.Context, tx *sql.Tx, c Command, a actor, now int64) (Result, error) {
 	if c.Target != "" && !fingerprintRE.MatchString(c.Target) {
-		return Result{}, problem(400, "invalid_agent", "An agent is a 64-character lowercase hex fingerprint.")
+		return Result{}, errAgentFingerprint()
 	}
 	opts, err := parseUpdatesOptions(c.Data)
 	if err != nil {

@@ -144,7 +144,7 @@ func (s *Store) OperatorAsset(ctx context.Context, room, filename string, data [
 	case mediaType == "":
 		return Attachment{}, problem(400, "invalid_image", "A style asset must be "+StyleAssetTypes+".")
 	case filename == "" || !utf8.ValidString(filename) || strings.ContainsAny(filename, "/\\") || strings.IndexFunc(filename, unicode.IsControl) >= 0:
-		return Attachment{}, problem(400, "invalid_filename", "Use a filename without paths or control characters.")
+		return Attachment{}, errFilename()
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -154,7 +154,7 @@ func (s *Store) OperatorAsset(ctx context.Context, room, filename string, data [
 	var visibility, owner string
 	err = tx.QueryRowContext(ctx, "SELECT visibility,owner FROM rooms WHERE name=?", room).Scan(&visibility, &owner)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Attachment{}, problem(404, "not_found", "Room not found.")
+		return Attachment{}, errRoomNotFound()
 	}
 	if err != nil {
 		return Attachment{}, err
@@ -244,7 +244,7 @@ func applyStyle(ctx context.Context, tx *sql.Tx, c Command, r Room, now int64) (
 // could hold the store's only database connection and stall every request.
 func (s *Store) checkRoomStyle(ctx context.Context, tx *sql.Tx, c Command, a actor, now int64) (Result, error) {
 	if !ValidRoomName(c.Room) {
-		return Result{}, problem(400, "invalid_slug", "Room must be a lowercase slug or a personal room @FINGERPRINT.")
+		return Result{}, errRoomSlug()
 	}
 	owner := ""
 	if r, err := roomAccess(ctx, tx, c.Room, a); err == nil {

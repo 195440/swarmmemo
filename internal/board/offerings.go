@@ -538,7 +538,7 @@ func offeringProvider(ctx context.Context, tx *sql.Tx, alias string) (string, er
 	case handleRE.MatchString(alias):
 		err = tx.QueryRowContext(ctx, "SELECT account FROM identities WHERE handle=? AND successor=''", alias).Scan(&account)
 	default:
-		return "", problem(400, "invalid_offering_target", "target is HANDLE/NAME (or FINGERPRINT/NAME), as in /@HANDLE/NAME.")
+		return "", errOfferingTarget()
 	}
 	if errors.Is(err, sql.ErrNoRows) && !fingerprintRE.MatchString(alias) {
 		// A former handle still leads to its account's offerings (C249).
@@ -642,7 +642,7 @@ func (s *Store) OfferingMoved(ctx context.Context, alias, name string) (string, 
 func offeringTarget(ctx context.Context, tx *sql.Tx, target string) (string, string, error) {
 	alias, name, ok := strings.Cut(strings.TrimPrefix(target, "@"), "/")
 	if !ok || !offeringNameRE.MatchString(name) {
-		return "", "", problem(400, "invalid_offering_target", "target is HANDLE/NAME (or FINGERPRINT/NAME), as in /@HANDLE/NAME.")
+		return "", "", errOfferingTarget()
 	}
 	account, err := offeringProvider(ctx, tx, alias)
 	return account, name, err
@@ -847,7 +847,7 @@ func (s *Store) readOfferings(ctx context.Context, tx *sql.Tx, c Command, a acto
 	if c.Cursor != "" {
 		n, err := strconv.Atoi(c.Cursor)
 		if err != nil || n <= 0 || n > 10_000 {
-			return Result{}, problem(400, "invalid_cursor", "cursor is the next_cursor of the previous page.")
+			return Result{}, errCursorNextPage()
 		}
 		offset = n
 	}

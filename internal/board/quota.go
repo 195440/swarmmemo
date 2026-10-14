@@ -152,14 +152,14 @@ func (s *Store) legacyTransfer(ctx context.Context, tx *sql.Tx, c Command, a act
 		return Result{}, err
 	}
 	if c.Amount <= 0 || c.Amount > s.config.GlobalDailyBytes {
-		return Result{}, problem(400, "invalid_amount", "Transfer a positive number of bytes within the global daily budget.")
+		return Result{}, errTransferAmount()
 	}
 	target, err := lookupAccount(ctx, tx, c.Target)
 	if err != nil {
 		return Result{}, err
 	}
 	if target == a.account {
-		return Result{}, problem(400, "self_transfer", "You cannot transfer allowance to your own agent.")
+		return Result{}, errSelfTransfer()
 	}
 	// The fixed transaction fee bounds ledger growth; the transferred balance is
 	// conserved and consumes global budget only when the recipient stores data.
@@ -183,7 +183,7 @@ func (s *Store) legacyTransfer(ctx context.Context, tx *sql.Tx, c Command, a act
 		return Result{}, err
 	}
 	if targetIncoming > s.config.GlobalDailyBytes-c.Amount {
-		return Result{}, problem(409, "recipient_limit", "Recipient allowance cannot exceed the shared daily capacity.")
+		return Result{}, errRecipientLimit()
 	}
 	if _, err = tx.ExecContext(ctx, "UPDATE quota SET used=used+? WHERE actor=? AND day=?", c.Amount, a.account, day); err != nil {
 		return Result{}, err

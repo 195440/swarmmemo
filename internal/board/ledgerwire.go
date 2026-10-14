@@ -473,7 +473,7 @@ func transferKey(c Command) string {
 func (s *Store) ledgerTransfer(ctx context.Context, tx *sql.Tx, c Command, a actor, r allowance.Resource, now int64) (Result, error) {
 	legacy := c.Operation == "credit.transfer"
 	if legacy && (c.Amount <= 0 || c.Amount > s.config.GlobalDailyBytes) {
-		return Result{}, problem(400, "invalid_amount", "Transfer a positive number of bytes within the global daily budget.")
+		return Result{}, errTransferAmount()
 	}
 	target, err := lookupAccount(ctx, tx, c.Target)
 	if err != nil {
@@ -490,7 +490,7 @@ func (s *Store) ledgerTransfer(ctx context.Context, tx *sql.Tx, c Command, a act
 			case "quota_exhausted":
 				return Result{}, rateError(now, "quota_exhausted", "Insufficient remaining allowance for this transfer and its 256-byte transaction fee.")
 			case "recipient_limit":
-				return Result{}, problem(409, "recipient_limit", "Recipient allowance cannot exceed the shared daily capacity.")
+				return Result{}, errRecipientLimit()
 			}
 		}
 		return Result{}, quotaError(err, now, r)
@@ -606,7 +606,15 @@ func (s *Store) balances(ctx context.Context, tx *sql.Tx, subj, credit allowance
 	return out, nil
 }
 
-var tierNames = map[allowance.Tier]string{1: "trusted", 2: "proven", 3: "signed", 4: "anonymous"}
+// byTier keys a per-tier parameter (index 0 is tier 1) by tier name, tiers
+// 1-4.
+func byTier(v []int64) map[string]int64 {
+	out := map[string]int64{}
+	for i := 0; i < len(v) && i < int(allowance.TierAnonymous); i++ {
+		out[allowance.Tier(i+1).Name()] = v[i]
+	}
+	return out
+}
 
 // WaterfallSentence explains the allowance in one sentence (§2.3); it is
 // the same text as web.WaterfallSentence, which every surface uses.
@@ -677,9 +685,9 @@ func (s *Store) readAllowance(ctx context.Context, tx *sql.Tx, c Command, a acto
 	data := map[string]any{"schema": 1, "agent": agent, "ledger": s.config.Features.Ledger.String(), "model": "waterfall",
 		"claim":     "implicit, on the first spend of each UTC day",
 		"tier":      int(st.Tier),
-		"tier_name": tierNames[st.Tier],
+		"tier_name": reputationTierName(int64(st.Tier)),
 		"reason":    st.Reason,
-		"standing":  map[string]any{"tier": int(st.Tier), "name": tierNames[st.Tier], "weight_ppm": st.WeightPPM, "source": st.Source, "reason": st.Reason},
+		"standing":  map[string]any{"tier": int(st.Tier), "name": reputationTierName(int64(st.Tier)), "weight_ppm": st.WeightPPM, "source": st.Source, "reason": st.Reason},
 		"resources": resources, "resets_at": b.ResetsAt, "params_version": b.ParamsVersion}
 	// Review rewards on their way (pending) and settled this week.
 	if subj.Signed {
@@ -761,7 +769,7 @@ func (s *Store) readLedger(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 	if c.Cursor != "" {
 		before, err := strconv.ParseInt(c.Cursor, 10, 64)
 		if err != nil || before <= 0 {
-			return Result{}, problem(400, "invalid_cursor", "cursor is the next_cursor of the previous page.")
+			return Result{}, errCursorNextPage()
 		}
 		q.Before = before
 	}
@@ -852,7 +860,7 @@ func (s *Store) allowanceNote(ctx context.Context, tx *sql.Tx, a actor, res *Res
 	if err != nil {
 		return fromAllowance(err)
 	}
-	name := tierNames[b.Standing.Tier]
+	name := reputationTierName(int64(b.Standing.Tier))
 	res.Allowance = &AllowanceNote{
 		Line:     fmt.Sprintf("Free today: %s of posting (%s tier), %s left; resets 00:00 UTC. Linked domains and endorsements raise it.", humanBytes(b.Entitlement+b.Incoming), name, humanBytes(b.Remaining)),
 		Resource: string(allowance.PostBytes), Tier: int(b.Standing.Tier), Entitlement: b.Entitlement, Remaining: b.Remaining, ResetsAt: b.ResetsAt,
@@ -1056,8 +1064,8 @@ func (s *Store) AllowanceCapabilities(ctx context.Context) map[string]any {
 	resources := map[string]any{}
 	for _, r := range resourceOrder {
 		rp := p.Resources[r]
-		resources[string(r)] = map[string]any{"unit": rp.Unit, "budget": rp.Budget, "caps": map[string]int64{"trusted": rp.Cap[0], "proven": rp.Cap[1], "signed": rp.Cap[2], "anonymous": rp.Cap[3]},
-			"floors": map[string]int64{"trusted": rp.Floor[0], "proven": rp.Floor[1], "signed": rp.Floor[2], "anonymous": rp.Floor[3]}, "transfer_fee": rp.TransferFee, "inbound_cap": rp.InboundCap}
+		resources[string(r)] = map[string]any{"unit": rp.Unit, "budget": rp.Budget, "caps": byTier(rp.Cap),
+			"floors": byTier(rp.Floor), "transfer_fee": rp.TransferFee, "inbound_cap": rp.InboundCap}
 	}
 	return map[string]any{
 		"model":       "waterfall",

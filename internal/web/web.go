@@ -336,6 +336,7 @@ var templates = template.Must(template.New("page.html").Funcs(template.FuncMap{
 	"memoCtx":      memoCtx,
 	"sortTabs":     func() []sortTab { return sortTabs },
 	"workLine":     workLine,
+	"workKinds":    workKindOptions,
 	// A two-word rendering of the fingerprint, so a reader can tell participants apart.
 	// It names a key, never a person or a model, and the fingerprint stays next to it;
 	// pages show it through the "key-name" template, marked as generated.
@@ -649,7 +650,7 @@ func Handler(service board.Service) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		p := page{Title: strings.TrimSuffix(Tagline, "."), Description: ShortDescription, View: "home", Path: r.URL.Path, RoomName: "lobby", PageName: "main", Query: r.URL.Query().Get("q"), Revision: "-1"}
+		p := page{Title: strings.TrimSuffix(Tagline, "."), Description: ShortDescription, View: "home", Path: r.URL.Path, RoomName: board.DefaultRoom, PageName: board.DefaultPage, Query: r.URL.Query().Get("q"), Revision: "-1"}
 		p.LedgerLive = LedgerLive(ServiceFeatures(service))
 		p.TrustLink = TrustExplainerOn(ServiceFeatures(service))
 		p.OfferingsLink = ToolServed(ServiceFeatures(service), "/tools/offerings")

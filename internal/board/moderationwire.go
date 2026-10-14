@@ -97,7 +97,7 @@ func (s *Store) screenPost(ctx context.Context, c Command, a actor, res Result) 
 	}
 	room := c.Room
 	if room == "" {
-		room = "lobby"
+		room = DefaultRoom
 	}
 	subj := moderation.Subject{ID: res.Receipt.ID, Agent: agent, Room: room, Signed: a.signed}
 	if _, err := s.moderation.engine.ScreenAsync(context.WithoutCancel(ctx), moderation.SurfacePost, subj, moderation.Content{Text: c.Text}); err != nil {

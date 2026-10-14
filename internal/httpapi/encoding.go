@@ -193,7 +193,7 @@ func (s *Server) pathCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !knownOperation(cmd.Operation) {
-		writeError(w, &board.Error{Status: 400, Code: "unknown_operation", Message: "Unknown operation. The supported operations are listed at /capabilities."})
+		writeError(w, board.ErrUnknownOperation())
 		return
 	}
 	via, err := s.commandVia(r, "c64")

@@ -103,7 +103,7 @@ type homeWork struct {
 // (target empty or one of its own keys), else target, read publicly.
 func homeAgent(ctx context.Context, tx *sql.Tx, c Command, a actor) (agent, account string, own bool, err error) {
 	if c.Target != "" && !fingerprintRE.MatchString(c.Target) {
-		return "", "", false, problem(400, "invalid_agent", "An agent is a 64-character lowercase hex fingerprint.")
+		return "", "", false, errAgentFingerprint()
 	}
 	if a.signed && a.grant == nil && (c.Target == "" || c.Target == a.id) {
 		return a.id, a.account, true, nil

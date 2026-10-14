@@ -835,7 +835,7 @@ func (c *Core) execute(ctx context.Context, peer string, cmd board.Command) (boa
 	if cmd.Operation == "post" && cmd.Visibility != "private" {
 		room := cmd.Room
 		if room == "" {
-			room = "lobby"
+			room = board.DefaultRoom
 		}
 		// The same visibility probe HTTP makes before a plaintext signed post:
 		// anonymous, so a private room is simply not found.

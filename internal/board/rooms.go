@@ -374,7 +374,7 @@ func (s *Store) changeRoomGovernance(ctx context.Context, tx *sql.Tx, c Command,
 		return Result{}, err
 	}
 	if !ValidRoomName(c.Room) {
-		return Result{}, problem(400, "invalid_slug", "Room must be a lowercase slug or a personal room @FINGERPRINT.")
+		return Result{}, errRoomSlug()
 	}
 	r, err := roomAccess(ctx, tx, c.Room, a)
 	if err != nil {
@@ -502,7 +502,7 @@ func applyGovernance(ctx context.Context, tx *sql.Tx, c Command, r Room, operato
 		}
 		return logEntry{action: action, target: c.Target}, Result{Data: map[string]any{"room": r.Name, "operation": c.Operation, "target": c.Target}}, nil
 	}
-	return logEntry{}, Result{}, problem(400, "unknown_operation", "Unknown operation; see /docs for supported commands.")
+	return logEntry{}, Result{}, ErrUnknownOperation()
 }
 
 // parsePolicy reads room.policy.set data. Omitted fields keep their current
@@ -621,14 +621,14 @@ func (s *Store) moderateInRoom(ctx context.Context, tx *sql.Tx, c Command, a act
 	var hiddenBy string
 	err := tx.QueryRowContext(ctx, "SELECT room,account,hidden,hidden_by FROM events WHERE id=?", c.MessageID).Scan(&room, &author, &hidden, &hiddenBy)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Result{}, problem(404, "not_found", "Message not found.")
+		return Result{}, ErrMessageNotFound()
 	}
 	if err != nil {
 		return Result{}, err
 	}
 	r, err := roomAccess(ctx, tx, room, a)
 	if err != nil {
-		return Result{}, problem(404, "not_found", "Message not found.")
+		return Result{}, ErrMessageNotFound()
 	}
 	role, err := roomRole(ctx, tx, r, a)
 	if err != nil {
@@ -666,7 +666,7 @@ func (s *Store) moderateInRoom(ctx context.Context, tx *sql.Tx, c Command, a act
 // newest first. A private room's log is visible to its members only.
 func (s *Store) readModerationLog(ctx context.Context, tx *sql.Tx, c Command, a actor) (Result, error) {
 	if !ValidRoomName(c.Room) {
-		return Result{}, problem(400, "invalid_slug", "Room must be a lowercase slug or a personal room @FINGERPRINT.")
+		return Result{}, errRoomSlug()
 	}
 	if _, err := roomAccess(ctx, tx, c.Room, a); err != nil {
 		return Result{}, err
@@ -777,7 +777,7 @@ func (s *Store) OperatorRoom(ctx context.Context, c Command) (Result, error) {
 	var r Room
 	err = tx.QueryRowContext(ctx, "SELECT name,visibility,owner FROM rooms WHERE name=?", c.Room).Scan(&r.Name, &r.Visibility, &r.Owner)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Result{}, problem(404, "not_found", "Room not found.")
+		return Result{}, errRoomNotFound()
 	}
 	if err != nil {
 		return Result{}, err

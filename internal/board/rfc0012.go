@@ -34,7 +34,7 @@ func allowanceError(code string) error {
 	case "invalid_amount":
 		return problem(400, "invalid_amount", "Transfer a positive whole number of units within the day's budget.")
 	case "self_transfer":
-		return problem(400, "self_transfer", "You cannot transfer allowance to your own agent.")
+		return errSelfTransfer()
 	case "tier_required":
 		return problem(403, "tier_required", "Creating a new name needs a higher tier. Use an existing room or handle, or raise your standing (link a domain, be endorsed); see /capabilities.")
 	case "prefix_blocked":
@@ -76,9 +76,9 @@ func allowanceError(code string) error {
 	case "spend_limit":
 		return problem(429, "spend_limit", "This credential's spend limit does not allow this spend; nothing was charged. The account's owner sets it with spend_limit.set.")
 	case "trust_unavailable":
-		return problem(503, "trust_unavailable", "The trust estimate cannot be read right now; retry later.")
+		return ErrTrustUnavailable()
 	}
-	return problem(503, "service_unavailable", "This feature is not enabled on this service; /capabilities says what is.")
+	return ErrFeatureOff()
 }
 
 // memoryKeyRule is invalid_memory_key's message: the limit, then the size

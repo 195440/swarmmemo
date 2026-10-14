@@ -105,13 +105,10 @@ type trustGraphEntry struct {
 
 // BandName names a standing band: 1 trusted, 2 proven, 3 signed.
 func BandName(band int64) string {
-	switch band {
-	case 1:
-		return "trusted"
-	case 2:
-		return "proven"
+	if band == int64(allowance.TierTrusted) || band == int64(allowance.TierProven) {
+		return allowance.Tier(band).Name()
 	}
-	return "signed"
+	return allowance.TierSigned.Name()
 }
 
 // TrustGraph is the public trust network of the latest finished run with

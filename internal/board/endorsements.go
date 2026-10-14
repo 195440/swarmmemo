@@ -449,7 +449,7 @@ func (s *Store) parseEndorsementCursor(cursor string) (phase byte, position int6
 		return cursorEndorsementLegacy, 0, nil
 	}
 	if len(cursor) > 256 {
-		return 0, 0, problem(400, "invalid_cursor", "Use a cursor returned by this server.")
+		return 0, 0, errCursorForeign()
 	}
 	if n, err := s.parseCursorFor(cursor, cursorEndorsementRecord); err == nil {
 		return cursorEndorsementRecord, n, nil

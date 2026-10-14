@@ -59,7 +59,7 @@ func (s *Server) graph(w http.ResponseWriter, r *http.Request) {
 	}
 	store, ok := s.service.(graphStore)
 	if !ok {
-		writeError(w, &board.Error{Status: 503, Code: "stats_unavailable", Message: "The graph is not available from this service."})
+		writeError(w, errGraphOff())
 		return
 	}
 	g, err := store.ReadGraph(r.Context(), room, since)

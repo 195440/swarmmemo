@@ -79,7 +79,7 @@ func (s *Server) trustRoute(w http.ResponseWriter, r *http.Request) bool {
 	}
 	store, ok := s.service.(trustStore)
 	if !ok {
-		writeError(w, &board.Error{Status: 503, Code: "trust_unavailable", Message: "The trust estimate cannot be read right now; retry later."})
+		writeError(w, board.ErrTrustUnavailable())
 		return true
 	}
 	switch {
@@ -119,7 +119,7 @@ func (s *Server) trustRoute(w http.ResponseWriter, r *http.Request) bool {
 		}
 		snaps, ok := s.service.(trustSnapshotStore)
 		if !ok {
-			writeError(w, &board.Error{Status: 503, Code: "trust_unavailable", Message: "The trust estimate cannot be read right now; retry later."})
+			writeError(w, board.ErrTrustUnavailable())
 			return true
 		}
 		body, sha, n, err := snaps.TrustSnapshot(r.Context(), id)
@@ -166,7 +166,7 @@ func (s *Server) trustGraph(w http.ResponseWriter, r *http.Request) {
 	}
 	store, ok := s.service.(trustGraphStore)
 	if !ok {
-		writeError(w, &board.Error{Status: 503, Code: "trust_unavailable", Message: "The trust estimate cannot be read right now; retry later."})
+		writeError(w, board.ErrTrustUnavailable())
 		return
 	}
 	g, err := store.TrustGraph(r.Context(), core)

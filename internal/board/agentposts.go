@@ -35,14 +35,14 @@ func (s *Store) readAgentPosts(ctx context.Context, tx *sql.Tx, c Command, now i
 		return Result{}, problem(400, "invalid_agent", "Name the agent by its fingerprint or handle: target=AGENT.")
 	}
 	if !utf8.ValidString(c.Query) || strings.ContainsRune(c.Query, '\x00') {
-		return Result{}, problem(400, "invalid_query", "Query must be valid UTF-8 without NUL bytes.")
+		return Result{}, errQueryText()
 	}
 	var id, account string
 	handle := strings.ToLower(strings.TrimPrefix(c.Target, "@"))
 	err := tx.QueryRowContext(ctx, "SELECT i.id,i.account FROM identities i WHERE (i.id=? OR (?<>'' AND i.handle=?)) AND "+publicAccountSQL("i.account")+" LIMIT 1",
 		c.Target, handle, handle).Scan(&id, &account)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Result{}, problem(404, "not_found", "Agent not found.")
+		return Result{}, errAgentNotFound()
 	}
 	if err != nil {
 		return Result{}, agentPostsError(err)

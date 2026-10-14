@@ -37,7 +37,7 @@ func (s *Store) post(ctx context.Context, tx *sql.Tx, c Command, a actor, now in
 		c.Kind = DefaultKind
 	}
 	if c.Visibility != "" && c.Visibility != "public" && c.Visibility != "private" {
-		return Result{}, problem(400, "invalid_visibility", "Visibility must be public or private.")
+		return Result{}, errVisibility()
 	}
 	if !ValidRoomName(c.Room) || !slug.MatchString(c.Page) || !slug.MatchString(c.Kind) {
 		return Result{}, problem(400, "invalid_slug", "Room, page and kind must be lowercase ASCII slugs of 1–64 characters; a personal room is @ and its owner's 64-character fingerprint.")
@@ -52,7 +52,7 @@ func (s *Store) post(ctx context.Context, tx *sql.Tx, c Command, a actor, now in
 		return Result{}, problem(400, "invalid_handle", fmt.Sprintf("A handle is 1–%d ASCII letters, digits, underscores or hyphens, starting with a letter or digit.", HandleMaxChars))
 	}
 	if c.To != "" && !fingerprintRE.MatchString(c.To) {
-		return Result{}, problem(400, "invalid_recipient", "to must be an agent fingerprint: 64 lowercase hex characters.")
+		return Result{}, errRecipient()
 	}
 	if len(c.ReplyTo) > 64 {
 		return Result{}, problem(400, "invalid_reply", "reply_to must be a message ID: 32 lowercase hex characters.")
@@ -149,13 +149,13 @@ func (s *Store) post(ctx context.Context, tx *sql.Tx, c Command, a actor, now in
 		var room string
 		err = tx.QueryRowContext(ctx, "SELECT room FROM events WHERE id=?", c.ReplyTo).Scan(&room)
 		if errors.Is(err, sql.ErrNoRows) {
-			return Result{}, problem(404, "not_found", "Reply target not found.")
+			return Result{}, errReplyTargetNotFound()
 		}
 		if err != nil {
 			return Result{}, err
 		}
 		if _, err = roomAccess(ctx, tx, room, a); err != nil {
-			return Result{}, problem(404, "not_found", "Reply target not found.")
+			return Result{}, errReplyTargetNotFound()
 		}
 		// Same-room replies cannot reveal a private identifier into a public room.
 		if room != c.Room {
@@ -454,7 +454,7 @@ func (s *Store) readEvents(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 	}
 	if c.To != "" {
 		if !fingerprintRE.MatchString(c.To) {
-			return Result{}, problem(400, "invalid_recipient", "to must be an agent fingerprint: 64 lowercase hex characters.")
+			return Result{}, errRecipient()
 		}
 		// Preserve original recipient bytes on events, while reading the inbox
 		// across every key belonging to the addressed participant's account.
@@ -562,7 +562,7 @@ func (s *Store) readEvents(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 		args = append(args, c.MessageID)
 		e, err := scanEvent(tx.QueryRowContext(ctx, "SELECT "+eventColumns+" FROM events e JOIN rooms r ON r.name=e.room WHERE "+strings.Join(where, " AND "), args...))
 		if errors.Is(err, sql.ErrNoRows) {
-			return Result{}, problem(404, "not_found", "Message not found.")
+			return Result{}, ErrMessageNotFound()
 		}
 		if err != nil {
 			return Result{}, err
@@ -802,7 +802,7 @@ func (s *Store) Moderate(ctx context.Context, eventID, reason string, hide bool)
 	defer tx.Rollback()
 	var room, visibility string
 	if err = tx.QueryRowContext(ctx, "SELECT e.room,r.visibility FROM events e JOIN rooms r ON r.name=e.room WHERE e.id=?", eventID).Scan(&room, &visibility); errors.Is(err, sql.ErrNoRows) {
-		return problem(404, "not_found", "Message not found.")
+		return ErrMessageNotFound()
 	} else if err != nil {
 		return err
 	}
@@ -843,7 +843,7 @@ func (s *Store) report(ctx context.Context, tx *sql.Tx, c Command, a actor, now 
 	var room string
 	err := tx.QueryRowContext(ctx, "SELECT room FROM events WHERE id=?", c.MessageID).Scan(&room)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Result{}, problem(404, "not_found", "Message not found.")
+		return Result{}, ErrMessageNotFound()
 	}
 	if err != nil {
 		return Result{}, err

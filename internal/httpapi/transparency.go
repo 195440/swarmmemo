@@ -91,7 +91,7 @@ func (s *Server) transparencyRoute(w http.ResponseWriter, r *http.Request) bool 
 	}
 	store, ok := s.service.(transparencyReader)
 	if !ok {
-		writeError(w, &board.Error{Status: 503, Code: "service_unavailable", Message: "The transparency log is not available on this service."})
+		writeError(w, errTransparencyOff())
 		return true
 	}
 	if !readMethod(r) {
@@ -311,7 +311,7 @@ type workProofsInput struct {
 func (s *Server) mcpWorkProofs(ctx context.Context, in workProofsInput) (*mcp.CallToolResult, board.Result, error) {
 	store, ok := s.service.(transparencyReader)
 	if !ok {
-		return nil, board.Result{}, &board.Error{Status: 503, Code: "service_unavailable", Message: "The transparency log is not available on this service."}
+		return nil, board.Result{}, errTransparencyOff()
 	}
 	if in.Limit < 0 || in.Limit > board.RecordProofsPageMax {
 		return nil, board.Result{}, bad("limit must be from 1 to " + strconv.Itoa(board.RecordProofsPageMax) + ".")
@@ -326,7 +326,7 @@ func (s *Server) mcpWorkProofs(ctx context.Context, in workProofsInput) (*mcp.Ca
 func (s *Server) mcpLogProof(ctx context.Context, in logProofInput) (*mcp.CallToolResult, board.Result, error) {
 	store, ok := s.service.(transparencyReader)
 	if !ok {
-		return nil, board.Result{}, &board.Error{Status: 503, Code: "service_unavailable", Message: "The transparency log is not available on this service."}
+		return nil, board.Result{}, errTransparencyOff()
 	}
 	given := 0
 	for _, set := range []bool{in.Leaf != nil, in.MessageID != "", in.Notary != ""} {
@@ -364,7 +364,7 @@ func (s *Server) mcpLogProof(ctx context.Context, in logProofInput) (*mcp.CallTo
 func (s *Server) mcpAgentRecord(ctx context.Context, in agentRecordInput) (*mcp.CallToolResult, board.Result, error) {
 	store, ok := s.service.(transparencyReader)
 	if !ok {
-		return nil, board.Result{}, &board.Error{Status: 503, Code: "service_unavailable", Message: "The transparency log is not available on this service."}
+		return nil, board.Result{}, errTransparencyOff()
 	}
 	rec, err := store.ReadLogRecord(ctx, in.Agent)
 	if err != nil {

@@ -929,7 +929,7 @@ func (s *Store) encodeFeedCursor(c feedCursor) string {
 func (s *Store) decodeFeedCursor(raw, feed string) (feedCursor, error) {
 	var c feedCursor
 	if len(raw) > 512 {
-		return c, problem(400, "invalid_cursor", "Invalid feed cursor.")
+		return c, errFeedCursor()
 	}
 	s.cursorMu.RLock()
 	defer s.cursorMu.RUnlock()
@@ -942,11 +942,11 @@ func (s *Store) decodeFeedCursor(raw, feed string) (feedCursor, error) {
 	}
 	sealed, err := base64.RawURLEncoding.Strict().DecodeString(body)
 	if err != nil {
-		return c, problem(400, "invalid_cursor", "Invalid feed cursor.")
+		return c, errFeedCursor()
 	}
 	plain, err := s.cursorCipher.Open(nil, nil, sealed, []byte(feedCursorDomain+s.generation))
 	if err != nil || json.Unmarshal(plain, &c) != nil || c.Version != 1 || c.Offset < 0 || c.Offset > HotCandidates+PageMax+1 {
-		return c, problem(400, "invalid_cursor", "Cursor is invalid or belongs to another endpoint.")
+		return c, errCursorOtherEndpoint()
 	}
 	if c.Feed != feed {
 		return c, problem(400, "invalid_cursor", "This cursor pages another feed; send it with the same profile and override as the read that returned it.")

@@ -51,7 +51,7 @@ func (s *Store) blob(ctx context.Context, tx *sql.Tx, c Command, a actor, now in
 			filename = "attachment.bin"
 		}
 		if !utf8.ValidString(filename) || strings.ContainsAny(filename, "/\\") || strings.IndexFunc(filename, unicode.IsControl) >= 0 || filename == "." || filename == ".." {
-			return Result{}, problem(400, "invalid_filename", "Use a filename without paths or control characters.")
+			return Result{}, errFilename()
 		}
 		mediaType := c.MediaType
 		if mediaType == "" {
@@ -94,14 +94,14 @@ func (s *Store) blob(ctx context.Context, tx *sql.Tx, c Command, a actor, now in
 	}
 	b, err := scanBlob(tx.QueryRowContext(ctx, "SELECT "+blobColumns+" FROM blobs WHERE id=?", id))
 	if errors.Is(err, sql.ErrNoRows) {
-		return Result{}, problem(404, "not_found", "Attachment not found.")
+		return Result{}, errAttachmentNotFound()
 	}
 	if err != nil {
 		return Result{}, err
 	}
 	r, err := roomAccess(ctx, tx, b.Room, a)
 	if err != nil {
-		return Result{}, problem(404, "not_found", "Attachment not found.")
+		return Result{}, errAttachmentNotFound()
 	}
 	if c.Operation == "blob.delete" {
 		if err = requireSigned(a); err != nil {
@@ -142,7 +142,7 @@ func (s *Store) blob(ctx context.Context, tx *sql.Tx, c Command, a actor, now in
 		return Result{}, err
 	}
 	if total > 0 && visible == 0 {
-		return Result{}, problem(404, "not_found", "Attachment not found.")
+		return Result{}, errAttachmentNotFound()
 	}
 	var data []byte
 	if err = tx.QueryRowContext(ctx, "SELECT data FROM blobs WHERE id=?", id).Scan(&data); err != nil {
@@ -160,13 +160,13 @@ func (s *Store) attachToPost(ctx context.Context, tx *sql.Tx, c Command, eventID
 		seen[id] = true
 		b, err := scanBlob(tx.QueryRowContext(ctx, "SELECT "+blobColumns+" FROM blobs WHERE id=?", id))
 		if errors.Is(err, sql.ErrNoRows) {
-			return problem(404, "not_found", "Attachment not found in this room.")
+			return errAttachmentNotInRoom()
 		}
 		if err != nil {
 			return err
 		}
 		if b.Room != c.Room {
-			return problem(404, "not_found", "Attachment not found in this room.")
+			return errAttachmentNotInRoom()
 		}
 		if b.Deleted || blobExpired(b.ExpiresAt, now) {
 			return problem(410, "attachment_gone", "An attachment was deleted or expired; upload a new copy.")
@@ -177,7 +177,7 @@ func (s *Store) attachToPost(ctx context.Context, tx *sql.Tx, c Command, eventID
 			return err
 		}
 		if refs > 0 && visible == 0 {
-			return problem(404, "not_found", "Attachment not found in this room.")
+			return errAttachmentNotInRoom()
 		}
 		if _, err = tx.ExecContext(ctx, "INSERT INTO event_attachments(event_id,blob_id,position) VALUES(?,?,?)", eventID, id, position); err != nil {
 			return err

@@ -1137,7 +1137,7 @@ func loadCall(ctx context.Context, q interface {
 }, id string) (callRow, error) {
 	r, err := scanCall(q.QueryRowContext(ctx, "SELECT "+callCols+" FROM offering_calls WHERE id=?", id).Scan)
 	if errors.Is(err, sql.ErrNoRows) {
-		return r, problem(404, "offering_call_not_found", "No such offering call for this agent.")
+		return r, errOfferingCallNotFound()
 	}
 	return r, err
 }
@@ -1239,14 +1239,14 @@ func (r callRow) providerView(now int64) map[string]any {
 // providerCall loads the call target names when it is one of a's account's.
 func (s *Store) providerCall(ctx context.Context, tx *sql.Tx, target string, a actor) (callRow, error) {
 	if !offeringCallRE.MatchString(target) {
-		return callRow{}, problem(400, "invalid_offering_call", "target is the call's id, oc_ and 32 hex digits.")
+		return callRow{}, errOfferingCallID()
 	}
 	call, err := loadCall(ctx, tx, target)
 	if err != nil {
 		return call, err
 	}
 	if call.Account != a.account {
-		return callRow{}, problem(404, "offering_call_not_found", "No such offering call for this agent.")
+		return callRow{}, errOfferingCallNotFound()
 	}
 	return call, nil
 }
@@ -1258,7 +1258,7 @@ func (s *Store) readOfferingCalls(ctx context.Context, tx *sql.Tx, c Command, a 
 	}
 	if c.Operation == "offering.call.get" {
 		if !offeringCallRE.MatchString(c.Target) {
-			return Result{}, problem(400, "invalid_offering_call", "target is the call's id, oc_ and 32 hex digits.")
+			return Result{}, errOfferingCallID()
 		}
 		call, err := loadCall(ctx, tx, c.Target)
 		if err != nil {
@@ -1274,7 +1274,7 @@ func (s *Store) readOfferingCalls(ctx context.Context, tx *sql.Tx, c Command, a 
 		} else if mine {
 			return Result{Data: map[string]any{"call": call.callerView(now)}}, nil
 		}
-		return Result{}, problem(404, "offering_call_not_found", "No such offering call for this agent.")
+		return Result{}, errOfferingCallNotFound()
 	}
 	limit := c.Limit
 	if limit < 0 || limit > OfferingCallsPageMax {
@@ -1308,7 +1308,7 @@ func (s *Store) readOfferingCalls(ctx context.Context, tx *sql.Tx, c Command, a 
 	if c.Cursor != "" {
 		n, err := strconv.ParseInt(c.Cursor, 10, 64)
 		if err != nil || n <= 0 {
-			return Result{}, problem(400, "invalid_cursor", "cursor is the next_cursor of the previous page.")
+			return Result{}, errCursorNextPage()
 		}
 		where, args = append(where, "seq<?"), append(args, n)
 	}

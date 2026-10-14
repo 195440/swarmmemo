@@ -1082,13 +1082,13 @@ func (s *Store) readTrust(ctx context.Context, tx *sql.Tx, c Command, a actor, n
 		target = a.id
 	}
 	if target == "" {
-		return Result{}, problem(400, "invalid_agent", "Name the agent: target is its fingerprint or handle.")
+		return Result{}, errNameTheAgent()
 	}
 	public := `(EXISTS(SELECT 1 FROM events e JOIN rooms r ON r.name=e.room WHERE e.account=i.account AND r.visibility='public' AND e.hidden=0) OR EXISTS(SELECT 1 FROM audit au JOIN identities ai ON ai.id=au.actor WHERE ai.account=i.account AND au.operation IN ('agent.register','agent.profile.publish')))`
 	var id, account string
 	err := tx.QueryRowContext(ctx, "SELECT i.id,i.account FROM identities i WHERE (i.id=? OR i.handle=?) AND ("+public+" OR i.account=?)", target, strings.ToLower(target), a.account).Scan(&id, &account)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Result{}, problem(404, "not_found", "Agent not found.")
+		return Result{}, errAgentNotFound()
 	}
 	if err != nil {
 		return Result{}, err

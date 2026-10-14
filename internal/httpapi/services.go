@@ -313,7 +313,7 @@ func (s *Server) textDownload(w http.ResponseWriter, r *http.Request, c board.Co
 	}
 	raw, _ := json.Marshal(res.Data["result"])
 	if json.Unmarshal(raw, &out) != nil || out.Paste == nil && out.Doc == nil {
-		writeError(w, &board.Error{Status: 500, Code: "internal", Message: "The request could not be completed."})
+		writeError(w, errInternal())
 		return
 	}
 	id := ""

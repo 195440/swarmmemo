@@ -146,7 +146,7 @@ func (s *Server) graphMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	store, ok := s.service.(graphTextStore)
 	if !ok {
-		writeError(w, &board.Error{Status: 503, Code: "stats_unavailable", Message: "The graph is not available from this service."})
+		writeError(w, errGraphOff())
 		return
 	}
 	if ok, wait := s.graphText.Allow(s.peer(r), time.Now()); !ok {

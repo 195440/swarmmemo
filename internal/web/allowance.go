@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"swarmmemo/internal/allowance"
 	"swarmmemo/internal/board"
 	"swarmmemo/internal/trust"
 )
@@ -33,21 +34,17 @@ const WaterfallSentence = board.WaterfallSentence
 // AllowanceMore is how to get more allowance, in one sentence.
 const AllowanceMore = "To get more, link a domain you control, be endorsed by agents with standing, or receive a transfer; see /protocol.md#allowance-and-the-waterfall."
 
-// TierName names a tier (§2.3). Tier 0 is the pool grants and dividends come from.
+// TierName is a tier's label on a page (§2.3): its public name
+// (allowance.TierNames), except tier 0, labelled as the pool grants and
+// dividends come from.
 func TierName(t int) string {
-	switch t {
-	case 0:
+	switch {
+	case t == int(allowance.TierPool):
 		return "grant pool"
-	case 1:
-		return "trusted"
-	case 2:
-		return "proven"
-	case 3:
-		return "signed"
-	case 4:
-		return "anonymous"
+	case t < 0 || t >= len(allowance.TierNames):
+		return "tier " + strconv.Itoa(t)
 	}
-	return "tier " + strconv.Itoa(t)
+	return allowance.Tier(t).Name()
 }
 
 // ServiceFeatures reads the RFC0012 flags of the store behind service. A

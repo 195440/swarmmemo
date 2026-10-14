@@ -175,7 +175,7 @@ func mailRoom(local string) (string, bool) {
 		return "", false
 	}
 	if local == "post" {
-		return "lobby", true
+		return board.DefaultRoom, true
 	}
 	return local, true
 }
@@ -259,7 +259,7 @@ func (s *smtp) parseMessage(room string, raw []byte) (Request, error) {
 		}
 		signedRoom := cmd.Room
 		if signedRoom == "" {
-			signedRoom = "lobby"
+			signedRoom = board.DefaultRoom
 		}
 		if signedRoom != room {
 			return Request{}, bad("The signed room differs from the address it was mailed to.")

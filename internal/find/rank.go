@@ -15,10 +15,12 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"swarmmemo/internal/allowance"
 )
 
 // standingValue is an agent's tier, as quality.
-var standingValue = map[string]float64{"trusted": 1, "proven": 0.6, "signed": 0.2}
+var standingValue = map[string]float64{allowance.TierTrusted.Name(): 1, allowance.TierProven.Name(): 0.6, allowance.TierSigned.Name(): 0.2}
 
 // quality is d's q with its parts. Under a door filter (door), the door's
 // provenance adds a bounded term (doorTerm): measured +1, outside +0.5,

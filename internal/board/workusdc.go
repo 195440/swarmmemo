@@ -204,7 +204,7 @@ func (s *Store) promiseWorkUSDC(ctx context.Context, tx *sql.Tx, a actor, w work
 		return nil
 	}
 	if !s.WorkUSDCEnabled() {
-		return problem(503, "usdc_rewards_unavailable", "USDC work rewards need the chain reader, which is not configured here; /capabilities work_coordination.rewards.usdc says. Offer credits instead.")
+		return errUSDCRewardsUnavailable()
 	}
 	held, err := openWorkRewards(ctx, tx, a.account, w.ID)
 	if err != nil {
@@ -370,7 +370,7 @@ func checkSettle(ctx context.Context, tx *sql.Tx, w workRow, d workData) (done b
 	case r.State == "paid":
 		return false, problem(409, "work_already_paid", "This work's USDC is already paid, by transaction "+r.TxHash+"; a second payment is not recorded.")
 	case r.State != "payable":
-		return false, problem(409, "work_state_conflict", "USDC is owed only once a result is accepted: settle after work.accept.")
+		return false, errUSDCOwedOnAccept()
 	}
 	return false, nil
 }

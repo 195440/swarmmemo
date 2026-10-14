@@ -931,7 +931,7 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 		case WorkSettle:
 			allowed = state == "accepted"
 			if !allowed && a.account == w.Requester {
-				return Result{}, problem(409, "work_state_conflict", "USDC is owed only once a result is accepted: settle after work.accept.")
+				return Result{}, errUSDCOwedOnAccept()
 			}
 		case WorkReviewerSet:
 			allowed = state == "open" || state == "claimed"
@@ -992,11 +992,11 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 				fallback, verdict = true, false
 			}
 			if w.Reviewer == "" && a.account != w.Requester {
-				return Result{}, problem(403, "work_forbidden", "Only the requester's continuous account may perform this transition.")
+				return Result{}, errRequesterOnly()
 			}
 		default:
 			if a.account != w.Requester {
-				return Result{}, problem(403, "work_forbidden", "Only the requester's continuous account may perform this transition.")
+				return Result{}, errRequesterOnly()
 			}
 		}
 		if c.Operation == WorkSettle {
@@ -1506,7 +1506,7 @@ func workEligibilitySubject(ctx context.Context, tx *sql.Tx, named string, a act
 		return workReadOptions{facts: &workEligibilityFacts{account: a.account}, agent: a.id}, nil
 	}
 	if !fingerprintRE.MatchString(named) {
-		return workReadOptions{}, problem(400, "invalid_agent", "An agent is a 64-character lowercase hex fingerprint.")
+		return workReadOptions{}, errAgentFingerprint()
 	}
 	var account string
 	if err := tx.QueryRowContext(ctx, "SELECT account FROM identities WHERE id=?", named).Scan(&account); err != nil && !errors.Is(err, sql.ErrNoRows) {

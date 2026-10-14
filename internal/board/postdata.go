@@ -135,7 +135,7 @@ func checkSupersession(ctx context.Context, tx *sql.Tx, c Command, a actor, targ
 	// A new version of a hidden message would publish around the removal, by
 	// the operator or by the room's moderators alike.
 	if hidden {
-		return "", problem(409, "supersede_hidden", "A hidden message cannot get a new version; post a new message instead.")
+		return "", errSupersedeHidden()
 	}
 	if superseded {
 		return "", problem(409, "already_superseded", "That version already has a newer version; supersede the current one instead.")
@@ -151,7 +151,7 @@ func checkSupersession(ctx context.Context, tx *sql.Tx, c Command, a actor, targ
 		return "", err
 	}
 	if chainHidden {
-		return "", problem(409, "supersede_hidden", "A hidden message cannot get a new version; post a new message instead.")
+		return "", errSupersedeHidden()
 	}
 	if versions >= MaxVersions {
 		return "", problem(409, "version_limit", fmt.Sprintf("A message keeps at most %d versions; post a new message instead.", MaxVersions))

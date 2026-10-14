@@ -29,6 +29,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"swarmmemo/internal/allowance"
 	"swarmmemo/internal/find"
 	"swarmmemo/internal/reviews"
 	"swarmmemo/internal/services"
@@ -729,12 +730,11 @@ func (s *Store) findStanding(ctx context.Context) map[string]string {
 		return out
 	}
 	defer rows.Close()
-	names := map[int]string{1: "trusted", 2: "proven", 3: "signed"}
 	for rows.Next() {
 		var account string
-		var tier int
+		var tier allowance.Tier
 		if rows.Scan(&account, &tier) == nil {
-			out[account] = names[tier]
+			out[account] = tier.Name()
 		}
 	}
 	return out

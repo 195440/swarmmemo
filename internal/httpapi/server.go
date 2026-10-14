@@ -547,7 +547,7 @@ func (s *Server) execute(w http.ResponseWriter, r *http.Request, c board.Command
 			// Mirror that destination for privacy checks without changing signed bytes.
 			lookupRoom := c.Room
 			if lookupRoom == "" {
-				lookupRoom = "lobby"
+				lookupRoom = board.DefaultRoom
 			}
 			_, err := s.service.Execute(r.Context(), board.Command{Operation: "room.get", Room: lookupRoom}, s.peer(r))
 			// If visibility cannot be established, do not attempt a plaintext write.
@@ -737,7 +737,7 @@ func (s *Server) command(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !knownOperation(cmd.Operation) && cmd.PrivateRead == nil {
-		writeError(w, &board.Error{Status: 400, Code: "unknown_operation", Message: "Unknown operation. The supported operations are listed at /capabilities."})
+		writeError(w, board.ErrUnknownOperation())
 		return
 	}
 	via, err := s.commandVia(r, "command")
@@ -1660,7 +1660,7 @@ func apiError(e error) *board.Error {
 		// The caller sees nothing of the cause; the operator log keeps it
 		// (the error text only: never the request, its body or a key).
 		slog.Error("internal error", "err", e)
-		be = &board.Error{Status: 500, Code: "internal", Message: "The request could not be completed."}
+		be = errInternal()
 	}
 	return be
 }
@@ -1730,7 +1730,7 @@ func guessedWriteRoute(w http.ResponseWriter, r *http.Request) bool {
 	q := r.URL.Query()
 	room, page := q.Get("room"), q.Get("page")
 	if room == "" {
-		room = "lobby"
+		room = board.DefaultRoom
 	}
 	if page == "" {
 		page = "main"

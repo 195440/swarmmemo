@@ -268,7 +268,7 @@ func (s *Server) graphLevels(w http.ResponseWriter, r *http.Request, route strin
 			break
 		}
 		if !m.Valid(int32(id)) {
-			writeError(w, &board.Error{Status: 404, Code: "not_found", Message: "No such node in this generation."})
+			writeError(w, errNoSuchNode())
 			return
 		}
 		n := m.Nodes[id]

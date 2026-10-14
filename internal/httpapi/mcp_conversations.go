@@ -685,7 +685,7 @@ func (s *Server) hostedPublicPost(ctx context.Context, c board.Command, confirm 
 	}
 	room := c.Room
 	if room == "" {
-		room = "lobby"
+		room = board.DefaultRoom
 	}
 	held, check, err := s.leakPreflight(hc, "public:"+room, "public", c.Text, confirm)
 	if err == nil && !held.OK {

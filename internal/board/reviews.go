@@ -1459,7 +1459,7 @@ func offsetCursor(cursor string) (int, error) {
 	}
 	n, err := strconv.Atoi(cursor)
 	if err != nil || n < 0 || n > reviewOffsetCursorMax || strconv.Itoa(n) != cursor {
-		return 0, problem(400, "invalid_cursor", "cursor is the next_cursor of the previous page.")
+		return 0, errCursorNextPage()
 	}
 	return n, nil
 }

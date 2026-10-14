@@ -298,7 +298,7 @@ func (s *Store) createWorkStanding(ctx context.Context, tx *sql.Tx, a actor, w w
 	st := workStanding{ID: w.ID, Seats: d.Standing.Seats, PerAgentDay: d.Standing.PerAgentDay, DayMax: d.Standing.DayMax, Tiers: d.Standing.Tiers,
 		USDCPerAgentDay: d.Standing.USDCPerAgentDay, USDCDayMax: d.Standing.USDCDayMax, VerdictTTL: WorkStandingVerdictTTL}
 	if st.maxUSDC() > 0 && !s.WorkUSDCEnabled() {
-		return problem(503, "usdc_rewards_unavailable", "USDC work rewards need the chain reader, which is not configured here; /capabilities work_coordination.rewards.usdc says. Offer credits instead.")
+		return errUSDCRewardsUnavailable()
 	}
 	pool := st.maxCredits() * st.Seats
 	if pool > WorkRewardMax {

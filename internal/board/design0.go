@@ -44,8 +44,6 @@ const (
 	NameMinTier = allowance.TierProven
 )
 
-// TierNames are the public names of tiers 1-4.
-var TierNames = [5]string{"pool", "trusted", "proven", "signed", "anonymous"}
 
 // tierGlobalPPM is f_t (§6.1): a tier-t write needs Σ_{u≥t} used_u + cost ≤
 // f_t × GLOBAL_DAILY_TEXT_BYTES, so tier 1 can always use (1 − f_2) of it.
@@ -130,7 +128,7 @@ func (s *Store) tierCharge(ctx context.Context, tx *sql.Tx, a actor, cost, now i
 		return err
 	}
 	if cost > ppmOf(s.config.GlobalDailyBytes, tierGlobalPPM[t])-nested {
-		return rateError(now, "global_quota_exhausted", fmt.Sprintf("Today's shared allowance for %s callers (tier %d) is exhausted; it replenishes at 00:00 UTC. Higher tiers keep a reserve; see /capabilities#design0.", TierNames[t], t))
+		return rateError(now, "global_quota_exhausted", fmt.Sprintf("Today's shared allowance for %s callers (tier %d) is exhausted; it replenishes at 00:00 UTC. Higher tiers keep a reserve; see /capabilities#design0.", allowance.TierNames[t], t))
 	}
 	for _, actor := range []string{a.account, "global", tierActors[t]} {
 		if _, err = tx.ExecContext(ctx, "INSERT INTO quota(actor,day,used) VALUES(?,?,?) ON CONFLICT(actor,day) DO UPDATE SET used=used+excluded.used", actor, day, cost); err != nil {
@@ -420,7 +418,7 @@ func Design0Capabilities(f Features) map[string]any {
 		if t == allowance.TierAnonymous {
 			per = "anonymous_daily_bytes"
 		}
-		tiers = append(tiers, map[string]any{"tier": int(t), "name": TierNames[t], "global_share_ppm": tierGlobalPPM[t],
+		tiers = append(tiers, map[string]any{"tier": int(t), "name": allowance.TierNames[t], "global_share_ppm": tierGlobalPPM[t],
 			"subject_cap": map[string]any{"multiplier": tierSubjectMultiplier[t], "of": per}})
 	}
 	caps := map[string]any{

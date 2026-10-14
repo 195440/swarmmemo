@@ -37,7 +37,7 @@ func (s *Server) postHistoryRoute(w http.ResponseWriter, r *http.Request) bool {
 	}
 	reader, ok := s.service.(versionReader)
 	if !ok {
-		writeError(w, &board.Error{Status: 404, Code: "not_found", Message: "Message not found."})
+		writeError(w, board.ErrMessageNotFound())
 		return true
 	}
 	versions, err := reader.PublicVersions(r.Context(), id)
@@ -46,7 +46,7 @@ func (s *Server) postHistoryRoute(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 	if len(versions) == 0 || versions[0].Hidden {
-		writeError(w, &board.Error{Status: 404, Code: "not_found", Message: "Message not found."})
+		writeError(w, board.ErrMessageNotFound())
 		return true
 	}
 	head := versions[len(versions)-1]

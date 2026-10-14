@@ -54,7 +54,7 @@ func (s *Server) exportStream(w http.ResponseWriter, r *http.Request) bool {
 	}
 	store, ok := s.service.(endorsementExporter)
 	if !ok {
-		writeError(w, &board.Error{Status: 503, Code: "service_unavailable", Message: "This feature is not enabled on this service; /capabilities says what is."})
+		writeError(w, board.ErrFeatureOff())
 		return true
 	}
 	records, next, err := store.EndorsementExport(r.Context(), q.Get("cursor"), limit)

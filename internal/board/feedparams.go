@@ -75,7 +75,7 @@ type FeedPersona struct {
 // DefaultFeedParams are version 0: no personas, questions and requests ask
 // in the lobby, and a trusted voter's first public post is a week old.
 func DefaultFeedParams() FeedParams {
-	return FeedParams{Schema: 1, Personas: []FeedPersona{}, QuestionRooms: []string{"lobby"}, TrustedVoterDays: 7}
+	return FeedParams{Schema: 1, Personas: []FeedPersona{}, QuestionRooms: []string{DefaultRoom}, TrustedVoterDays: 7}
 }
 
 func defaultFeedParamsBody() []byte {

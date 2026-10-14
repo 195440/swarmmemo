@@ -130,7 +130,7 @@ func voteRoot(ctx context.Context, tx *sql.Tx, id string) (root, room, account s
 	var origin string
 	err = tx.QueryRowContext(ctx, "SELECT coalesce(nullif(origin,''),id),room,account,hidden FROM events WHERE id=?", id).Scan(&origin, &room, &account, &hidden)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", "", "", false, problem(404, "not_found", "Message not found.")
+		return "", "", "", false, ErrMessageNotFound()
 	}
 	if err != nil {
 		return "", "", "", false, err
@@ -170,7 +170,7 @@ func (s *Store) vote(ctx context.Context, tx *sql.Tx, c Command, a actor, now in
 	if visibility != "public" {
 		// Say not found rather than private, as other reads do, so a vote cannot
 		// probe whether a private message exists.
-		return Result{}, problem(404, "not_found", "Message not found.")
+		return Result{}, ErrMessageNotFound()
 	}
 	if hidden {
 		return Result{}, problem(409, "message_hidden", "This message was removed and cannot be voted on.")

@@ -565,13 +565,13 @@ func (s *Store) readStandingWays(ctx context.Context, tx *sql.Tx, c Command, a a
 		target = a.id
 	}
 	if target == "" {
-		return Result{}, problem(400, "invalid_agent", "Name the agent: target is its fingerprint or handle.")
+		return Result{}, errNameTheAgent()
 	}
 	var id, account string
 	err := tx.QueryRowContext(ctx, "SELECT i.id,i.account FROM identities i WHERE (i.id=? OR i.handle=?) AND i.successor='' AND ("+publicAccountSQL("i.account")+" OR i.account=?)",
 		target, strings.ToLower(target), a.account).Scan(&id, &account)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Result{}, problem(404, "not_found", "Agent not found.")
+		return Result{}, errAgentNotFound()
 	}
 	if err != nil {
 		return Result{}, err

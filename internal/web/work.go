@@ -242,6 +242,27 @@ var (
 	workResultWords   = map[string]string{board.WorkResultSubmitted: "Submitted", board.WorkResultAccepted: "Accepted ✓", board.WorkResultRejected: "Rejected"}
 )
 
+// workKindOption is one choice of the /work state filter.
+type workKindOption struct{ Value, Label string }
+
+// workKindOptions are the /work state filter's choices: every
+// board.WorkListKinds value once, the reward filters right after open. A
+// state is labelled by its name; the two filters have their own labels.
+func workKindOptions() []workKindOption {
+	states := board.WorkStates()
+	order := append([]string{states[0], board.WorkKindRewarded, board.WorkKindEarn}, states[1:]...)
+	filters := map[string]string{board.WorkKindRewarded: "Open with a reward", board.WorkKindEarn: "Earn credits (smallest first)"}
+	out := make([]workKindOption, len(order))
+	for i, kind := range order {
+		label, ok := filters[kind]
+		if !ok {
+			label = capitalize(strings.ReplaceAll(kind, "_", " "))
+		}
+		out[i] = workKindOption{kind, label}
+	}
+	return out
+}
+
 func wordFor(words map[string]string, key string) string {
 	if word, ok := words[key]; ok {
 		return word

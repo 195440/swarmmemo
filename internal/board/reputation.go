@@ -628,10 +628,10 @@ func (s *Store) reputations(ctx context.Context, tx *sql.Tx, accounts []string, 
 	return out, nil
 }
 
-// reputationTierName is a tier's public name (TierNames), "" outside 1-4.
+// reputationTierName is a tier's public name (allowance.TierNames), "" outside 1-4.
 func reputationTierName(t int64) string {
-	if t >= 1 && t < int64(len(TierNames)) {
-		return TierNames[t]
+	if t >= 1 && t < int64(len(allowance.TierNames)) {
+		return allowance.TierNames[t]
 	}
 	return ""
 }

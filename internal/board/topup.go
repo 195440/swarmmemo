@@ -126,11 +126,11 @@ func (s *Store) newTopupQuote(account string, amount, now int64) services.TopupR
 func (s *Store) checkTopupQuote(quote, account string, amount int64) (services.TopupRequirement, error) {
 	parts := strings.Split(quote, ".")
 	if len(parts) != 3 {
-		return services.TopupRequirement{}, problem(400, "payment_mismatch", "The payment does not accept a requirement this server issued for this agent and amount; ask again without a payment for a fresh one.")
+		return services.TopupRequirement{}, errPaymentMismatch()
 	}
 	expires, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil || expires <= 0 || !hmac.Equal([]byte(s.topupQuote(account, amount, expires, parts[1])), []byte(quote)) {
-		return services.TopupRequirement{}, problem(400, "payment_mismatch", "The payment does not accept a requirement this server issued for this agent and amount; ask again without a payment for a fresh one.")
+		return services.TopupRequirement{}, errPaymentMismatch()
 	}
 	return services.TopupRequirement{Amount: amount, Quote: quote, Expires: expires}, nil
 }
@@ -173,7 +173,7 @@ func (s *Store) creditsTopupOnce(ctx context.Context, tx *sql.Tx, c Command, a a
 		return Result{}, err
 	}
 	if !s.TopupEnabled() {
-		return Result{}, problem(404, "topup_unavailable", "Credit top-ups are not enabled on this server; see /capabilities.")
+		return Result{}, errTopupUnavailable()
 	}
 	cfg := s.config.Topup
 	if c.Amount < cfg.Min || c.Amount > cfg.Max {
@@ -307,7 +307,7 @@ func topupError(err error) error {
 	if te.Definite {
 		return &Error{Status: 503, Code: "facilitator_unavailable", Message: "The payment facilitator could not be reached; nothing was charged. Send the same payment again with a new request_id shortly.", RetryAfter: 30}
 	}
-	return &Error{Status: 502, Code: "payment_unsettled", Message: "The payment's settlement could not be confirmed, so no credit was added yet. Do not pay again: the operator reconciles it, and credits.topups shows its state."}
+	return errPaymentUnsettled()
 }
 
 // settleTopup runs after commit with no transaction held: the facilitator
@@ -346,7 +346,7 @@ func (s *Store) settleTopup(ctx context.Context, account, id string, p services.
 			slog.Error("Credit top-up outcome not recorded", "topup", id, "error", uerr.Error())
 		}
 		slog.Error("Credit top-up settled but not credited: resolve it with swarmmemo topup resolve", "topup", id, "transaction", st.Transaction, "error", err.Error())
-		return Result{}, &Error{Status: 502, Code: "payment_unsettled", Message: "The payment's settlement could not be confirmed, so no credit was added yet. Do not pay again: the operator reconciles it, and credits.topups shows its state."}
+		return Result{}, errPaymentUnsettled()
 	}
 	return Result{Data: s.topupPaid(row)}, nil
 }
@@ -484,7 +484,7 @@ func (s *Store) readTopups(ctx context.Context, tx *sql.Tx, c Command, a actor) 
 		return Result{}, err
 	}
 	if !s.TopupEnabled() {
-		return Result{}, problem(404, "topup_unavailable", "Credit top-ups are not enabled on this server; see /capabilities.")
+		return Result{}, errTopupUnavailable()
 	}
 	limit := c.Limit
 	if limit < 0 || limit > TopupPageMax {
@@ -497,7 +497,7 @@ func (s *Store) readTopups(ctx context.Context, tx *sql.Tx, c Command, a actor) 
 	if c.Cursor != "" {
 		n, err := strconv.ParseInt(c.Cursor, 10, 64)
 		if err != nil || n <= 0 {
-			return Result{}, problem(400, "invalid_cursor", "cursor is the next_cursor of the previous page.")
+			return Result{}, errCursorNextPage()
 		}
 		before = n
 	}

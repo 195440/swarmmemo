@@ -196,7 +196,7 @@ func inboundEvent(raw []byte, now time.Time, bridgeKey string) (nostr.Event, str
 		return e, "", err
 	}
 	if room == "" {
-		room = "lobby"
+		room = board.DefaultRoom
 	}
 	return e, room, nil
 }

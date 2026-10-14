@@ -170,7 +170,7 @@ func (s *Store) ownInbox(ctx context.Context, tx *sql.Tx, c Command, a actor, do
 		return err
 	}
 	if a.grant != nil {
-		return problem(403, "own_inbox_only", "Only the agent itself can mark its inbox; sign as that agent.")
+		return errOwnInboxOnly()
 	}
 	if c.Target != "" {
 		var account string
@@ -179,7 +179,7 @@ func (s *Store) ownInbox(ctx context.Context, tx *sql.Tx, c Command, a actor, do
 			return err
 		}
 		if c.Target != a.id && account != a.account {
-			return problem(403, "own_inbox_only", "Only the agent itself can mark its inbox; sign as that agent.")
+			return errOwnInboxOnly()
 		}
 	}
 	if !s.inboxRead(ctx) {

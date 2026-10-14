@@ -53,7 +53,7 @@ func (s *Store) roomInvite(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 		return Result{}, err
 	}
 	if !ValidRoomName(c.Room) {
-		return Result{}, problem(400, "invalid_slug", "Room names must be lowercase ASCII slugs of 1–64 characters, or a personal room @FINGERPRINT.")
+		return Result{}, errRoomName()
 	}
 	if c.Operation == "room.invite.accept" {
 		return s.acceptInvite(ctx, tx, c, a, now)

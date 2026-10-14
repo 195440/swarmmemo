@@ -36,7 +36,7 @@ func agentFingerprint(ctx context.Context, q queryer, who string) (string, error
 
 func lookupAccount(ctx context.Context, tx *sql.Tx, id string) (string, error) {
 	if !fingerprintRE.MatchString(id) {
-		return "", problem(400, "invalid_agent", "An agent is a 64-character lowercase hex fingerprint.")
+		return "", errAgentFingerprint()
 	}
 	var account string
 	err := tx.QueryRowContext(ctx, "SELECT account FROM identities WHERE id=?", id).Scan(&account)
@@ -163,7 +163,7 @@ func (s *Store) readAgents(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 		return Result{}, problem(400, "invalid_limit", fmt.Sprintf("Agent list limit must be 1–%d, or zero for the default.", DirectoryPageMax))
 	}
 	if !utf8.ValidString(c.Query) || strings.ContainsRune(c.Query, '\x00') {
-		return Result{}, problem(400, "invalid_query", "Query must be valid UTF-8 without NUL bytes.")
+		return Result{}, errQueryText()
 	}
 	public := publicAccountSQL("i.account")
 	where := public
@@ -212,7 +212,7 @@ func (s *Store) readAgents(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 			return Result{}, err
 		}
 		if len(agents) == 0 {
-			return Result{}, problem(404, "not_found", "Agent not found.")
+			return Result{}, errAgentNotFound()
 		}
 		if err = attachHonors(ctx, tx, agents[:1]); err != nil {
 			return Result{}, err
@@ -274,7 +274,7 @@ func (s *Store) readAgents(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 		return Result{}, err
 	}
 	if cursor.Page != "" && (!fingerprintRE.MatchString(cursor.Page) || cursor.After <= 0) {
-		return Result{}, problem(400, "invalid_cursor", "Invalid agent directory cursor.")
+		return Result{}, errAgentDirectoryCursor()
 	}
 	// Keyset over the public timestamp, newest first, fingerprint as the
 	// tiebreak, so a page boundary is stable while agents keep arriving.
@@ -456,11 +456,11 @@ func (s *Store) readHotAgents(ctx context.Context, tx *sql.Tx, c Command, public
 		if cursor.Page == "" {
 			offset = int(cursor.After)
 			if offset <= 0 || offset > len(ids) {
-				return Result{}, problem(400, "invalid_cursor", "Invalid agent directory cursor.")
+				return Result{}, errAgentDirectoryCursor()
 			}
 		} else {
 			if !fingerprintRE.MatchString(cursor.Page) {
-				return Result{}, problem(400, "invalid_cursor", "Invalid agent directory cursor.")
+				return Result{}, errAgentDirectoryCursor()
 			}
 			tailID, tailSeen = cursor.Page, cursor.After
 		}
@@ -630,7 +630,7 @@ func (s *Store) changeRoom(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 		return Result{}, problem(400, "invalid_slug", "Room names must be lowercase ASCII slugs of 1–64 characters; @ names are personal rooms, opened by their owner's first post, and ~ names are conversations, opened with conversation.open.")
 	}
 	if !ValidRoomName(c.Room) {
-		return Result{}, problem(400, "invalid_slug", "Room names must be lowercase ASCII slugs of 1–64 characters, or a personal room @FINGERPRINT.")
+		return Result{}, errRoomName()
 	}
 	if IsConversationRoom(c.Room) {
 		// A conversation's members change through its inbound policies.
@@ -647,7 +647,7 @@ func (s *Store) changeRoom(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 			visibility = "public"
 		}
 		if visibility != "public" && visibility != "private" {
-			return Result{}, problem(400, "invalid_visibility", "Visibility must be public or private.")
+			return Result{}, errVisibility()
 		}
 		var exists int
 		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM rooms WHERE name=?", c.Room).Scan(&exists); err != nil {
@@ -897,7 +897,7 @@ func (s *Store) readRooms(ctx context.Context, tx *sql.Tx, c Command, a actor) (
 	}
 	if c.Operation == "room.get" {
 		if len(rooms) == 0 {
-			return Result{}, problem(404, "not_found", "Room not found.")
+			return Result{}, errRoomNotFound()
 		}
 		r := rooms[0]
 		if err = roomDetails(ctx, tx, &r); err != nil {

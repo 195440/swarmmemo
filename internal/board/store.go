@@ -608,7 +608,7 @@ func (s *Store) parseCursorParts(cursor string, kind byte) (int64, int64, int64,
 		return 0, 0, 0, err
 	}
 	if (len(plain) != 9 && (len(plain) != 17 && len(plain) != 25 && len(plain) != updatesCursorV2Size || kind != 0)) || plain[0] != kind {
-		return 0, 0, 0, problem(400, "invalid_cursor", "Cursor is invalid or belongs to another endpoint.")
+		return 0, 0, 0, errCursorOtherEndpoint()
 	}
 	n, received, wakeups := int64(binary.BigEndian.Uint64(plain[1:9])), int64(-1), int64(-1)
 	if len(plain) == updatesCursorV2Size {
@@ -617,7 +617,7 @@ func (s *Store) parseCursorParts(cursor string, kind byte) (int64, int64, int64,
 		// sequence, and a legacy updates.get reads it as a cursor without
 		// receiver or wake-up parts.
 		if plain[9] != updatesCursorV2Tag || n < 0 || int64(binary.BigEndian.Uint64(plain[10:])) < 0 {
-			return 0, 0, 0, problem(400, "invalid_cursor", "Invalid cursor sequence.")
+			return 0, 0, 0, errCursorSequence()
 		}
 		return n, -1, -1, nil
 	}
@@ -632,7 +632,7 @@ func (s *Store) parseCursorParts(cursor string, kind byte) (int64, int64, int64,
 		}
 	}
 	if n < 0 || (len(plain) == 17 && received < 1) || (len(plain) == 25 && (received < -1 || wakeups < 1)) {
-		return 0, 0, 0, problem(400, "invalid_cursor", "Invalid cursor sequence.")
+		return 0, 0, 0, errCursorSequence()
 	}
 	return n, received, wakeups, nil
 }
@@ -644,7 +644,7 @@ func (s *Store) openCursor(cursor string) ([]byte, error) {
 	defer s.cursorMu.RUnlock()
 	parts := strings.Split(cursor, ":")
 	if len(parts) != 2 {
-		return nil, problem(400, "invalid_cursor", "Use a cursor returned by this server.")
+		return nil, errCursorForeign()
 	}
 	if parts[0] != s.generation {
 		return nil, problem(409, "cursor_reset", "The server generation changed; resynchronize from an empty cursor and deduplicate event IDs.")
@@ -655,7 +655,7 @@ func (s *Store) openCursor(cursor string) ([]byte, error) {
 	}
 	plain, err := s.cursorCipher.Open(nil, nil, sealed, []byte(s.generation))
 	if err != nil {
-		return nil, problem(400, "invalid_cursor", "Cursor is invalid or belongs to another endpoint.")
+		return nil, errCursorOtherEndpoint()
 	}
 	return plain, nil
 }
@@ -718,7 +718,7 @@ func validateCommandFields(c Command) error {
 	}
 	op, exists := LookupOperation(c.Operation)
 	if !exists {
-		return problem(400, "unknown_operation", "Unknown operation. The supported operations are listed at /capabilities.")
+		return ErrUnknownOperation()
 	}
 	allowed := map[string]bool{}
 	for _, field := range append(CommandEnvelopeFields(), strings.Fields(op.Fields)...) {
@@ -1239,7 +1239,7 @@ func (s *Store) execute(ctx context.Context, tx *sql.Tx, c Command, a actor, now
 	case "spend_limit.set":
 		return s.changeSpendLimit(ctx, tx, c, a, now)
 	default:
-		return Result{}, problem(400, "unknown_operation", "Unknown operation. The supported operations are listed at /capabilities.")
+		return Result{}, ErrUnknownOperation()
 	}
 }
 
@@ -1257,7 +1257,7 @@ func roomAccess(ctx context.Context, tx *sql.Tx, name string, a actor) (Room, er
 	var r Room
 	err := tx.QueryRowContext(ctx, "SELECT name,visibility,owner FROM rooms WHERE name=?", name).Scan(&r.Name, &r.Visibility, &r.Owner)
 	if errors.Is(err, sql.ErrNoRows) {
-		return r, problem(404, "not_found", "Room not found.")
+		return r, errRoomNotFound()
 	}
 	if err != nil {
 		return r, err
@@ -1271,7 +1271,7 @@ func roomAccess(ctx context.Context, tx *sql.Tx, name string, a actor) (Room, er
 			}
 		}
 		if n == 0 {
-			return Room{}, problem(404, "not_found", "Room not found.")
+			return Room{}, errRoomNotFound()
 		}
 	}
 	return r, nil

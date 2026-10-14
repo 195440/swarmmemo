@@ -31,7 +31,7 @@ func (s *Server) communityPrompt(ctx context.Context, nodes []int32, gen string)
 	}
 	for _, id := range nodes {
 		if !m.Valid(id) {
-			return "", "", "", 0, 0, &board.Error{Status: 404, Code: "not_found", Message: "No such node in this generation."}
+			return "", "", "", 0, 0, errNoSuchNode()
 		}
 	}
 	stats := m.Stats(nodes)

@@ -9,6 +9,7 @@ import (
 	"io"
 	"strconv"
 
+	"swarmmemo/internal/allowance"
 	"swarmmemo/internal/board"
 )
 
@@ -40,7 +41,7 @@ func operatorTier(ctx context.Context, store *board.Store, args []string, out io
 		if err = store.GrantTier(ctx, args[1], tier, reason); err != nil {
 			return err
 		}
-		fmt.Fprintf(out, "Tier %d (%s) granted to %s\n", tier, board.TierNames[tier], args[1])
+		fmt.Fprintf(out, "Tier %d (%s) granted to %s\n", tier, allowance.TierNames[tier], args[1])
 		return nil
 	case len(args) >= 1 && args[0] == "revoke":
 		if len(args) != 4 {
@@ -61,7 +62,7 @@ func operatorTier(ctx context.Context, store *board.Store, args []string, out io
 			return err
 		}
 		for _, g := range grants {
-			fmt.Fprintf(out, "%s\t%d\t%s\t%d\t%s\n", g.Account, g.Tier, board.TierNames[g.Tier], g.GrantedAt, g.Reason)
+			fmt.Fprintf(out, "%s\t%d\t%s\t%d\t%s\n", g.Account, g.Tier, allowance.TierNames[g.Tier], g.GrantedAt, g.Reason)
 		}
 		fmt.Fprintf(out, "%d of at most %d accounts hold a tier grant\n", len(grants), board.TierGrantsMax)
 		return nil

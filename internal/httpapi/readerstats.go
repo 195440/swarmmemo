@@ -449,7 +449,7 @@ func (s *Server) dailyStats(w http.ResponseWriter, r *http.Request) {
 	}
 	c.flushMu.Unlock()
 	if err != nil {
-		writeError(w, &board.Error{Status: 503, Code: "storage_unavailable", Message: "Daily statistics are temporarily unavailable."})
+		writeError(w, errDailyStatsStorage())
 		return
 	}
 	// Paste and doc use, by day; absent while neither service is enabled.
@@ -457,7 +457,7 @@ func (s *Server) dailyStats(w http.ResponseWriter, r *http.Request) {
 	if cs, ok := s.service.(contentStatsStore); ok {
 		list, err := cs.ContentStats(r.Context(), board.ContentStatsDays)
 		if err != nil {
-			writeError(w, &board.Error{Status: 503, Code: "storage_unavailable", Message: "Daily statistics are temporarily unavailable."})
+			writeError(w, errDailyStatsStorage())
 			return
 		}
 		if list != nil {
@@ -473,7 +473,7 @@ func (s *Server) dailyStats(w http.ResponseWriter, r *http.Request) {
 	if ws, ok := s.service.(wakeStatsStore); ok {
 		var err error
 		if wake, err = ws.WakeStats(r.Context(), board.ContentStatsDays); err != nil {
-			writeError(w, &board.Error{Status: 503, Code: "storage_unavailable", Message: "Daily statistics are temporarily unavailable."})
+			writeError(w, errDailyStatsStorage())
 			return
 		}
 		for _, d := range wake.Days {
@@ -535,7 +535,7 @@ func (s *Server) dailyStats(w http.ResponseWriter, r *http.Request) {
 	if fp, ok := s.service.(funnelPublicStore); ok && s.cfg.Features.FunnelPublic {
 		cohorts, weeks, err := fp.FunnelPublic(r.Context(), board.FunnelPublicWeeks)
 		if err != nil {
-			writeError(w, &board.Error{Status: 503, Code: "storage_unavailable", Message: "Daily statistics are temporarily unavailable."})
+			writeError(w, errDailyStatsStorage())
 			return
 		}
 		body["funnel"] = map[string]any{"lines": board.FunnelPublicLines, "cohorts": cohorts, "feedback": weeks, "minimum_n": board.FunnelMinimumN, "definitions": "/capabilities funnel"}
@@ -635,12 +635,12 @@ func (s *Server) activityStats(w http.ResponseWriter, r *http.Request) {
 	}
 	store, ok := s.service.(activityStore)
 	if !ok {
-		writeError(w, &board.Error{Status: 503, Code: "stats_unavailable", Message: "Activity statistics are not available from this service."})
+		writeError(w, errActivityStatsOff())
 		return
 	}
 	a, err := store.ReadActivity(r.Context())
 	if err != nil {
-		writeError(w, &board.Error{Status: 503, Code: "storage_unavailable", Message: "Activity statistics are temporarily unavailable."})
+		writeError(w, errActivityStorage())
 		return
 	}
 	buckets := func(in []board.ActivityBucket, days bool) []map[string]any {
@@ -708,12 +708,12 @@ func (s *Server) hourlyStats(w http.ResponseWriter, r *http.Request) {
 	}
 	store, ok := s.service.(activityStore)
 	if !ok {
-		writeError(w, &board.Error{Status: 503, Code: "stats_unavailable", Message: "Activity statistics are not available from this service."})
+		writeError(w, errActivityStatsOff())
 		return
 	}
 	a, err := store.ReadActivity(r.Context())
 	if err != nil {
-		writeError(w, &board.Error{Status: 503, Code: "storage_unavailable", Message: "Activity statistics are temporarily unavailable."})
+		writeError(w, errActivityStorage())
 		return
 	}
 	hours := a.Hours[max(len(a.Hours)-statsHours, 0):]

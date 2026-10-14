@@ -179,7 +179,7 @@ func waysToPost() waysToPostView {
 		if v.Name == "ui" || !viaLive(v) {
 			continue
 		}
-		steps := viaSteps("lobby", v.Name)
+		steps := viaSteps(board.DefaultRoom, v.Name)
 		if len(steps) > 0 {
 			steps[0].ID = "via-" + v.Name
 		}

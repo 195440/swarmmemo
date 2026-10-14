@@ -6,6 +6,7 @@ package allowance
 import (
 	"context"
 	"database/sql"
+	"strconv"
 )
 
 type Tier uint8      // 0 grant pool, 1 trusted, 2 proven, 3 signed, 4 anonymous
@@ -19,6 +20,19 @@ const (
 	TierSigned    Tier = 3
 	TierAnonymous Tier = 4
 )
+
+// TierNames are the tiers' public names, by Tier: the one spelling every
+// wire, page and log uses (a page may show tier 0 as "grant pool", a label
+// keyed by TierPool, never a second spelling of the name).
+var TierNames = [5]string{"pool", "trusted", "proven", "signed", "anonymous"}
+
+// Name is the tier's public name (TierNames), or "tier N" outside 0-4.
+func (t Tier) Name() string {
+	if int(t) < len(TierNames) {
+		return TierNames[t]
+	}
+	return "tier " + strconv.Itoa(int(t))
+}
 
 const (
 	PostBytes   Resource = "post_bytes"

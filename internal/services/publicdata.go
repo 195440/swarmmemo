@@ -287,7 +287,7 @@ func (p *publicData) Datasets() map[string]any {
 	}
 	tiers := map[string]any{}
 	for t, l := range publicDataTierLimits {
-		tiers[tierName(t)] = map[string]int64{"per_minute": l.PerMinute, "per_day": l.PerDay}
+		tiers[t.Name()] = map[string]int64{"per_minute": l.PerMinute, "per_day": l.PerDay}
 	}
 	return map[string]any{
 		"envelope_version": PublicDataSchemaVersion,
@@ -301,20 +301,6 @@ func (p *publicData) Datasets() map[string]any {
 		"rate_limit_note":   "per caller, by the caller's tier; a bulk call counts one request per dataset request",
 		"stale_max_seconds": int64(PublicDataStaleMax / time.Second),
 	}
-}
-
-func tierName(t allowance.Tier) string {
-	switch t {
-	case allowance.TierPool:
-		return "grant_pool"
-	case allowance.TierTrusted:
-		return "trusted"
-	case allowance.TierProven:
-		return "proven"
-	case allowance.TierSigned:
-		return "signed"
-	}
-	return "anonymous"
 }
 
 // Read serves the free datasets read.

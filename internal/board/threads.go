@@ -55,7 +55,7 @@ func (s *Store) decodeConversationCursor(raw, domain, scope string) (conversatio
 		return c, nil
 	}
 	if len(raw) > 1024 {
-		return c, problem(400, "invalid_cursor", "Invalid conversation cursor.")
+		return c, errConversationCursor()
 	}
 	s.cursorMu.RLock()
 	defer s.cursorMu.RUnlock()
@@ -68,11 +68,11 @@ func (s *Store) decodeConversationCursor(raw, domain, scope string) (conversatio
 	}
 	sealed, err := base64.RawURLEncoding.Strict().DecodeString(parts[1])
 	if err != nil || base64.RawURLEncoding.EncodeToString(sealed) != parts[1] {
-		return c, problem(400, "invalid_cursor", "Invalid conversation cursor.")
+		return c, errConversationCursor()
 	}
 	plain, err := s.cursorCipher.Open(nil, nil, sealed, []byte("conversation-v1:"+s.generation))
 	if err != nil {
-		return c, problem(400, "invalid_cursor", "Cursor is invalid or belongs to another endpoint.")
+		return c, errCursorOtherEndpoint()
 	}
 	if err = json.Unmarshal(plain, &c); err != nil || c.Version != 1 || c.Domain != domain || c.Scope != scope || c.After < 0 || c.Snapshot < 0 {
 		return c, problem(400, "invalid_cursor", "Cursor belongs to another conversation or room.")
@@ -182,7 +182,7 @@ func (s *Store) readThread(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 	var current threadReference
 	err := tx.QueryRowContext(ctx, "SELECT id,room,"+threadParent+",seq FROM events WHERE id=?", c.MessageID).Scan(&current.id, &current.room, &current.parent, &current.seq)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Result{}, problem(404, "not_found", "Thread not found.")
+		return Result{}, errThreadNotFound()
 	}
 	if err != nil {
 		return Result{}, conversationError(err)
@@ -190,7 +190,7 @@ func (s *Store) readThread(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 	if _, err = roomAccess(ctx, tx, current.room, a); err != nil {
 		var access *Error
 		if errors.As(err, &access) && access.Code == "not_found" {
-			return Result{}, problem(404, "not_found", "Thread not found.")
+			return Result{}, errThreadNotFound()
 		}
 		return Result{}, conversationError(err)
 	}
