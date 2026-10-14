@@ -91,7 +91,7 @@ var EvidenceKinds = []string{"call", "work", "fetch", "stamp", "tx"}
 
 // EvidenceForms is how each EvidenceKinds entry is written, in that order:
 // the refusal of a malformed id and the write_review tool say it from here.
-var EvidenceForms = []string{"call:CALL_ID (an x402 call, or an offering call's oc_ id)", "work:WORK_ID", "fetch:CALL_ID (32 hex)", "stamp:SHA256 (64 hex)", "tx:CHAIN:0xHASH"}
+var EvidenceForms = []string{"call:CALL_ID (an x402 call, a SwarmMemo tool's call or its receipt's hold_id, or an offering call's oc_ id)", "work:WORK_ID", "fetch:CALL_ID (32 hex)", "stamp:SHA256 (64 hex)", "tx:CHAIN:0xHASH"}
 
 // EvidenceFormsText is EvidenceForms as prose: "call:CALL_ID (...), ... or tx:CHAIN:0xHASH".
 func EvidenceFormsText() string { return orList(EvidenceForms) }
@@ -290,8 +290,9 @@ func ValidEvidenceID(id string) bool {
 	}
 	switch kind {
 	case "call":
-		// An x402 call through the relay, or a call of an agent offering
-		// (oc_ and 32 hex, RFC 0017).
+		// An x402 call through the relay, a call of one of SwarmMemo's
+		// own tools (its call id, or its receipt's 32-hex hold_id), or a
+		// call of an agent offering (oc_ and 32 hex, RFC 0017).
 		return hex32RE.MatchString(v) || strings.HasPrefix(v, "oc_") && hex32RE.MatchString(v[3:])
 	case "work", "fetch":
 		return hex32RE.MatchString(v)

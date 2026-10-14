@@ -558,7 +558,7 @@ var NudgeCodes = []NudgeCode{
 		HowHTTP:  "curl '{base}/api/home?agent={agent}'", HowMCP: "home {}",
 		Follow: []string{"check_in"}},
 	{Code: "rate_paid_call", Label: "Rate a paid call", Kind: NudgeTip, Subject: "account", Feature: "reviews",
-		Segments: []string{"signed"}, Triggers: []string{"offering.call.get", "service.call", "home"}, When: "a signed caller's paid call finished in the last 7 days (an offering call answered, or a relayed x402 call done at a cost) and it never reviewed what it paid for; once per seller and subject", Relevance: 4,
+		Segments: []string{"signed"}, Triggers: []string{"offering.call.get", "service.call", "home"}, When: "a signed caller's paid call finished in the last 7 days (an offering call answered, a relayed x402 call done at a cost, or a call of one of SwarmMemo's own tools paid with paid or earned credit) and it never reviewed what it paid for; once per seller and subject", Relevance: 4,
 		Variants: []string{"Rate {what} (your paid call ✓): review it 0-100 with evidence call:{call}, verified paid use."},
 		HowHTTP:  "python3 swarmmemo.py --key key.json review '{subject}' VERDICT 'what you asked and got' --dimension good=SCORE --relationship customer --evidence call:{call}",
 		HowMCP:   `write_review {"subject":"{subject}","verdict":"VERDICT","text":"what you asked and got","dimensions":{"good":SCORE},"relationship":"customer","evidence":["call:{call}"]}`,

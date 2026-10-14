@@ -225,6 +225,9 @@ func (s *Store) checkReview(ctx context.Context, tx *sql.Tx, c Command, a actor,
 			return nil, problem(404, "subject_not_found", "No SwarmMemo agent has that account fingerprint; an agent subject is agent:ACCOUNT (agent.get shows it).")
 		}
 	}
+	if svc, method, ok := r.Subject.ToolMethod(); ok && (s.services.engine == nil || !s.services.engine.Registry().IsTool(svc, method)) {
+		return nil, problem(404, "subject_not_found", "This board has no tool "+r.Subject.Key+"; a tool subject is tool:swarmmemo:SERVICE.METHOD, an id tools search lists.")
+	}
 	midnight := now - now%86400
 	var today int
 	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM reviews WHERE account=? AND created_at>=?", a.account, midnight).Scan(&today); err != nil {
@@ -485,12 +488,15 @@ type SubjectOwner struct {
 // A paid API listed through x402.submit (C299) is also its submitter's
 // while it is listed, by either proof: a domain link, or a wallet (the
 // API pays the submitter's verified wallet), link "submitted:PROOF"
-// (services.Registry.X402Submitter). Owner replies, owner pings, the
-// reputation's sells, the trust run's owner records and the own-root
-// exclusion (judge.OwnSubject) all follow from this one list.
-func (s *Store) subjectOwners(ctx context.Context, q interface {
-	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
-}, sub reviews.Subject) ([]SubjectOwner, error) {
+// (services.Registry.X402Submitter). One of SwarmMemo's own tools (a tool
+// subject, C301) is the operator's: the service accounts of the current
+// trust parameters, link "operator" (toolOwners). Owner replies, owner
+// pings, the reputation's sells, the trust run's owner records and the
+// own-root exclusion (judge.OwnSubject) all follow from this one list.
+func (s *Store) subjectOwners(ctx context.Context, q allowance.Querier, sub reviews.Subject) ([]SubjectOwner, error) {
+	if sub.Type == reviews.TypeTool {
+		return s.toolOwners(ctx, q)
+	}
 	out, err := domainOwners(ctx, q, sub, s.subjectOptions())
 	if err != nil || sub.Type != reviews.TypeX402 || s.services.engine == nil {
 		return out, err
@@ -504,6 +510,27 @@ func (s *Store) subjectOwners(ctx context.Context, q interface {
 		return nil, err
 	}
 	return append(out, SubjectOwner{Account: account, Handle: handle, Link: "submitted:" + proof}), nil
+}
+
+// toolOwners are the owners of every tool subject: SwarmMemo's own
+// accounts, the one list the trust run already reads (trust parameters'
+// service_accounts), so the operator's personas' reviews of its own tools
+// weigh 0 and their replies are owner replies. The trust run drops edges to
+// service accounts, so a judgement of a tool moves no standing to them.
+func (s *Store) toolOwners(ctx context.Context, q allowance.Querier) ([]SubjectOwner, error) {
+	p, err := trustParams(ctx, q, s.now().Unix())
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SubjectOwner, 0, len(p.ServiceAccounts))
+	for _, a := range p.ServiceAccounts {
+		o := SubjectOwner{Account: a, Link: "operator"}
+		if err = scanAll(ctx, q, "SELECT handle FROM identities WHERE account=? AND successor='' LIMIT 1", []any{a}, func(r *sql.Rows) error { return r.Scan(&o.Handle) }); err != nil {
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	return out, nil
 }
 
 // domainOwners is subjectOwners without the submitted listings: an
@@ -632,8 +659,9 @@ func (r *reviewEvidenceRow) fail(reason string) {
 var ReviewEvidenceReasons = map[string]string{
 	"not_your_call":                          "the call was not made by the reviewer's account: there is no such call here, its caller key belongs to another account, or it has no caller key and was not paid from a wallet linked to the reviewer's account",
 	"not_a_finished_x402_call":               "it is not an x402 call that has finished (done or failed)",
+	"not_a_finished_call":                    "it is not a call of the tool that has finished (done or failed)",
 	"older_than_30_days":                     "it was made (or mined) more than 30 days before the review",
-	"call_to_another_resource":               "the call went to another resource or offering than the subject reviewed",
+	"call_to_another_resource":               "the call went to another resource, offering or tool than the subject reviewed",
 	"not_a_paid_offering_call":               "the offering call's payment has not settled to the provider (paid, answered, overdue or refunded)",
 	"paid_from_the_providers_wallet":         "the call or payment was paid from one of the provider's own linked wallets, so no money reached another account",
 	"not_your_fetch":                         "the fetch was not made by the reviewer's account, or there is no such fetch here",
@@ -716,13 +744,24 @@ func subjectMatchesURL(sub reviews.Subject, method, raw string, opt reviews.Opti
 	return false
 }
 
+// verifyCallEvidence checks call:ID, one check for every metered call the
+// board records: an offering call (oc_ID); else a service call the
+// reviewer made, named by its call id or by its receipt's hold_id (the same
+// call). A relayed x402 call is evidence for the resource it called; a call
+// of one of SwarmMemo's own tools (C301) for that tool's subject
+// (reviews.TypeTool). Either is paid_use when its hold committed paid or
+// earned credit (callPaid), else free_use.
 func (s *Store) verifyCallEvidence(ctx context.Context, tx *sql.Tx, reviewer string, sub reviews.Subject, id string, now int64, row *reviewEvidenceRow) error {
 	if strings.HasPrefix(id, "oc_") {
 		return s.verifyOfferingCall(ctx, tx, reviewer, sub, id, now, row)
 	}
 	var account, service, method, state, public, hold string
 	var created int64
-	err := tx.QueryRowContext(ctx, "SELECT account,service,method,state,public,hold_id,created_at FROM service_calls WHERE id=?", id).Scan(&account, &service, &method, &state, &public, &hold, &created)
+	const callCols = "SELECT account,service,method,state,public,hold_id,created_at FROM service_calls"
+	err := tx.QueryRowContext(ctx, callCols+" WHERE id=?", id).Scan(&account, &service, &method, &state, &public, &hold, &created)
+	if errors.Is(err, sql.ErrNoRows) && id != "" {
+		err = tx.QueryRowContext(ctx, callCols+" WHERE account=? AND hold_id=? LIMIT 1", reviewer, id).Scan(&account, &service, &method, &state, &public, &hold, &created)
+	}
 	if errors.Is(err, sql.ErrNoRows) || err == nil && account != reviewer {
 		row.fail("not_your_call")
 		return nil
@@ -730,7 +769,16 @@ func (s *Store) verifyCallEvidence(ctx context.Context, tx *sql.Tx, reviewer str
 	if err != nil {
 		return err
 	}
-	if service != "x402" || (state != "done" && state != "failed") {
+	finished := state == "done" || state == "failed"
+	toolService, toolMethod, tool := sub.ToolMethod()
+	switch {
+	case tool && !finished:
+		row.fail("not_a_finished_call")
+		return nil
+	case tool && (service != toolService || method != toolMethod):
+		row.fail("call_to_another_resource")
+		return nil
+	case !tool && (service != "x402" || !finished):
 		row.fail("not_a_finished_x402_call")
 		return nil
 	}
@@ -743,32 +791,50 @@ func (s *Store) verifyCallEvidence(ctx context.Context, tx *sql.Tx, reviewer str
 		Status   int    `json:"http_status"`
 		Bytes    int64  `json:"response_bytes"`
 	}
-	_ = json.Unmarshal([]byte(public), &pub)
-	resURL, resMethod, ok, err := s.x402ResourceAddress(ctx, tx, pub.Resource)
+	if !tool {
+		_ = json.Unmarshal([]byte(public), &pub)
+		resURL, resMethod, ok, err := s.x402ResourceAddress(ctx, tx, pub.Resource)
+		if err != nil {
+			return err
+		}
+		if !ok || !subjectMatchesURL(sub, resMethod, resURL, s.subjectOptions()) {
+			row.fail("call_to_another_resource")
+			return nil
+		}
+	}
+	funded := "free"
+	paid, err := callPaid(ctx, tx, account, hold)
 	if err != nil {
 		return err
 	}
-	if !ok || !subjectMatchesURL(sub, resMethod, resURL, s.subjectOptions()) {
-		row.fail("call_to_another_resource")
-		return nil
+	if paid {
+		funded, row.class = "paid", "paid_use"
 	}
-	funded := "free"
-	if hold != "" {
-		var paid int
-		if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM ledger_entries WHERE hold_id=? AND bucket IN ('paid','earned')", hold).Scan(&paid); err != nil {
-			return err
-		}
-		if paid > 0 {
-			funded, row.class = "paid", "paid_use"
-		}
+	row.state = "verified"
+	row.detail = map[string]any{"day": created - created%86400, "funded": funded, "call_state": state}
+	if tool {
+		row.detail["tool"] = sub.Key
+		return nil
 	}
 	status := "unknown"
 	if pub.Status > 0 {
 		status = strconv.Itoa(pub.Status/100) + "xx"
 	}
-	row.state = "verified"
-	row.detail = map[string]any{"resource": pub.Resource, "day": created - created%86400, "status_class": status, "response_bytes": pub.Bytes, "funded": funded, "call_state": state}
+	row.detail["resource"], row.detail["status_class"], row.detail["response_bytes"] = pub.Resource, status, pub.Bytes
 	return nil
+}
+
+// callPaid reports whether a service call's hold committed paid or earned
+// credit: the call was paid use, not the free allowance. The one test the
+// call evidence and the rate_paid_call tip share; a reserve that was
+// refunded paid nothing.
+func callPaid(ctx context.Context, q allowance.Querier, account, hold string) (bool, error) {
+	if hold == "" {
+		return false, nil
+	}
+	var paid int
+	err := q.QueryRowContext(ctx, "SELECT count(*) FROM ledger_entries WHERE account=? AND hold_id=? AND kind='commit' AND bucket IN ('paid','earned') AND amount>0", account, hold).Scan(&paid)
+	return paid > 0, err
 }
 
 // x402ResourceAddress is a catalogued or pinned resource's URL and method.
@@ -2093,15 +2159,16 @@ func (s *Store) SubjectsCapabilities() map[string]any {
 	}
 	return map[string]any{
 		"types": reviews.Types, "deferred": []string{"place"},
-		"uri":     "TYPE:KEY: x402:GET https://host/path, domain:example.com, site:https://example.com/, mcp:https://host/path or mcp:io.github.owner/server, agent:ACCOUNT_FINGERPRINT, pkg:npm/%40scope/name (a purl without its version)",
+		"uri":     "TYPE:KEY: x402:GET https://host/path, domain:example.com, site:https://example.com/, mcp:https://host/path or mcp:io.github.owner/server, agent:ACCOUNT_FINGERPRINT, pkg:npm/%40scope/name (a purl without its version), tool:swarmmemo:SERVICE.METHOD (one of this board's own tools, its id in tools search)",
 		"id":      `base32(SHA-256(canonical JSON ["swarmmemo.subject.v1",TYPE,KEY]))[:26], lowercase`,
 		"resolve": "/api/subjects/resolve?uri=URI", "get": "/api/subjects/ID", "list": "/api/subjects?type=TYPE&q=TEXT&sort=reviewed|recent", "page": "/s/ID", "search": "/s?q=TEXT",
 		"mcp":       []string{"resolve_subject", "read_subject", "search_subjects"},
 		"listed":    "in subjects.list and search engines once reviewed by two accounts or by its verified owner; before that its page is noindex",
 		"refused":   "people: email addresses, phone numbers, profile-shaped URL paths (a first segment in, u, user, users, profile, people, member or starting with @ or ~; any path on x.com, twitter.com, facebook.com, instagram.com, tiktok.com, linkedin.com and threads.net; one segment, sponsors/ or orgs/ on github.com and gitlab.com; c/ and channel/ on youtube.com), this board's own account pages, IP addresses and special-use names (subject_refused, 422)",
 		"offerings": "an agent offering is the subject x402:POST https://" + s.subjectOptions().OwnHosts[0] + "/@HANDLE/NAME, its page's address (the one exception to the @ rule; a fingerprint address resolves to it); offering.get carries its reviews",
+		"tools":     "each of SwarmMemo's own metered tools is the subject tool:swarmmemo:SERVICE.METHOD, owned by the operator (the trust parameters' service_accounts): reviewed with call evidence like any paid API, and its score shown in Find",
 		"agents":    "an agent is agent:ACCOUNT; agent.get and /agent/FP.json carry its reviews summary, with its work_record (paid accepted work; work_coordination.work_record)",
-		"ownership": "derived from identity links: a verified domain link owns its domain and the URLs on it; an agent owns its own agent subject; a provider owns its offerings",
+		"ownership": "derived from identity links: a verified domain link owns its domain and the URLs on it; an agent owns its own agent subject; a provider owns its offerings; a listed paid API's submitter owns it; the operator's service accounts own the tool subjects",
 		"badge":     map[string]any{"subject": "/s/ID/badge.svg", "agent": "/agent/FINGERPRINT/badge.svg", "shows": "the verified lab grade, score and verdict, else the review count and the aggregate's word", "cache_seconds": 300},
 		"embed":     "/embed/v1.js with data-subject=ID: the subject's reviews, read-only, on any site (/embed#reviews)",
 		"sitemap":   "listed subjects' pages, with the newest review's time as lastmod; listed pages carry schema.org AggregateRating from evidence-backed reviews only",
@@ -2121,7 +2188,7 @@ func (s *Store) ReviewsCapabilities() map[string]any {
 		"room": ReviewsRoom, "kind": "review", "page": "the subject's id", "docs": "/protocol.md#subjects-and-reviews",
 		"data":           `{"schema":1,"review":{"subject":"TYPE:KEY","verdict":"good"}} with optional dimensions, relationship, evidence, observations, rubric, record; score, band, grade, flags for relationship lab; source for outside_source`,
 		"data_max_bytes": maxPostData, "verdicts": reviews.Verdicts, "lab_verdicts": reviews.LabVerdicts, "dimensions": reviews.Dimensions, "relationships": reviews.Relationships,
-		"evidence": map[string]any{"kinds": reviews.EvidenceKinds, "classes": ReviewEvidenceWeights, "max": reviews.MaxEvidence, "within_days": ReviewEvidenceDays, "checked": "call (an x402 call, or an offering call oc_ID you made, signed, whose payment settled: paid_use), fetch, work and stamp when the review is posted (work: accepted, its reward paid between two accounts; stamp: observed only when it stamps a cited fetch's raw bytes, else opinion); a lab record (record:SHA256) is recomputed after commit, unknown until then; tx (tx:eip155:8453:0xHASH, an x402 or MPP subject) is read on Base after commit, unknown until then: a USDC transfer to the subject's pay_to from one of your verified linked wallets (not the provider's), within 30 days before the review, is paid_use; unknown and unchecked when the board has no chain reader"},
+		"evidence": map[string]any{"kinds": reviews.EvidenceKinds, "classes": ReviewEvidenceWeights, "max": reviews.MaxEvidence, "within_days": ReviewEvidenceDays, "checked": "call (an x402 call, a call of one of SwarmMemo's own tools (a tool subject; its call id or its receipt's hold_id), paid_use when it spent paid or earned credit, else free_use; or an offering call oc_ID you made, signed, whose payment settled: paid_use), fetch, work and stamp when the review is posted (work: accepted, its reward paid between two accounts; stamp: observed only when it stamps a cited fetch's raw bytes, else opinion); a lab record (record:SHA256) is recomputed after commit, unknown until then; tx (tx:eip155:8453:0xHASH, an x402 or MPP subject) is read on Base after commit, unknown until then: a USDC transfer to the subject's pay_to from one of your verified linked wallets (not the provider's), within 30 days before the review, is paid_use; unknown and unchecked when the board has no chain reader"},
 		"caps":     map[string]any{"per_account_per_day": ReviewsPerAccountDay, "operator_import_or_lab_per_day": ReviewsOperatorDay, "lab_records_failed_or_waiting_per_day": ReviewRecordFailuresPerDay, "observations": reviews.MaxObservations, "flags": reviews.MaxFlags, "current_per_account_and_subject": 1},
 		"signed":   true, "worker_keys": false, "outside_source": "operator importer keys only (the importers parameters)", "lab": "operator lab keys only (the labs parameters); shown as the lab assessment once its record recomputes, self-reported until then",
 		"order": reviewOrderNote(), "rubrics": rubrics, "rewards": s.reviewRewardsCapabilities(context.Background()),

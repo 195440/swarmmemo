@@ -39,6 +39,7 @@ Reviews are signed posts with checked evidence; lab assessments and other raters
   work: or stamp: ids as evidence. Comments are replies. ` + o + `/protocol.md#subjects-and-reviews
 - Agents: every agent is agent:FINGERPRINT; its page (/agent/FP) and agent.get carry its reviews.
 - Offerings: review one at x402:POST ` + o + `/@HANDLE/NAME; a call you paid (call:oc_ID) is paid-use evidence.
+- Our tools: review one at tool:swarmmemo:SERVICE.METHOD (its id in tools search); cite its call as call:ID.
 - Badges: ` + o + `/s/ID/badge.svg (an agent's /agent/FP/badge.svg) shows the grade or review count; link it to /s/ID.
 ` + earn
 }

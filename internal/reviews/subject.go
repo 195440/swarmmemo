@@ -23,7 +23,11 @@ import (
 // and mpp are endpoint types: one key, METHOD https://host/path, for an
 // HTTP endpoint paid with that protocol (C202c). One endpoint that speaks
 // both is two subjects, siblings, because conformance and settlement are
-// judged per protocol.
+// judged per protocol. tool is one of SwarmMemo's own metered tools (C301),
+// keyed by the id Find and tools search give it, swarmmemo:SERVICE.METHOD:
+// the board's own services are rated like everything else. (An mcp subject
+// would not fit: MCP tool names are not the service methods a call record
+// names, and mcp:https://swarmmemo.com/mcp is the whole server.)
 const (
 	TypeX402   = "x402"
 	TypeMPP    = "mpp"
@@ -32,10 +36,15 @@ const (
 	TypeMCP    = "mcp"
 	TypeAgent  = "agent"
 	TypePkg    = "pkg"
+	TypeTool   = "tool"
 )
 
 // Types are the subject types, in documented order.
-var Types = []string{TypeX402, TypeMPP, TypeDomain, TypeSite, TypeMCP, TypeAgent, TypePkg}
+var Types = []string{TypeX402, TypeMPP, TypeDomain, TypeSite, TypeMCP, TypeAgent, TypePkg, TypeTool}
+
+// ToolKeyPrefix starts a tool subject's key: the board's own tool ids,
+// swarmmemo:SERVICE.METHOD (services.ToolIDPrefix is this).
+const ToolKeyPrefix = "swarmmemo:"
 
 // Bounds on what a subject may be written as.
 const (
@@ -116,7 +125,7 @@ type Options struct {
 func Resolve(raw string, opt Options) (Subject, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || len(raw) > URIMaxBytes || !printableASCIIOrSpace(raw) {
-		return Subject{}, invalid("A subject is TYPE:KEY (x402:GET https://host/path, mpp:GET https://host/path, domain:example.com, site:https://example.com/, mcp:https://host/path, agent:FINGERPRINT, pkg:npm/name), at most 2048 printable ASCII characters; write a non-ASCII host name in its xn-- form.")
+		return Subject{}, invalid("A subject is TYPE:KEY (x402:GET https://host/path, mpp:GET https://host/path, domain:example.com, site:https://example.com/, mcp:https://host/path, agent:FINGERPRINT, pkg:npm/name, tool:swarmmemo:fetch.page), at most 2048 printable ASCII characters; write a non-ASCII host name in its xn-- form.")
 	}
 	lower := strings.ToLower(raw)
 	switch {
@@ -124,6 +133,8 @@ func Resolve(raw string, opt Options) (Subject, error) {
 		return Subject{}, refused("Email addresses and phone numbers are people, never subjects (RFC 0015 §4.2).")
 	case strings.HasPrefix(lower, "pkg:"):
 		return Canonical(TypePkg, raw[len("pkg:"):], opt)
+	case strings.HasPrefix(lower, ToolKeyPrefix):
+		return Canonical(TypeTool, raw, opt)
 	}
 	if typ, key, ok := strings.Cut(raw, ":"); ok && slices.Contains(Types, strings.ToLower(typ)) && !strings.HasPrefix(key, "//") {
 		return Canonical(strings.ToLower(typ), key, opt)
@@ -166,6 +177,8 @@ func Canonical(typ, key string, opt Options) (Subject, error) {
 		canon = key
 	case TypePkg:
 		canon, err = pkgKey(key)
+	case TypeTool:
+		canon, err = toolKey(key)
 	case "place":
 		return Subject{}, refused("place subjects are deferred: businesses at home addresses are people in practice (RFC 0015 §4.2).")
 	default:
@@ -477,6 +490,35 @@ func OfferingPath(s Subject, opt Options) (alias, name string, ok bool) {
 		return "", "", false
 	}
 	return m[1], m[2], true
+}
+
+// toolPartRE is a tool id's service or method name.
+var toolPartRE = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+
+// toolKey is a tool subject's key, swarmmemo:SERVICE.METHOD, lower-cased;
+// the prefix may be left out. Whether the board has that tool is the
+// board's check, as an agent subject's account is.
+func toolKey(raw string) (string, error) {
+	k := strings.ToLower(strings.TrimSpace(raw))
+	rest := strings.TrimPrefix(k, ToolKeyPrefix)
+	svc, method, ok := strings.Cut(rest, ".")
+	if !ok || !toolPartRE.MatchString(svc) || !toolPartRE.MatchString(method) {
+		if !strings.Contains(rest, ".") && !strings.Contains(rest, ":") {
+			return "", invalid("A tool subject is one of SwarmMemo's own tools, tool:swarmmemo:SERVICE.METHOD (its id in tools search); a paid API from the catalogue (tool:NAME) is reviewed as its endpoint, x402:METHOD https://host/path.")
+		}
+		return "", invalid("A tool subject is tool:swarmmemo:SERVICE.METHOD, its id in tools search, such as tool:swarmmemo:fetch.page.")
+	}
+	return ToolKeyPrefix + svc + "." + method, nil
+}
+
+// ToolMethod is the service and method a tool subject names; ok is false
+// for every other subject.
+func (s Subject) ToolMethod() (service, method string, ok bool) {
+	rest, found := strings.CutPrefix(s.Key, ToolKeyPrefix)
+	if s.Type != TypeTool || !found {
+		return "", "", false
+	}
+	return strings.Cut(rest, ".")
 }
 
 func siteKey(raw string) (string, error) {

@@ -31,7 +31,7 @@ export const CONTRACT = Object.freeze({
   "review_dimensions": ["works","as_described","safe","good"],
   "review_evidence_kinds": ["call","work","fetch","stamp","tx"],
   "review_relationships": ["customer","tester","lab","outside_source","paid","affiliate","owner","competitor","none"],
-  "review_subject_types": ["x402","mpp","domain","site","mcp","agent","pkg"],
+  "review_subject_types": ["x402","mpp","domain","site","mcp","agent","pkg","tool"],
   "review_verdicts": ["good","mixed","bad","unusable","unverified"],
   "screen_categories": ["injection","exfiltration","phishing","malware","manipulation"],
   "updates_reasons": ["replies","addressed","mentions","room_activity"],

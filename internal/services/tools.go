@@ -26,6 +26,7 @@ import (
 	"unicode/utf8"
 
 	"swarmmemo/internal/allowance"
+	"swarmmemo/internal/reviews"
 )
 
 // Tools bounds and ids.
@@ -33,7 +34,7 @@ const (
 	ToolsID = "tools"
 	// ToolIDPrefix starts a SwarmMemo tool's id: swarmmemo:SERVICE.METHOD.
 	// A catalogue tool keeps its own tool: id (BundlerPrefix).
-	ToolIDPrefix = "swarmmemo:"
+	ToolIDPrefix = reviews.ToolKeyPrefix
 	// ToolsCallArgsMax bounds tools.call's args: the routed method's own
 	// args, which its own ArgsMax bounds again, and the id.
 	ToolsCallArgsMax = MemoryPutArgsMax + 1024
@@ -115,6 +116,37 @@ func toolable(d Descriptor) bool {
 	return d.Topic != "" && d.ID != ToolsID && d.ID != "x402"
 }
 
+// toolMethod is the service and write method a tool id names, when that
+// service's write methods are tools here.
+func (r *Registry) toolMethod(service, method string) (Descriptor, Method, bool) {
+	p, err := r.Lookup(service)
+	if err != nil {
+		return Descriptor{}, Method{}, false
+	}
+	d := p.Describe()
+	m, found := d.method(method)
+	if !found || !m.Write || !toolable(d) {
+		return Descriptor{}, Method{}, false
+	}
+	return d, m, true
+}
+
+// IsTool reports whether service.method is one of SwarmMemo's tools here
+// (its id is ToolID(service, method)): the board's check that a tool
+// subject (reviews.TypeTool) names a real tool, and that a service call's
+// record is a tool's call.
+func (r *Registry) IsTool(service, method string) bool {
+	_, _, ok := r.toolMethod(service, method)
+	return ok
+}
+
+// HasTools reports whether a service's write methods are SwarmMemo tools
+// here (IsTool for some method): a service.call to it may be a tool's call.
+func (r *Registry) HasTools(service string) bool {
+	p, err := r.Lookup(service)
+	return err == nil && toolable(p.Describe())
+}
+
 // ToolID is the id of a SwarmMemo tool: swarmmemo:SERVICE.METHOD.
 func ToolID(service, method string) string { return ToolIDPrefix + service + "." + method }
 
@@ -182,13 +214,8 @@ func (e *Engine) routeTool(data string, toolMaxCost func() int64) (service, rout
 	unknown := &allowance.Err{Code: "invalid_service", Message: "id names no tool here: tools search lists them (" + ToolIDPrefix + "SERVICE.METHOD or " + BundlerPrefix + "NAME)."}
 	if rest, ok := strings.CutPrefix(id, ToolIDPrefix); ok {
 		svc, method, _ := strings.Cut(rest, ".")
-		p, lerr := e.cfg.Registry.Lookup(svc)
-		if lerr != nil {
-			return "", "", unknown
-		}
-		d := p.Describe()
-		m, found := d.method(method)
-		if !found || !m.Write || !toolable(d) {
+		d, m, found := e.cfg.Registry.toolMethod(svc, method)
+		if !found {
 			return "", "", unknown
 		}
 		raw := canonicalJSON(map[string]any{"schema": 1, "method": m.Name, "args": args, "max_cost": maxCost})

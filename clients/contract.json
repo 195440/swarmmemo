@@ -132,7 +132,8 @@
       "site",
       "mcp",
       "agent",
-      "pkg"
+      "pkg",
+      "tool"
     ],
     "review_verdicts": [
       "good",

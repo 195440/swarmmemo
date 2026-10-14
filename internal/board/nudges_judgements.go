@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"swarmmemo/internal/reviews"
+	"swarmmemo/internal/services"
 )
 
 // Prompts to rate after a real transaction (C306, RFC 0020 §9: thin
@@ -19,8 +20,9 @@ import (
 // of the one engine (nudges.go), rows of NudgeCodes with Feature reviews:
 //
 //   - rate_paid_call: a signed caller whose paid call finished (an
-//     offering call answered, or a relayed x402 call done at a cost) and
-//     who has not reviewed what it paid for; how cites call:ID.
+//     offering call answered, a relayed x402 call done at a cost, or a call
+//     of one of SwarmMemo's own tools that spent paid or earned credit, C301)
+//     and who has not reviewed what it paid for; how cites call:ID.
 //   - rate_worker: a requester with a submitted result waiting, who has not
 //     reviewed the worker; how is the rated accept.
 //
@@ -136,8 +138,11 @@ func (s *Store) ratePaidCallFact(ctx context.Context, c *nudgeCall) (map[string]
 			return nil, false
 		}
 	case "service.call":
-		if c.cmd.Target != "x402" {
-			return nil, false // only the relay's own answer
+		// Only the relay's own answer, or a tool's (directly or through
+		// tools.call).
+		e := s.services.engine
+		if c.cmd.Target != "x402" && (e == nil || c.cmd.Target != services.ToolsID && !e.Registry().HasTools(c.cmd.Target)) {
+			return nil, false
 		}
 	}
 	var cands []rateCandidate
@@ -162,11 +167,14 @@ func (s *Store) ratePaidCallFact(ctx context.Context, c *nudgeCall) (map[string]
 
 // paidCallsToRate are account's finished paid calls within the lookback,
 // newest first, whose subject it has not reviewed: offering calls it
-// signed that were answered, and relayed x402 calls done at a cost.
+// signed that were answered, relayed x402 calls done at a cost, and calls
+// of SwarmMemo's own tools that spent paid or earned credit (callPaid, the
+// call evidence's own test: the review it prompts verifies as paid use).
 func (s *Store) paidCallsToRate(ctx context.Context, tx *sql.Tx, account string, now int64) ([]rateCandidate, error) {
 	since := now - rateLookbackSeconds
 	type paid struct {
 		id, seller, name, public string
+		tool                     reviews.Subject // a call of one of our tools
 		at                       int64
 	}
 	var calls []paid
@@ -203,14 +211,58 @@ func (s *Store) paidCallsToRate(ctx context.Context, tx *sql.Tx, account string,
 	if err = rows.Close(); err != nil {
 		return nil, err
 	}
-	// Newest first across both kinds.
+	if e := s.services.engine; e != nil {
+		rows, err = tx.QueryContext(ctx, `SELECT id,service,method,hold_id,coalesce(nullif(finished_at,0),created_at) FROM service_calls
+ WHERE account=? AND created_at>? AND service NOT IN ('x402',?) AND state='done' AND cost>0 ORDER BY created_at DESC LIMIT ?`, account, since, services.ToolsID, rateCandidates)
+		if err != nil {
+			return nil, err
+		}
+		type toolCall struct {
+			p                     paid
+			service, method, hold string
+		}
+		var tcs []toolCall
+		for rows.Next() {
+			var t toolCall
+			if err = rows.Scan(&t.p.id, &t.service, &t.method, &t.hold, &t.p.at); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			tcs = append(tcs, t)
+		}
+		if err = rows.Close(); err != nil {
+			return nil, err
+		}
+		for _, t := range tcs {
+			if !e.Registry().IsTool(t.service, t.method) {
+				continue
+			}
+			if t.p.tool, err = reviews.Canonical(reviews.TypeTool, services.ToolID(t.service, t.method), reviews.Options{}); err != nil {
+				continue
+			}
+			ok, err := callPaid(ctx, tx, account, t.hold)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				calls = append(calls, t.p)
+			}
+		}
+	}
+	// Newest first across every kind.
 	slices.SortStableFunc(calls, func(a, b paid) int { return cmp.Compare(b.at, a.at) })
 	var out []rateCandidate
 	for _, p := range calls {
 		var sub reviews.Subject
 		var ids []string
 		var what, pair string
-		if p.seller != "" {
+		switch {
+		case p.tool.ID != "":
+			// Our own tool: the operator is its owner, the pair the
+			// subject's alone, as a relayed API's.
+			sub, what, pair = p.tool, p.tool.Key, "swarmmemo/"+p.tool.ID
+			ids = append(ids, sub.ID)
+		case p.seller != "":
 			if p.seller == account {
 				continue
 			}
@@ -230,7 +282,7 @@ func (s *Store) paidCallsToRate(ctx context.Context, tx *sql.Tx, account string,
 				who = truncateUTF8(p.seller, 12) + "…"
 			}
 			what, pair = "@"+who+"'s "+p.name, p.seller+"/"+sub.ID
-		} else {
+		default:
 			var pub struct {
 				Resource string `json:"resource"`
 				Status   int    `json:"http_status"`

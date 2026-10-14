@@ -341,3 +341,42 @@ func TestOfferingSubjects(t *testing.T) {
 		}
 	}
 }
+
+// One of SwarmMemo's own tools is a subject (C301): tool:swarmmemo:SERVICE.METHOD,
+// the id tools search and Find give it.
+func TestToolSubjects(t *testing.T) {
+	for _, in := range []string{"tool:swarmmemo:fetch.page", "TOOL:SwarmMemo:Fetch.Page", "swarmmemo:fetch.page", " tool:fetch.page "} {
+		s, err := Resolve(in, opt)
+		if err != nil {
+			t.Fatalf("%q: %v", in, err)
+		}
+		if s.Type != TypeTool || s.Key != "swarmmemo:fetch.page" || s.URI() != "tool:swarmmemo:fetch.page" || s.ID != SubjectID(TypeTool, "swarmmemo:fetch.page") {
+			t.Fatalf("%q: %+v", in, s)
+		}
+		if again, err := Resolve(s.URI(), opt); err != nil || again != s {
+			t.Fatalf("%q: not idempotent: %v %v", in, again, err)
+		}
+		if svc, m, ok := s.ToolMethod(); !ok || svc != "fetch" || m != "page" {
+			t.Fatalf("ToolMethod: %q %q %v", svc, m, ok)
+		}
+		if _, ok := s.Parent(); ok || s.Host() != "" || s.Siblings() != nil {
+			t.Fatalf("a tool has no host, parent or siblings: %+v", s)
+		}
+	}
+	c, err := Canonical(TypeTool, "swarmmemo:public_data.fetch", opt)
+	if err != nil || c.Key != "swarmmemo:public_data.fetch" {
+		t.Fatalf("Canonical: %+v %v", c, err)
+	}
+	for _, in := range []string{"tool:exa_search", "tool:swarmmemo:fetch", "tool:swarmmemo:fetch.page.x", "tool:swarmmemo:.page", "tool:other:fetch.page", "tool:swarmmemo:fe tch.page"} {
+		var se *Error
+		if _, err := Resolve(in, opt); !errors.As(err, &se) || se.Code != "invalid_subject" {
+			t.Errorf("%q: %v", in, err)
+		}
+	}
+	if _, _, ok := (Subject{Type: TypeX402, Key: "GET https://example.com/"}).ToolMethod(); ok {
+		t.Fatal("ToolMethod of an x402 subject")
+	}
+	if !strings.Contains(TypesText(), "tool") {
+		t.Fatal(TypesText())
+	}
+}

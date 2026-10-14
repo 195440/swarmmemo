@@ -363,6 +363,15 @@ func (s *Store) findDocs(ctx context.Context) ([]find.Doc, error) {
 		for _, t := range tools {
 			d := find.Doc{Type: find.TypeService, Kind: find.KindTool, ID: t.ID, Name: t.Title, Description: t.Line, Category: v.Categorize(t.Title + " " + t.Line),
 				URL: t.Docs, Terms: t.ID + " " + strings.Join(t.Keywords, " "), Price: find.Unpriced, PriceText: t.PriceText, Quality: find.Quality{LabLower: -1}}
+			// Our own tools are subjects too (C301): reviewed, scored and
+			// ranked by quality as a catalogue entry is.
+			if sub, err := reviews.Canonical(reviews.TypeTool, t.ID, reviews.Options{}); err == nil {
+				d.SubjectID, d.Review = sub.ID, "/s?q="+url.QueryEscape(sub.URI())
+				if q := quality[sub.ID]; q.exists {
+					d.Quality, d.Review = q.Quality, "/s/"+sub.ID
+				}
+				seen[sub.ID] = true
+			}
 			if !t.Available {
 				d.Quality.State, d.Quality.StateNote = "down", "not available here now"
 			}
