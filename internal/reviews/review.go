@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"swarmmemo/internal/judge"
 )
 
 // The universal verdicts (RFC 0019 §3), in order from best. A lab's
@@ -22,6 +24,47 @@ var Verdicts = []string{"good", "mixed", "bad", "unusable", "unverified"}
 // LabVerdicts maps each verdict to the lab word x402 Trust and the design
 // use for it, shown beside the verdict on a lab card.
 var LabVerdicts = map[string]string{"good": "proceed", "mixed": "caution", "bad": "avoid", "unusable": "down", "unverified": "unverified"}
+
+// ScoreVerdict is the verdict a 0-100 score (50 neutral, RFC 0020) reads
+// as: the verdict whose judge.VerdictX is nearest, a tie going to the better
+// verdict (ScoreBands). A rated work.accept's review carries both (the score
+// as its good dimension), so the score and its verdict never disagree.
+func ScoreVerdict(score int) string {
+	for _, b := range ScoreBands {
+		if score >= b.From {
+			return b.Verdict
+		}
+	}
+	return ScoreBands[len(ScoreBands)-1].Verdict
+}
+
+// ScoreBand is the lowest score (From) that reads as Verdict.
+type ScoreBand struct {
+	From    int    `json:"from"`
+	Verdict string `json:"verdict"`
+}
+
+// ScoreBands are ScoreVerdict's bands, best first, derived from
+// judge.VerdictX (the one verdict-to-x map): each band starts at the
+// midpoint (rounded up) between its verdict's x and the next better one's.
+// clients/contract.json carries them for the clients that build a rating.
+var ScoreBands = scoreBands()
+
+func scoreBands() []ScoreBand {
+	var out []ScoreBand
+	for _, v := range Verdicts { // best first; unverified has no x
+		x, ok := judge.VerdictX[v]
+		if !ok {
+			continue
+		}
+		out = append(out, ScoreBand{From: int(x), Verdict: v})
+	}
+	for i := 0; i+1 < len(out); i++ {
+		out[i].From = (out[i].From + out[i+1].From + 1) / 2
+	}
+	out[len(out)-1].From = 0
+	return out
+}
 
 // UniversalVerdict is the verdict for a lab word (internal/rubric's
 // proceed, caution, avoid, down, unverified); "" for anything else.

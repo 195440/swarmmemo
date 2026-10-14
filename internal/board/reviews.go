@@ -25,6 +25,7 @@ import (
 	"unicode/utf8"
 
 	"swarmmemo/internal/allowance"
+	"swarmmemo/internal/judge"
 	"swarmmemo/internal/reviews"
 	"swarmmemo/internal/services"
 )
@@ -33,7 +34,8 @@ import (
 const ReviewsRoom = "reviews"
 
 // Review caps (RFC 0019 §4) and the default order's parameters (RFC 0015
-// §5.4). The order is version 1 of the reviews parameters.
+// §5.4). The order is version 1 of the reviews parameters; its weights,
+// half-life and prior are internal/judge's (RFC 0020, the one source).
 const (
 	ReviewsPerAccountDay = 20
 	// ReviewsOperatorDay is the daily cap for the operator's importer and lab
@@ -47,11 +49,11 @@ const (
 	SubjectsPageDefault   = 20
 	SubjectsPageMax       = 50
 	SubjectQueryMaxBytes  = 128
-	ReviewHalfLifeDays    = 180
+	ReviewHalfLifeDays    = judge.HalfLifeDays
 	ReviewBurstCap        = 3.0
 	ReviewBurstDays       = 7
-	ReviewPriorWeight     = 2.0
-	ReviewPriorValue      = 0.5
+	ReviewPriorWeight     = judge.PriorWeight * 1.0
+	ReviewPriorValue      = 1.0 * (judge.Neutral - judge.Min) / (judge.Max - judge.Min)
 	ReviewOrderVersion    = 1
 	reviewThreadCountMax  = 1000
 	labRunsShown          = 10
@@ -59,15 +61,26 @@ const (
 	reviewOffsetCursorMax = 10000
 )
 
-// ReviewEvidenceWeights are the default order's evidence classes.
-var ReviewEvidenceWeights = map[string]float64{"paid_use": 1, "work": 1, "observed": 0.4, "free_use": 0.3, "opinion": 0.2}
+// ReviewEvidenceWeights are the default order's evidence classes
+// (judge.EvidenceWeightPPM).
+var ReviewEvidenceWeights = ppmFactors(judge.EvidenceWeightPPM)
 
 // reviewClassRank orders the classes: a review counts its best verified one.
 var reviewClassRank = []string{"opinion", "free_use", "observed", "work", "paid_use"}
 
 // ReviewRelationshipFactors are the default order's relationship factors;
 // lab and outside_source are shown apart and never in the community order.
-var ReviewRelationshipFactors = map[string]float64{"owner": 0, "affiliate": 0, "paid": 0, "competitor": 0.5, "outside_source": 0, "lab": 0}
+// (judge.RelationshipFactorPPM).
+var ReviewRelationshipFactors = ppmFactors(judge.RelationshipFactorPPM)
+
+// ppmFactors is a ppm table as the factors the SQL order multiplies.
+func ppmFactors(ppm map[string]int64) map[string]float64 {
+	out := make(map[string]float64, len(ppm))
+	for k, v := range ppm {
+		out[k] = float64(v) / 1e6
+	}
+	return out
+}
 
 // reviewSchema (schema 30). reviews.event_id references events(id) and
 // review_evidence.event_id references reviews(event_id), with foreign keys
@@ -250,7 +263,9 @@ func (s *Store) checkReview(ctx context.Context, tx *sql.Tx, c Command, a actor,
 		if n == 0 {
 			return nil, problem(409, "review_supersede", "supersedes names a message that is not a review; a review supersedes only your current review of the same subject.")
 		}
-	case p.previous != "" && d.Supersedes != p.previous && currentAuthor == a.id:
+	case p.previous != "" && d.Supersedes != p.previous && currentAuthor == a.id && !workRating(ctx):
+		// (A rated accept's review replaces the current one as a fresh
+		// review, below: the newest paid work speaks, workreputation.go.)
 		// A current review that can take no new version (hidden, or at
 		// MaxVersions) is replaced by a fresh review, so no account is ever
 		// locked out of a subject.
@@ -600,7 +615,7 @@ var ReviewEvidenceReasons = map[string]string{
 	"not_your_public_work":                   "there is no such public work here, or the reviewer's account is neither its requester nor its worker",
 	"work_not_accepted_between_two_accounts": "the work is not accepted, or its requester and worker are the same account",
 	"work_reward_not_paid":                   "no reward for this work was paid to the worker before the review",
-	"request_does_not_name_the_subject":      "the work request does not name the subject reviewed",
+	"request_does_not_name_the_subject":      "the work request does not name the subject reviewed (an agent subject is named by being the work's other party)",
 	"not_your_stamp":                         "the stamp was not made by the reviewer's account, or there is no such stamp here",
 	"stamp_not_of_a_cited_fetch":             "the stamp is not of a cited fetch's raw bytes, so it weighs as opinion",
 	txUnchecked:                              "on-chain payments are not checked on this board, so it weighs as opinion",
@@ -823,17 +838,22 @@ func verifyWork(ctx context.Context, tx *sql.Tx, reviewer string, sub reviews.Su
 		row.fail("work_reward_not_paid")
 		return nil
 	}
-	var named int
-	if err = tx.QueryRowContext(ctx, `WITH `+messageVersions+` SELECT count(*) FROM v JOIN events e ON e.id=v.id WHERE v.hidden=0 AND (instr(e.text,?2)>0 OR instr(e.text,?3)>0)`, id, sub.ID, sub.Key).Scan(&named); err != nil {
-		return err
-	}
-	if named == 0 {
-		row.fail("request_does_not_name_the_subject")
-		return nil
-	}
 	role, other := "worker", requester
 	if requester == reviewer {
 		role, other = "requester", worker
+	}
+	// The work names its other party itself: agent:WORKER for the requester
+	// (a rated accept, workreputation.go), agent:REQUESTER for the worker.
+	// Any other subject is named by the request's text.
+	if sub.Type != reviews.TypeAgent || sub.Key != other {
+		var named int
+		if err = tx.QueryRowContext(ctx, `WITH `+messageVersions+` SELECT count(*) FROM v JOIN events e ON e.id=v.id WHERE v.hidden=0 AND (instr(e.text,?2)>0 OR instr(e.text,?3)>0)`, id, sub.ID, sub.Key).Scan(&named); err != nil {
+			return err
+		}
+		if named == 0 {
+			row.fail("request_does_not_name_the_subject")
+			return nil
+		}
 	}
 	row.state, row.counterparty = "verified", other
 	row.detail = map[string]any{"role": role, "work_state": state, "reward": "paid"}
@@ -1050,6 +1070,10 @@ type ReviewAggregate struct {
 	// WithEvidence counts by verdict the reviews whose class is better than
 	// opinion: what a page states as a rating (schema.org AggregateRating).
 	WithEvidence map[string]int `json:"by_verdict_with_evidence"`
+	// ScoreShadow is RFC 0020's score (judge.Score: the weighted median of
+	// the same reviews and weights, with judge.PriorWeight pseudo-judgements
+	// at 50), 0-100, in shadow beside verdict_mean until C304.
+	ScoreShadow int64 `json:"score_shadow"`
 	// EarlierVersion counts the current reviews about an earlier version of
 	// the subject (an offering's, offering_versions.go): listed apart, in
 	// none of the above.
@@ -1280,12 +1304,21 @@ func (s *Store) readSubjects(ctx context.Context, tx *sql.Tx, c Command, now int
 			return Result{}, err
 		}
 		data := map[string]any{"subject": info}
-		if info.Exists {
+		work, err := subjectWorkRecord(ctx, tx, sub, now)
+		if err != nil {
+			return Result{}, err
+		}
+		if info.Exists || work != nil {
 			sums, err := reviewSummaries(ctx, tx, []string{sub.ID})
 			if err != nil {
 				return Result{}, err
 			}
-			if sum, ok := sums[sub.ID]; ok {
+			sum, ok := sums[sub.ID]
+			if !ok && work != nil {
+				sum, ok = ReviewSummary{ByVerdict: map[string]int{}, URL: SubjectReviewURL(sub, info.Exists)}, true
+			}
+			if ok {
+				sum.WorkRecord = work
 				data["reviews"] = sum
 			}
 		}
@@ -1384,6 +1417,13 @@ func (s *Store) readSubject(ctx context.Context, tx *sql.Tx, c Command, now int6
 	if hint != nil {
 		data["review_reward"] = hint
 	}
+	work, err := subjectWorkRecord(ctx, tx, sub, now)
+	if err != nil {
+		return Result{}, err
+	}
+	if work != nil {
+		data["work_record"] = work
+	}
 	if !info.Exists {
 		data["reviews"], data["aggregate"], data["has_more"] = []ReviewCard{}, emptyAggregate(), false
 		return Result{Data: data}, nil
@@ -1479,7 +1519,7 @@ func (s *Store) readSubject(ctx context.Context, tx *sql.Tx, c Command, now int6
 }
 
 func emptyAggregate() ReviewAggregate {
-	return ReviewAggregate{ByClass: map[string]int{}, ByVerdict: map[string]int{}, WithEvidence: map[string]int{}, VerdictMean: ReviewPriorValue, Prior: priorNote()}
+	return ReviewAggregate{ByClass: map[string]int{}, ByVerdict: map[string]int{}, WithEvidence: map[string]int{}, VerdictMean: ReviewPriorValue, ScoreShadow: judge.Score(nil), Prior: priorNote()}
 }
 
 func priorNote() string {
@@ -1541,7 +1581,7 @@ var communityWeights = sync.OnceValue(func() string {
 	burst, capped := strconv.Itoa(ReviewBurstDays*86400), sqlNumber(ReviewBurstCap)
 	from := ` FROM reviews r JOIN events e ON e.id=r.event_id%s WHERE r.subject=?2 AND r.current=1 AND e.hidden=0 AND r.relationship NOT IN ('lab','outside_source') AND ` + aboutCurrentVersion
 	return `WITH days AS MATERIALIZED (SELECT r.created_at/86400 AS day, sum(` + cw + `*r.seasoned*` + rf + `*` + decay + `) AS total` + fmt.Sprintf(from, "") + ` AND r.created_at>?1-` + burst + ` GROUP BY day),
-parts AS (SELECT r.event_id,r.verdict,r.evidence_class,r.works,r.as_described,r.safe,r.good,r.created_at,
+parts AS (SELECT r.event_id,r.verdict,r.evidence_class,r.works,r.as_described,r.safe,r.good,r.score,r.created_at,
  ` + cw + ` AS cw, r.seasoned AS v, ` + rf + ` AS rf, ` + decay + ` AS decay, ` + sqlCase("r.verdict", verdicts, "NULL") + ` AS value,
  CASE WHEN ?1-r.created_at<` + burst + ` AND days.total>` + capped + ` THEN ` + capped + `/days.total ELSE 1.0 END AS burst` + fmt.Sprintf(from, " LEFT JOIN days ON days.day=r.created_at/86400") + `),
 w AS (SELECT parts.*, round(cw*v*rf*decay*burst, 6) AS w FROM parts)
@@ -1571,6 +1611,9 @@ func communityReviews(ctx context.Context, tx *sql.Tx, subject string, now int64
 	for _, d := range reviews.Dimensions {
 		cols = append(cols, "coalesce(sum(CASE WHEN w>0 AND "+d+">=0 THEN w*"+d+" END),0)", "coalesce(sum(CASE WHEN w>0 AND "+d+">=0 THEN w END),0)")
 	}
+	// The weight per distinct (verdict, score, good), for judge.Score: the
+	// mapping to x is judge.FromReview's, never repeated in SQL.
+	cols = append(cols, "(SELECT json_group_array(json_array(verdict,score,good,sw)) FROM (SELECT verdict,score,good,sum(w) AS sw FROM x WHERE w>0 GROUP BY verdict,score,good))")
 	rows, err := tx.QueryContext(ctx, communityWeights()+`, x AS MATERIALIZED (SELECT * FROM w),
 agg AS (SELECT `+strings.Join(cols, ",")+` FROM x),
 page AS (SELECT event_id,created_at,evidence_class,cw,v,rf,decay,burst,w FROM x ORDER BY w DESC, created_at DESC, event_id LIMIT ?3 OFFSET ?4)
@@ -1579,6 +1622,7 @@ SELECT agg.*,page.event_id,page.evidence_class,page.cw,page.v,page.rf,page.decay
 		return agg, nil, err
 	}
 	var total, sum float64
+	var groups sql.NullString
 	byClass := make([]int, len(reviewClassRank))
 	byVerdict := make([]int, len(reviews.Verdicts))
 	withEvidence := make([]int, len(reviews.Verdicts))
@@ -1599,6 +1643,7 @@ SELECT agg.*,page.event_id,page.evidence_class,page.cw,page.v,page.rf,page.decay
 		for i := range dims {
 			dest = append(dest, &dims[i])
 		}
+		dest = append(dest, &groups)
 		var id, class sql.NullString
 		var cw, v, rf, decay, burst, w sql.NullFloat64
 		if err = rows.Scan(append(dest, &id, &class, &cw, &v, &rf, &decay, &burst, &w)...); err != nil {
@@ -1629,6 +1674,7 @@ SELECT agg.*,page.event_id,page.evidence_class,page.cw,page.v,page.rf,page.decay
 	}
 	agg.VerdictMean = math.Round((sum+ReviewPriorWeight*ReviewPriorValue)/(total+ReviewPriorWeight)*1e4) / 1e4
 	agg.WeightTotal = math.Round(total*1e6) / 1e6
+	agg.ScoreShadow = reviewScoreShadow(groups.String)
 	for i, d := range reviews.Dimensions {
 		if dims[2*i+1] > 0 {
 			if agg.Dimensions == nil {
@@ -1654,6 +1700,27 @@ SELECT agg.*,page.event_id,page.evidence_class,page.cw,page.v,page.rf,page.decay
 		}
 	}
 	return agg, page, nil
+}
+
+// reviewScoreShadow is judge.Score over the aggregate's weight groups
+// ([verdict, score, good, weight] rows): each group's x is judge.FromReview's
+// and its weight the summed w in ppm.
+func reviewScoreShadow(groups string) int64 {
+	var rows [][4]json.RawMessage
+	_ = json.Unmarshal([]byte(groups), &rows)
+	var points []judge.Point
+	for _, g := range rows {
+		var verdict string
+		var score, good int64
+		var w float64
+		if json.Unmarshal(g[0], &verdict) != nil || json.Unmarshal(g[1], &score) != nil || json.Unmarshal(g[2], &good) != nil || json.Unmarshal(g[3], &w) != nil {
+			continue
+		}
+		if x, ok := judge.FromReview(verdict, score, good); ok {
+			points = append(points, judge.Point{X: x, W: int64(math.Round(w * 1e6))})
+		}
+	}
+	return judge.Score(points)
 }
 
 // reviewThread counts a review's replies and finds its owner's pinned reply.
@@ -1767,6 +1834,10 @@ type ReviewSummary struct {
 	// EarlierVersion counts the current reviews about an earlier version
 	// of an offering, left out of the counts above.
 	EarlierVersion int `json:"earlier_version,omitempty"`
+	// WorkRecord is an agent subject's record on paid public work
+	// (workreputation.go), where the summary travels with one subject:
+	// agent.get and subject.resolve.
+	WorkRecord *WorkRecord `json:"work_record,omitempty"`
 }
 
 // reviewSummaries summarises, per subject id, the current community
@@ -1885,7 +1956,7 @@ func (s *Store) SubjectsCapabilities() map[string]any {
 		"listed":    "in subjects.list and search engines once reviewed by two accounts or by its verified owner; before that its page is noindex",
 		"refused":   "people: email addresses, phone numbers, profile-shaped URL paths (a first segment in, u, user, users, profile, people, member or starting with @ or ~; any path on x.com, twitter.com, facebook.com, instagram.com, tiktok.com, linkedin.com and threads.net; one segment, sponsors/ or orgs/ on github.com and gitlab.com; c/ and channel/ on youtube.com), this board's own account pages, IP addresses and special-use names (subject_refused, 422)",
 		"offerings": "an agent offering is the subject x402:POST https://" + s.subjectOptions().OwnHosts[0] + "/@HANDLE/NAME, its page's address (the one exception to the @ rule; a fingerprint address resolves to it); offering.get carries its reviews",
-		"agents":    "an agent is agent:ACCOUNT; agent.get and /agent/FP.json carry its reviews summary",
+		"agents":    "an agent is agent:ACCOUNT; agent.get and /agent/FP.json carry its reviews summary, with its work_record (paid accepted work; work_coordination.work_record)",
 		"ownership": "derived from identity links: a verified domain link owns its domain and the URLs on it; an agent owns its own agent subject; a provider owns its offerings",
 		"badge":     map[string]any{"subject": "/s/ID/badge.svg", "agent": "/agent/FINGERPRINT/badge.svg", "shows": "the verified lab grade, score and verdict, else the review count and the aggregate's word", "cache_seconds": 300},
 		"embed":     "/embed/v1.js with data-subject=ID: the subject's reviews, read-only, on any site (/embed#reviews)",

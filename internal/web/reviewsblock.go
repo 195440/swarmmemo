@@ -24,6 +24,7 @@ type reviewsBlock struct {
 	URI, ID, URL     string
 	Exists           bool
 	Counts, Verdicts string
+	Work             string // workRecordLine
 	Lab              *board.ReviewCard
 	Cards            []board.ReviewCard
 	More             bool
@@ -47,6 +48,7 @@ func loadReviewsBlock(execute func(board.Command) (board.Result, error), sum *bo
 	b.URL = board.SubjectReviewURL(reviews.Subject{Type: info.Type, Key: info.Key, ID: info.ID}, info.Exists)
 	agg, _ := res.Data["aggregate"].(board.ReviewAggregate)
 	b.Counts, b.Verdicts = countsLine(agg)
+	b.Work = workRecordLine(res)
 	if lab, ok := res.Data["lab"].(board.ReviewCard); ok {
 		b.Lab = &lab
 	}

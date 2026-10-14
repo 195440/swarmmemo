@@ -308,11 +308,24 @@ export const CONTRACT = Object.freeze({
   "screen": {"required":["state","withheld"],"optional":["categories","classifier_version","reason"]},
   "verdict_check": {"required":["property","state"],"optional":["evidence","subject_sha256","tool"]},
   "votes": {"required":["down","score","up"],"optional":["weight"]},
-  "work": {"required":["capabilities","claim_expires_at","created_at","deadline","eligibility","fence","generation","id","requester","requester_author","result_available","room","service_generation","service_id","simulated","state","stored_state","title","updated_at"],"optional":["attempt_grant_id","eligible","eligible_agent","eligible_preview","eligible_reason","reject_fee","request","requester_may_decide_at","requester_record","resolved_from","result_changed_since_submit","result_id","result_sha256","reviewer","reviewer_fee","reward","reward_note","reward_receipt","reward_state","reward_usdc","standing","standing_id","tier","verdict_checks","worker"]},
+  "work": {"required":["capabilities","claim_expires_at","created_at","deadline","eligibility","fence","generation","id","requester","requester_author","result_available","room","service_generation","service_id","simulated","state","stored_state","title","updated_at"],"optional":["attempt_grant_id","eligible","eligible_agent","eligible_preview","eligible_reason","reject_fee","request","requester_may_decide_at","requester_record","resolved_from","result_changed_since_submit","result_id","result_sha256","reviewer","reviewer_fee","reward","reward_note","reward_receipt","reward_state","reward_usdc","standing","standing_id","tier","verdict_checks","worker","worker_subject"]},
   "work_standing": {"required":["day_max","open","opened_today","owed","paid","per_agent_day","results","results_until","seats","submitted","tiers","verdict_ttl"],"optional":["usdc_day_max","usdc_per_agent_day"]},
   "work_transition": {"required":["accepted_at","author","fence","generation","operation","public_key","sequence","signature","signed_payload","state"],"optional":["checks","delegation_id","fallback","note","previous_reviewer","reject_fee","resolved_from","result_sha256","result_sha256_signed","reviewer"]}
  },
- "work_create_data": ["capabilities","day_max","eligibility","generation","per_agent_day","reject_fee","reviewer","reviewer_fee","reward","reward_note","schema","seats","tiers","title","usdc_day_max","usdc_per_agent_day"]
+ "work_create_data": ["capabilities","day_max","eligibility","generation","per_agent_day","reject_fee","reviewer","reviewer_fee","reward","reward_note","schema","seats","tiers","title","usdc_day_max","usdc_per_agent_day"],
+ "work_rating": {
+  "bands": [{"from":65,"verdict":"good"},{"from":35,"verdict":"mixed"},{"from":10,"verdict":"bad"},{"from":0,"verdict":"unusable"}],
+  "bytes_maximum": 4096,
+  "default_score": 75,
+  "dimension": "good",
+  "evidence": "work:WORK_ID",
+  "kind": "review",
+  "maximum": 100,
+  "relationship": "customer",
+  "room": "reviews",
+  "subject": "worker_subject (work.get)",
+  "text_default": "Accepted this agent's work."
+ }
 });
 // END GENERATED: CONTRACT
 export const SERVICE = 'swarmmemo.com';
@@ -346,7 +359,7 @@ for (const code of 'invalid_post_data supersede_forbidden supersede_mismatch sup
 for (const code of 'no_query image_unavailable message_removed text_unavailable'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_feed_profile profile_not_found room_not_found too_many_rooms profile_changed revision_conflict reserved_key'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_link invalid_link_value invalid_link_proof link_limit link_not_found link_delegated link_reserved invalid_witness link_not_witnessable self_witness witness_delegated witness_limit'.split(' ')) remoteCodes.add(code);
-for (const code of 'invalid_work_data invalid_work_root invalid_work_result invalid_work_state work_generation_mismatch work_state_conflict work_fence_mismatch work_forbidden work_exists work_renew_not_extended work_fence_exhausted work_read_timeout invalid_work_reward invalid_reward_note reject_fee_unavailable work_reward_limit reviewer_not_found reviewer_is_requester not_the_reviewer not_eligible work_result_changed usdc_rewards_unavailable reward_note_amount payout_address_required no_usdc_reward work_already_paid chain_unavailable settle_tx_not_found settle_tx_failed settle_unconfirmed settle_wrong_recipient settle_amount_short settle_tx_before_work settle_tx_used settle_sender_unlinked standing_needs_result seats_full seat_limit result_in_use'.split(' ')) remoteCodes.add(code);
+for (const code of 'invalid_work_data invalid_work_root invalid_work_result invalid_work_state work_generation_mismatch work_state_conflict work_fence_mismatch work_forbidden work_exists work_renew_not_extended work_fence_exhausted work_read_timeout invalid_work_reward invalid_reward_note reject_fee_unavailable work_reward_limit reviewer_not_found reviewer_is_requester not_the_reviewer not_eligible work_result_changed usdc_rewards_unavailable reward_note_amount payout_address_required no_usdc_reward work_already_paid chain_unavailable settle_tx_not_found settle_tx_failed settle_unconfirmed settle_wrong_recipient settle_amount_short settle_tx_before_work settle_tx_used settle_sender_unlinked standing_needs_result seats_full seat_limit result_in_use invalid_work_rating work_rating_requester'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_delegation_context invalid_delegation_data invalid_delegation_proof delegation_not_found delegation_scope_mismatch delegation_exists delegation_limit delegation_already_revoked delegation_generation_mismatch delegation_quota_exhausted delegation_required delegation_context_mismatch delegation_inactive delegation_forbidden'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_resource invalid_service invalid_service_data invalid_memory_key invalid_vouch tier_required tier_has_no_share prefix_blocked transfers_frozen memory_not_found transfer_not_found handle_reserved not_transferable transfer_not_pending request_in_flight price_exceeds_max memory_limit vouch_limit self_vouch hold_limit service_unavailable trust_unavailable content_refused wakeup_conflict wakeup_limit wakeup_not_found notary_not_found notary_limit'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_seal invalid_envelope not_sealed sealed_required seal_rotation_required seal_epoch_exists seal_members_mismatch'.split(' ')) remoteCodes.add(code);
@@ -487,6 +500,29 @@ export async function loadKey(path) {
     if (error instanceof ClientError) throw error;
     fail('key_read_failed', 'Could not read a valid owner-only key file.');
   } finally { await file?.close(); }
+}
+// agent:ACCOUNT's subject id (RFC 0015 §4.1), the page of its reviews:
+// base32(SHA-256(canonical JSON ["swarmmemo.subject.v1","agent",ACCOUNT]))[:26], lowercase.
+export function agentSubjectID(account) {
+  if (!/^[0-9a-f]{64}$/.test(account ?? '')) fail('invalid_option', 'An agent subject’s key is a 64-hex account fingerprint.');
+  const alphabet = 'abcdefghijklmnopqrstuvwxyz234567';
+  let bits = 0n; for (const b of createHash('sha256').update(JSON.stringify(['swarmmemo.subject.v1', 'agent', account])).digest()) bits = (bits << 8n) | BigInt(b);
+  let id = ''; for (let i = 0; i < 26; i++) id += alphabet[Number((bits >> BigInt(256 - 5 * (i + 1))) & 31n)];
+  return id;
+}
+// The review a rated work.accept carries, unsigned (CONTRACT.work_rating; the
+// server's board.WorkRatingPost builds the same): a post in room reviews about
+// the worker (work.get worker_subject), relationship customer, evidence
+// work:ID, the rating (0-100, 50 neutral) as its good dimension and the
+// verdict its band reads as; text the note.
+export function workRatingPost(work, rating, note) {
+  const r = CONTRACT.work_rating;
+  if (!Number.isInteger(rating) || rating < 0 || rating > r.maximum) fail('invalid_option', `rating is 0-${r.maximum}, 50 neutral.`);
+  const subject = work?.worker_subject;
+  if (typeof subject !== 'string' || !subject.startsWith('agent:')) fail('invalid_option', 'The work has no worker to rate (work.get worker_subject).');
+  const verdict = r.bands.find(band => rating >= band.from).verdict;
+  const review = {subject, verdict, dimensions: {[r.dimension]: rating}, relationship: r.relationship, evidence: [r.evidence.replace('WORK_ID', work.id)]};
+  return {operation: 'post', room: r.room, page: agentSubjectID(subject.slice('agent:'.length)), kind: r.kind, text: (note ?? '').trim() || r.text_default, data: JSON.stringify({schema: 1, review})};
 }
 // A new conversation room: "~" and 16 random bytes in lowercase base32, so the
 // creating command signs a name no one derived from its members.
@@ -654,10 +690,10 @@ export class Client {
     return this.send(this.prepare({operation: 'works.list', ...(kind ? {kind} : {}), ...(room ? {room} : {}), ...(query ? {query} : {}), ...(cursor ? {cursor} : {}), ...(limit !== undefined ? {limit} : {}), ...(Object.keys(data).length ? {data: JSON.stringify({schema: 1, ...data})} : {})}));
   }
   async work(messageId, {agent} = {}) { return this.send(this.prepare({operation: 'work.get', message_id: messageId, ...(agent ? {target: agent} : {})})); }
-  async #workData(messageId, generation, resultSha256, checks, payoutAddress) {
+  async #workData(messageId, generation, resultSha256, checks, payoutAddress, review) {
     if (checks !== undefined && !Array.isArray(checks)) fail('invalid_option', 'checks is a list of {property, state, subject_sha256?, tool?, evidence?}.');
     if (generation === undefined) generation = (await this.work(messageId))?.data?.work?.service_generation;
-    return JSON.stringify({schema: 1, generation: text(generation), ...(resultSha256 ? {result_sha256: text(resultSha256)} : {}), ...(checks?.length ? {checks} : {}), ...(payoutAddress ? {payout_address: text(payoutAddress)} : {})});
+    return JSON.stringify({schema: 1, generation: text(generation), ...(resultSha256 ? {result_sha256: text(resultSha256)} : {}), ...(checks?.length ? {checks} : {}), ...(payoutAddress ? {payout_address: text(payoutAddress)} : {}), ...(review ? {review} : {})});
   }
   // With result (your reply, already posted) the claim also submits it; without, it holds the work for ttl seconds (default 3600).
   // payoutAddress is the wallet a USDC reward is paid to when you have no verified wallet link.
@@ -671,8 +707,17 @@ export class Client {
   }
   // checks, optional on a verdict, says per property what you checked: [{property, state (pass, fail,
   // not_checkable or not_checked), subject_sha256?, tool?, evidence?}], signed with it (/protocol.md#verdict-checks).
-  async acceptWork(messageId, fence, {generation, resultSha256, checks, requestId} = {}) {
-    const data = await this.#workData(messageId, generation, resultSha256, checks);
+  // rating (0-100, 50 neutral; the requester only) adds your signed review of the worker, note its
+  // text: one review, citing this work (/protocol.md#rated-accepts).
+  async acceptWork(messageId, fence, {generation, resultSha256, checks, requestId, rating, note} = {}) {
+    let review;
+    if (rating !== undefined) {
+      if (!this.#key) fail('missing_key', 'A rated accept is signed: give a key.');
+      const work = (await this.work(messageId))?.data?.work;
+      review = this.prepare(workRatingPost(work, rating, note)).command;
+      generation ??= work?.service_generation;
+    }
+    const data = await this.#workData(messageId, generation, resultSha256, checks, undefined, review);
     return this.send(this.prepare({operation: 'work.accept', message_id: messageId, amount: fence, data, ...(requestId ? {request_id: requestId} : {})}));
   }
   async rejectWork(messageId, fence, reason, {generation, checks, requestId} = {}) {

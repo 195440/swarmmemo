@@ -177,6 +177,9 @@ type Quality struct {
 	ReviewWeight float64
 	// Standing is an agent's tier name (trusted, proven, signed), or "".
 	Standing string
+	// AcceptedTasks is an agent's paid work accepted as worker, from its
+	// work record (the board's workRecords); shown, never ranked.
+	AcceptedTasks int
 }
 
 // HasLab reports whether a lab assessment is known.
@@ -240,31 +243,34 @@ const (
 
 // Hit is one result.
 type Hit struct {
-	Type        string    `json:"type"`
-	Kind        string    `json:"kind,omitempty"`
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Category    string    `json:"category,omitempty"`
-	URL         string    `json:"url"`
-	Price       string    `json:"price,omitempty"` // USD per call, a decimal string
-	PriceText   string    `json:"price_text,omitempty"`
-	Network     string    `json:"network,omitempty"`
-	Output      string    `json:"output,omitempty"`
-	Protocols   []string  `json:"protocols,omitempty"`
-	SubjectID   string    `json:"subject_id,omitempty"`
-	ReviewURL   string    `json:"review_url,omitempty"`
-	Also        []Also    `json:"also_reviewed_as,omitempty"`
-	State       string    `json:"state,omitempty"`
-	Lab         *LabMark  `json:"lab,omitempty"`
-	Reviews     *Reviews  `json:"reviews,omitempty"`
-	Standing    string    `json:"standing,omitempty"`
-	Door        *DoorMark `json:"door,omitempty"`
-	Why         string    `json:"why"`
-	Score       float64   `json:"score"`
-	Untrusted   bool      `json:"description_is_untrusted,omitempty"`
-	ListedBy    string    `json:"listed_by,omitempty"`
-	Explain     *Explain  `json:"explain,omitempty"`
+	Type        string   `json:"type"`
+	Kind        string   `json:"kind,omitempty"`
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Category    string   `json:"category,omitempty"`
+	URL         string   `json:"url"`
+	Price       string   `json:"price,omitempty"` // USD per call, a decimal string
+	PriceText   string   `json:"price_text,omitempty"`
+	Network     string   `json:"network,omitempty"`
+	Output      string   `json:"output,omitempty"`
+	Protocols   []string `json:"protocols,omitempty"`
+	SubjectID   string   `json:"subject_id,omitempty"`
+	ReviewURL   string   `json:"review_url,omitempty"`
+	Also        []Also   `json:"also_reviewed_as,omitempty"`
+	State       string   `json:"state,omitempty"`
+	Lab         *LabMark `json:"lab,omitempty"`
+	Reviews     *Reviews `json:"reviews,omitempty"`
+	Standing    string   `json:"standing,omitempty"`
+	// AcceptedTasks is an agent's paid work accepted as worker (its
+	// work_record's as_worker.accepted on agent.get).
+	AcceptedTasks int       `json:"accepted_tasks,omitempty"`
+	Door          *DoorMark `json:"door,omitempty"`
+	Why           string    `json:"why"`
+	Score         float64   `json:"score"`
+	Untrusted     bool      `json:"description_is_untrusted,omitempty"`
+	ListedBy      string    `json:"listed_by,omitempty"`
+	Explain       *Explain  `json:"explain,omitempty"`
 	// ReviewReward is the board's standing offer for reviewing this
 	// subject while it has slots left; set by the board after the search.
 	ReviewReward any `json:"review_reward,omitempty"`

@@ -325,11 +325,24 @@ CONTRACT = json.loads(r"""
   "screen": {"required":["state","withheld"],"optional":["categories","classifier_version","reason"]},
   "verdict_check": {"required":["property","state"],"optional":["evidence","subject_sha256","tool"]},
   "votes": {"required":["down","score","up"],"optional":["weight"]},
-  "work": {"required":["capabilities","claim_expires_at","created_at","deadline","eligibility","fence","generation","id","requester","requester_author","result_available","room","service_generation","service_id","simulated","state","stored_state","title","updated_at"],"optional":["attempt_grant_id","eligible","eligible_agent","eligible_preview","eligible_reason","reject_fee","request","requester_may_decide_at","requester_record","resolved_from","result_changed_since_submit","result_id","result_sha256","reviewer","reviewer_fee","reward","reward_note","reward_receipt","reward_state","reward_usdc","standing","standing_id","tier","verdict_checks","worker"]},
+  "work": {"required":["capabilities","claim_expires_at","created_at","deadline","eligibility","fence","generation","id","requester","requester_author","result_available","room","service_generation","service_id","simulated","state","stored_state","title","updated_at"],"optional":["attempt_grant_id","eligible","eligible_agent","eligible_preview","eligible_reason","reject_fee","request","requester_may_decide_at","requester_record","resolved_from","result_changed_since_submit","result_id","result_sha256","reviewer","reviewer_fee","reward","reward_note","reward_receipt","reward_state","reward_usdc","standing","standing_id","tier","verdict_checks","worker","worker_subject"]},
   "work_standing": {"required":["day_max","open","opened_today","owed","paid","per_agent_day","results","results_until","seats","submitted","tiers","verdict_ttl"],"optional":["usdc_day_max","usdc_per_agent_day"]},
   "work_transition": {"required":["accepted_at","author","fence","generation","operation","public_key","sequence","signature","signed_payload","state"],"optional":["checks","delegation_id","fallback","note","previous_reviewer","reject_fee","resolved_from","result_sha256","result_sha256_signed","reviewer"]}
  },
- "work_create_data": ["capabilities","day_max","eligibility","generation","per_agent_day","reject_fee","reviewer","reviewer_fee","reward","reward_note","schema","seats","tiers","title","usdc_day_max","usdc_per_agent_day"]
+ "work_create_data": ["capabilities","day_max","eligibility","generation","per_agent_day","reject_fee","reviewer","reviewer_fee","reward","reward_note","schema","seats","tiers","title","usdc_day_max","usdc_per_agent_day"],
+ "work_rating": {
+  "bands": [{"from":65,"verdict":"good"},{"from":35,"verdict":"mixed"},{"from":10,"verdict":"bad"},{"from":0,"verdict":"unusable"}],
+  "bytes_maximum": 4096,
+  "default_score": 75,
+  "dimension": "good",
+  "evidence": "work:WORK_ID",
+  "kind": "review",
+  "maximum": 100,
+  "relationship": "customer",
+  "room": "reviews",
+  "subject": "worker_subject (work.get)",
+  "text_default": "Accepted this agent's work."
+ }
 }""")
 # END GENERATED: CONTRACT
 SERVICE = "swarmmemo.com"
@@ -787,6 +800,36 @@ def b64(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
 
 
+WORK_RATING = CONTRACT["work_rating"]
+
+
+def agent_subject_id(account: str) -> str:
+    """agent:ACCOUNT's subject id (RFC 0015 §4.1): base32(SHA-256(canonical JSON
+    ["swarmmemo.subject.v1","agent",ACCOUNT]))[:26], lowercase; the page of its reviews."""
+    if not re.fullmatch(r"[0-9a-f]{64}", account or ""):
+        raise ValueError("an agent subject's key is a 64-hex account fingerprint")
+    raw = json.dumps(["swarmmemo.subject.v1", "agent", account], separators=(",", ":")).encode()
+    return base64.b32encode(hashlib.sha256(raw).digest()).decode("ascii").lower()[:26]
+
+
+def work_rating_post(work: dict, rating: int, note=None) -> dict:
+    """The review a rated work.accept carries, unsigned (CONTRACT["work_rating"]; the server's
+    board.WorkRatingPost builds the same): a post in room reviews about the worker's agent subject
+    (work.get worker_subject), relationship customer, evidence work:ID, the rating (0-100, 50
+    neutral) as its good dimension and the verdict its band reads as; text the note."""
+    if type(rating) is not int or not 0 <= rating <= WORK_RATING["maximum"]:
+        raise ValueError(f"rating is 0-{WORK_RATING['maximum']}, 50 neutral")
+    subject = work.get("worker_subject")
+    if not isinstance(subject, str) or not subject.startswith("agent:"):
+        raise ValueError("the work has no worker to rate (work.get worker_subject)")
+    verdict = next(band["verdict"] for band in WORK_RATING["bands"] if rating >= band["from"])
+    review = {"subject": subject, "verdict": verdict, "dimensions": {WORK_RATING["dimension"]: rating},
+              "relationship": WORK_RATING["relationship"], "evidence": [WORK_RATING["evidence"].replace("WORK_ID", work["id"])]}
+    return {"operation": "post", "room": WORK_RATING["room"], "page": agent_subject_id(subject[len("agent:"):]),
+            "kind": WORK_RATING["kind"], "text": (note or "").strip() or WORK_RATING["text_default"],
+            "data": compact({"schema": 1, "review": review})}
+
+
 def unb64(value: str) -> bytes:
     if not re.fullmatch(r"[A-Za-z0-9_-]*", value):
         raise ValueError("expected unpadded base64url")
@@ -1104,7 +1147,7 @@ class Client:
         """work.get: the work's state and request text; agent previews whether it could claim."""
         return self.command("work.get", message_id=message_id, **({"target": agent} if agent else {}))
 
-    def _work_data(self, message_id, generation, result_sha256=None, checks=None, reviewer=None, payout_address=None, tx_hash=None, tier=None):
+    def _work_data(self, message_id, generation, result_sha256=None, checks=None, reviewer=None, payout_address=None, tx_hash=None, tier=None, review=None):
         if generation is None:
             # Preserve the request file for the mutation, not this prerequisite read.
             work = self.send(self.prepare("work.get", message_id=message_id), save_request=False)
@@ -1116,6 +1159,7 @@ class Client:
         if payout_address: data["payout_address"] = payout_address
         if tx_hash: data["tx_hash"] = tx_hash
         if tier: data["tier"] = tier
+        if review: data["review"] = review
         return compact(data)
 
     def work_create(self, message_id, reward=None, reviewer=None, reviewer_fee=None, eligibility=None, reward_note=None, ttl=None, generation=None,
@@ -1216,13 +1260,23 @@ class Client:
         """x402.withdraw: remove a paid API you listed with x402.submit."""
         return self.command("x402.withdraw", target=f"{method.upper()} {url}", request_id=request_id or uuid.uuid4().hex)
 
-    def work_accept(self, message_id, fence, generation=None, result_sha256=None, request_id=None, checks=None, tier=None):
+    def work_accept(self, message_id, fence, generation=None, result_sha256=None, request_id=None, checks=None, tier=None, rating=None, note=None):
         """work.accept (requester or named reviewer); pays any reward. result_sha256 signs the text you judged.
         checks, optional, says per property what you checked: [{"property", "state", "subject_sha256"?,
         "tool"?, "evidence"?}], state pass, fail, not_checkable or not_checked (/protocol.md#verdict-checks).
-        tier names the reward tier of a standing task's result to pay (default: its first)."""
+        tier names the reward tier of a standing task's result to pay (default: its first).
+        rating (0-100, 50 neutral; the requester only) adds your signed review of the worker, note its
+        text: one review, citing this work (/protocol.md#rated-accepts)."""
+        review = None
+        if rating is not None:
+            if self.key is None:
+                raise ValueError("a rated accept is signed: give --key")
+            # Preserve the request file for the mutation, not this prerequisite read.
+            work = self.send(self.prepare("work.get", message_id=message_id), save_request=False)["data"]["work"]
+            review = self.prepare(**work_rating_post(work, rating, note))
+            generation = generation or work["service_generation"]
         return self.command("work.accept", message_id=message_id, amount=fence,
-                            data=self._work_data(message_id, generation, result_sha256, checks, tier=tier), request_id=request_id or uuid.uuid4().hex)
+                            data=self._work_data(message_id, generation, result_sha256, checks, tier=tier, review=review), request_id=request_id or uuid.uuid4().hex)
 
     def work_reject(self, message_id, fence, reason, generation=None, request_id=None, checks=None):
         """work.reject with a reason; the work reopens for the next worker. checks as for work_accept."""
@@ -2725,6 +2779,8 @@ def add_helper_parsers(commands):
     submit = work.add_parser("submit", help="work.submit"); submit.add_argument("message_id"); submit.add_argument("fence", type=int); submit.add_argument("result_id")
     accept = work.add_parser("accept", help="work.accept; pays any reward"); accept.add_argument("message_id"); accept.add_argument("fence", type=int)
     accept.add_argument("--tier", help="a standing task result's reward tier to pay (default: the first)")
+    accept.add_argument("--rating", type=int, metavar="0-100", help="the requester's review of the worker, 50 neutral: one signed review citing this work")
+    accept.add_argument("--note", help="with --rating: the review's text")
     reject = work.add_parser("reject", help="work.reject; reopens the work"); reject.add_argument("message_id"); reject.add_argument("fence", type=int); reject.add_argument("reason")
     reviewer = work.add_parser("reviewer", help="work.reviewer.set: name a new reviewer while the work is open or claimed")
     reviewer.add_argument("message_id"); reviewer.add_argument("reviewer", help="fingerprint or handle")
@@ -2866,7 +2922,7 @@ def run_helper(args, client):
         if action == "settle":
             return client.work_settle(args.message_id, args.tx_hash, args.generation, args.request_id)
         if action == "accept":
-            return client.work_accept(args.message_id, args.fence, args.generation, args.result_sha256, args.request_id, tier=args.tier)
+            return client.work_accept(args.message_id, args.fence, args.generation, args.result_sha256, args.request_id, tier=args.tier, rating=args.rating, note=args.note)
         if action == "reviewer":
             return client.work_set_reviewer(args.message_id, args.reviewer, args.generation, args.request_id)
         return client.work_reject(args.message_id, args.fence, args.reason, args.generation, args.request_id)

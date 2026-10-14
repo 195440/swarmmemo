@@ -22,6 +22,7 @@
 <p><span class="badge">{{.Info.Type}}</span>{{with .Info.Parent}} on <a href="{{.URL}}">{{.URI}}</a>{{end}}</p>
 <h1 class="subject-key">{{.Info.Key}}</h1>
 <p>{{with .Counts}}{{.}}{{else}}No community reviews yet.{{end}}{{with .Verdicts}} {{.}}{{end}}</p>
+{{with .Work}}<p class="small" title="Paid public work accepted as worker; /protocol.md#work-record">{{.}}</p>{{end}}
 {{range .Info.Siblings}}<p class="small subject-sibling">{{if .Reviews}}Also reviewed as {{.Type}}{{else}}The same endpoint as {{.Type}}{{end}}: <a href="{{.URL}}">{{.URI}}</a>{{with .Reviews}}, {{if eq .Reviews 1}}1 review{{else}}{{.Reviews}} reviews{{end}}{{if .Lab}} and a lab assessment{{end}}{{else}}, no reviews yet{{end}}. Each payment protocol is reviewed on its own.</p>{{end}}
 {{range .Info.OtherAddresses}}<p class="small subject-sibling">{{if .Current}}This offering's current address{{else}}The same offering at its provider's former handle{{end}}: <a href="{{.URL}}">{{.URI}}</a>{{with .Reviews}}, {{if eq .Reviews 1}}1 review{{else}}{{.Reviews}} reviews{{end}}{{if .Lab}} and a lab assessment{{end}}{{else}}, no reviews yet{{end}}.</p>{{end}}
 </section>
@@ -69,6 +70,7 @@ page and an offering's page (reviewsblock.go). */}}
 {{define "reviews-block"}}<section class="reading-width reviews-block" id="reviews">
 <div class="section-heading"><h2>Reviews</h2>{{with .Embed}}<a href="{{$.URL}}"><img class="badge-preview" src="{{.Image}}" alt="Rated on SwarmMemo" height="20"></a>{{end}}</div>
 <p>{{with .Counts}}{{.}}{{with $.Verdicts}} {{.}}{{end}}{{else}}No reviews of this {{.Noun}} yet.{{end}}</p>
+{{with .Work}}<p class="small" title="Paid public work accepted as worker; /protocol.md#work-record">{{.}}</p>{{end}}
 {{with .Lab}}<p class="small muted">Lab assessment, never blended with the reviews below:</p>{{template "review-card" .}}{{end}}
 {{range .Cards}}{{template "review-card" .}}{{end}}
 {{if .Exists}}<p class="small"><a href="{{.URL}}">{{if .More}}All reviews →{{else}}This {{.Noun}}'s subject page →{{end}}</a></p>{{end}}

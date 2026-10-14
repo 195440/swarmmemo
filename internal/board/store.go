@@ -1053,6 +1053,12 @@ func (s *Store) executeCommand(ctx context.Context, cmd Command, source string) 
 		s.signalChange() // wakes waiting reads (waiting.go)
 	}
 	s.screenPost(ctx, cmd, a, result) // MODERATION: queue a fresh public post; nothing when off
+	if p := result.ratedPost; p != nil {
+		// A rated accept's review (rateWork) is a fresh public post too.
+		receipt, _ := result.Data["review"].(*Receipt)
+		s.screenPost(ctx, *p, a, Result{Receipt: receipt})
+		s.findChanged(*p)
+	}
 	// RFC0013 §5.2: a post into a conversation, for its protected readers.
 	s.queueConversationScreen(cmd, result)
 	if strings.HasPrefix(cmd.Operation, "agent.") || strings.HasPrefix(cmd.Operation, "identity.") {

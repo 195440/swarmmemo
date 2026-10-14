@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"swarmmemo/internal/judge"
 )
 
 // Standing (RFC0015 §3) is what it would cost to fake an identity, in US
@@ -379,21 +381,8 @@ func (st *StandingParams) Band(cents int64) int64 {
 }
 
 // mulDiv is ⌊a × b / c⌋ for non-negative a, b and positive c, exact in 128
-// bits; a quotient past int64 saturates.
-func mulDiv(a, b, c int64) int64 {
-	if a <= 0 || b <= 0 || c <= 0 {
-		return 0
-	}
-	hi, lo := bits.Mul64(uint64(a), uint64(b))
-	if hi >= uint64(c) {
-		return 1<<63 - 1
-	}
-	q, _ := bits.Div64(hi, lo, uint64(c))
-	if q > 1<<63-1 {
-		return 1<<63 - 1
-	}
-	return int64(q)
-}
+// bits; a quotient past int64 saturates (judge.MulDiv, the one copy).
+func mulDiv(a, b, c int64) int64 { return judge.MulDiv(a, b, c) }
 
 // isqrt is ⌊√n⌋ for n ≥ 0.
 func isqrt(n int64) int64 {
@@ -509,6 +498,8 @@ type standingResult struct {
 	parts   map[string]*StandingPart
 	summary *StandingSummary
 	extra   []string // accounts with standing that were not otherwise scored
+	// shadow is RFC 0020's judgements_shadow section (rule 3 only).
+	shadow *JudgementsShadow
 }
 
 func computeStanding(in standingInput) standingResult {
@@ -781,6 +772,7 @@ func computeStanding(in standingInput) standingResult {
 	}
 
 	var stakeOut stakeResult
+	var shadow *JudgementsShadow
 	if st.Rule >= 3 {
 		// C160: accounts that wrote from one network with one client are
 		// not independent, while signal_link_days is set.
@@ -793,9 +785,14 @@ func computeStanding(in standingInput) standingResult {
 			}
 			inputs["signal_links"] = int64(len(linked) / 2)
 		}
-		stakeOut = runStakes(st, in.asOf, ws, nodes, seed, pen, staked, func(a, b string) bool {
+		// Independent: another root, no transfer either way within
+		// funded_days, no signal link. Rule 3 and RFC 0020 read the same test.
+		indep := func(a, b string) bool {
 			return a != b && in.rootOf(a) != in.rootOf(b) && !funded[[2]string{a, b}] && !linked[[2]string{a, b}]
-		})
+		}
+		stakeOut = runStakes(st, in.asOf, ws, nodes, seed, pen, staked, indep)
+		shadow = computeJudgementsShadow(shadowInput{st: st, p: p, snap: in.snap, asOf: in.asOf, D: in.D, ws: ws, service: in.service, reset: in.reset,
+			rootOf: in.rootOf, penalty: in.penalty, nodes: nodes, index: index, c: stakeOut.c, judged: stakeOut.judged, seed: seed, pen: pen, indep: indep})
 	}
 
 	// Personalized PageRank from the seed mass, in integers. Each step a
@@ -1048,7 +1045,7 @@ func computeStanding(in standingInput) standingResult {
 		sum.LargestMoves = append(sum.LargestMoves, m)
 	}
 	sort.Strings(extra)
-	return standingResult{parts: parts, summary: sum, extra: extra}
+	return standingResult{parts: parts, summary: sum, extra: extra, shadow: shadow}
 }
 
 // StandingScore is log₁₀(1 + C) rounded to two decimals, the displayed

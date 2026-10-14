@@ -143,10 +143,7 @@ func runStakes(st *StandingParams, asOf, ws int64, nodes []string, seed, pen []i
 	}
 	scale := make([]int64, n)
 	for i := range scale {
-		scale[i] = 1e6
-		if share := mulDiv(st.StakePPM, load[i], 1e6); share > st.StakeBudgetPPM {
-			scale[i] = mulDiv(st.StakeBudgetPPM, 1e6, share)
-		}
+		scale[i] = st.budgetScale(load[i])
 	}
 	keys := make([]string, 0, len(objects))
 	for k := range objects {
@@ -180,7 +177,7 @@ func runStakes(st *StandingParams, asOf, ws int64, nodes []string, seed, pen []i
 			judged[i] = 0
 		}
 		for x, a := range acts {
-			sig[x] = mulDiv(mulDiv(c[src[x]], st.StakePPM, 1e6), mulDiv(a.load, scale[src[x]], 1e6), 1e6)
+			sig[x] = st.stake(c[src[x]], a.load, scale[src[x]])
 			if transfer[x] {
 				next[src[x]] -= sig[x]
 				next[dst[x]] += sig[x]
@@ -361,6 +358,22 @@ func runStakes(st *StandingParams, asOf, ws int64, nodes []string, seed, pen []i
 	}
 	res.c, res.raw, res.judged = c, raw, judged
 	return res
+}
+
+// budgetScale is the ppm an account's acts are scaled by so that what they
+// commit in all (stake_ppm × their total load) stays within
+// stake_budget_ppm of its standing: 1e6 within the budget.
+func (st *StandingParams) budgetScale(load int64) int64 {
+	if share := mulDiv(st.StakePPM, load, 1e6); share > st.StakeBudgetPPM {
+		return mulDiv(st.StakeBudgetPPM, 1e6, share)
+	}
+	return 1e6
+}
+
+// stake is what an act commits: its author's standing c × stake_ppm × its
+// load (weight × decay, ppm) × the author's budget scale.
+func (st *StandingParams) stake(c, load, scale int64) int64 {
+	return mulDiv(mulDiv(c, st.StakePPM, 1e6), mulDiv(load, scale, 1e6), 1e6)
 }
 
 // score is (R − P) / (R + P) in ppm, P ≥ 1.

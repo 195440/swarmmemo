@@ -204,7 +204,7 @@ func Run(ctx context.Context, db DB, in Inputs, p Params, asOf, now int64, compu
 	}
 	inputs := Canonical(map[string]any{"summary": out.Inputs, "params_version": p.Version, "params_sha256": out.ParamsSHA256, "params": json.RawMessage(p.Body()),
 		"seeds_a": out.SeedsA, "seeds_b": out.SeedsB, "seeds_b_used": out.SeedsBUsed, "pool_units": out.PoolUnits, "active_accounts": out.Active,
-		"snapshot_sha256": snapshot.sha256, "snapshot_bytes": snapshot.bytes, "standing": out.Standing})
+		"snapshot_sha256": snapshot.sha256, "snapshot_bytes": snapshot.bytes, "standing": out.Standing, "judgements_shadow": shadowPublished(out.JudgementsShadow)})
 	err = db.Write(ctx, func(q allowance.Querier) error {
 		for _, ev := range out.Evidence {
 			if _, err := q.ExecContext(ctx, "INSERT OR IGNORE INTO trust_evidence(id,run_id,kind,members,detail,detector_version,created_at) VALUES(?,?,?,?,?,?,?)",
@@ -249,6 +249,15 @@ func Run(ctx context.Context, db DB, in Inputs, p Params, asOf, now int64, compu
 	return sum, nil
 }
 
+// shadowPublished is the judgements_shadow section as a run records it
+// (nil before rule 3).
+func shadowPublished(s *JudgementsShadow) any {
+	if s == nil {
+		return nil
+	}
+	return s.Published(ShadowPublishedMax)
+}
+
 // Current reads an account's score in the latest done run; ok is false when
 // that run has no row for it.
 func Current(ctx context.Context, q allowance.Querier, account string) (score Score, ok bool, err error) {
@@ -274,17 +283,17 @@ func Current(ctx context.Context, q allowance.Querier, account string) (score Sc
 // latestRuns reads the latest done run and the latest run of any state.
 func latestRuns(ctx context.Context, q allowance.Querier) (done map[string]any, lastState string, err error) {
 	var id, asOf, version, finished int64
-	var inputs string
-	err = q.QueryRowContext(ctx, "SELECT id,as_of,params_version,finished_at,inputs FROM trust_runs WHERE state='done' ORDER BY id DESC LIMIT 1").Scan(&id, &asOf, &version, &finished, &inputs)
+	var summary string
+	// Only the summary: a run's inputs also carry its standing and
+	// judgements_shadow sections, too large to parse on every read.
+	err = q.QueryRowContext(ctx, "SELECT id,as_of,params_version,finished_at,coalesce(json_extract(inputs,'$.summary'),'{}') FROM trust_runs WHERE state='done' ORDER BY id DESC LIMIT 1").Scan(&id, &asOf, &version, &finished, &summary)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, "", err
 	}
 	if err == nil {
-		var in struct {
-			Summary InputsSummary `json:"summary"`
-		}
-		_ = json.Unmarshal([]byte(inputs), &in)
-		done = map[string]any{"id": id, "as_of": asOf, "params_version": version, "computed_at": finished, "summary": in.Summary}
+		var in InputsSummary
+		_ = json.Unmarshal([]byte(summary), &in)
+		done = map[string]any{"id": id, "as_of": asOf, "params_version": version, "computed_at": finished, "summary": in}
 	}
 	err = q.QueryRowContext(ctx, "SELECT state FROM trust_runs WHERE state<>'running' ORDER BY id DESC LIMIT 1").Scan(&lastState)
 	if errors.Is(err, sql.ErrNoRows) {

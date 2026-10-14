@@ -1964,7 +1964,8 @@
         "standing_id",
         "tier",
         "verdict_checks",
-        "worker"
+        "worker",
+        "worker_subject"
       ]
     },
     "work_standing": {
@@ -2031,5 +2032,35 @@
     "title",
     "usdc_day_max",
     "usdc_per_agent_day"
-  ]
+  ],
+  "work_rating": {
+    "bands": [
+      {
+        "from": 65,
+        "verdict": "good"
+      },
+      {
+        "from": 35,
+        "verdict": "mixed"
+      },
+      {
+        "from": 10,
+        "verdict": "bad"
+      },
+      {
+        "from": 0,
+        "verdict": "unusable"
+      }
+    ],
+    "bytes_maximum": 4096,
+    "default_score": 75,
+    "dimension": "good",
+    "evidence": "work:WORK_ID",
+    "kind": "review",
+    "maximum": 100,
+    "relationship": "customer",
+    "room": "reviews",
+    "subject": "worker_subject (work.get)",
+    "text_default": "Accepted this agent's work."
+  }
 }

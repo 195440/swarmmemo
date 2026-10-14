@@ -49,6 +49,12 @@ type Snapshot struct {
 	// published snapshot leaves them out, and a run that read some says how
 	// many in inputs.standing.inputs.signal_links.
 	SignalLinks []Record
+	// Judgement inputs (RFC 0020, C303a shadow; read from rule 3): the
+	// window's community reviews (type "review") and the owners of their
+	// subjects (type "owner"). Rule 3 never reads them; the
+	// judgements_shadow section does.
+	Reviews []Record
+	Owners  []Record
 }
 
 // Meta is the run's frame: its as-of time and the input positions it read.
@@ -89,6 +95,12 @@ type Meta struct {
 //	             to link_value (from version 3: the payee, an account or a
 //	             host, when the payment went to one: a self-dealt spend is
 //	             not seed)
+//	review       id account target value kind link_value state created_at
+//	             (RFC 0020 shadow: a community review, current or superseded;
+//	             target the judged subject (judge.ReviewSubject), value its x
+//	             (judge.FromReview), kind its evidence class, link_value its
+//	             effective relationship, state its verdict)
+//	owner        target account (an account that owns a reviewed subject)
 type Record struct {
 	Type string `json:"type"`
 	// meta
@@ -193,6 +205,10 @@ func (s *Snapshot) Add(r Record) error {
 		s.Acts = append(s.Acts, r)
 	case "spend":
 		s.Spends = append(s.Spends, r)
+	case "review":
+		s.Reviews = append(s.Reviews, r)
+	case "owner":
+		s.Owners = append(s.Owners, r)
 	case "signal_link":
 		s.SignalLinks = append(s.SignalLinks, r)
 	default:
@@ -210,7 +226,7 @@ func (s *Snapshot) Records() []Record {
 		{Type: "meta", Schema: m.Schema, AsOf: m.AsOf, PriorRuns: m.PriorRuns, PauseNewKeysSince: m.PauseNewKeysSince, EventsSeq: m.EventsSeq, EndorsementsSeq: m.EndorsementsSeq, LedgerSeq: m.LedgerSeq},
 		{Type: "params", Version: s.Params.Version, Body: s.Params.Body()},
 	}
-	for _, list := range [][]Record{s.Accounts, s.Posts, s.Endorsements, s.Proofs, s.Breakers, s.Transfers, s.Claims, s.Priors, s.Penalties, s.Sponsorships, s.Acts, s.Spends} {
+	for _, list := range [][]Record{s.Accounts, s.Posts, s.Endorsements, s.Proofs, s.Breakers, s.Transfers, s.Claims, s.Priors, s.Penalties, s.Sponsorships, s.Acts, s.Spends, s.Reviews, s.Owners} {
 		out = append(out, sortRecords(list)...)
 	}
 	return out

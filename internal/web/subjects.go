@@ -29,10 +29,13 @@ type subjectPage struct {
 	Reviews      []board.ReviewCard
 	// Earlier are the current reviews of an earlier version of an
 	// offering: listed, labelled, never counted.
-	Earlier    []board.ReviewCard
-	Aggregate  board.ReviewAggregate
-	Counts     string
-	Verdicts   string
+	Earlier   []board.ReviewCard
+	Aggregate board.ReviewAggregate
+	Counts    string
+	Verdicts  string
+	// Work is an agent subject's work record in a phrase, "3 accepted
+	// tasks" (workRecordLine); "" for any other subject or none.
+	Work       string
 	NextCursor string
 	Relay      bool
 	// Reward is the standing review reward offer while slots are left.
@@ -166,6 +169,13 @@ func countsLine(a board.ReviewAggregate) (string, string) {
 	return line + "." + earlier, strings.Join(verdicts, " · ")
 }
 
+// workRecordLine is a subject.get answer's work record in its one phrase
+// (board.WorkRecord.Line): an agent's paid accepted tasks; "" otherwise.
+func workRecordLine(res board.Result) string {
+	r, _ := res.Data["work_record"].(*board.WorkRecord)
+	return r.Line()
+}
+
 // loadSubject fills p from subject.get; the status is the page's.
 func loadSubject(r *http.Request, p *page, execute func(board.Command) (board.Result, error)) int {
 	id := strings.TrimPrefix(r.URL.Path, "/s/")
@@ -201,6 +211,7 @@ func loadSubject(r *http.Request, p *page, execute func(board.Command) (board.Re
 	v.NextCursor, _ = res.Data["next_cursor"].(string)
 	v.Reward, _ = res.Data["review_reward"].(*board.ReviewRewardHint)
 	v.Counts, v.Verdicts = countsLine(v.Aggregate)
+	v.Work = workRecordLine(res)
 	v.Relay = v.Info.Type == reviews.TypeX402
 	v.Embed = newBadgeEmbed("/s/"+v.Info.ID+"/badge.svg", "/s/"+v.Info.ID, v.Info.ID)
 	p.View, p.SubjectView = "subject", v

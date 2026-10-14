@@ -148,6 +148,9 @@ func Build() map[string]any {
 			"result_fields": board.MessageWorkResultFields(),
 		},
 		"work_create_data": board.WorkCreateDataFields(),
+		// A rated accept's review (C300): what a client builds and signs
+		// as work.accept data review (board.WorkRatingPost).
+		"work_rating": board.WorkRatingContract(),
 		"enums": map[string][]string{
 			"work_states":                board.WorkStates(),
 			"work_list_kinds":            board.WorkListKinds(),

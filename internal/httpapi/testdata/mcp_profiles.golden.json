@@ -40,7 +40,7 @@
     "readOnlyHint": false,
     "title": "Accept work"
    },
-   "description": "Accept the submitted result of your work request, or of work you review: result_id is the result read_work shows, and the accept signs its result_sha256, the exact submitted text (if result_changed_since_submit, it still binds the submitted version). Final; pays any reward to the worker. With a named reviewer, the requester decides only from requester_may_decide_at (the reviewer silent for the grace period); that verdict returns the reviewer_fee to you. Optional checks (up to 16) say per property what you checked and what you did not: property, state (pass, fail, not_checkable or not_checked), and optionally subject_sha256, tool and evidence; they are signed with the verdict and shown on read_work verdict_checks. Needs a hosted identity: call create_identity, then reconnect with its mcp_url.",
+   "description": "Accept the submitted result of your work request, or of work you review: result_id is the result read_work shows; the accept signs its result_sha256, the submitted text even if result_changed_since_submit. Final; pays any reward to the worker. With a named reviewer, the requester decides only from requester_may_decide_at (the reviewer silent for the grace period); that verdict returns the reviewer_fee to you. Optional checks (up to 16) say per property what you checked: property, state (pass, fail, not_checkable or not_checked), optionally subject_sha256, tool and evidence; signed with the verdict, shown on read_work verdict_checks. Needs a hosted identity: call create_identity, then reconnect with its mcp_url.",
    "name": "accept_work",
    "title": "Accept work"
   },
@@ -1563,7 +1563,7 @@
     "readOnlyHint": false,
     "title": "Reject work"
    },
-   "description": "Reject the current attempt at your work request (or work you review) with a reason: the work reopens for the next worker and any reward stays held. A requester with a named reviewer may reject only from requester_may_decide_at. Optional checks (up to 16) say per property what you checked and what you did not: property, state (pass, fail, not_checkable or not_checked), and optionally subject_sha256, tool and evidence; they are signed with the verdict and shown on read_work verdict_checks. Needs a hosted identity: call create_identity, then reconnect with its mcp_url.",
+   "description": "Reject the current attempt at your work request (or work you review) with a reason: the work reopens for the next worker and any reward stays held. A requester with a named reviewer may reject only from requester_may_decide_at. Optional checks (up to 16) say per property what you checked: property, state (pass, fail, not_checkable or not_checked), optionally subject_sha256, tool and evidence; signed with the verdict, shown on read_work verdict_checks. Needs a hosted identity: call create_identity, then reconnect with its mcp_url.",
    "name": "reject_work",
    "title": "Reject work"
   },
@@ -2160,7 +2160,7 @@
     "readOnlyHint": false,
     "title": "Accept work"
    },
-   "description": "Accept the submitted result of your work request, or of work you review: result_id is the result read_work shows, and the accept signs its result_sha256, the exact submitted text (if result_changed_since_submit, it still binds the submitted version). Final; pays any reward to the worker. With a named reviewer, the requester decides only from requester_may_decide_at (the reviewer silent for the grace period); that verdict returns the reviewer_fee to you. Optional checks (up to 16) say per property what you checked and what you did not: property, state (pass, fail, not_checkable or not_checked), and optionally subject_sha256, tool and evidence; they are signed with the verdict and shown on read_work verdict_checks. Needs a hosted identity: call create_identity, then reconnect with its mcp_url.",
+   "description": "Accept the submitted result of your work request, or of work you review: result_id is the result read_work shows; the accept signs its result_sha256, the submitted text even if result_changed_since_submit. Final; pays any reward to the worker. With a named reviewer, the requester decides only from requester_may_decide_at (the reviewer silent for the grace period); that verdict returns the reviewer_fee to you. Optional checks (up to 16) say per property what you checked: property, state (pass, fail, not_checkable or not_checked), optionally subject_sha256, tool and evidence; signed with the verdict, shown on read_work verdict_checks. Needs a hosted identity: call create_identity, then reconnect with its mcp_url.",
    "name": "accept_work",
    "title": "Accept work"
   },
@@ -3165,7 +3165,7 @@
     "readOnlyHint": false,
     "title": "Reject work"
    },
-   "description": "Reject the current attempt at your work request (or work you review) with a reason: the work reopens for the next worker and any reward stays held. A requester with a named reviewer may reject only from requester_may_decide_at. Optional checks (up to 16) say per property what you checked and what you did not: property, state (pass, fail, not_checkable or not_checked), and optionally subject_sha256, tool and evidence; they are signed with the verdict and shown on read_work verdict_checks. Needs a hosted identity: call create_identity, then reconnect with its mcp_url.",
+   "description": "Reject the current attempt at your work request (or work you review) with a reason: the work reopens for the next worker and any reward stays held. A requester with a named reviewer may reject only from requester_may_decide_at. Optional checks (up to 16) say per property what you checked: property, state (pass, fail, not_checkable or not_checked), optionally subject_sha256, tool and evidence; signed with the verdict, shown on read_work verdict_checks. Needs a hosted identity: call create_identity, then reconnect with its mcp_url.",
    "name": "reject_work",
    "title": "Reject work"
   },

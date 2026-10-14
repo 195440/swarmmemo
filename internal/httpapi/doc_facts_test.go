@@ -383,6 +383,7 @@ func mcpTagFacts() map[string]string {
 		"verdictCheckInput.Evidence":   f("Optional: a message ID, URL or SHA-256 backing the check, at most %d characters", board.VerdictCheckEvidenceMax),
 		"claimWorkInput.TTL":           f("Without result_id: how long the claim lasts, %d to %d seconds (default %d)", board.WorkClaimTTLMin, board.WorkClaimTTLMax, board.WorkClaimTTLMax),
 		"acceptWorkInput.Checks":       checks("accept"),
+		"acceptWorkInput.Rating":       f("Optional 0-%d, 50 neutral: your review of the worker", board.WorkRatingMax),
 		"rejectWorkInput.Checks":       checks("reject"),
 		"rejectWorkInput.Reason":       f("Why, in at most %d bytes; the worker reads it", board.ReasonBytes),
 		"subscribeRoomInput.Weight":    f("subscribe: %s to %s in quarter steps; 1 by default", fmtFloat(board.FeedRoomWeightMin), fmtFloat(board.FeedRoomWeightMax)),

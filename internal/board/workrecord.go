@@ -105,20 +105,39 @@ func requesterUnpaidNote(r *RequesterRecord) string {
 // the requesters named (the IN list follows), with what answered it and the
 // account that submitted (the grant's parent for a scoped worker key).
 // work_rewards leads, through its requester index.
-const requesterSubmissionsSQL = `SELECT requester,work_id,reviewer,deadline,reward_state,submitted_at,verdict,verdict_at,worker FROM (
+var requesterSubmissionsSQL = `SELECT requester,work_id,reviewer,deadline,reward_state,submitted_at,verdict,verdict_at,worker FROM (
  SELECT r.requester AS requester,w.id AS work_id,w.reviewer AS reviewer,w.deadline AS deadline,r.state AS reward_state,
   s.accepted_at AS submitted_at,coalesce(v.operation,'') AS verdict,coalesce(v.accepted_at,0) AS verdict_at,
-  CASE WHEN s.delegation_id<>'' THEN coalesce((SELECT d.parent_account FROM delegations d WHERE d.child_id=s.delegation_id),'')
-   ELSE coalesce((SELECT i.account FROM identities i WHERE i.id=s.author),'') END AS worker
+  ` + transitionAccountSQL("s") + ` AS worker
  FROM work_rewards r JOIN works w ON w.id=r.work_id AND w.requester=r.requester
  JOIN events e ON e.id=w.id JOIN rooms rm ON rm.name=e.room
  JOIN work_transitions s ON s.work_id=w.id AND (s.operation='work.submit' OR (s.operation='work.claim' AND s.state='submitted'))
  LEFT JOIN work_transitions v ON v.work_id=w.id AND v.sequence=s.sequence+1
- WHERE ((w.standing_id='' AND e.kind='request') OR (w.standing_id<>'' AND e.hidden=0)) AND rm.visibility='public' AND r.requester IN (%s)) x
- WHERE worker<>'' AND worker<>requester AND NOT EXISTS(SELECT 1 FROM identities ri JOIN identities wi ON wi.account=x.worker
-  JOIN identity_links l ON l.kind='ed25519' AND ((l.agent=wi.id AND l.value=ri.public_key) OR (l.agent=ri.id AND l.value=wi.public_key AND l.state IN ('proof_attached','verified')))
-  WHERE ri.account=x.requester)
+ WHERE ` + workPublicSQL + ` AND r.requester IN (%s)) x
+ WHERE worker<>'' AND worker<>requester AND NOT ` + workLinkedSQL("x.requester", "x.worker") + `
  ORDER BY requester,submitted_at DESC,work_id`
+
+// workPublicSQL is the work a record counts (over works w, its event e and
+// room rm): a public request (never a simulation), or a result on a
+// standing task whose reply is visible.
+const workPublicSQL = `((w.standing_id='' AND e.kind='request') OR (w.standing_id<>'' AND e.hidden=0)) AND rm.visibility='public'`
+
+// transitionAccountSQL is the account that signed work transition t: a
+// scoped worker key's grant parent, else its key's account.
+func transitionAccountSQL(t string) string {
+	return `CASE WHEN ` + t + `.delegation_id<>'' THEN coalesce((SELECT d.parent_account FROM delegations d WHERE d.child_id=` + t + `.delegation_id),'')
+   ELSE coalesce((SELECT i.account FROM identities i WHERE i.id=` + t + `.author),'') END`
+}
+
+// workLinkedSQL is true when the worker is linked to the requester: the
+// worker names a requester key as its own (an ed25519 identity link in any
+// state), or the requester names the worker's key with the worker's signed
+// proof attached. A requester's one-sided claim links nothing.
+func workLinkedSQL(requester, worker string) string {
+	return `EXISTS(SELECT 1 FROM identities ri JOIN identities wi ON wi.account=` + worker + `
+  JOIN identity_links l ON l.kind='ed25519' AND ((l.agent=wi.id AND l.value=ri.public_key) OR (l.agent=ri.id AND l.value=wi.public_key AND l.state IN ('proof_attached','verified')))
+  WHERE ri.account=` + requester + `)`
+}
 
 type requesterTally struct {
 	rec     RequesterRecord

@@ -33,6 +33,10 @@ type Output struct {
 	// version 2 (standing.go), absent before, so earlier runs recompute
 	// byte for byte.
 	Standing *StandingSummary `json:"standing,omitempty"`
+	// JudgementsShadow is RFC 0020's judgements_shadow section (rule 3
+	// runs, judgements.go). It is not part of the canonical output, so rule
+	// 3's outputs recompute unchanged; the run records it with its inputs.
+	JudgementsShadow *JudgementsShadow `json:"-"`
 	// Work is the number of edge examinations; a run statistic, not output.
 	Work int64 `json:"-"`
 }
@@ -895,6 +899,7 @@ func Compute(ctx context.Context, snap Snapshot) (Output, error) {
 	}
 
 	var standingSummary *StandingSummary
+	var shadow *JudgementsShadow
 	if p.Standing != nil {
 		proofParts := make(map[string][]ProofPart, len(accountProofs))
 		for a, ps := range accountProofs {
@@ -918,6 +923,7 @@ func Compute(ctx context.Context, snap Snapshot) (Output, error) {
 		}
 		sort.Slice(scores, func(i, j int) bool { return scores[i].Account < scores[j].Account })
 		standingSummary = res.summary
+		shadow = res.shadow
 	}
 
 	sponsorships, dividends := sponsor(p, snap, asOf, service, firstSeen, reset, index, ownAvg, rootOf, pairSum, flowTotal, func(invitee string) []endorserFlow {
@@ -949,7 +955,7 @@ func Compute(ctx context.Context, snap Snapshot) (Output, error) {
 		SeedsA: seedsAList, SeedsB: seedsBList, SeedsBUsed: useB,
 		CaptureBound: CaptureBound{UnitPerShare: U, EdgeCapUnits: p.EdgeCapPPM * U / 1e6, LambdaPPM: p.LambdaPPM, MaxTransitUnits: maxTransit, PoolUnits: pool,
 			Statement: "Whatever the number of sybils, a region behind k attack edges receives at most k x edge_cap_units flow units, and at most max_transit_units through any one non-seed endorser."},
-		Scores: scores, Evidence: evidence, Penalties: penaltiesOut, Sponsorships: sponsorships, Dividends: dividends, Standing: standingSummary, Work: work,
+		Scores: scores, Evidence: evidence, Penalties: penaltiesOut, Sponsorships: sponsorships, Dividends: dividends, Standing: standingSummary, JudgementsShadow: shadow, Work: work,
 	}, nil
 }
 

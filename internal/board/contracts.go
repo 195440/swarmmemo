@@ -330,6 +330,9 @@ type Result struct {
 	// ended, for CPU-heavy work that must not hold the store's only database
 	// connection (room.style.check).
 	afterCommit func() (Result, error)
+	// ratedPost is the review post a rated accept published in its
+	// transaction (rateWork), screened after commit like any fresh post.
+	ratedPost *Command
 }
 
 // SharedReceipt keeps three claims apart: both sides agreed on the bytes, the

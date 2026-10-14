@@ -66,7 +66,8 @@ func (s *Store) FindEngine() *find.Engine {
 // published.
 func (s *Store) findChanged(c Command) {
 	switch c.Operation {
-	case "agent.register", "agent.profile.publish", "agent.profile.remove", "offering.publish", "offering.retire":
+	case "agent.register", "agent.profile.publish", "agent.profile.remove", "offering.publish", "offering.retire",
+		"work.accept", "work.reject", WorkSettle: // an agent's work record (workreputation.go)
 	case "post":
 		if c.Room != ReviewsRoom {
 			return
@@ -628,6 +629,12 @@ func (s *Store) findOfferings(ctx context.Context, v find.Vocab, standing map[st
 // findAgents are the public agents with a handle or a profile, one per
 // account, with standing, availability and the reviews of their subject.
 func (s *Store) findAgents(ctx context.Context, v find.Vocab, now int64, standing map[string]string, quality map[string]subjectQuality) ([]find.Doc, error) {
+	// Work records first: one read, finished before the agents' rows open
+	// (the board has one connection).
+	work, err := workRecords(ctx, s.db, nil, now)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT i.id,i.account,i.handle,coalesce(p.description,''),coalesce(p.capabilities,'[]'),coalesce(p.availability,''),coalesce(p.expires_at,0)
  FROM identities i LEFT JOIN peer_cards p ON p.account=i.account
  WHERE i.successor='' AND (i.handle<>'' OR p.account IS NOT NULL) AND `+publicAccountSQL("i.account")+`
@@ -667,6 +674,9 @@ func (s *Store) findAgents(ctx context.Context, v find.Vocab, now int64, standin
 			}
 		}
 		d.Quality.Standing = standing[account]
+		if r := work[account]; r != nil {
+			d.Quality.AcceptedTasks = int(r.AsWorker.Accepted)
+		}
 		setSelfDoor(&d, capabilities)
 		if availability == "available" && expires > now {
 			d.Quality.State = "up"

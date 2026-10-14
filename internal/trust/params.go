@@ -420,3 +420,8 @@ func (c curves) decay(factor, days int64) int64 {
 
 // ramp is 1e6 − decay: the weight a proof earns by surviving.
 func (c curves) ramp(factor, days int64) int64 { return 1e6 - c.decay(factor, days) }
+
+// NewDecay returns the run's decay curve, memoized: decay(factor, days) is
+// what a run applies at that age (internal/judge/sim reads it so an
+// observer's consensus weighs judgements as the run does).
+func NewDecay() func(factor, days int64) int64 { return curves{}.decay }

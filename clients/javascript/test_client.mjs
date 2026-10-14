@@ -8,7 +8,7 @@ import {join} from 'node:path';
 import {spawn, spawnSync} from 'node:child_process';
 import {gzipSync} from 'node:zlib';
 import {createPrivateKey, createPublicKey, sign, verify} from 'node:crypto';
-import {Client, DelegatedClient, ClientError, CONTRACT, FIELDS, canonical, delegationContext, generateKey, importKey, writeKey, loadKey, conversationRoom, loadSeal} from './swarmmemo.mjs';
+import {Client, DelegatedClient, ClientError, CONTRACT, FIELDS, canonical, delegationContext, generateKey, importKey, writeKey, loadKey, conversationRoom, loadSeal, agentSubjectID} from './swarmmemo.mjs';
 
 const vector = JSON.parse(await readFile(new URL('../python/signing-vector.json', import.meta.url), 'utf8'));
 const fixtureKey = importKey({private_key: Buffer.from(vector.seed_hex, 'hex').toString('base64url'), public_key: vector.command.public_key});
@@ -387,7 +387,7 @@ test('work, updates, journal, docs, tools and /call helpers send the documented 
     let body = ''; req.on('data', chunk => {body += chunk;});
     req.on('end', () => {
       const parsed = JSON.parse(body); requests.push({path: req.url, body: parsed});
-      const reply = parsed.operation === 'work.get' ? {ok: true, data: {work: {service_generation: generation, fence: 3}}}
+      const reply = parsed.operation === 'work.get' ? {ok: true, data: {work: {id, service_generation: generation, fence: 3, worker_subject: 'agent:' + agent}}}
         : parsed.operation === 'agent.get' ? {ok: true, agent: {id: agent}}
         : parsed.operation === 'updates.get' ? {ok: true, messages: [], next_cursor: parsed.cursor ? parsed.cursor + '+' : 'c1', data: {}}
         : parsed.operation === 'subject.resolve' ? {ok: true, data: {subject: {id: 's'.repeat(26), uri: 'site:https://example.org/', exists: false}}}
@@ -483,6 +483,17 @@ test('work, updates, journal, docs, tools and /call helpers send the documented 
   await signed.acceptWork(id, 3, {requestId: 'a-2'});
   assert.deepEqual(requests.map(r => r.body.operation), ['work.get', 'work.accept']);
   assert.equal(requests[1].body.data, `{"schema":1,"generation":"${generation}"}`); verifySigned(requests[1].body); requests.length = 0;
+  // A rated accept (C300): one work.get (worker_subject), then the accept carrying the signed review post.
+  assert.equal(agentSubjectID('a'.repeat(64)), 'gv3vfww72ravwux2dfdyxmfhbm'); // the Go and Python vector
+  await signed.acceptWork(id, 3, {rating: 40, note: 'Late, but right.', requestId: 'a-4'});
+  assert.deepEqual(requests.map(r => r.body.operation), ['work.get', 'work.accept']);
+  const rated = JSON.parse(requests[1].body.data);
+  assert.equal(rated.generation, generation); verifySigned(requests[1].body); verifySigned(rated.review);
+  assert.deepEqual(shown(rated.review), {operation: 'post', room: 'reviews', page: agentSubjectID(agent), kind: 'review', text: 'Late, but right.', request_id: rated.review.request_id,
+    data: `{"schema":1,"review":{"subject":"agent:${agent}","verdict":"mixed","dimensions":{"good":40},"relationship":"customer","evidence":["work:${id}"]}}`});
+  requests.length = 0;
+  await assert.rejects(signed.acceptWork(id, 3, {rating: 101}), errorCode('invalid_option')); requests.length = 0;
+  await assert.rejects(anonymous.acceptWork(id, 3, {rating: 50}), errorCode('missing_key'));
   // /call: unsigned POST, args as the body's fields, with max_cost and request_id.
   await signed.callUrl('fetch', 'page', {url: 'https://example.com/'}, {maxCost: 8, requestId: 'r'.repeat(16)});
   assert.deepEqual(requests.shift(), {path: '/call/fetch/page', body: {url: 'https://example.com/', max_cost: 8, request_id: 'r'.repeat(16)}});

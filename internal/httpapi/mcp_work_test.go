@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"swarmmemo/internal/board"
 )
@@ -116,7 +117,7 @@ func TestHostedMCPWorkLifecycle(t *testing.T) {
 	if _, err := store.SignCheckpoint(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	rec :=mustTool(t, s, "/mcp", "", "agent_record", map[string]any{"agent": worker["agent"]})["data"].(map[string]any)
+	rec := mustTool(t, s, "/mcp", "", "agent_record", map[string]any{"agent": worker["agent"]})["data"].(map[string]any)
 	if got, want := dig(rec, "record", "counts", "work"), map[string]any{"claimed": 2.0, "submitted": 2.0, "accepted": 1.0, "rejected": 1.0, "expired_unjudged": 0.0, "paid": 0.0, "posted": 0.0, "accepted_as_requester": 0.0, "rejected_as_requester": 0.0, "unjudged_as_requester": 0.0}; !reflect.DeepEqual(got, want) || dig(rec, "record", "type") != board.RecordType {
 		t.Fatalf("agent_record counts.work: %v (type %v)", got, dig(rec, "record", "type"))
 	}
@@ -402,5 +403,68 @@ func TestStandingOpenSeatsOneName(t *testing.T) {
 		if !strings.HasSuffix(path, ".mjs") && !strings.HasSuffix(path, "operations.py") && !strings.Contains(text, canonical) {
 			t.Errorf("%s does not name %s", path, canonical)
 		}
+	}
+}
+
+// A rated accept over MCP (C300): accept_work with rating and note signs the
+// review post as the hosted requester and sends it in the accept's data; the
+// board posts it through the one review path, about agent:WORKER, citing
+// the work. Without rating nothing is reviewed.
+func TestHostedMCPRatedAccept(t *testing.T) {
+	store, s := hostedServerWith(t, board.Features{Reviews: true})
+	rater, doer := newIdentity(t, s, "rater"), newIdentity(t, s, "doer")
+	asRater, asDoer := "Bearer "+rater["token"].(string), "Bearer "+doer["token"].(string)
+	key, _, err := store.HostedSigner(t.Context(), rater["token"].(string), time.Now().Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := func(c board.Command) board.Result {
+		t.Helper()
+		res, err := store.Execute(t.Context(), signService(key, c), "mcp-rated-test")
+		if err != nil {
+			t.Fatalf("%s: %v", c.Operation, err)
+		}
+		return res
+	}
+	feed, err := store.Execute(t.Context(), board.Command{Operation: "messages.list"}, "mcp-rated-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := func() string {
+		id := exec(board.Command{Operation: "post", Room: "gigs", Kind: "request", Text: "Check one link."}).Receipt.ID
+		data, _ := json.Marshal(map[string]any{"schema": 1, "generation": feed.Generation, "title": "Check a link", "capabilities": []string{"web"}})
+		exec(board.Command{Operation: "work.create", MessageID: id, Data: string(data)})
+		reply := mustTool(t, s, "/mcp", asDoer, "post_message", map[string]any{"reply_to": id, "text": "The link works."})["receipt"].(map[string]any)["id"].(string)
+		mustTool(t, s, "/mcp", asDoer, "claim_work", map[string]any{"message_id": id, "result_id": reply})
+		return id
+	}
+	id := create()
+	result := mustTool(t, s, "/mcp", asRater, "read_work", map[string]any{"message_id": id})["data"].(map[string]any)["work"].(map[string]any)
+	if result["worker_subject"] != "agent:"+doer["agent"].(string) {
+		t.Fatalf("read_work worker_subject: %v", result["worker_subject"])
+	}
+	accepted := mustTool(t, s, "/mcp", asRater, "accept_work", map[string]any{"message_id": id, "result_id": result["result_id"], "rating": 80, "note": "Quick and right."})["data"].(map[string]any)
+	reviewID, _ := dig(accepted, "review", "id").(string)
+	if dig(accepted, "ack", "state") != "accepted" || reviewID == "" {
+		t.Fatalf("rated accept_work: %v", accepted)
+	}
+	msg, err := store.Execute(t.Context(), board.Command{Operation: "message.get", MessageID: reviewID}, "mcp-rated-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := msg.Messages[0]
+	if m.Room != board.ReviewsRoom || m.Kind != "review" || m.Author != rater["agent"] || m.Text != "Quick and right." || m.Review == nil || m.Review.Verdict != "good" {
+		t.Fatalf("the review: %+v", m)
+	}
+	// An accept without rating posts no review.
+	second := create()
+	w := mustTool(t, s, "/mcp", asRater, "read_work", map[string]any{"message_id": second})["data"].(map[string]any)["work"].(map[string]any)
+	mustTool(t, s, "/mcp", asRater, "accept_work", map[string]any{"message_id": second, "result_id": w["result_id"]})
+	subject := mustTool(t, s, "/mcp", "", "read_subject", map[string]any{"subject": "agent:" + doer["agent"].(string)})["data"].(map[string]any)
+	if n := len(subject["reviews"].([]any)); n != 1 {
+		t.Fatalf("reviews of the worker: %d", n)
+	}
+	if subject["work_record"] == nil {
+		t.Fatalf("read_subject has no work_record: %v", subject)
 	}
 }

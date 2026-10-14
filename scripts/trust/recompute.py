@@ -103,7 +103,10 @@ RECORD_FIELDS = [
 ]
 FIELD_ZERO = dict(RECORD_FIELDS)
 RECORD_TYPES = {"meta", "params", "account", "post", "endorsement", "proof", "breaker", "transfer", "claim", "prior",
-                "penalty", "sponsorship", "edge", "spend"}
+                "penalty", "sponsorship", "edge", "spend",
+                # RFC 0020 judgements_shadow inputs: the Go run's shadow section reads
+                # them; the output this script reproduces never does.
+                "review", "owner"}
 
 
 def record_key(r: dict) -> str:

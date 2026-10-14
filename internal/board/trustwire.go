@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"swarmmemo/internal/allowance"
+	"swarmmemo/internal/judge"
+	"swarmmemo/internal/reviews"
 	"swarmmemo/internal/trust"
 )
 
@@ -236,19 +238,33 @@ func (s *Store) payTrustDividends(ctx context.Context, run int64, p trust.Params
 // WriteTrustInputs writes the snapshot a run as of today's 00:00 UTC would
 // read, as JSONL: what a verifier needs to recompute it (§4.8).
 func (s *Store) WriteTrustInputs(ctx context.Context, w io.Writer) error {
+	snap, err := s.TrustInputs(ctx, 0)
+	if err != nil {
+		return err
+	}
+	return snap.WriteJSONL(w)
+}
+
+// TrustInputs reads the snapshot a run as of today's 00:00 UTC would read,
+// with the current parameters' window, or windowDays when it is positive
+// (the replay's --days). It only reads, in short read transactions.
+func (s *Store) TrustInputs(ctx context.Context, windowDays int64) (trust.Snapshot, error) {
 	now := s.now().Unix()
 	asOf := now - now%86400
 	db := trustDB{s}
 	var p trust.Params
 	if err := db.Read(ctx, func(q allowance.Querier) (err error) { p, err = trustParams(ctx, q, now); return err }); err != nil {
-		return err
+		return trust.Snapshot{}, err
+	}
+	if windowDays > 0 {
+		p.WindowDays = windowDays
 	}
 	snap := trust.Snapshot{Params: p, Meta: trust.Meta{Schema: 1, AsOf: asOf}}
 	if err := (trustInputs{s}).Read(ctx, asOf, p, snap.Add); err != nil {
-		return err
+		return trust.Snapshot{}, err
 	}
 	snap.Meta.AsOf = asOf
-	return snap.WriteJSONL(w)
+	return snap, nil
 }
 
 // LiftTrustEvidence lifts evidence and its penalties with a public reason.
@@ -741,6 +757,12 @@ func (in trustInputs) Read(ctx context.Context, asOf int64, p trust.Params, emit
 		if err := in.readStanding(ctx, asOf, p, exists, paged, emit); err != nil {
 			return err
 		}
+		// RFC 0020's judgements_shadow reads the window's reviews (rule 3).
+		if p.Standing.Rule >= 3 {
+			if err := in.readJudgements(ctx, asOf, p, paged, emit); err != nil {
+				return err
+			}
+		}
 		// C160: shared network and client links, only while the parameter
 		// asks for them (signals.go); never in the published snapshot.
 		if p.Standing.Rule >= 3 && p.Standing.SignalLinkDays > 0 {
@@ -750,6 +772,71 @@ func (in trustInputs) Read(ctx context.Context, asOf int64, p trust.Params, emit
 		}
 	}
 	return emit(meta)
+}
+
+// readJudgements emits RFC 0020's judgement inputs that are not already
+// trust inputs (C303a, shadow): the window's community reviews by public
+// accounts, current or superseded (a newer review closes an older one), as
+// "review" records (x from judge.FromReview), then the owners of their
+// subjects as "owner" records. Lab and outside_source reviews, hidden ones,
+// unverified verdicts (no judgement) and reviews of an earlier version of a
+// subject are left out, as the community aggregate leaves them out.
+func (in trustInputs) readJudgements(ctx context.Context, asOf int64, p trust.Params,
+	paged func(string, []any, func(*sql.Rows) (trust.Record, int64, error)) error, emit func(trust.Record) error) error {
+	var ok bool
+	if err := in.page(ctx, func(q allowance.Querier) (err error) { ok, err = tableExists(ctx, q, "reviews"); return err }); err != nil || !ok {
+		return err
+	}
+	type subjectKey struct{ typ, key, id string }
+	seen := map[subjectKey]bool{}
+	var subjects []subjectKey
+	if err := paged(`SELECT r.rowid,r.event_id,r.account,s.type,s.key,s.id,r.verdict,r.score,r.good,r.evidence_class,
+ CASE WHEN r.relationship_raised<>'' THEN r.relationship_raised ELSE r.relationship END,r.created_at
+ FROM reviews r JOIN events e ON e.id=r.event_id JOIN subjects s ON s.id=r.subject
+ WHERE r.rowid>? AND e.hidden=0 AND r.relationship NOT IN ('lab','outside_source') AND r.verdict<>'unverified' AND `+aboutCurrentVersion+`
+ AND r.created_at>=? AND r.created_at<? AND `+publicAccountSQL("r.account")+` ORDER BY r.rowid LIMIT ?`,
+		[]any{asOf - p.WindowDays*86400, asOf}, func(r *sql.Rows) (trust.Record, int64, error) {
+			rec := trust.Record{Type: "review"}
+			var rowid, score, good int64
+			var sub subjectKey
+			if err := r.Scan(&rowid, &rec.ID, &rec.Account, &sub.typ, &sub.key, &sub.id, &rec.State, &score, &good, &rec.Kind, &rec.LinkValue, &rec.CreatedAt); err != nil {
+				return rec, 0, err
+			}
+			rec.Target = judge.ReviewSubject(sub.typ, sub.key, sub.id)
+			rec.Value, _ = judge.FromReview(rec.State, score, good)
+			if sub.typ != reviews.TypeAgent && !seen[sub] {
+				seen[sub] = true
+				subjects = append(subjects, sub)
+			}
+			return rec, rowid, nil
+		}); err != nil {
+		return err
+	}
+	sort.Slice(subjects, func(i, j int) bool { return subjects[i].id < subjects[j].id })
+	opt := in.s.subjectOptions()
+	for start := 0; start < len(subjects); start += 200 {
+		var batch []trust.Record
+		if err := in.page(ctx, func(q allowance.Querier) error {
+			for _, sub := range subjects[start:min(start+200, len(subjects))] {
+				owners, err := subjectOwners(ctx, q, reviews.Subject{Type: sub.typ, Key: sub.key, ID: sub.id}, opt)
+				if err != nil {
+					return err
+				}
+				for _, o := range owners {
+					batch = append(batch, trust.Record{Type: "owner", Target: judge.ReviewSubject(sub.typ, sub.key, sub.id), Account: o.Account})
+				}
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		for _, rec := range batch {
+			if err := emit(rec); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // readStanding emits the standing inputs of trust parameter version 2

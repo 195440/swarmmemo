@@ -105,8 +105,13 @@ func run() error {
 			return topupCheck(os.Stdout)
 		}
 		return operator(command)
+	case "trust":
+		if len(os.Args) >= 3 && os.Args[2] == "simulate" { // trustsim.go: reads no database
+			return trustSimulate(os.Args[3:], os.Stdout)
+		}
+		return operator(command)
 	case "backup", "integrity", "reports", "moderate", "room", "recover-generation", "maintenance", "stats",
-		"tier", "params", "allowance", "lever", "trust", // RFC0012, rfc0012.go
+		"tier", "params", "allowance", "lever", // RFC0012, rfc0012.go (trust above)
 		"moderation",   // moderation.go
 		"receiver",     // receiver.go
 		"inbox",        // inbox.go

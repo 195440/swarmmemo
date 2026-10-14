@@ -54,28 +54,31 @@ var workIDRE = regexp.MustCompile(`^[a-f0-9]{32}$`)
 // the credit held for it, if any.
 // Generation belongs to the stored fence; ServiceGeneration is the current epoch.
 type Work struct {
-	ID                string      `json:"id"`
-	Room              string      `json:"room"`
-	Title             string      `json:"title"`
-	Capabilities      []string    `json:"capabilities"`
-	Simulated         bool        `json:"simulated"`
-	State             string      `json:"state"`
-	StoredState       string      `json:"stored_state"`
-	Generation        string      `json:"generation"`
-	ServiceGeneration string      `json:"service_generation"`
-	ServiceID         string      `json:"service_id"`
-	CreatedAt         int64       `json:"created_at"`
-	UpdatedAt         int64       `json:"updated_at"`
-	Deadline          int64       `json:"deadline"`
-	Fence             int64       `json:"fence"`
-	ClaimExpiresAt    int64       `json:"claim_expires_at"`
-	RequesterAuthor   string      `json:"requester_author"`
-	Requester         AgentRef    `json:"requester"`
-	Worker            *AgentRef   `json:"worker,omitempty"`
-	ResultID          string      `json:"result_id,omitempty"`
-	ResultAvailable   bool        `json:"result_available"`
-	AttemptGrantID    string      `json:"attempt_grant_id,omitempty"`
-	Reward            *WorkReward `json:"reward,omitempty"`
+	ID                string    `json:"id"`
+	Room              string    `json:"room"`
+	Title             string    `json:"title"`
+	Capabilities      []string  `json:"capabilities"`
+	Simulated         bool      `json:"simulated"`
+	State             string    `json:"state"`
+	StoredState       string    `json:"stored_state"`
+	Generation        string    `json:"generation"`
+	ServiceGeneration string    `json:"service_generation"`
+	ServiceID         string    `json:"service_id"`
+	CreatedAt         int64     `json:"created_at"`
+	UpdatedAt         int64     `json:"updated_at"`
+	Deadline          int64     `json:"deadline"`
+	Fence             int64     `json:"fence"`
+	ClaimExpiresAt    int64     `json:"claim_expires_at"`
+	RequesterAuthor   string    `json:"requester_author"`
+	Requester         AgentRef  `json:"requester"`
+	Worker            *AgentRef `json:"worker,omitempty"`
+	// WorkerSubject is the worker's agent subject, agent:ACCOUNT: what a
+	// rated accept's review is about (workreputation.go WorkRatingPost).
+	WorkerSubject   string      `json:"worker_subject,omitempty"`
+	ResultID        string      `json:"result_id,omitempty"`
+	ResultAvailable bool        `json:"result_available"`
+	AttemptGrantID  string      `json:"attempt_grant_id,omitempty"`
+	Reward          *WorkReward `json:"reward,omitempty"`
 	// RewardUSDC is the reward's USDC asset (RFC 0016): promised, owed
 	// (payable) after accept, paid once a settlement is verified on chain.
 	// RewardState is the whole reward's state, paid only when every asset
@@ -315,6 +318,9 @@ type workData struct {
 	// and the tier an accept of one of its results names.
 	Standing workStandingData
 	Tier     string
+	// Review is a rated accept's review: the requester's own signed post
+	// (workreputation.go rateWork).
+	Review json.RawMessage
 }
 
 // workVerdictOp says whether an operation is a verdict on a submitted
@@ -332,7 +338,7 @@ func workResultHashOp(operation string) bool {
 
 // workDataRule is the whole rule for work.* data, the message of an
 // invalid_work_data refusal; a refusal that can name its field says so first.
-const workDataRule = "Data must be strict schema-1 JSON with a current lowercase 32-hex generation; creation also requires a 1–160 UTF-8 byte title and up to 16 unique lowercase capability slugs, and may add a reward (whole credits, or an object with credits and usdc, a decimal string), a reviewer (a 64-hex agent fingerprint) with an optional reviewer_fee, an eligibility (open, first_work, linked or new_agent) and a reward_note (one line, display only); work.reviewer.set takes reviewer, the new one's fingerprint; work.claim and work.submit may add payout_address (0x and 40 hex, where a USDC reward is paid); work.settle takes tx_hash, the payment's transaction; submit, accept and a claim with a result may add result_sha256, the 64-hex SHA-256 of the result text; accept and reject may add checks, the verifier's per-property list; a standing task's create may add seats (1–50) with per_agent_day, day_max, tiers, usdc_per_agent_day and usdc_day_max, and an accept of one of its results may add tier."
+const workDataRule = "Data must be strict schema-1 JSON with a current lowercase 32-hex generation; creation also requires a 1–160 UTF-8 byte title and up to 16 unique lowercase capability slugs, and may add a reward (whole credits, or an object with credits and usdc, a decimal string), a reviewer (a 64-hex agent fingerprint) with an optional reviewer_fee, an eligibility (open, first_work, linked or new_agent) and a reward_note (one line, display only); work.reviewer.set takes reviewer, the new one's fingerprint; work.claim and work.submit may add payout_address (0x and 40 hex, where a USDC reward is paid); work.settle takes tx_hash, the payment's transaction; submit, accept and a claim with a result may add result_sha256, the 64-hex SHA-256 of the result text; accept and reject may add checks, the verifier's per-property list; the requester's accept may add review, its own signed review post of the worker (a rated accept); a standing task's create may add seats (1–50) with per_agent_day, day_max, tiers, usdc_per_agent_day and usdc_day_max, and an accept of one of its results may add tier."
 
 // workDataAliases is the field a name work data does not take was likely
 // meant to be: a tiny fixed map, no fuzzy matching. ttl is the command field
@@ -367,7 +373,7 @@ func workDataTakes(operation, name string) bool {
 	case "title", "capabilities", "reward", "reviewer_fee", "reject_fee", "eligibility", "reward_note",
 		"seats", "per_agent_day", "day_max", "tiers", "usdc_per_agent_day", "usdc_day_max":
 		return operation == "work.create"
-	case "tier":
+	case "tier", "review":
 		return operation == "work.accept"
 	case "result_sha256":
 		return workResultHashOp(operation)
@@ -410,7 +416,7 @@ func parseWorkData(raw string, operation string) (workData, error) {
 	invalid := func() (workData, error) {
 		return workData{}, problem(400, "invalid_work_data", workDataRule)
 	}
-	if len(raw) > 8192+VerdictChecksBytesMax || !utf8.ValidString(raw) {
+	if len(raw) > 8192+VerdictChecksBytesMax+WorkRatingBytesMax || !utf8.ValidString(raw) {
 		return invalid()
 	}
 	// A reward object's unexpected keys get a sharper hint when the data
@@ -502,6 +508,16 @@ func parseWorkData(raw string, operation string) (workData, error) {
 				return workData{}, err
 			}
 			continue
+		case "review":
+			// Checked as the signed post it is, after the accept (rateWork).
+			if !workDataTakes(operation, name) {
+				return workData{}, invalidWorkField(operation, name)
+			}
+			if len(value) > WorkRatingBytesMax || len(value) == 0 || value[0] != '{' {
+				return workData{}, workRatingError(fmt.Sprintf("review is one signed post object of at most %d bytes.", WorkRatingBytesMax))
+			}
+			d.Review = value
+			continue
 		case "checks":
 			if !workDataTakes(operation, name) {
 				return workData{}, invalidWorkField(operation, name)
@@ -530,6 +546,9 @@ func parseWorkData(raw string, operation string) (workData, error) {
 		want++
 	}
 	if seen["checks"] {
+		want++
+	}
+	if seen["review"] {
 		want++
 	}
 	if seen["tier"] {
@@ -1267,6 +1286,15 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 	if err != nil {
 		return Result{}, err
 	}
+	// A rated accept: the requester's review of the worker, posted once the
+	// work is accepted and paid, so its work:ID evidence verifies (C300).
+	var rated *Receipt
+	var ratedPost *Command
+	if d.Review != nil {
+		if rated, ratedPost, err = s.rateWork(ctx, tx, c, a, w, d.Review, now); err != nil {
+			return Result{}, err
+		}
+	}
 	// MCP Events: work.open and work.update, queued in this transaction.
 	reward := d.Reward
 	if c.Operation != "work.create" {
@@ -1331,6 +1359,9 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 	if standingNote != "" {
 		ack.Note = strings.TrimSpace(standingNote + " " + ack.Note)
 	}
+	if rated != nil {
+		return Result{Data: map[string]any{"ack": ack, "review": rated}, ratedPost: ratedPost}, nil
+	}
 	return Result{Data: map[string]any{"ack": ack}}, nil
 }
 
@@ -1366,6 +1397,7 @@ func (s *Store) projectWork(ctx context.Context, tx *sql.Tx, w workRow, root wor
 			return Work{}, e
 		}
 		p.Worker = &identity
+		p.WorkerSubject = agentSubjectURI(w.Worker)
 	}
 	if w.Reviewer != "" {
 		identity, e := currentWorkIdentity(ctx, tx, w.Reviewer)

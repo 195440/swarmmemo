@@ -8,17 +8,25 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"strconv"
 	"strings"
 
 	"swarmmemo/internal/board"
+	"swarmmemo/internal/trust"
 )
 
-const trustUsage = "usage: swarmmemo trust run | trust show AGENT | trust inputs | trust lift EVIDENCE_ID --reason TEXT"
+const trustUsage = "usage: swarmmemo trust run | trust show AGENT | trust inputs | trust lift EVIDENCE_ID --reason TEXT | trust replay [--days N] [--json|--md] [--snapshot FILE] | trust simulate [--scenario NAME|all] [--seed N] [--seeds K] [--cadence DAYS] [--md|--json]"
 
 // operatorTrust is "swarmmemo trust run", "trust show AGENT", "trust inputs"
 // (the JSONL snapshot a run as of today would read, for verifiers) and
 // "trust lift EVIDENCE_ID --reason TEXT" (the only human action on
 // evidence: lifting it, with a public reason). Run and show need TRUST set.
+// "trust replay" (RFC 0020 §6, C303a) computes rule 3 and RFC 0020 on the
+// snapshot a run as of today would read (or on a snapshot file) and reports
+// tier moves, the top and bottom marks, the most judged subjects, ring and
+// funnel members' marks and conservation. It only reads: run it against a
+// copy of the database (DATA_DIR=copy), never the live one.
 func operatorTrust(ctx context.Context, store *board.Store, args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return errors.New(trustUsage)
@@ -52,6 +60,8 @@ func operatorTrust(ctx context.Context, store *board.Store, args []string, out i
 			return errors.New(trustUsage)
 		}
 		return store.WriteTrustInputs(ctx, out)
+	case "replay":
+		return trustReplay(ctx, store, args[1:], out)
 	case "lift":
 		if len(args) != 4 || args[2] != "--reason" {
 			return errors.New(trustUsage)
@@ -63,6 +73,60 @@ func operatorTrust(ctx context.Context, store *board.Store, args []string, out i
 		return nil
 	}
 	return errors.New(trustUsage)
+}
+
+// trustReplay is "trust replay [--days N] [--json|--md] [--snapshot FILE]".
+func trustReplay(ctx context.Context, store *board.Store, args []string, out io.Writer) error {
+	var days int64
+	format, file := "md", ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--json":
+			format = "json"
+		case "--md":
+			format = "md"
+		case "--days", "--snapshot":
+			if i+1 >= len(args) {
+				return errors.New(trustUsage)
+			}
+			if args[i] == "--snapshot" {
+				file = args[i+1]
+			} else if n, err := strconv.ParseInt(args[i+1], 10, 64); err != nil || n < 1 || n > 365 {
+				return errors.New("--days is 1-365")
+			} else {
+				days = n
+			}
+			i++
+		default:
+			return errors.New(trustUsage)
+		}
+	}
+	var snap trust.Snapshot
+	var err error
+	if file != "" {
+		f, err := os.Open(file)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		if snap, err = trust.ReadJSONL(f); err != nil {
+			return err
+		}
+	} else if snap, err = store.TrustInputs(ctx, days); err != nil {
+		return err
+	}
+	report, err := trust.Replay(ctx, snap, days)
+	if err != nil {
+		return err
+	}
+	if format == "md" {
+		_, err = io.WriteString(out, report.Markdown())
+		return err
+	}
+	enc := json.NewEncoder(out)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false)
+	return enc.Encode(report)
 }
 
 func trustError(err error) error {

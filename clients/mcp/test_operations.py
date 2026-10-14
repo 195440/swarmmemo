@@ -105,9 +105,12 @@ class OperationTests(unittest.TestCase):
                 "standing": {"seats": 10, "open": 7, "submitted": 3, "owed": 0, "paid": 12, "results": 15, "per_agent_day": 1, "day_max": 10, "opened_today": 2,
                              "tiers": [{"name": "bug", "credits": 2000, "usdc": "0.2"}, {"name": "bug+fix", "credits": 2000}], "usdc_day_max": "2",
                              "verdict_ttl": 259200, "results_until": 9},
-                "standing_id": "9" * 32, "tier": "bug+fix"}
+                "standing_id": "9" * 32, "tier": "bug+fix", "worker_subject": "agent:" + "8" * 64}
         self.assertEqual(set(work), op.WORK_REQUIRED | op.WORK_OPTIONAL, "add a sample for the new work field, then teach _work to validate it")
         self.assertEqual(op._work(self.profile, dict(work), "e" * 32), work)
+        for bad in ("agent:x", "site:" + "8" * 64, 7):
+            with self.assertRaises(op.BridgeError): op._work(self.profile, {**work, "worker_subject": bad}, "e" * 32)
+        with self.assertRaises(op.BridgeError): op._work(self.profile, {k: v for k, v in work.items() if k != "worker"}, "e" * 32)
         for state in op.REWARD_STATES: self.assertIsNotNone(op._work(self.profile, {**work, "reward_state": state}))
         for state in op.USDC_STATES: self.assertIsNotNone(op._work(self.profile, {**work, "reward_usdc": {**work["reward_usdc"], "state": state}}))
         for name, bad in (("reward_usdc", {"amount": 0.1, "state": "promised"}), ("reward_usdc", {"amount": "1e3", "state": "promised"}),

@@ -382,6 +382,9 @@ def _work(profile, work, expected=None):
     for name in ("requester_author", "attempt_grant_id"):
         if name in work and (not isinstance(work[name], str) or not re.fullmatch(HEX64, work[name])): raise BridgeError("invalid_response")
     if "result_id" in work and (not isinstance(work["result_id"], str) or not re.fullmatch(HEX32, work["result_id"])): raise BridgeError("invalid_response")
+    # worker_subject: the worker's agent subject, agent:ACCOUNT (a rated accept reviews it), only beside worker.
+    if "worker_subject" in work and ("worker" not in work or not isinstance(work["worker_subject"], str) or not work["worker_subject"].startswith("agent:")
+                                     or not re.fullmatch(HEX64, work["worker_subject"][len("agent:"):])): raise BridgeError("invalid_response")
     if "eligibility" in work and work["eligibility"] not in ELIGIBILITIES: raise BridgeError("invalid_response")
     for name in ("reward", "reviewer_fee", "reject_fee"):
         if name in work and not isinstance(work[name], dict): raise BridgeError("invalid_response")

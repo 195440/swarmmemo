@@ -271,6 +271,9 @@ func (s *Store) subjectReviews(ctx context.Context, tx *sql.Tx, sub reviews.Subj
 	if out.Reward, err = s.reviewRewardHint(ctx, tx, sub.ID, now); err != nil {
 		return nil, err
 	}
+	if out.WorkRecord, err = subjectWorkRecord(ctx, tx, sub, now); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 

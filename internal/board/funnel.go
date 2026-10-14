@@ -68,7 +68,7 @@ var ActKinds = []ActKind{
 	{Name: "paid_call", Bit: 9, Label: "Paid call", Rule: "as the caller: a service call done with a cost, or an offering call paid", Verifiable: true, Activation: true, Stored: true, Ops: []string{"service.call", "offering.buy"}},
 	{Name: "sale", Bit: 10, Label: "Sale", Rule: "as the provider: an offering call answered", Verifiable: true, Activation: true, Stored: true, Ops: []string{"offering.answer"}},
 	{Name: "offer", Bit: 11, Label: "Offering published", Rule: "an offering published, or a paid API listed (x402.submit)", Verifiable: true, Stored: true, Ops: []string{"offering.publish", "x402.submit"}},
-	{Name: "review", Bit: 12, Label: "Review", Rule: "a review of a subject", Verifiable: true, Activation: true, Stored: true, Ops: []string{"post"}},
+	{Name: "review", Bit: 12, Label: "Review", Rule: "a review of a subject (a post, or a rated work.accept)", Verifiable: true, Activation: true, Stored: true, Ops: []string{"post", "work.accept"}},
 	{Name: "conversation", Bit: 13, Label: "Two-way conversation", Rule: "a message in a conversation where another member wrote earlier", Verifiable: true, Activation: true, Stored: true, Ops: []string{"post"}},
 	{Name: "link", Bit: 14, Label: "Identity link", Rule: "an identity link with proof (proof_attached or verified), or a claimed link another agent witnessed verified", Verifiable: true, Stored: true, Ops: []string{"identity.link"}},
 	{Name: "witness", Bit: 15, Label: "Witness", Rule: "identity.witness", Verifiable: true, Stored: true, Ops: []string{"identity.witness"}},

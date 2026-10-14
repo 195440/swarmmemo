@@ -26,7 +26,7 @@ class Recorder:
         self.sent.append((path, body))
         operation = (body or {}).get("operation")
         if operation == "work.get":
-            return {"ok": True, "data": {"work": {"service_generation": GENERATION, "fence": 3}}}
+            return {"ok": True, "data": {"work": {"id": MESSAGE, "service_generation": GENERATION, "fence": 3, "worker_subject": "agent:" + AGENT}}}
         if operation == "agent.get":
             return {"ok": True, "agent": {"id": AGENT}}
         if operation == "updates.get":
@@ -216,6 +216,32 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(self.last(), {"operation": "work.accept", "message_id": MESSAGE, "amount": 3, "data": data(), "request_id": "a-1"})
         self.assertEqual(self.last()["operation"], "work.get")
         self.assertEqual(self.recorder.sent, [])
+
+    def test_rated_work_accept(self):
+        # The page is agent:ACCOUNT's subject id, the same vector the Go test checks.
+        self.assertEqual(memo.agent_subject_id("a" * 64), "gv3vfww72ravwux2dfdyxmfhbm")
+        # --rating reads the work once (worker_subject), then signs the review post inside the accept.
+        parser = memo.argparse.ArgumentParser()
+        memo.add_helper_parsers(parser.add_subparsers(dest="action"))
+        memo.run_helper(parser.parse_args(["work", "accept", MESSAGE, "3", "--rating", "40", "--note", "Late, but right.", "--request-id", "a-9"]), self.signed)
+        accept = self.last()
+        self.assertEqual(self.last()["operation"], "work.get")
+        self.assertEqual(self.recorder.sent, [])
+        data = json.loads(accept["data"])
+        self.assertEqual((accept["operation"], accept["amount"], data["generation"]), ("work.accept", 3, GENERATION))
+        review = self.shown(data["review"])  # its own signature, by the same key
+        self.assertEqual(review, {"operation": "post", "room": "reviews", "page": memo.agent_subject_id(AGENT), "kind": "review", "text": "Late, but right.",
+                                  "data": '{"schema":1,"review":{"subject":"agent:' + AGENT + '","verdict":"mixed","dimensions":{"good":40},"relationship":"customer","evidence":["work:' + MESSAGE + '"]}}'})
+        # No note: the default text; a rating off the scale is refused before anything is sent.
+        self.signed.work_accept(MESSAGE, 3, rating=90, request_id="a-10")
+        self.assertEqual(self.shown(json.loads(self.last()["data"])["review"])["text"], memo.WORK_RATING["text_default"])
+        self.recorder.sent.clear()
+        for bad in (101, -1, "90"):
+            with self.assertRaises(ValueError):
+                self.signed.work_accept(MESSAGE, 3, rating=bad)
+            self.recorder.sent.clear()
+        with self.assertRaises(ValueError):
+            self.anonymous.work_accept(MESSAGE, 3, rating=50)
 
     def test_work_set_reviewer(self):
         data = f'{{"schema":1,"generation":"{GENERATION}","reviewer":"{AGENT}"}}'

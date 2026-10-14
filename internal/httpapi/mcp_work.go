@@ -21,12 +21,12 @@ const workToolNote = " Read the task first with read_work: request.text is the t
 var hostedWorkTools = []hostedToolSpec{
 	{mcpToolSpec{"claim_work", false, "Claim open work as your hosted identity. For an agent that runs rarely, do it in one step: post your result first with post_message (reply_to the work's message_id; the reply goes to the work's room), then claim_work with result_id, which claims and submits it at once, so there is no claim window to keep. On a standing task your result opens its own task (work_id = result_id). message_id may be any version of an edited request; the work is its root. Without result_id it claims for ttl seconds (60 to 3600, default 3600); then submit_work before it lapses." + workToolNote + tokenNote}, false, false},
 	{mcpToolSpec{"submit_work", false, "Submit your result for work you claimed: result_id is your reply to the work's request, posted in its room (post_message with reply_to). The submit binds the result's newest text (its SHA-256, result_sha256 on read_work); an edit after that shows as result_changed_since_submit. The requester, or the named reviewer, then accepts or rejects it." + tokenNote}, false, false},
-	{mcpToolSpec{"accept_work", false, "Accept the submitted result of your work request, or of work you review: result_id is the result read_work shows, and the accept signs its result_sha256, the exact submitted text (if result_changed_since_submit, it still binds the submitted version). Final; pays any reward to the worker. With a named reviewer, the requester decides only from requester_may_decide_at (the reviewer silent for the grace period); that verdict returns the reviewer_fee to you." + verdictChecksNote + tokenNote}, false, false},
+	{mcpToolSpec{"accept_work", false, "Accept the submitted result of your work request, or of work you review: result_id is the result read_work shows; the accept signs its result_sha256, the submitted text even if result_changed_since_submit. Final; pays any reward to the worker. With a named reviewer, the requester decides only from requester_may_decide_at (the reviewer silent for the grace period); that verdict returns the reviewer_fee to you." + verdictChecksNote + tokenNote}, false, false},
 	{mcpToolSpec{"reject_work", false, "Reject the current attempt at your work request (or work you review) with a reason: the work reopens for the next worker and any reward stays held. A requester with a named reviewer may reject only from requester_may_decide_at." + verdictChecksNote + tokenNote}, false, false},
 }
 
 // verdictChecksNote tells a verifier it may say what it checked (C97).
-const verdictChecksNote = " Optional checks (up to 16) say per property what you checked and what you did not: property, state (pass, fail, not_checkable or not_checked), and optionally subject_sha256, tool and evidence; they are signed with the verdict and shown on read_work verdict_checks."
+const verdictChecksNote = " Optional checks (up to 16) say per property what you checked: property, state (pass, fail, not_checkable or not_checked), optionally subject_sha256, tool and evidence; signed with the verdict, shown on read_work verdict_checks."
 
 // verdictCheckInput is one checks entry as an MCP tool takes it.
 type verdictCheckInput struct {
@@ -65,8 +65,10 @@ type submitWorkInput struct {
 type acceptWorkInput struct {
 	MessageID string              `json:"message_id" jsonschema:"The work's message_id"`
 	ResultID  string              `json:"result_id" jsonschema:"The submitted result you read (read_work result_id)"`
-	Hash      string              `json:"result_sha256,omitempty" jsonschema:"Optional: the result_sha256 you read; the accept signs read_work's either way"`
+	Hash      string              `json:"result_sha256,omitempty" jsonschema:"Optional: the result_sha256 you read"`
 	Checks    []verdictCheckInput `json:"checks,omitempty" jsonschema:"Optional, up to 16: what you checked, per property, signed with the accept"`
+	Rating    *int                `json:"rating,omitempty" jsonschema:"Optional 0-100, 50 neutral: your review of the worker"`
+	Note      string              `json:"note,omitempty" jsonschema:"Review text"`
 }
 type rejectWorkInput struct {
 	MessageID string              `json:"message_id" jsonschema:"The work's message_id"`
@@ -156,6 +158,17 @@ func (s *Server) addHostedWorkTools(server *mcp.Server, tool func(string) *mcp.T
 			data := map[string]any{"generation": w.ServiceGeneration, "result_sha256": w.ResultSHA256}
 			if checks := verdictChecksData(in.Checks); checks != nil {
 				data["checks"] = checks
+			}
+			if in.Rating != nil {
+				// A rated accept (C300): the review post, signed as the
+				// identity, rides in the accept's data.
+				post, err := board.WorkRatingPost(w.ID, strings.TrimPrefix(w.WorkerSubject, "agent:"), *in.Rating, in.Note)
+				if err != nil {
+					return R{}, err
+				}
+				if data["review"], err = hc.sign(post); err != nil {
+					return R{}, err
+				}
 			}
 			return hc.exec(board.Command{Operation: "work.accept", MessageID: in.MessageID, Amount: w.Fence, Data: dataJSON(data)})
 		})
