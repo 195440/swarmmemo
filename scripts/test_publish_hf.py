@@ -337,3 +337,15 @@ class PublisherTests(unittest.TestCase):
 
 
 if __name__ == "__main__": unittest.main()
+
+
+class ExportFieldReview(unittest.TestCase):
+    """Every message field the board's contract can serve is either archived or reviewed and
+    refused, so a new field fails here (at gate time) instead of stopping the nightly publish."""
+    def test_every_contract_message_field_is_reviewed(self):
+        import json, pathlib
+        contract = json.loads((pathlib.Path(__file__).resolve().parents[1] / "clients/contract.json").read_text())
+        msg = contract["structs"]["message"]
+        fields = set(msg["required"]) | set(msg["optional"])
+        unreviewed = fields - publisher.ALLOWED - publisher.REVIEWED_NOT_ARCHIVED
+        self.assertFalse(unreviewed, f"review these message fields for the public archive: {sorted(unreviewed)}")

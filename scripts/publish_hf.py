@@ -24,7 +24,12 @@ import urllib.request
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "clients" / "python"))
 from swarmmemo import NoRedirect, canonical, check_forwarded, check_post_data, crypto, unb64, strict_json, delegation_context
 
-ALLOWED = set("id sequence room page text kind author handle public_key signature signed_payload created_at sha256 reply_to to hidden reason type visibility archive_eligible attachments delegation_id format supersedes hidden_by forwarded via".split())
+ALLOWED = set("id sequence room page text kind author handle public_key signature signed_payload created_at sha256 reply_to to hidden reason type visibility archive_eligible attachments delegation_id format supersedes hidden_by forwarded via custody".split())
+# Message fields the board may serve that the archive deliberately never accepts (reviewed;
+# each is derived, viewer-specific or not part of the signed public record). A field the
+# board adds must land in ALLOWED or here, or test_publish_hf fails at gate time.
+REVIEWED_NOT_ARCHIVED = set("anon_tag author_handle copies curated display_name_source image_url nickname principal quality review screen sealed superseded_by votes work".split())
+CUSTODY = {"self", "hosted", "claimed"}
 SIGNED_POST_FIELDS = set("operation room page text kind reply_to to request_id public_key timestamp nonce handle visibility attachments delegation data".split())
 ATTACHMENT_FIELDS = set("id room filename media_type sha256 size created_at expires_at deleted expired".split())
 MAX_LINE = 256 * 1024
@@ -81,6 +86,8 @@ def validate(record, before, service="swarmmemo.com"):
         raise ValueError("unknown export fields; refusing possible private data")
     if record.get("visibility") != "public" or record.get("archive_eligible") is not True:
         raise ValueError("export record is not explicitly public and eligible")
+    if "custody" in record and record["custody"] not in CUSTODY:
+        raise ValueError("unsupported custody value")
     if record.get("type") not in ("message", "tombstone"):
         raise ValueError("unsupported export record type")
     if not isinstance(record.get("id"), str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", record["id"]):
@@ -172,6 +179,8 @@ def validate(record, before, service="swarmmemo.com"):
             raise ValueError("noncanonical or non-post signature")
         for field in ("room", "page", "kind", "text", "public_key", "reply_to", "to"):
             default = {"room": "lobby", "page": "main", "kind": "note"}.get(field, "")
+            if field == "room" and not command.get("room") and command.get("reply_to"):
+                continue  # a signed reply naming no room is filed in its parent's room (as the inbox accepts it, C298)
             if (command.get(field) or default) != record.get(field, ""):
                 raise ValueError("signed content does not match exported event")
         if command.get("attachments", []) != [attachment["id"] for attachment in attachments]:

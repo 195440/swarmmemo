@@ -345,6 +345,98 @@ func TestReviewWorkEvidence(t *testing.T) {
 	}
 }
 
+// C319: a rated accept's own review of its worker verifies on the accept
+// alone, before the reward is paid (a held credit, USDC owed until
+// work.settle): the requester's accept is itself the attestation. Any
+// other reviewer, including the worker reviewing the requester over the
+// same work, still needs the reward paid.
+func TestReviewWorkEvidenceRequesterAttest(t *testing.T) {
+	s := reviewsStore(t)
+	alice, bob := keyFor(85), keyFor(86)
+	register(t, s, alice)
+	register(t, s, bob)
+	held := work(t, s, alice, keyID(bob), "held")
+	aliceOfBob := reviews.TypeAgent + ":" + keyID(bob)
+	aliceReview := run(t, s, reviewPost(t, alice, aliceOfBob, map[string]any{"evidence": []string{"work:" + held}}, "")).Receipt.ID
+	if e := evidenceOf(t, s, aliceReview)["work:"+held]; e.State != "verified" || e.Detail["role"] != "requester" || e.Detail["reward"] != "owed" {
+		t.Fatalf("the requester's own review, unpaid: %+v", e)
+	}
+	bobOfAlice := reviews.TypeAgent + ":" + keyID(alice)
+	bobReview := run(t, s, reviewPost(t, bob, bobOfAlice, map[string]any{"evidence": []string{"work:" + held}}, "")).Receipt.ID
+	if e := evidenceOf(t, s, bobReview)["work:"+held]; e.State != "failed" || e.Detail["reason"] != "work_reward_not_paid" {
+		t.Fatalf("another reviewer still needs payment: %+v", e)
+	}
+}
+
+// C319: workEvidenceAttestBackfill re-verifies review_evidence rows that
+// failed as work_reward_not_paid before the fix, for the work's own
+// requester reviewing its worker, once an accepted work's requester-worker
+// evidence qualifies under the new rule; it changes nothing else (another
+// account's row, or one that fails for another reason, stays as it was),
+// and a second run is a no-op.
+func TestWorkEvidenceAttestBackfill(t *testing.T) {
+	s := reviewsStore(t)
+	alice, bob, carol := keyFor(87), keyFor(88), keyFor(89)
+	register(t, s, alice)
+	register(t, s, bob)
+	register(t, s, carol)
+	held := work(t, s, alice, keyID(bob), "held")
+	selfPaid := work(t, s, carol, keyID(carol), "paid")
+	aliceOfBob := reviews.TypeAgent + ":" + keyID(bob)
+	carolOfCarol := reviews.TypeAgent + ":" + keyID(carol)
+	// Pre-fix rows: computed as failed before C319 (the requester's own
+	// citation, and an unrelated failure that the fix leaves alone).
+	aliceReview := run(t, s, reviewPost(t, alice, aliceOfBob, map[string]any{}, "")).Receipt.ID
+	carolReview := run(t, s, reviewPost(t, carol, carolOfCarol, map[string]any{}, "")).Receipt.ID
+	for _, row := range []struct{ eventID, workID string }{{aliceReview, held}, {carolReview, selfPaid}} {
+		if _, err := s.db.Exec("INSERT INTO review_evidence(event_id,evidence,class,state,checked_at,detail) VALUES(?,?,'work','failed',?,?)",
+			row.eventID, "work:"+row.workID, testTime, `{"reason":"work_reward_not_paid"}`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// openTest already ran the backfill once, at store open, before these
+	// rows existed (recorded in meta, n=0 then); reset the marker so the
+	// run below sees them, as a real upgrade's first start would.
+	if _, err := s.db.Exec("DELETE FROM meta WHERE key=?", workEvidenceAttestBackfillKey); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	n, err := workEvidenceAttestBackfill(testContext, tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		var state, detail string
+		_ = tx.QueryRow("SELECT state,detail FROM review_evidence WHERE event_id=? AND evidence=?", aliceReview, "work:"+held).Scan(&state, &detail)
+		t.Fatalf("backfilled: %d; alice's row now %s %s", n, state, detail)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if e := evidenceOf(t, s, aliceReview)["work:"+held]; e.State != "verified" || e.Detail["role"] != "requester" || e.Detail["reward"] != "owed" {
+		t.Fatalf("the requester's row was not re-verified: %+v", e)
+	}
+	if e := evidenceOf(t, s, carolReview)["work:"+selfPaid]; e.State != "failed" || e.Detail["reason"] != "work_reward_not_paid" {
+		t.Fatalf("the self-paid row changed: %+v", e)
+	}
+	// Idempotent: recorded in meta, a second run changes nothing.
+	tx2, err := s.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx2.Rollback()
+	if n, err = workEvidenceAttestBackfill(testContext, tx2); err != nil || n != 0 {
+		t.Fatalf("second run: %d, %v", n, err)
+	}
+	if err = tx2.Commit(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // M2: a stamp is observed evidence only of a cited fetch's raw bytes.
 func TestReviewStampBinding(t *testing.T) {
 	s := reviewsStore(t)

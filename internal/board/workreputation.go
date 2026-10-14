@@ -34,6 +34,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"swarmmemo/internal/find"
@@ -397,4 +398,72 @@ func (s *Store) rateWork(ctx context.Context, tx *sql.Tx, c Command, a actor, w 
 		return nil, nil, errors.New("board: a rated accept's review has no receipt")
 	}
 	return res.Receipt, &r, nil
+}
+
+// workEvidenceAttestBackfillKey marks workEvidenceAttestBackfill done (meta),
+// as tlogBackfillIdentity does: migration-free, run once from upkeepData.
+const workEvidenceAttestBackfillKey = "work_evidence_attest_backfill"
+
+// workEvidenceAttestBackfill is C319's one-time fix-up: before it, a rated
+// accept's own review (rateWork) failed its work:ID evidence, because the
+// reward was not yet paid at accept time (a held credit, an owed USDC
+// transfer) and verifyWork required payment of every reviewer alike. It
+// now verifies a requester's own citation of its accept without payment
+// (the accept is the attestation); this re-checks every review_evidence
+// row that failed for that reason before the fix, with verifyWork itself
+// (one evidence path), at the review's own created_at so the recheck
+// decides exactly as the fix would have at the time. It runs once,
+// recorded in meta, so a second start changes nothing. It flips only the
+// evidence row to verified: the review's stored evidence_class and any
+// review reward are left alone, so this never grants a reward retroactively
+// for a review posted in the past.
+func workEvidenceAttestBackfill(ctx context.Context, tx *sql.Tx) (int, error) {
+	var done int
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM meta WHERE key=?", workEvidenceAttestBackfillKey).Scan(&done); err != nil || done > 0 {
+		return 0, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT v.event_id,v.evidence,r.account,r.created_at,s.type,s.key,s.id
+ FROM review_evidence v JOIN reviews r ON r.event_id=v.event_id JOIN subjects s ON s.id=r.subject
+ WHERE v.evidence LIKE 'work:%' AND v.state='failed' AND json_extract(v.detail,'$.reason')='work_reward_not_paid'`)
+	if err != nil {
+		return 0, err
+	}
+	type candidate struct {
+		eventID, evidence, account, subType, subKey, subID string
+		createdAt                                          int64
+	}
+	var list []candidate
+	for rows.Next() {
+		var c candidate
+		if err = rows.Scan(&c.eventID, &c.evidence, &c.account, &c.createdAt, &c.subType, &c.subKey, &c.subID); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		list = append(list, c)
+	}
+	if err = rows.Close(); err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, c := range list {
+		id := strings.TrimPrefix(c.evidence, "work:")
+		sub := reviews.Subject{Type: c.subType, Key: c.subKey, ID: c.subID}
+		row := reviewEvidenceRow{id: c.evidence, class: "work", state: "failed", detail: map[string]any{}}
+		if err = verifyWork(ctx, tx, c.account, sub, id, c.createdAt, &row); err != nil {
+			return n, err
+		}
+		if row.state != "verified" {
+			continue
+		}
+		detail, err := json.Marshal(row.detail)
+		if err != nil {
+			return n, err
+		}
+		if _, err = tx.ExecContext(ctx, "UPDATE review_evidence SET state=?,checked_at=?,detail=? WHERE event_id=? AND evidence=? AND state='failed'", row.state, c.createdAt, string(detail), c.eventID, c.evidence); err != nil {
+			return n, err
+		}
+		n++
+	}
+	_, err = tx.ExecContext(ctx, "INSERT INTO meta(key,value) VALUES(?,?)", workEvidenceAttestBackfillKey, strconv.Itoa(n))
+	return n, err
 }

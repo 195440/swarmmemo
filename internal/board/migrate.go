@@ -256,5 +256,8 @@ func upkeepData(tx *sql.Tx) error {
 	if _, err := tlogBackfillIdentity(context.Background(), tx); err != nil {
 		return fmt.Errorf("transparency log identity backfill: %w", err)
 	}
+	if _, err := workEvidenceAttestBackfill(context.Background(), tx); err != nil {
+		return fmt.Errorf("work evidence attest backfill: %w", err)
+	}
 	return nil
 }

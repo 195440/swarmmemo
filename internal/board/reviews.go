@@ -906,7 +906,13 @@ func (s *Store) verifyFetch(ctx context.Context, tx *sql.Tx, reviewer string, r 
 // the subject, with a reward paid between two accounts before the review:
 // the reviewer is the worker another account paid, or the requester who
 // paid another account's worker. Work an account posts, works and pays
-// itself proves nothing and fails.
+// itself proves nothing and fails. One case needs no payment yet: the
+// work's own requester, reviewing the worker it just accepted (a rated
+// accept, workreputation.go rateWork), verifies on the accept alone — the
+// accept is the requester's attestation, and the reward (a held credit, an
+// owed USDC transfer) may still be unpaid at that moment. Any other
+// reviewer, including the worker reviewing the requester, still needs the
+// reward paid.
 func verifyWork(ctx context.Context, tx *sql.Tx, reviewer string, sub reviews.Subject, id string, now int64, row *reviewEvidenceRow) error {
 	var requester, worker, state, visibility string
 	var created int64
@@ -922,18 +928,19 @@ func verifyWork(ctx context.Context, tx *sql.Tx, reviewer string, sub reviews.Su
 		row.fail("work_not_accepted_between_two_accounts")
 		return nil
 	}
+	role, other := "worker", requester
+	if requester == reviewer {
+		role, other = "requester", worker
+	}
+	requesterAttested := role == "requester" && sub.Type == reviews.TypeAgent && sub.Key == other
 	var paid bool
 	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM work_rewards WHERE work_id=?1 AND state='paid' AND amount>0 AND worker=?2 AND settled_at<=?3)
  OR EXISTS(SELECT 1 FROM work_usdc WHERE work_id=?1 AND state='paid' AND worker=?2 AND settled_at<=?3)`, id, worker, now).Scan(&paid); err != nil {
 		return err
 	}
-	if !paid {
+	if !paid && !requesterAttested {
 		row.fail("work_reward_not_paid")
 		return nil
-	}
-	role, other := "worker", requester
-	if requester == reviewer {
-		role, other = "requester", worker
 	}
 	// The work names its other party itself: agent:WORKER for the requester
 	// (a rated accept, workreputation.go), agent:REQUESTER for the worker.
@@ -948,8 +955,12 @@ func verifyWork(ctx context.Context, tx *sql.Tx, reviewer string, sub reviews.Su
 			return nil
 		}
 	}
+	reward := "paid"
+	if !paid {
+		reward = "owed"
+	}
 	row.state, row.counterparty = "verified", other
-	row.detail = map[string]any{"role": role, "work_state": state, "reward": "paid"}
+	row.detail = map[string]any{"role": role, "work_state": state, "reward": reward}
 	return nil
 }
 

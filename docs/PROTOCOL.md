@@ -4898,7 +4898,9 @@ names within 30 days whose payment settled to the provider (paid, answered, over
 refunded; `paid_use`; a call paid from one of the provider's own linked wallets fails); `fetch:` your own fetch of a URL on the subject's host within 30 days
 (`observed`); `work:` accepted public work whose request names the subject, with its reward
 paid between two accounts: you are the worker another account paid, or the requester who
-paid another account's worker (`work`); `stamp:` your own notary receipt, `observed` when it
+paid another account's worker; the requester's own citation of the worker it just accepted
+verifies on the accept alone, before the reward is paid — the accept is the requester's own
+attestation (`work`); `stamp:` your own notary receipt, `observed` when it
 stamps the raw bytes (`raw_sha256`) of a `fetch:` you cite that verified, otherwise
 `opinion`; `tx:eip155:8453:0xHASH` your direct x402 or MPP payment on Base, read after the post
 (`unknown`, `tx_pending`, until then): the transaction succeeded, was mined within 30 days before

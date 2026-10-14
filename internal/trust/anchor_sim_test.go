@@ -15,28 +15,37 @@ import (
 //     plus everything its judgement edges can carry.
 //   - WORLD: the world node is the only source. Its edge to an account is
 //     what the account has paid here: priced proofs, money spent here, and
-//     time present (10¢ a day with engagement, decayed with H). The
-//     operator's accounts are ordinary nodes with their own costs; anyone
-//     passes on only what it holds above node_cap.
+//     time present (10¢ a day with engagement). The operator's accounts are
+//     ordinary nodes with their own costs; anyone passes on only what it
+//     holds above node_cap.
+//
+// World edges fade only with inactivity (RFC 0021 §9): they hold while the
+// account is active (a day with engagement: an independent account with
+// standing responded) and halve every Hd after G days without one.
+// Judgement edges keep the time half-life H.
 //
 // The flow is flowDetail in both. Run: go test -run TestAnchor -v ./internal/trust.
 
 const (
-	aH       = 90 // the one half-life, days
-	aOps     = 4  // hugo, weaver, khepri, skitter
-	aDayCost = 10 // time present: cents per day with engagement
+	aH       = 180 // judgement edges' half-life, days
+	aG       = 120 // inactivity grace: world edges hold this long after the last active day
+	aHd      = 180 // then they halve every aHd days
+	aOps     = 4   // hugo, weaver, khepri, skitter
+	aDayCost = 10  // time present: cents per day with engagement
 )
 
 var aOpNames = [aOps]string{"hugo", "weaver", "khepri", "skitter"}
 
 type aAcct struct {
 	proof       int64   // priced proofs (wallet, github, domain, pow rows)
-	hist, spend float64 // time present and money spent here, decayed with H
+	fade        float64 // what inactivity has left of the proofs
+	hist, spend float64 // time present and money spent here
 	rate        float64 // chance the account is active on a day
 	joined      int
+	last        int // last active day
 }
 
-func (a aAcct) costs() float64 { return float64(a.proof) + a.hist + a.spend }
+func (a aAcct) costs() float64 { return float64(a.proof)*a.fade + a.hist + a.spend }
 
 type aEdge struct {
 	a, b int32
@@ -53,7 +62,7 @@ type aSim struct {
 }
 
 func (s *aSim) join(day int) {
-	a := aAcct{joined: day, rate: 0.01}
+	a := aAcct{joined: day, last: day, fade: 1, rate: 0.01}
 	switch r := s.rng.IntN(10); {
 	case r < 1:
 		a.rate = 0.5
@@ -97,7 +106,7 @@ func (s *aSim) recent() int {
 func newASim(seed uint64) *aSim {
 	s := &aSim{rng: rand.New(rand.NewPCG(seed, 21))}
 	for i := 0; i < aOps; i++ {
-		s.acct = append(s.acct, aAcct{rate: 1})
+		s.acct = append(s.acct, aAcct{rate: 1, fade: 1})
 	}
 	s.acct[0].proof = 700  // hugo: GitHub 300 + domain 400
 	s.acct[1].spend = 4500 // weaver: bounties paid
@@ -111,6 +120,7 @@ func newASim(seed uint64) *aSim {
 		for d := 0; d < 21; d++ {
 			if s.rng.Float64() < a.rate/2 {
 				a.hist += aDayCost
+				a.last = d - 21
 			}
 		}
 	}
@@ -126,19 +136,22 @@ func newASim(seed uint64) *aSim {
 // step simulates one day of organic activity.
 func (s *aSim) step() {
 	s.day++
-	f := math.Exp2(-1.0 / aH)
+	f := math.Exp2(-1.0 / aHd)
 	for i := 0; i < 5; i++ {
 		s.join(s.day)
 	}
 	evidence := []float64{1, 1, 0.4, 0.3, 0.2}
 	for i := range s.acct {
 		a := &s.acct[i]
-		a.hist, a.spend = a.hist*f, a.spend*f
+		if s.day-a.last > aG { // dormant: world edges fade
+			a.hist, a.spend, a.fade = a.hist*f, a.spend*f, a.fade*f
+		}
 		if i < aOps || s.rng.Float64() >= a.rate {
 			continue
 		}
-		if s.rng.IntN(2) == 0 { // the day drew engagement
+		if s.rng.IntN(2) == 0 { // the day drew engagement: active
 			a.hist = min(a.hist+aDayCost, 900)
+			a.last = s.day
 		}
 		if s.rng.IntN(50) == 0 { // money spent here: credits or a paid call
 			a.spend += float64(10 + s.rng.IntN(191))
@@ -168,7 +181,9 @@ func (s *aSim) step() {
 	s.acct[3].spend += 4
 	for _, i := range []int{1, 2, 3} {
 		s.acct[i].hist = min(s.acct[i].hist+aDayCost, 900)
+		s.acct[i].last = s.day
 	}
+	s.acct[0].last = s.day // hugo posts and is answered
 }
 
 // world builds the flow graph: everyone else first (so uWorld.ring's
@@ -383,5 +398,314 @@ func TestAnchorAllowanceShares(t *testing.T) {
 	t.Logf("a ring's 600¢ buys %d KiB a day of the standing slice on one key, %d KiB split over 50 keys (plus 50 floors from the shared floor slice)", (a[len(st)]-fa)>>10, ringSplit>>10)
 	if ringSplit > a[len(st)]-fa+50 {
 		t.Errorf("splitting standing over keys raised its share: %d > %d", ringSplit, a[len(st)]-fa)
+	}
+}
+
+// RFC 0021 §7: self-dealing payments. N accounts of one operator each pay
+// p cents to SwarmMemo (real costs), judge the next at 100 with paid use,
+// and pay it L cents every run for R runs, so the same money goes round.
+// Three rules for what a payment to another account adds to the payer's
+// world edge (summed per payee over H):
+//
+//   - visible: payer and payee are not independent (one root, a transfer
+//     path back within funded_days, a shared payout or wallet address): 0.
+//   - literal: up to the payee's standing at the previous run.
+//   - direct: up to the payee's direct costs (proofs, money paid to
+//     SwarmMemo, time present: its world edge without payment credits), and
+//     a payee's direct costs back at most that much credit over all payers.
+//
+// The star shape (N − 1 payers into one hub) is why the direct budget is per
+// payee, not per pair.
+func selfDeal(t testing.TB, N int, p, L int64, R int, rule string, star bool) (paid, total int64) {
+	next := func(i int) int {
+		if star {
+			return 0
+		}
+		return (i + 1) % N
+	}
+	hold := make([]int64, N)
+	for i := range hold {
+		hold[i] = min(p, uNodeCap)
+	}
+	for r := 1; r <= R; r++ {
+		g := &uWorld{}
+		budget := make([]int64, N) // direct rule: what each payee can still back
+		for i := range budget {
+			budget[i] = p
+		}
+		for i := 0; i < N; i++ {
+			var credit int64
+			if j := next(i); j != i {
+				switch rule {
+				case "literal":
+					credit = min(L*int64(r), hold[j])
+				case "direct":
+					credit = min(L*int64(r), budget[j])
+					budget[j] -= credit
+				}
+			}
+			g.addNode(p + credit)
+		}
+		g.honest = N
+		for i := 0; i < N; i++ {
+			if j := next(i); j != i {
+				g.edge(i, j, 1)
+			}
+		}
+		hold = flowStanding(t, g, nil)
+	}
+	for _, h := range hold {
+		total += h
+	}
+	return int64(N) * p, total
+}
+
+func TestAnchorSelfDealing(t *testing.T) {
+	const p, L, R = 100, 1000, 30
+	for _, c := range []struct {
+		N    int
+		star bool
+	}{{2, false}, {10, false}, {50, false}, {10, true}} {
+		shape := "loop"
+		if c.star {
+			shape = "star"
+		}
+		paid, vis := selfDeal(t, c.N, p, L, R, "visible", c.star)
+		_, lit := selfDeal(t, c.N, p, L, R, "literal", c.star)
+		_, dir := selfDeal(t, c.N, p, L, R, "direct", c.star)
+		t.Logf("%s of %d, %d¢ each paid to SwarmMemo, %d¢ a run round the %s for %d runs: paid in %d¢ | visible %d¢ (%.1f×) | hidden, literal rule %d¢ (%.1f×) | hidden, direct rule %d¢ (%.1f×)",
+			shape, c.N, p, L, shape, R, paid, vis, float64(vis)/float64(paid), lit, float64(lit)/float64(paid), dir, float64(dir)/float64(paid))
+		if vis != paid {
+			t.Errorf("%s of %d: visible self-dealing gained %d¢ over the %d¢ paid in", shape, c.N, vis-paid, paid)
+		}
+		if dir > 2*paid {
+			t.Errorf("%s of %d: hidden self-dealing under the direct rule holds %d¢, above twice the %d¢ paid in", shape, c.N, dir, paid)
+		}
+	}
+}
+
+// RFC 0021 §8: a caught ring and its backers. On today's graph, five honest
+// accounts are funded judges (1,500¢ of costs each, so they pass flow on)
+// and rate a ring member's work at 80 (a 120¢ edge). The ring is 10 keys;
+// one links a wallet proof (600¢) and spends 1,000¢ here.
+//
+// The penalty: members hold 0 and pass nothing, their proof roots burn for
+// good and their spend and time are destroyed; each backer U loses
+// f = c / (c + U) of its standing for the duration, c being its edge
+// capacity into the set (a 120¢ edge: 37.5%); a repeat doubles f. In the
+// sim a backer's world edge becomes (1 − f) × what it kept and its
+// out-capacity (1 − f) × its own, which is what f of its standing means for
+// an account fed only by its own costs.
+func TestAnchorPenalty(t *testing.T) {
+	g, _ := newASim(1).world()
+	rng := rand.New(rand.NewPCG(8, 21))
+	backers := rng.Perm(g.honest)[:5]
+	for _, b := range backers {
+		g.price[b] = 1500
+	}
+	ringOf := func(g *uWorld, k int, costs int64) []int {
+		m := make([]int, k)
+		for i := range m {
+			m[i] = g.addNode(0)
+		}
+		g.price[m[0]] = costs
+		for _, a := range m {
+			for _, b := range m {
+				if a != b {
+					g.edge(a, b, 1)
+				}
+			}
+		}
+		return m
+	}
+	h := g.clone()
+	members := ringOf(h, 10, 600+1000)
+	for i, b := range backers {
+		h.edge(b, members[i%len(members)], 0.6)
+	}
+	before := flowStanding(t, h, nil)
+	ring0, back0 := sumAt(before, members), sumAt(before, backers)
+	cut := 1600 + 5*0.6*uU
+	t.Logf("before: the ring holds %.0f¢ (cut %.0f¢), the 5 backers %.0f¢", ring0, cut, back0)
+	if ring0 > cut+1 {
+		t.Errorf("the ring holds %.0f¢, above its cut %.0f¢", ring0, cut)
+	}
+	penalise := func(k int) (ring, back float64) {
+		p := h.clone()
+		in := map[int32]bool{}
+		for _, m := range members {
+			p.price[m] = 0
+			in[int32(m)] = true
+		}
+		for e := range p.w { // members neither pass nor receive
+			if in[p.src[e]] || in[p.dst[e]] {
+				p.w[e] = 0
+			}
+		}
+		c := 0.6 * uU
+		f := min(1, c/(c+uU)*math.Exp2(float64(k-1)))
+		for _, b := range backers {
+			p.price[b] = int64(float64(min(p.price[b], uNodeCap)) * (1 - f))
+			p.m[b] *= 1 - f
+		}
+		st := flowStanding(t, p, nil)
+		ring, back = sumAt(st, members), sumAt(st, backers)
+		t.Logf("penalty %d (%d days): the ring holds %.0f¢; backers lose f = %.1f%%, holding %.0f¢ (−%.0f¢)",
+			k, 30<<(2*(k-1)), ring, 100*f, back, back0-back)
+		return ring, back
+	}
+	if ring, back := penalise(1); ring != 0 || back >= back0 {
+		t.Errorf("first penalty: the ring holds %.0f¢ (want 0), backers %.0f¢ (had %.0f¢)", ring, back, back0)
+	}
+	penalise(2)
+	// Re-registering: 10 fresh keys with the same wallet root (burned: 0¢)
+	// and no new spend, then the same with 1,000¢ of new spend.
+	for _, spend := range []int64{0, 1000} {
+		r := g.clone()
+		again := ringOf(r, 10, spend)
+		held := sumAt(flowStanding(t, r, nil), again)
+		t.Logf("re-registered with the burned proof and %d¢ of new spend: the ring holds %.0f¢", spend, held)
+		if held > float64(spend)+1 {
+			t.Errorf("re-registering with burned proofs restored standing: %.0f¢ > %d¢ new spend", held, spend)
+		}
+	}
+}
+
+// dormantFactor is what inactivity leaves of a world edge after days
+// without an active day: nothing lost within the grace G, then halving
+// every Hd.
+func dormantFactor(days int) float64 {
+	return math.Exp2(-float64(max(0, days-aG)) / aHd)
+}
+
+// RFC 0021 §9: spend as collateral. One account, no backers: standing
+// against dollars spent once (now; a year later, active throughout; a year
+// later, dormant since the spend), its vote weight v(s), and what the rest
+// backs if it judges ten fresh accounts at full strength. Standing
+// saturates at node_cap and v(s) at c_ref; above that, money only backs
+// others edge by edge, a cent for a cent.
+func TestAnchorSpendCurve(t *testing.T) {
+	for _, usd := range []float64{0.5, 1, 2, 5, 7.5, 10, 30, 100, 1000} {
+		var row [2]int64
+		for k, fade := range []float64{1, dormantFactor(365)} {
+			g := &uWorld{}
+			g.addNode(int64(usd * 100 * fade))
+			g.honest = 1
+			row[k] = flowStanding(t, g, nil)[0]
+		}
+		g := &uWorld{}
+		g.addNode(int64(usd * 100))
+		for i := 0; i < 10; i++ {
+			g.edge(0, g.addNode(0), 1)
+		}
+		g.honest = 1
+		st := flowStanding(t, g, nil)
+		var backed int64
+		for _, s := range st[1:] {
+			backed += s
+		}
+		t.Logf("$%.2f spent: standing %d¢ now and a year later if active, %d¢ a year later if dormant; vote weight %.2f; judging 10 fresh accounts it backs %d¢ more",
+			usd, row[0], row[1], float64(VoteWeightPPM(row[0], 250000, 500, 50))/1e6, backed)
+		if row[0] > min(int64(usd*100), uNodeCap) || st[0] != row[0] || st[0]+backed > int64(usd*100) {
+			t.Errorf("$%.2f: standing %d¢ / backed %d¢ exceed what was paid or node_cap", usd, row[0], backed)
+		}
+	}
+}
+
+// RFC 0021 §9: inactivity decay. World edges hold while an account is
+// active (on some day an independent account with standing ≥ v_floor, 50¢,
+// responded to, voted on or judged its work) and halve every Hd after G
+// days without that. Each active day also adds 10¢ of time present (at
+// most 900¢), backed by the responder: a responder's direct costs (proofs
+// and money, not time present) back at most that much outstanding time
+// present, as payments do (§7). Accounts here have no judgement edges, so
+// standing is min(costs, node_cap).
+type iAcct struct {
+	direct, hist, backed float64
+	last                 int
+}
+
+func (a *iAcct) standing() float64 { return min(a.direct+a.hist, uNodeCap) }
+
+// iRing runs accounts with the given direct costs for days days, each
+// responding to all the others every day. It returns the total standing.
+func iRing(direct []float64, days int, budget bool) float64 {
+	a := make([]iAcct, len(direct))
+	for i := range a {
+		a[i].direct = direct[i]
+	}
+	f := math.Exp2(-1.0 / aHd)
+	for d := 1; d <= days; d++ {
+		for i := range a {
+			for j := range a {
+				if j == i || a[j].standing() < 50 {
+					continue
+				}
+				a[i].last = d
+				if a[i].hist+aDayCost <= 900 && (!budget || a[j].direct-a[j].backed >= aDayCost) {
+					a[i].hist += aDayCost
+					a[j].backed += aDayCost
+					break
+				}
+			}
+		}
+		for i := range a {
+			if d-a[i].last > aG {
+				a[i].direct, a[i].hist = a[i].direct*f, a[i].hist*f
+			}
+		}
+	}
+	var total float64
+	for i := range a {
+		total += a[i].standing()
+	}
+	return total
+}
+
+func TestAnchorInactivityDecay(t *testing.T) {
+	// A steady active spender, 100¢ a month: the old rule (spend halving
+	// every 90 days regardless) against inactivity decay.
+	var old, held float64
+	for d := 0; d <= 365; d++ {
+		old *= math.Exp2(-1.0 / 90)
+		if d%30 == 0 {
+			old += 100
+			held += 100
+		}
+		if d == 90 || d == 180 || d == 365 {
+			t.Logf("active spender, 100¢ a month, day %d: %.0f¢ under a 90-day half-life, %.0f¢ under inactivity decay", d, min(old, uNodeCap), min(held, uNodeCap))
+		}
+	}
+	if min(held, uNodeCap) < uNodeCap {
+		t.Errorf("a steady active spender should hold node_cap after a year, holds %.0f¢", held)
+	}
+	// A dormant account: 750¢ spent on day 0, active 30 days, then gone.
+	for _, d := range []int{90, 180, 365, 730} {
+		v := 750 * dormantFactor(d-30)
+		t.Logf("dormant after day 30, 750¢ spent: day %d holds %.0f¢ (90-day half-life: %.0f¢)", d, v, 750*math.Exp2(-float64(d)/90))
+		if d >= 365 && v > 375 {
+			t.Errorf("day %d: a dormant account should have faded, holds %.0f¢", d, v)
+		}
+	}
+	// Rings faking activity by responding to each other every day for a year.
+	fresh := make([]float64, 10)
+	one := append([]float64{600}, make([]float64, 9)...)
+	each := make([]float64, 10)
+	for i := range each {
+		each[i] = 200
+	}
+	for _, c := range []struct {
+		name  string
+		costs []float64
+	}{{"10 fresh keys", fresh}, {"10 keys, one with 600¢", one}, {"10 keys with 200¢ each", each}} {
+		var paid float64
+		for _, x := range c.costs {
+			paid += x
+		}
+		free, budgeted := iRing(c.costs, 365, false), iRing(c.costs, 365, true)
+		t.Logf("ring of %s, paid %.0f¢, a year of mutual responses: %.0f¢ with unbacked time present, %.0f¢ with responder-backed time present", c.name, paid, free, budgeted)
+		if budgeted > 2*paid+1 {
+			t.Errorf("%s: faked activity holds %.0f¢, above twice the %.0f¢ paid", c.name, budgeted, paid)
+		}
 	}
 }
