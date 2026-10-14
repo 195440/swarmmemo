@@ -756,6 +756,9 @@ func (x *x402) Work(ctx context.Context, _ *sql.DB, now int64) (int, error) {
 		_, _ = x.importCatalogue(ctx, now) // the store's clock, as every load
 		cancel()
 		ctx, cancel = context.WithTimeout(context.Background(), x402ImportDeadline)
+		_, _ = x.reprobeSubmitted(ctx, now) // submitted entries, as the crawl sees crawled ones
+		cancel()
+		ctx, cancel = context.WithTimeout(context.Background(), x402ImportDeadline)
 		_, _ = x.importMPP(ctx, now)
 		cancel()
 		ctx, cancel = context.WithTimeout(context.Background(), x402ScreenDeadline)
@@ -863,11 +866,13 @@ func (x *x402) readHistory(ctx context.Context, now int64) (x402History, error) 
 }
 
 // x402RankKey is what ranks an open resource: ours failing last; vetted
-// ones first; then our own paid answers; then the trusted discovery signal;
-// the lower price; the id.
+// ones first; then our own paid answers; then those their proven owner
+// listed (x402.submit); then the trusted discovery signal; the lower price;
+// the id.
 type x402RankKey struct {
 	demoted, vetted bool
 	paid            int64
+	submitted       bool
 	sig             bazaarSignal
 	price           int64
 	id              string
@@ -881,6 +886,8 @@ func (a x402RankKey) before(b x402RankKey) bool {
 		return a.vetted
 	case a.paid != b.paid:
 		return a.paid > b.paid
+	case a.submitted != b.submitted:
+		return a.submitted
 	case better(a.sig, b.sig) != better(b.sig, a.sig):
 		return better(a.sig, b.sig)
 	case a.price != b.price:
@@ -1035,19 +1042,8 @@ func (x *x402) importCatalogue(ctx context.Context, now int64) (int, error) {
 		}
 		for _, r := range all[start:min(start+x402UpsertBatch, len(all))] {
 			f := byID[r.ID]
-			query, _ := json.Marshal(r.Query)
-			if query == nil || string(query) == "null" {
-				query = []byte("[]")
-			}
-			// An id is its method and URL's hash: a row whose URL or method
-			// differs is a collision, never overwritten (L2).
-			if _, err = tx.ExecContext(ctx, `INSERT INTO x402_catalogue(id,bundler,url,method,pay_to,amount,query,body,category,summary,source,payers,calls,curated,first_seen,last_seen)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-ON CONFLICT(id) DO UPDATE SET pay_to=excluded.pay_to, amount=excluded.amount, query=excluded.query, body=excluded.body, category=excluded.category,
- summary=excluded.summary, source=excluded.source, payers=excluded.payers, calls=excluded.calls, curated=excluded.curated, last_seen=excluded.last_seen
- WHERE x402_catalogue.url=excluded.url AND x402_catalogue.method=excluded.method`,
-				r.ID, r.Bundler, r.URL, r.Method, r.PayTo.String(), r.MaxAmount, string(query), b2i(r.Body), r.Category, r.Summary, f.src,
-				f.sig.Payers, f.sig.Calls, b2i(f.sig.Curated), now, now); err != nil {
+			r.Source = f.src
+			if err = upsertCatalogue(ctx, tx, r, f.sig, now); err != nil {
 				_ = tx.Rollback()
 				return 0, x.importFailed(err)
 			}
@@ -1064,6 +1060,28 @@ ON CONFLICT(id) DO UPDATE SET pay_to=excluded.pay_to, amount=excluded.amount, qu
 	}
 	x.cat.lastError.Store(nil)
 	return len(all), x.loadCatalogue(ctx, now)
+}
+
+// upsertCatalogue writes one open resource as seen now, crawled or
+// submitted (r.Source says which). An id is its method and URL's hash: a
+// row whose URL or method differs is a collision, never overwritten (L2).
+// A crawl never overwrites a submitted row: its owner's reading stands, and
+// the refresh re-probes it (x402_submit.go).
+func upsertCatalogue(ctx context.Context, tx *sql.Tx, r *X402Resource, sig bazaarSignal, now int64) error {
+	query, _ := json.Marshal(r.Query)
+	if query == nil || string(query) == "null" {
+		query = []byte("[]")
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO x402_catalogue(id,bundler,url,method,pay_to,amount,query,body,category,summary,source,payers,calls,curated,first_seen,last_seen)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(id) DO UPDATE SET pay_to=excluded.pay_to, amount=excluded.amount, query=excluded.query, body=excluded.body, category=excluded.category,
+ summary=excluded.summary, source=excluded.source, payers=excluded.payers, calls=excluded.calls, curated=excluded.curated, last_seen=excluded.last_seen
+ WHERE x402_catalogue.url=excluded.url AND x402_catalogue.method=excluded.method
+ AND (substr(x402_catalogue.source,1,?)<>? OR substr(excluded.source,1,?)=?)`,
+		r.ID, r.Bundler, r.URL, r.Method, r.PayTo.String(), r.MaxAmount, string(query), b2i(r.Body), r.Category, r.Summary, r.Source,
+		sig.Payers, sig.Calls, b2i(sig.Curated), now, now,
+		len(x402SubmittedPrefix), x402SubmittedPrefix, len(x402SubmittedPrefix), x402SubmittedPrefix)
+	return err
 }
 
 // recordAutoVets writes the rule's verdicts in x402_vetted, a batch per
@@ -1252,7 +1270,7 @@ FROM x402_catalogue WHERE last_seen>=? AND id>? ORDER BY id LIMIT ?`, stale, aft
 			r.summaryStatus = summaryStatusOf(r, verdicts[c.hash])
 			s.importedAt = max(s.importedAt, c.seen)
 			s.signal[r.ID] = c.sig
-			keys[r] = x402RankKey{demoted: s.stats[r.ID].demoted(), vetted: r.Vetted, paid: hist.paid[r.ID], sig: c.sig, price: r.MaxAmount, id: r.ID}
+			keys[r] = x402RankKey{demoted: s.stats[r.ID].demoted(), vetted: r.Vetted, paid: hist.paid[r.ID], submitted: r.Submitter() != "", sig: c.sig, price: r.MaxAmount, id: r.ID}
 			s.open = append(s.open, r)
 		}
 		sort.SliceStable(s.open, func(i, j int) bool { return keys[s.open[i]].before(keys[s.open[j]]) })

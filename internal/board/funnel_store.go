@@ -641,6 +641,7 @@ func (s *Store) deriveAccount(ctx context.Context, account string, from, to int6
 		{`SELECT settled_at FROM offering_calls WHERE caller<>'' AND caller IN ` + accountIDs + ` AND settled_at BETWEEN ?2 AND ?3 AND settled_at>0`, simple("paid_call")},
 		{`SELECT answered_at FROM offering_calls WHERE account=?1 AND answered_at BETWEEN ?2 AND ?3 AND answered_at>0`, simple("sale")},
 		{`SELECT created_at FROM offerings WHERE account=?1 AND created_at BETWEEN ?2 AND ?3`, simple("offer")},
+		{`SELECT created_at FROM audit WHERE operation='` + auditX402Listed + `' AND actor IN ` + accountIDs + ` AND created_at BETWEEN ?2 AND ?3`, simple("offer")},
 		{`SELECT created_at FROM identity_links WHERE agent IN ` + accountIDs + ` AND state IN ('proof_attached','verified') AND created_at BETWEEN ?2 AND ?3`, simple("link")},
 		{`SELECT max(w.created_at) FROM identity_links l JOIN link_witnesses w ON w.agent=l.agent AND w.kind=l.kind AND w.value=l.value AND w.verdict='verified' AND w.superseded_at=0 AND w.witness<>l.agent
  WHERE l.agent IN ` + accountIDs + ` AND l.state='claimed' AND w.created_at BETWEEN ?2 AND ?3 GROUP BY l.agent,l.kind,l.value`, simple("link")},

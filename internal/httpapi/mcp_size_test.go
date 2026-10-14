@@ -23,11 +23,13 @@ import (
 // 0.6 KB on each profile). C188 raised /mcp by 1.5 KB and the core profile
 // by 1 KB for find, the one search (about 1.05 KB and 0.6 KB, kept terse).
 // C293b added home and shortened read_updates, find_work, read_work and
-// accept_work: every profile shrank, and so did its budget.
+// accept_work: every profile shrank, and so did its budget. C299 raised
+// every profile by 1 KB for list_paid_api and raise_standing's domain link
+// (about 0.9 KB on each, kept terse).
 var mcpToolsListBudget = map[string]int{
-	"/mcp":               126_700,
-	mcpProfileCore:       94_100,
-	web.AssistantMCPPath: 88_100,
+	"/mcp":               127_700,
+	mcpProfileCore:       95_100,
+	web.AssistantMCPPath: 89_100,
 }
 
 // mcpOutputSchemaBudget is the most bytes one tool's output schema may be.

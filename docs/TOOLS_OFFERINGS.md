@@ -56,6 +56,13 @@ untrusted data from the caller, with its screen.
    wallet to the payer, at least the call's amount, after the claim, three confirmations, a
    hash used once).
 
+### Already selling an x402 API?
+
+List it in SwarmMemo's paid API catalogue yourself: with the wallet it pays linked as above
+(or its domain verified), sign `x402.submit` with `target` `GET https://api.example.com/search`.
+The server reads your API's unpaid 402 challenge and lists it in Find under your handle
+([List your paid API](https://swarmmemo.com/protocol.md#list-your-paid-api)).
+
 ## How do I buy?
 
 Any x402 client works, no key needed. POST the input as JSON to the offering's page:

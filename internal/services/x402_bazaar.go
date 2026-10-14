@@ -22,6 +22,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"swarmmemo/internal/allowance"
 )
 
 // X402Candidate is one allowlist entry in the allowlist file's own format.
@@ -56,17 +58,25 @@ type bazaarItem struct {
 		Payers json.Number `json:"l30DaysUniquePayers"`
 	} `json:"quality"`
 	Curated    json.RawMessage `json:"curated"`
-	Extensions struct {
-		Bazaar struct {
-			Info struct {
-				Input struct {
-					Method      string                     `json:"method"`
-					QueryParams map[string]json.RawMessage `json:"queryParams"`
-					BodyType    string                     `json:"bodyType"`
-				} `json:"input"`
-			} `json:"info"`
-		} `json:"bazaar"`
-	} `json:"extensions"`
+	Extensions x402Extensions  `json:"extensions"`
+}
+
+// x402Input is how an endpoint says it is called: its method, query names
+// and body type. A Bazaar item and a v2 402 challenge carry it in the
+// bazaar extension; a v1 challenge in each option's outputSchema.input.
+type x402Input struct {
+	Method      string                     `json:"method"`
+	QueryParams map[string]json.RawMessage `json:"queryParams"`
+	BodyType    string                     `json:"bodyType"`
+}
+
+// x402Extensions are the extensions we read: the Bazaar's input.
+type x402Extensions struct {
+	Bazaar struct {
+		Info struct {
+			Input x402Input `json:"input"`
+		} `json:"info"`
+	} `json:"bazaar"`
 }
 
 // bazaarSignal is a discovery item's popularity: CDP's last-30-days unique
@@ -109,6 +119,15 @@ func parseBazaarPage(raw []byte) (bazaarPage, error) {
 
 var slugRE = regexp.MustCompile(`[^a-z0-9]+`)
 
+// Why an endpoint is not admitted as a paid resource we can pay: the
+// normaliser's refusals, which a submission reports (x402_submit.go).
+var (
+	errX402NotHTTP     = refusal("x402_listing_url")         // not an HTTPS endpoint on 443 to a public DNS name
+	errX402Unsupported = refusal("x402_listing_unsupported") // no exact EIP-3009 option on our network and asset
+	errX402OverPrice   = refusal("x402_listing_price")       // a matching option asks more than the cap
+	errX402Method      = refusal("x402_listing_method")      // not GET or POST
+)
+
 // bazaarResource reads one discovery item as a resource we can pay: HTTP,
 // HTTPS on 443 to a public DNS name, an exact EIP-3009 option on cfg's
 // network and asset to a non-zero recipient for at most maxAmount, GET or
@@ -121,12 +140,21 @@ func bazaarResource(raw json.RawMessage, cfg *X402Config, maxAmount int64) (X402
 	if len(raw) > bazaarItemBytesMax || json.Unmarshal(raw, &it) != nil {
 		return X402Resource{}, bazaarSignal{}, false
 	}
+	r, sig, err := it.resource(cfg, maxAmount)
+	return r, sig, err == nil
+}
+
+// resource is the one normaliser of a paid endpoint: a crawled discovery
+// item and a submitted endpoint's 402 challenge (x402ChallengeItem) both
+// become a catalogue resource here, so the two read alike. It refuses with
+// one of the errX402 values.
+func (it *bazaarItem) resource(cfg *X402Config, maxAmount int64) (X402Resource, bazaarSignal, error) {
 	if (it.Type != "" && it.Type != "http") || checkX402URL(it.Resource) != nil {
-		return X402Resource{}, bazaarSignal{}, false
+		return X402Resource{}, bazaarSignal{}, errX402NotHTTP
 	}
 	version, _ := strconv.Atoi(it.X402Version.String())
 	var choice x402Choice
-	found := false
+	found, tooDear := false, false
 	for i, q := range it.Accepts {
 		if i >= x402AcceptsMax {
 			break
@@ -145,9 +173,14 @@ func bazaarResource(raw json.RawMessage, cfg *X402Config, maxAmount int64) (X402
 			choice, found = c, true
 			break
 		}
+		var e *allowance.Err
+		tooDear = tooDear || errors.As(err, &e) && e.Code == "x402_price_changed"
 	}
 	if !found {
-		return X402Resource{}, bazaarSignal{}, false
+		if tooDear {
+			return X402Resource{}, bazaarSignal{}, errX402OverPrice
+		}
+		return X402Resource{}, bazaarSignal{}, errX402Unsupported
 	}
 	in := it.Extensions.Bazaar.Info.Input
 	method := strings.ToUpper(in.Method)
@@ -158,15 +191,11 @@ func bazaarResource(raw json.RawMessage, cfg *X402Config, maxAmount int64) (X402
 		method = http.MethodGet
 	}
 	if method != http.MethodGet && method != http.MethodPost {
-		return X402Resource{}, bazaarSignal{}, false
+		return X402Resource{}, bazaarSignal{}, errX402Method
 	}
-	u, _ := url.Parse(it.Resource)
-	id := strings.Trim(slugRE.ReplaceAllString(strings.ToLower(u.Hostname()+u.Path), "-"), "-")
-	if len(id) > 60 {
-		id = strings.Trim(id[:60], "-")
-	}
+	id := x402Slug(it.Resource)
 	if !x402IDRE.MatchString(id) {
-		return X402Resource{}, bazaarSignal{}, false
+		return X402Resource{}, bazaarSignal{}, errX402NotHTTP
 	}
 	r := X402Resource{ID: id, URL: it.Resource, Method: method, PayTo: choice.PayTo, MaxAmount: choice.Amount, Bundler: X402Bundler,
 		Body: method == http.MethodPost && (in.BodyType == "" || in.BodyType == "json")}
@@ -189,7 +218,21 @@ func bazaarResource(raw json.RawMessage, cfg *X402Config, maxAmount int64) (X402
 		sig.Calls, _ = strconv.ParseInt(it.Quality.Calls.String(), 10, 64)
 	}
 	sig.Curated = string(bytes.TrimSpace(it.Curated)) == "true"
-	return r, sig, true
+	return r, sig, nil
+}
+
+// x402Slug is an endpoint's host and path as an id slug, at most 60 bytes
+// ("" when the URL does not parse); openID adds its hash.
+func x402Slug(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	id := strings.Trim(slugRE.ReplaceAllString(strings.ToLower(u.Hostname()+u.Path), "-"), "-")
+	if len(id) > 60 {
+		id = strings.Trim(id[:60], "-")
+	}
+	return id
 }
 
 // cleanUntrusted is upstream text made safe to show as data: valid UTF-8,

@@ -36,7 +36,8 @@ func findQuery(q url.Values) *board.Error {
 // findInstructions is /llms.txt's Find line: one verbatim example.
 func (s *Server) findInstructions() string {
 	return "- /api/find?q=" + url.QueryEscape("weather under a cent returns JSON") + ": tools, paid APIs, offerings, agents and sites\n  by intent (MCP: find); data.filters is what applied; protocol=mpp lists MPP APIs\n" +
-		"- /api/find?q=" + url.QueryEscape("sign up without a human") + ": door=agent, no human step; each door names its source\n"
+		"- /api/find?q=" + url.QueryEscape("sign up without a human") + ": door=agent, no human step\n" +
+		"- List your x402 API: /protocol.md#list-your-paid-api\n"
 }
 
 // findStore is the part of the store Find's surfaces read.

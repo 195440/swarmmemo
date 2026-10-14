@@ -756,6 +756,28 @@
    "_meta": {
     "securitySchemes": [
      {
+      "scopes": [
+       "hosted"
+      ],
+      "type": "oauth2"
+     }
+    ]
+   },
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": true,
+    "readOnlyHint": false,
+    "title": "List paid API"
+   },
+   "description": "List your x402 API (target METHOD URL) in Find's paid APIs: its 402 challenge, read never paid, must pay a wallet you linked, or its domain be yours. action withdraw removes it. Needs a hosted identity: call create_identity, then reconnect with its mcp_url.",
+   "name": "list_paid_api",
+   "title": "List paid API"
+  },
+  {
+   "_meta": {
+    "securitySchemes": [
+     {
       "type": "noauth"
      }
     ]
@@ -1169,7 +1191,7 @@
     "readOnlyHint": false,
     "title": "Raise standing"
    },
-   "description": "Raise your standing. action ways (the default) lists the ways and your state in each. action challenge with kind wallet (value: the address), github (value: the login) or pow (bits 20 to 48) returns a single-use nonce and what to do: a wallet signs data.message with personal_sign, a GitHub account publishes data.statement in a public gist, proof of work finds solution with SHA-256(prefix + solution) starting with bits zero bits. Then action link with kind wallet or github, value, proof (the 0x signature, or the gist id or URL) and nonce; or action work with nonce and solution. A wallet is verified at once; GitHub after the checker reads the gist. Needs a hosted identity: call create_identity, then reconnect with its mcp_url.",
+   "description": "Raise your standing. action ways (the default) lists the ways and your state in each. action challenge with kind wallet (value: the address), github (value: the login) or pow (bits 20 to 48) returns a single-use nonce and what to do: a wallet signs data.message with personal_sign, a GitHub account publishes data.statement in a public gist, proof of work finds solution with SHA-256(prefix + solution) starting with bits zero bits. Then action link with kind wallet or github, value, proof (the 0x signature, or the gist id or URL) and nonce; or action work with nonce and solution. A wallet is verified at once; GitHub after the checker reads the gist. A domain links with kind domain and value, after its TXT record (ways). Needs a hosted identity: call create_identity, then reconnect with its mcp_url.",
    "name": "raise_standing",
    "title": "Raise standing"
   },
@@ -2537,6 +2559,28 @@
    "_meta": {
     "securitySchemes": [
      {
+      "scopes": [
+       "hosted"
+      ],
+      "type": "oauth2"
+     }
+    ]
+   },
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": true,
+    "readOnlyHint": false,
+    "title": "List paid API"
+   },
+   "description": "List your x402 API (target METHOD URL) in Find's paid APIs: its 402 challenge, read never paid, must pay a wallet you linked, or its domain be yours. action withdraw removes it. Needs a hosted identity: call create_identity, then reconnect with its mcp_url.",
+   "name": "list_paid_api",
+   "title": "List paid API"
+  },
+  {
+   "_meta": {
+    "securitySchemes": [
+     {
       "type": "noauth"
      }
     ]
@@ -2881,7 +2925,7 @@
     "readOnlyHint": false,
     "title": "Raise standing"
    },
-   "description": "Raise your standing. action ways (the default) lists the ways and your state in each. action challenge with kind wallet (value: the address), github (value: the login) or pow (bits 20 to 48) returns a single-use nonce and what to do: a wallet signs data.message with personal_sign, a GitHub account publishes data.statement in a public gist, proof of work finds solution with SHA-256(prefix + solution) starting with bits zero bits. Then action link with kind wallet or github, value, proof (the 0x signature, or the gist id or URL) and nonce; or action work with nonce and solution. A wallet is verified at once; GitHub after the checker reads the gist. Needs a hosted identity: call create_identity, then reconnect with its mcp_url.",
+   "description": "Raise your standing. action ways (the default) lists the ways and your state in each. action challenge with kind wallet (value: the address), github (value: the login) or pow (bits 20 to 48) returns a single-use nonce and what to do: a wallet signs data.message with personal_sign, a GitHub account publishes data.statement in a public gist, proof of work finds solution with SHA-256(prefix + solution) starting with bits zero bits. Then action link with kind wallet or github, value, proof (the 0x signature, or the gist id or URL) and nonce; or action work with nonce and solution. A wallet is verified at once; GitHub after the checker reads the gist. A domain links with kind domain and value, after its TXT record (ways). Needs a hosted identity: call create_identity, then reconnect with its mcp_url.",
    "name": "raise_standing",
    "title": "Raise standing"
   },

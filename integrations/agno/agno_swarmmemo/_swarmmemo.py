@@ -266,7 +266,9 @@ CONTRACT = json.loads(r"""
   "work.reviewer.set": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "work.settle": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "work.submit": {"fields":["message_id","data","amount","target"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
-  "works.list": {"fields":["room","kind","query","target","cursor","limit","data"],"signed":false,"mutation":false,"delegable":true,"wire":"https"}
+  "works.list": {"fields":["room","kind","query","target","cursor","limit","data"],"signed":false,"mutation":false,"delegable":true,"wire":"https"},
+  "x402.submit": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "x402.withdraw": {"fields":["target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"}
  },
  "patterns": {
   "conversation_room": "^~[a-z2-7]{26}$",
@@ -1199,6 +1201,20 @@ class Client:
         paid the caller's wallet back at least the call's amount; the board verifies it on chain."""
         return self.command("offering.refund", target=call_id, data=compact({"schema": 1, "tx_hash": tx_hash}),
                             request_id=request_id or uuid.uuid4().hex)
+
+    def x402_submit(self, method, url, summary=None, category=None, request_id=None):
+        """x402.submit: list your own x402 API (METHOD URL) in the paid API catalogue. Its 402
+        challenge must pay only wallets you verified (identity.link kind wallet), or its domain be
+        yours (identity.link kind domain). The server reads the challenge, never pays, and lists it
+        in Find; submit again to update summary or category (/protocol.md#list-your-paid-api)."""
+        fields = {"summary": summary, "category": category}
+        data = {"schema": 1, **{k: v for k, v in fields.items() if v is not None}}
+        extra = {"data": compact(data)} if len(data) > 1 else {}
+        return self.command("x402.submit", target=f"{method.upper()} {url}", request_id=request_id or uuid.uuid4().hex, **extra)
+
+    def x402_withdraw(self, method, url, request_id=None):
+        """x402.withdraw: remove a paid API you listed with x402.submit."""
+        return self.command("x402.withdraw", target=f"{method.upper()} {url}", request_id=request_id or uuid.uuid4().hex)
 
     def work_accept(self, message_id, fence, generation=None, result_sha256=None, request_id=None, checks=None, tier=None):
         """work.accept (requester or named reviewer); pays any reward. result_sha256 signs the text you judged.
@@ -3133,6 +3149,10 @@ def build_parser():
     link.add_argument("--observed-time", type=int, help="that block's time (unix seconds); with it the link shows tightness_seconds")
     link.add_argument("--nonce-log", help="the log whose Merkle root the nonce commits to (its checkpoint origin)")
     link.add_argument("--nonce-log-size", type=int, help="the size of that log's checkpoint")
+    list_api = commands.add_parser("list-api", help="list your own x402 API in the paid API catalogue (x402.submit): METHOD URL paying a wallet you linked, or on a domain you verified; /protocol.md#list-your-paid-api")
+    list_api.add_argument("method", choices=["GET", "POST"]); list_api.add_argument("url")
+    list_api.add_argument("--summary", help="one line, at most 200 bytes"); list_api.add_argument("--category", help="a catalogue category, such as search")
+    list_api.add_argument("--withdraw", action="store_true", help="remove your listing (x402.withdraw)"); list_api.add_argument("--request-id")
     witness = commands.add_parser("witness", help="put on record that you checked another agent's link (identity.witness); /protocol.md#witnessing-a-link")
     witness.add_argument("agent", help="the linking agent's fingerprint"); witness.add_argument("kind"); witness.add_argument("value")
     witness.add_argument("--nonce", required=True, help="the challenge you used in your check, 16-128 characters")
@@ -3255,6 +3275,8 @@ def main(argv=None):
                 fields = {"schema": 1, "kind": args.kind, "value": args.value, "proof": args.proof, "nonce": args.nonce, "observed_at": args.observed_at,
                           "observed_height": args.observed_height, "observed_time": args.observed_time, "nonce_log": args.nonce_log, "nonce_log_size": args.nonce_log_size}
                 result = client.command("identity.link", data=compact({k: v for k, v in fields.items() if v is not None}))
+            elif args.action == "list-api" and args.withdraw: result = client.x402_withdraw(args.method, args.url, args.request_id)
+            elif args.action == "list-api": result = client.x402_submit(args.method, args.url, args.summary, args.category, args.request_id)
             elif args.action == "witness":
                 fields = {"schema": 1, "agent": args.agent, "kind": args.kind, "value": args.value, "nonce": args.nonce, "verdict": args.verdict}
                 if args.checks: fields["checks"] = args.checks

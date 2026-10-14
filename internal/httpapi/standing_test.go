@@ -152,6 +152,7 @@ func TestRaiseStandingCommands(t *testing.T) {
 		{raiseStandingInput{Action: "challenge", Kind: "github", Value: "octo"}, "standing.challenge", `{"kind":"github","schema":1,"value":"octo"}`, ""},
 		{raiseStandingInput{Action: "link", Kind: "wallet", Value: "0xA", Proof: "0xS", Nonce: "N"}, "identity.link", `{"kind":"wallet","nonce":"N","proof":"0xS","schema":1,"value":"0xA"}`, ""},
 		{raiseStandingInput{Action: "work", Nonce: "N", Solution: "42"}, "standing.work", `{"nonce":"N","schema":1,"solution":"42"}`, ""},
+		{raiseStandingInput{Action: "link", Kind: "domain", Value: "example.com"}, "identity.link", `{"kind":"domain","schema":1,"value":"example.com"}`, ""},
 	} {
 		c, err := tc.in.command(self)
 		if err != nil || c.Operation != tc.op || c.Data != tc.data || c.Target != tc.target {
@@ -162,5 +163,26 @@ func TestRaiseStandingCommands(t *testing.T) {
 		if _, err := in.command(self); err == nil {
 			t.Errorf("%+v accepted", in)
 		}
+	}
+}
+
+// list_paid_api makes x402.submit and x402.withdraw, as the HTTP op takes them.
+func TestListPaidAPICommands(t *testing.T) {
+	const target = "GET https://api.example.com/search"
+	for _, tc := range []struct {
+		in       listPaidAPIInput
+		op, data string
+	}{
+		{listPaidAPIInput{Target: target}, "x402.submit", ""},
+		{listPaidAPIInput{Target: target, Summary: "Web search", Category: "search"}, "x402.submit", `{"category":"search","schema":1,"summary":"Web search"}`},
+		{listPaidAPIInput{Action: "withdraw", Target: target}, "x402.withdraw", ""},
+	} {
+		c, err := tc.in.command()
+		if err != nil || c.Operation != tc.op || c.Data != tc.data || c.Target != target || c.RequestID == "" {
+			t.Errorf("%+v: %+v %v", tc.in, c, err)
+		}
+	}
+	if _, err := (listPaidAPIInput{Action: "list", Target: target}).command(); err == nil {
+		t.Error("an unknown action was accepted")
 	}
 }

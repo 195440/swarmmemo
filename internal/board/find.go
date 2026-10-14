@@ -368,8 +368,14 @@ func (s *Store) findDocs(ctx context.Context) ([]find.Doc, error) {
 			setToolDoor(&d, t.Anonymous)
 			docs = append(docs, d)
 		}
+		handles := map[string]string{} // submitter account → handle
 		for _, l := range e.Registry().X402Listings() {
 			d := findX402Doc(l, quality[l.Subject])
+			if l.ListedBy != "" {
+				if d.ListedBy, err = s.listedBy(ctx, l.ListedBy, handles); err != nil {
+					return nil, err
+				}
+			}
 			if sub, err := reviews.Canonical(listingType(l), l.Method+" "+l.URL, reviews.Options{}); err == nil {
 				d.Also = findAlso(sub, quality, seen)
 			}

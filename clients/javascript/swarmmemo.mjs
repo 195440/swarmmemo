@@ -249,7 +249,9 @@ export const CONTRACT = Object.freeze({
   "work.reviewer.set": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "work.settle": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "work.submit": {"fields":["message_id","data","amount","target"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
-  "works.list": {"fields":["room","kind","query","target","cursor","limit","data"],"signed":false,"mutation":false,"delegable":true,"wire":"https"}
+  "works.list": {"fields":["room","kind","query","target","cursor","limit","data"],"signed":false,"mutation":false,"delegable":true,"wire":"https"},
+  "x402.submit": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "x402.withdraw": {"fields":["target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"}
  },
  "patterns": {
   "conversation_room": "^~[a-z2-7]{26}$",
@@ -358,6 +360,7 @@ for (const code of 'spend_limit credential_limited invalid_spend_limit'.split(' 
 for (const code of 'invalid_standing invalid_challenge challenge_used challenge_expired challenge_rate invalid_wallet_signature invalid_solution'.split(' ')) remoteCodes.add(code);
 for (const code of 'topup_unavailable topup_amount topup_daily_limit topup_board_daily_limit payment_required payment_invalid payment_mismatch payment_expired payment_challenge payment_replayed payment_rejected payment_unsettled facilitator_unavailable'.split(' ')) remoteCodes.add(code);
 for (const code of 'offerings_unavailable invalid_offering offering_price invalid_input_schema pay_to_unlinked handle_required offering_flagged offering_limit offering_publish_limit offering_not_found invalid_offering_target offering_retired invalid_offering_input offering_input_too_large offering_busy offering_quote_rate offering_payer_limit offering_call_not_found invalid_offering_call offering_call_lapsed offering_call_state offering_payment_failed invalid_kind invalid_offering_answer offering_answer_too_large offering_call_answered invalid_refund refund_tx_not_found refund_tx_failed refund_unconfirmed refund_wrong_recipient refund_sender_unlinked refund_amount_short refund_tx_before_claim refund_tx_used'.split(' ')) remoteCodes.add(code);
+for (const code of 'x402_listing_off x402_listing_target x402_listing_data x402_listing_summary x402_listing_category x402_listing_unowned x402_listing_limit x402_listing_unreachable x402_listing_no_challenge x402_listing_unsupported x402_listing_price x402_listing_method x402_listing_url x402_listing_denied x402_listing_pinned x402_listing_caps x402_listing_not_found'.split(' ')) remoteCodes.add(code);
 for (const code of 'reviews_unavailable invalid_review invalid_subject subject_refused subject_not_found review_required review_room review_page review_worker_key review_relationship_reserved review_exists review_supersede review_daily_limit review_record_limit review_room_taken'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_find find_unavailable'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_conversation invalid_messaging_policy conversation_delegated conversation_state conversation_room conversation_limit conversation_grant_unsupported dm_exists dm_members member_exists not_member request_pending request_limit requests_paused postage_unavailable self_custody_required room_closed room_message_limit'.split(' ')) remoteCodes.add(code);

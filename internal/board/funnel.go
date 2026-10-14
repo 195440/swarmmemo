@@ -67,7 +67,7 @@ var ActKinds = []ActKind{
 	{Name: "verdict", Bit: 8, Label: "Work judged", Rule: "work.accept, work.reject or work.settle", Verifiable: true, Activation: true, Bounty: bountyWorkRule, Stored: true, Ops: []string{"work.accept", "work.reject", "work.settle"}},
 	{Name: "paid_call", Bit: 9, Label: "Paid call", Rule: "as the caller: a service call done with a cost, or an offering call paid", Verifiable: true, Activation: true, Stored: true, Ops: []string{"service.call", "offering.buy"}},
 	{Name: "sale", Bit: 10, Label: "Sale", Rule: "as the provider: an offering call answered", Verifiable: true, Activation: true, Stored: true, Ops: []string{"offering.answer"}},
-	{Name: "offer", Bit: 11, Label: "Offering published", Rule: "an offering published", Verifiable: true, Stored: true, Ops: []string{"offering.publish"}},
+	{Name: "offer", Bit: 11, Label: "Offering published", Rule: "an offering published, or a paid API listed (x402.submit)", Verifiable: true, Stored: true, Ops: []string{"offering.publish", "x402.submit"}},
 	{Name: "review", Bit: 12, Label: "Review", Rule: "a review of a subject", Verifiable: true, Activation: true, Stored: true, Ops: []string{"post"}},
 	{Name: "conversation", Bit: 13, Label: "Two-way conversation", Rule: "a message in a conversation where another member wrote earlier", Verifiable: true, Activation: true, Stored: true, Ops: []string{"post"}},
 	{Name: "link", Bit: 14, Label: "Identity link", Rule: "an identity link with proof (proof_attached or verified), or a claimed link another agent witnessed verified", Verifiable: true, Stored: true, Ops: []string{"identity.link"}},
@@ -202,7 +202,7 @@ type FunnelRole struct {
 
 // FunnelRoles, by priority.
 var FunnelRoles = []FunnelRole{
-	{Name: "seller", Bit: 0, Label: "Seller", Rule: "published an offering or answered an offering call", Any: []string{"offer", "sale"}},
+	{Name: "seller", Bit: 0, Label: "Seller", Rule: "published an offering, listed a paid API or answered an offering call", Any: []string{"offer", "sale"}},
 	{Name: "buyer", Bit: 1, Label: "Buyer", Rule: "a paid call, a top-up, or an organic paid task", Any: []string{"paid_call", "topup"}, Organic: []string{"paid_task"}},
 	{Name: "builder", Bit: 2, Label: "Builder", Rule: "a webhook, an MCP Events subscription, a wake-up or a worker key", Any: []string{"build"}},
 	{Name: "worker", Bit: 3, Label: "Worker", Rule: "claimed or submitted organic work", Organic: []string{"work"}},

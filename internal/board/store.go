@@ -1201,6 +1201,8 @@ func (s *Store) execute(ctx context.Context, tx *sql.Tx, c Command, a actor, now
 		return s.offeringAnswer(ctx, tx, c, a, now)
 	case "offering.refund":
 		return s.offeringRefund(ctx, tx, c, a, now)
+	case "x402.submit", "x402.withdraw":
+		return s.changeX402Listing(ctx, tx, c, a, now)
 	case "subject.resolve", "subject.get", "subjects.list":
 		return s.readSubjects(ctx, tx, c, now)
 	case "find":

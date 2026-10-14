@@ -801,7 +801,7 @@ func TestFunnelLookupsIndexed(t *testing.T) {
 			}
 		}
 	}
-	if audit != 2 || len(plans) < 15 {
+	if audit != 3 || len(plans) < 15 {
 		t.Fatalf("saw %d lookups, %d on audit: the hook missed some", len(plans), audit)
 	}
 }

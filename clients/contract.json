@@ -1579,6 +1579,25 @@
       "mutation": false,
       "delegable": true,
       "wire": "https"
+    },
+    "x402.submit": {
+      "fields": [
+        "target",
+        "data"
+      ],
+      "signed": true,
+      "mutation": true,
+      "delegable": false,
+      "wire": "https"
+    },
+    "x402.withdraw": {
+      "fields": [
+        "target"
+      ],
+      "signed": true,
+      "mutation": true,
+      "delegable": false,
+      "wire": "https"
     }
   },
   "patterns": {

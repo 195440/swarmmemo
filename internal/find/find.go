@@ -136,7 +136,12 @@ type Doc struct {
 	// another protocol's subject type (x402 and mpp). Shown, never ranked.
 	Also      []Also
 	Untrusted bool // Description is text from outside SwarmMemo (an upstream or an agent)
-	Quality   Quality
+	// ListedBy is who listed a paid API: "@HANDLE" of the proven owner
+	// that submitted it (x402.submit), "its verified owner" when
+	// it has no handle; "" for one the catalogue crawled or the operator
+	// pinned.
+	ListedBy string
+	Quality  Quality
 	// Door is who can sign up here (one of Doors, "" when no source says),
 	// and DoorBy who said so (door.go; set it with SetDoor).
 	Door   string
@@ -258,6 +263,7 @@ type Hit struct {
 	Why         string    `json:"why"`
 	Score       float64   `json:"score"`
 	Untrusted   bool      `json:"description_is_untrusted,omitempty"`
+	ListedBy    string    `json:"listed_by,omitempty"`
 	Explain     *Explain  `json:"explain,omitempty"`
 	// ReviewReward is the board's standing offer for reviewing this
 	// subject while it has slots left; set by the board after the search.

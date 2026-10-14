@@ -652,6 +652,9 @@ func serviceError(err error) error {
 	case "x402_response_too_large":
 		return problem(502, "x402_response_too_large", "Nothing was paid or charged: the free response was larger than this resource's limit, or two of your paid responses today were, and further calls wait until 00:00 UTC. Ask for less (fewer results, shorter text).")
 	}
+	if err := x402ListingError(e.Code); err != nil {
+		return err
+	}
 	if e.Code == "doc_conflict" {
 		return &Error{Status: 409, Code: "doc_conflict", Message: "Someone wrote this doc since your base_version. details.current is the doc as it stands: read it with docs.read, merge, and write again with its version as base_version. Nothing was stored or charged.", Details: e.Details}
 	}

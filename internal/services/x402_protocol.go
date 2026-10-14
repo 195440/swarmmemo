@@ -57,6 +57,12 @@ type x402Required struct {
 	Resource   json.RawMessage // v2 ResourceInfo, echoed in the payload
 	Accepts    []json.RawMessage
 	Extensions json.RawMessage // v2, echoed in the payload
+	// Description and Input are what the challenge says of the endpoint,
+	// read leniently for the catalogue (x402ChallengeItem): v2's
+	// resource.description and bazaar extension's input, v1's first
+	// option's description and outputSchema.input. Untrusted.
+	Description string
+	Input       x402Input
 }
 
 type x402RequiredWire struct {
@@ -133,6 +139,26 @@ func parseX402Required(header string, body []byte) (x402Required, bool) {
 		}
 		if isObject(w.Extensions) && len(w.Extensions) <= x402RawFieldBytes {
 			r.Extensions = w.Extensions
+		}
+		var info struct {
+			Description string `json:"description"`
+		}
+		var ext x402Extensions
+		if isObject(w.Resource) && json.Unmarshal(w.Resource, &info) == nil {
+			r.Description = info.Description
+		}
+		if isObject(w.Extensions) && json.Unmarshal(w.Extensions, &ext) == nil {
+			r.Input = ext.Bazaar.Info.Input
+		}
+	} else {
+		var first struct {
+			Description  string `json:"description"`
+			OutputSchema struct {
+				Input x402Input `json:"input"`
+			} `json:"outputSchema"`
+		}
+		if json.Unmarshal(w.Accepts[0], &first) == nil {
+			r.Description, r.Input = first.Description, first.OutputSchema.Input
 		}
 	}
 	return r, true

@@ -92,11 +92,14 @@ type X402Listing struct {
 	Decimals  int
 	Pinned    bool
 	Callable  bool
-	Reason    string // why an MPP entry is not callable
-	Calls     int64  // our answered calls, last 30 days
-	Failed    int64  // our failed calls, last 30 days
-	Demoted   bool   // most of our recent calls failed
-	Subject   string
+	// ListedBy is the account of the verified domain owner who listed it
+	// (x402.submit); "" for a crawled or pinned entry.
+	ListedBy string
+	Reason   string // why an MPP entry is not callable
+	Calls    int64  // our answered calls, last 30 days
+	Failed   int64  // our failed calls, last 30 days
+	Demoted  bool   // most of our recent calls failed
+	Subject  string
 	// Name is how Find names the entry: an MPP entry's DisplayName, an x402
 	// resource's "<host's registrable name> · METHOD /path" (x402Names).
 	Name string
@@ -127,7 +130,7 @@ func (r *Registry) X402Listings() []X402Listing {
 	add := func(res *X402Resource) {
 		named = append(named, res.namedPath())
 		l := X402Listing{ID: res.ID, Kind: KindX402, Protocols: snap.protocolsOf(res), Method: res.Method, URL: res.URL, Summary: res.servedSummary(), Category: res.Category, Network: x.cfg.Network,
-			MaxPrice: min(res.MaxAmount, x.cfg.PerCall), Decimals: x.cfg.Decimals, Pinned: !res.Open, Callable: x.callable(res)}
+			MaxPrice: min(res.MaxAmount, x.cfg.PerCall), Decimals: x.cfg.Decimals, Pinned: !res.Open, Callable: x.callable(res), ListedBy: res.Submitter()}
 		if st, ok := snap.stats[res.ID]; ok {
 			l.Calls, l.Failed, l.Demoted = st.ok, st.failed, st.demoted()
 		}

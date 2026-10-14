@@ -948,6 +948,10 @@ func (x *x402) Read(ctx context.Context, q allowance.Querier, c Call) (json.RawM
 		if r.Open {
 			entry["text_is_untrusted"], entry["summary_status"] = true, r.summaryStatus
 		}
+		if proof := r.Proof(); proof != "" {
+			// Its owner listed it (x402.submit), proven by a domain or wallet link.
+			entry["source"], entry["proof"] = "submitted", proof
+		}
 		if st, ok := page.stats[r.ID]; ok {
 			entry["calls_30d"], entry["failed_30d"] = st.ok, st.failed
 		}
