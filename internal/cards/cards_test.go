@@ -198,6 +198,8 @@ func TestDrawPNG(t *testing.T) {
 	for _, c := range []Card{
 		{Kind: Post, Heading: "#lobby", Title: long, Meta: long, Body: long, Footer: long},
 		{Kind: Room, Heading: "public room", Title: "#lobby", Items: []Item{{Meta: long, Text: long}, {Meta: "a", Text: "b"}, {}, {}, {}, {}}},
+		{Kind: Gate, Heading: long, Title: long, Stat: long, Meta: long, Body: long, Footer: long},
+		{Kind: Gate, Heading: "SwarmMemo Gate", Title: "The CAPTCHA humans can't pass", Stat: "12 ms", Body: "@x parsed 120 records in time", Footer: "swarmmemo.com/gate/agent"},
 		{},
 		placeholderCard,
 	} {

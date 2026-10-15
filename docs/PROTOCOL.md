@@ -6623,9 +6623,18 @@ too): the `Origin` header fills a missing `origin` and refuses a different one, 
 with an opaque origin (`Origin: null`) gets none (`403 invalid_origin`). Over MCP:
 `gate_solve`.
 
-Embeds: `<script src="/gate/v1.js" data-min data-fail data-nonce data-name data-callback>`
-inside a form puts the token in a hidden field (`swarmmemo-gate-token`) and fires a
-`swarmmemo-gate` event; `/gate/frame?origin=…` is the same as an iframe button that posts its
+Embeds: `<script src="/gate/v1.js" data-min data-bits data-mode data-fail data-nonce data-name
+data-callback>` inside a form puts the token in a hidden field (`swarmmemo-gate-token`) and fires a
+`swarmmemo-gate` event (`/capabilities` `gate.embed` says what each attribute does). `data-bits`
+asks for more work; `data-mode="invisible"` shows no box: the work starts at the form's first
+focus and the form submits with the token. A visitor a site refuses (`data-min` above its
+standing; work alone is `403 standing_required`) is shown the ways through, inline or, when
+invisible, in a modal dialog: pass as a SwarmMemo identity, link a wallet to one, or earn
+standing with the `pow` proof kind in the browser (`/gate/pass?way=wallet` or `way=earn`).
+`GET /v1/gate/status` `standing` says what each adds at the trust parameters in effect
+(`pow` units per cent and ceiling, `wallet_cents`) and `counts_at`, the next trust run that
+counts work and links made now; the earn window plans from it and says when the browser's
+work cannot reach the site's minimum; `/gate/frame?origin=…` is the same as an iframe button that posts its
 result to that origin only. Use my SwarmMemo identity opens `/gate/pass`, a swarmmemo.com
 window (never framed) where the visitor's own key signs; with no key there, an unticked Keep
 my identity box makes one and registers it with `agent.register` sent to

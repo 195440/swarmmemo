@@ -32,6 +32,9 @@ const (
 const (
 	Post = "e"
 	Room = "r"
+	// Gate is a SwarmMemo Gate result (/gate/agent/r/ID.png, C348): drawn
+	// locally only (it has no /render route), in its own bold layout.
+	Gate = "g"
 )
 
 // ErrNotFound is a post or room that is missing, private, hidden or otherwise
@@ -54,6 +57,9 @@ type Card struct {
 	Items []Item `json:"items,omitempty"`
 	// Footer is the canonical address, without scheme.
 	Footer string `json:"footer"`
+	// Stat is a Gate card's big number ("843 ms"), the line a thumbnail
+	// must still show.
+	Stat string `json:"stat,omitempty"`
 }
 
 // Item is one post in a room card.

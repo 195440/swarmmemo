@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image/png"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -38,6 +39,8 @@ func TestGatePages(t *testing.T) {
 	w := gateGet(s, GatePath)
 	body := w.Body.String()
 	for _, want := range []string{"A CAPTCHA alternative that lets real agents in", `<script src="/gate/v1.js" data-min="0" data-fail="closed"></script>`, "signing now",
+		`id="gate-strictness"`, `value="backed" data-min="50"`, `value="strict" data-min="0" data-bits="24"`, `<option value="100">at least $1</option>`, `name="invisible"`, `id="gate-demo-decision"`,
+		`<select name="bits">`, `<select name="mode">`, "<code>data-bits</code>", "<code>data-mode</code>", "Compared with Turnstile and reCAPTCHA", "Invisible mode", "a browser&#39;s minutes add a fraction of a cent",
 		`id="gate-generator"`, `data-frame="`, "Fail open or fail closed", "/gate/agent", "gate-page.js", "check-gate.mjs", "swarmmemo-gate-token"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("/gate misses %q", want)
@@ -56,7 +59,7 @@ func TestGatePages(t *testing.T) {
 		t.Fatal("/gate shows signing without a key")
 	}
 	agent := gateGet(s, GateAgentPath).Body.String()
-	for _, want := range []string{"The CAPTCHA humans can&#39;t pass", `id="gate-agent-start"`, "gate --agent-task", fmt.Sprint(gate.AgentDeadlineMillis), "/v1/gate/challenge"} {
+	for _, want := range []string{"The CAPTCHA humans can&#39;t pass", `id="gate-agent-start"`, "developer tools can pass it too", "a demo, not security", "gate --agent-task", fmt.Sprint(gate.AgentDeadlineMillis), "/v1/gate/challenge"} {
 		if !strings.Contains(agent, want) {
 			t.Errorf("/gate/agent misses %q", want)
 		}
@@ -87,8 +90,9 @@ func TestGateScript(t *testing.T) {
 	gz := gzip.NewWriter(&z)
 	_, _ = gz.Write(w.Body.Bytes())
 	_ = gz.Close()
-	if z.Len() > 6<<10 {
-		t.Fatalf("gate script is %d bytes gzipped, over 6 KiB", z.Len())
+	// 8 KiB: C348's refusal, ways through and invisible dialog included.
+	if z.Len() > 8<<10 {
+		t.Fatalf("gate script is %d bytes gzipped, over 8 KiB", z.Len())
 	}
 	t.Logf("gate script: %d bytes, %d gzipped", w.Body.Len(), z.Len())
 }
@@ -106,6 +110,22 @@ func TestGateWindows(t *testing.T) {
 	if strings.Contains(pass.Body.String(), `id="gate-pass-keep" checked`) {
 		t.Fatal("keeping an identity is never ticked for the visitor")
 	}
+	// C348: the ways through, and the site's work.
+	earn := gateGet(nil, GatePassPath+"?origin=https://shop.example&min=50&way=earn&bits=24")
+	for _, want := range []string{`data-way="earn"`, `data-bits="24"`, `id="gate-earn-plan"`, `id="gate-earn-progress"`, "gate-earn.js", ">Start</button>", "standing belongs to a key"} {
+		if !strings.Contains(earn.Body.String(), want) {
+			t.Errorf("earn window misses %q", want)
+		}
+	}
+	wallet := gateGet(nil, GatePassPath+"?origin=https://shop.example&min=50&way=wallet")
+	for _, want := range []string{`data-way="wallet"`, `id="gate-wallet-cents"`, ">Link a wallet</button>", "never passes a site alone"} {
+		if !strings.Contains(wallet.Body.String(), want) {
+			t.Errorf("wallet window misses %q", want)
+		}
+	}
+	if strings.Contains(wallet.Body.String(), "gate-earn.js") || strings.Contains(pass.Body.String(), "gate-earn.js") {
+		t.Fatal("only the earn window loads the worker")
+	}
 	frame := gateGet(nil, GateFramePath+"?origin=https://shop.example&fail=open&bits=22")
 	if frame.Code != 200 || frame.Header().Get("X-Frame-Options") != "" || !strings.Contains(frame.Header().Get("Content-Security-Policy"), "frame-ancestors *") ||
 		!strings.Contains(frame.Body.String(), `data-gate-frame="1"`) || !strings.Contains(frame.Body.String(), `data-bits="22"`) {
@@ -115,6 +135,7 @@ func TestGateWindows(t *testing.T) {
 		GatePassPath + "?origin=https://shop.example/path", GatePassPath + "?origin=javascript:alert(1)", GatePassPath + "?origin=https://a.example&x=1",
 		GatePassPath + "?origin=https://a.example&origin=https://b.example", GatePassPath + "?origin=https://a.example&min=-1", GatePassPath + "?origin=https://a.example&via=top",
 		GatePassPath + "?origin=https://a.example&nonce=<b>", GateFramePath + "?origin=https://a.example&bits=40", GateFramePath + "?origin=https://a.example&via=frame",
+		GatePassPath + "?origin=https://a.example&way=pay", GatePassPath + "?origin=https://a.example&bits=19", GateFramePath + "?origin=https://a.example&way=earn",
 	} {
 		if w := gateGet(nil, path); w.Code != 400 || strings.Contains(w.Body.String(), "gate-pass.js") || strings.Contains(w.Body.String(), "gate-embed.js") {
 			t.Errorf("%s: %d", path, w.Code)
@@ -155,8 +176,34 @@ func TestGateResultCard(t *testing.T) {
 	if img.Code != 200 || img.Header().Get("Content-Type") != "image/png" || !bytes.HasPrefix(img.Body.Bytes(), []byte("\x89PNG")) {
 		t.Fatalf("card image: %d %v", img.Code, img.Header())
 	}
+	// C348: the share card is dark, with the time as its biggest thing.
+	decoded, err := png.Decode(bytes.NewReader(img.Body.Bytes()))
+	if err != nil || decoded.Bounds().Dx() != 1200 || decoded.Bounds().Dy() != 630 {
+		t.Fatalf("card: %v", err)
+	}
+	dark, green := 0, 0
+	for y := 0; y < 630; y += 3 {
+		for x := 0; x < 1200; x += 3 {
+			r, g, b, _ := decoded.At(x, y).RGBA()
+			if r>>8 < 40 && g>>8 < 40 && b>>8 < 40 {
+				dark++
+			}
+			if g>>8 > 200 && r>>8 < 120 {
+				green++
+			}
+		}
+	}
+	if total := (1200 / 3) * (630 / 3); dark < total*6/10 || green < total/50 {
+		t.Fatalf("card: %d dark, %d green of %d sampled pixels", dark, green, total)
+	}
+	if c := gateCard(gateResultView{Millis: 843, Name: "@scout", When: "15 Oct 2026"}); c.Stat != "843 ms" || c.Kind != "g" || !strings.Contains(c.Body, "@scout") {
+		t.Fatalf("card fields: %+v", c)
+	}
 	id := strings.TrimPrefix(card["url"].(string), board.GateResultPath)
 	forged := id[:len(id)-2] + "AA"
+	if forged == id { // one signature in 4,096 ends in AA already
+		forged = id[:len(id)-2] + "BA"
+	}
 	for _, path := range []string{board.GateResultPath + forged, board.GateResultPath + forged + ".png", board.GateResultPath + "x.png", board.GateResultPath + "<script>"} {
 		if w := gateGet(s, path); w.Code != 404 {
 			t.Errorf("%s: %d", path, w.Code)

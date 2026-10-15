@@ -55,6 +55,44 @@ func (s *Store) NotaryPublicKey() (publicKey, keyID string) {
 	return base64.RawURLEncoding.EncodeToString(s.services.notaryKey.Public().(ed25519.PublicKey)), services.NotaryKeyID(s.services.notaryKey)
 }
 
+// GateStanding is what /v1/gate/status says about raising standing from a
+// site's gate (C348): when standing counts (the nightly trust run, as of the
+// next 00:00 UTC, so work and links made now count in the run after it),
+// what proof of work earns at the trust parameters in effect (the pow row:
+// units of 2^20 expected hashes per cent, saturating at its ceiling) and what
+// a linked wallet adds at least. The gate's ways read these numbers, so a
+// visitor sees what a browser's work can and cannot reach before it starts.
+// counted is false while this service runs no trust (standing is always 0).
+func (s *Store) GateStanding(ctx context.Context) map[string]any {
+	if s.config.Features.Trust == TrustOff {
+		return map[string]any{"counted": false}
+	}
+	now := s.now().Unix()
+	s.gateMu.Lock()
+	cached, at := s.gateStanding, s.gateStandingAt
+	s.gateMu.Unlock()
+	if cached != nil && now >= at && now-at < standingParamsTTL && now/86400 == at/86400 {
+		return cached
+	}
+	var p trust.Params
+	if err := (trustDB{s}).Read(ctx, func(q allowance.Querier) (err error) { p, err = s.trustParamsAt(ctx, q, now); return err }); err != nil {
+		return nil
+	}
+	pow := p.Proofs["pow"]
+	out := map[string]any{
+		"counted":   true,
+		"counts_at": now - now%86400 + 86400 + int64(TrustRunAfter.Seconds()),
+		"pow": map[string]any{"units_per_cent": pow.UnitsPerCent, "ceiling_cents": min(pow.Forge, pow.Rent), "unit_hashes": int64(1) << trust.PowUnitBits,
+			"bits": map[string]int{"minimum": StandingPowBitsMin, "maximum": StandingPowBitsMax}, "per_day": StandingPowPerDay,
+			"cents": "ceiling_cents × units / (units + ceiling_cents × units_per_cent), rounded down"},
+		"wallet_cents": trust.AssessedContribution(p.Proofs["wallet"], 0),
+	}
+	s.gateMu.Lock()
+	s.gateStanding, s.gateStandingAt = out, now
+	s.gateMu.Unlock()
+	return out
+}
+
 // GatePending is how many challenges are waiting.
 func (s *Store) GatePending() int { return s.gateCore().Pending() }
 

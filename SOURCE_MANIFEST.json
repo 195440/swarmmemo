@@ -1,5 +1,5 @@
 {
-  "allowlist_sha256": "89482a4268bcc548bfbccb15c189e74b6b10264ca98fe58a8e70981f095d2617",
+  "allowlist_sha256": "64b13079492f410ae90e7c6cbf9d545ff3ffc840cb67336f0ccb414a01ff2b8e",
   "files": [
     {
       "mode": "0644",
@@ -670,8 +670,8 @@
     {
       "mode": "0644",
       "path": "docs/GLOSSARY.md",
-      "sha256": "0ae99acc6995b055a07af561ba20a70a9699efdc4d8e8a983a3b96e5a9bf4a88",
-      "size": 30225
+      "sha256": "9d5d21eab3fb4cb02bd205a0e24951cbfd6cf646dd12e57868f5b6abf681753d",
+      "size": 30813
     },
     {
       "mode": "0644",
@@ -694,8 +694,8 @@
     {
       "mode": "0644",
       "path": "docs/PROTOCOL.md",
-      "sha256": "eb69e8191f5ddd95789036029abc8c30e667d888ea305027ada89e78dac84fdb",
-      "size": 514921
+      "sha256": "5b9c75aa944bed9cd7fbf659b655be678ca8d9b36e1798ed5d01d1d34836e375",
+      "size": 515778
     },
     {
       "mode": "0644",
@@ -886,8 +886,8 @@
     {
       "mode": "0644",
       "path": "docs/rfcs/0022-gate-token.md",
-      "sha256": "1606f85f795cbf11954c54f6e6f519dc0708d14ea53b20de6f733a5993d20e8e",
-      "size": 4919
+      "sha256": "a579bc000851d02e599fee5929001fe6eb05bc26207a656feda07d3fa46786df",
+      "size": 5190
     },
     {
       "mode": "0644",
@@ -1630,8 +1630,8 @@
     {
       "mode": "0644",
       "path": "internal/board/gate.go",
-      "sha256": "68c7bb62002ea83b1476cda222394167d9a97b72e5ebea9e909582a55cc8e864",
-      "size": 12755
+      "sha256": "3e5f01872452eccb1329253a411681008c5261b85e75d6687d7d657f2e11a6f0",
+      "size": 14586
     },
     {
       "mode": "0644",
@@ -2806,8 +2806,8 @@
     {
       "mode": "0644",
       "path": "internal/board/store.go",
-      "sha256": "ce37883e5298dd73af73f682e76709beac0cf0348413e5479751908eaecf1753",
-      "size": 52930
+      "sha256": "56f5da938511fb55a201e76ca48e17e425c20d58948f6d5f22c4db7c4dec8c49",
+      "size": 53123
     },
     {
       "mode": "0644",
@@ -3508,14 +3508,14 @@
     {
       "mode": "0644",
       "path": "internal/cards/cards.go",
-      "sha256": "b8f68cbb9f45577c7231d829c1b62f2644fc2a73c55263987c355f8e0849d395",
-      "size": 5633
+      "sha256": "38117ee4a99ee86a7b938e374ffa13a4aa7bf7f358cae7dcabc894f7f7bb3be0",
+      "size": 5913
     },
     {
       "mode": "0644",
       "path": "internal/cards/cards_test.go",
-      "sha256": "3af89b42b434d1b8f74cff95335b28341b8be7869e3f1762223924aae7d85eba",
-      "size": 15447
+      "sha256": "a52f672630ebe1c5f5e09042aac4cc1df89dcf860650ce49cdda864c3be6bd49",
+      "size": 15714
     },
     {
       "mode": "0644",
@@ -3562,8 +3562,8 @@
     {
       "mode": "0644",
       "path": "internal/cards/local.go",
-      "sha256": "eddf74d20e531f8e87ab04927ab5127d80086f3d33525dd126df83b02aae2c21",
-      "size": 4773
+      "sha256": "581729b9361e6aea59d517d94e3937596226d5947a449cf6362b8c841192676e",
+      "size": 7375
     },
     {
       "mode": "0644",
@@ -4030,14 +4030,14 @@
     {
       "mode": "0644",
       "path": "internal/httpapi/gate.go",
-      "sha256": "0cb8fff469279ebce07e82ff27ed025a133b99850edebc64d742144bbfbd40c0",
-      "size": 10091
+      "sha256": "6bc3ed7c67d714f06d6a45f0f11254e1442df10627aec2c14639e7097f9101b0",
+      "size": 10712
     },
     {
       "mode": "0644",
       "path": "internal/httpapi/gate_test.go",
-      "sha256": "5af4d31fde9b74015ef10f881b016828c9f4053336501b74382e50f349cbf44d",
-      "size": 13578
+      "sha256": "5e2fce78365bfe4cd54ac042361f3f83c9723568de5619ebf4511efb4c405d12",
+      "size": 15116
     },
     {
       "mode": "0644",
@@ -7455,21 +7455,27 @@
     },
     {
       "mode": "0644",
+      "path": "internal/web/assets/gate-earn.js",
+      "sha256": "3a2e2f01df3cec33c9c216ecaff7782bf879ef26616372c4890844210e8a2338",
+      "size": 7643
+    },
+    {
+      "mode": "0644",
       "path": "internal/web/assets/gate-embed.js",
-      "sha256": "3f741dd488adde8fb4bcfec62d2a5ddb3c029488d678d634884a6d63de8e4497",
-      "size": 10808
+      "sha256": "a92bb0164f8a8aae8dd8d269c67839c3e88bd2f9d1a93d43f814842c6b78c7ef",
+      "size": 17111
     },
     {
       "mode": "0644",
       "path": "internal/web/assets/gate-page.js",
-      "sha256": "39444dc4b71ef4429d5e18656a89d958bc36f017db4e6ea04aedf7efa465340d",
-      "size": 4678
+      "sha256": "6d5241af952dbcdfaf319a0a3d67cd31e292cf8cd1c8bd63f2715722e96968b6",
+      "size": 8771
     },
     {
       "mode": "0644",
       "path": "internal/web/assets/gate-pass.js",
-      "sha256": "ad012cb5189c62594177727a71255bd1b12cc60db85c634ada9c7cbed2ca5553",
-      "size": 5998
+      "sha256": "8dedcd864a9e6607b180df7a4f81ce6939a0732b35cfaa635e6a125b44020aa7",
+      "size": 16285
     },
     {
       "mode": "0644",
@@ -7564,8 +7570,8 @@
     {
       "mode": "0644",
       "path": "internal/web/assets/style.css",
-      "sha256": "5ac664d94e1cca83c5c864e3af30c58e2782cc325fd97a140be23064974d1d5b",
-      "size": 147797
+      "sha256": "8e309d1cab1485675493614f6387d01e153e228694cc0dd184c249a4f26e786a",
+      "size": 148887
     },
     {
       "mode": "0644",
@@ -7954,20 +7960,20 @@
     {
       "mode": "0644",
       "path": "internal/web/gate.go",
-      "sha256": "1f6aa0ef9709b1d881a660129d32ce963f50f12bd6ff96397a23234d2e2029dc",
-      "size": 22307
+      "sha256": "067f5f7cc1baa075e5248656ca567ab4195d510b3e10835589eb64ba63743719",
+      "size": 28843
     },
     {
       "mode": "0644",
       "path": "internal/web/gate_test.cjs",
-      "sha256": "6e3d291f7311a192b6949e6064b63565015256d170fd5b892f3d05da8a912622",
-      "size": 13322
+      "sha256": "79de584fa65228733444b9025f09f72088e7b517924a3eb4103c8243b903b9f6",
+      "size": 24640
     },
     {
       "mode": "0644",
       "path": "internal/web/gate_test.go",
-      "sha256": "b4f0aed96ed7b14e3677bcb2c81131f0f7b6ca5925fbb58ceba47d9866aa43c1",
-      "size": 7048
+      "sha256": "b3c0009fba0fb39b8e81de7874c9374829fc97a6339efd740e8b256a6611c6a1",
+      "size": 9630
     },
     {
       "mode": "0644",
@@ -8656,8 +8662,8 @@
     {
       "mode": "0644",
       "path": "internal/web/templates/gate.html",
-      "sha256": "c37f90e93e769964de7a8a415625f6037fed68cf1206f8ca88a267b48c2ab2e1",
-      "size": 5237
+      "sha256": "d1616ecfd62176c04793bee621d2b1a55a70e08612def882e9a97613948fbf41",
+      "size": 7406
     },
     {
       "mode": "0644",
@@ -8854,8 +8860,8 @@
     {
       "mode": "0644",
       "path": "internal/web/web.go",
-      "sha256": "b3cb1b07f39d544a676515460a5ad4303f407c44051acd8bf1bb56e55e0d0a1f",
-      "size": 52669
+      "sha256": "c4352dd4c06ec0bde09ead653849de95ee377679017ded9ba4f0a4c1c8cb9156",
+      "size": 52712
     },
     {
       "mode": "0644",

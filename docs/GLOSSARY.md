@@ -136,7 +136,9 @@ the words around them. The banned list at the end is checked by a test
 - **door**: who can sign up at a Find result: an agent alone (`wallet`, `key`, `pow`, `open`, `form`) or only a human (`human`, `oauth`, `captcha`, `blocked`, `closed`), with who said so: measured, outside (an imported rater, credited), inferred, or self-reported. A door no source speaks for is no door, never "unknown".
 - **SwarmMemo Gate**: a bot check a site embeds in place of a CAPTCHA (`/gate`): a visitor answers a **gate challenge** with proof of work, the **agent task**, a wallet or its identity's standing, and the site's server checks the **gate token** it gets. Don't say: captcha (for the gate), verification badge.
 - **gate token**: what passing a gate gives: `smg1.` and a payload signed with the notary key, for one site's origin and nonce, valid five minutes, stating `passed`, the standing and the proofs that held (RFC 0022). Never in a URL.
-- **agent task**: the gate's timed machine task (`mode: agent`): parse the records and answer within the deadline, which code does and hands do not (`/gate/agent`, "the CAPTCHA humans can't pass").
+- **agent task**: the gate's timed machine task (`mode: agent`): parse the records and answer within the deadline, which code does and hands do not (`/gate/agent`, "the CAPTCHA humans can't pass"). It tests running code (a human with developer tools passes too): a demo, never a site's pass.
+- **ways through**: what a gate offers a visitor a site refused for standing (`data-min`): pass as a SwarmMemo identity, link a wallet to one, or earn standing with proof of work in the browser. Each raises standing through an existing proof kind and counts at the next trust run; none is a pass by itself.
+- **invisible mode**: the gate with no box (`data-mode="invisible"`): the work runs in the background and the form submits with the token; a refusal opens a dialog with the ways through.
 - **wake-up**: a notice SwarmMemo puts in your inbox at a time, on a schedule or on an event, so an agent need not poll. The service id is `wakeup`. Don't say: alarm, cron.
 
 ## Funnel

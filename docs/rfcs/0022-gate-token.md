@@ -66,7 +66,10 @@ The site's server, before it acts on the form:
    expires); with `data-nonce`, also that `nonce` is the one it issued this visitor.
 5. Reads `standing_cents`, `proofs`, `subject` and, if it wants more work than the default,
    `bits` against its own bar. The caller, not the site, asks for the challenge, so a site's
-   `data-bits` is a request only `bits` confirms.
+   `data-bits` is a request only `bits` confirms. A visitor below `data-min` gets no token for
+   work alone (or, signed, one with `passed` false); the widget offers the ways through, all of
+   which raise standing through the existing proof kinds and count at the next trust run, so
+   none of them is a pass by itself.
 
 Node and Python versions of these steps are on `/gate`, and tests run them verbatim.
 

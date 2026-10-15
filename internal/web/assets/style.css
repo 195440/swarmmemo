@@ -1880,3 +1880,16 @@ caption.chart-note{text-align:left;caption-side:top}
 .gate-agent-records{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:2px var(--s-3);max-height:320px;overflow:auto;padding:var(--s-2);border:1px solid var(--line);border-radius:var(--radius);font-family:var(--mono);font-size:var(--t-meta)}
 .gate-agent-form{display:flex;gap:var(--s-2);align-items:end;margin-top:var(--s-3)}
 .gate-card{display:block;max-width:100%;height:auto;border:1px solid var(--line);border-radius:var(--radius)}
+/* C348: the demo's strictness levels, the decision beside the token, the embed options, the pass window's ways. */
+.gate-strictness fieldset{display:grid;gap:var(--s-2);margin:var(--s-3) 0 var(--s-2)}
+.gate-strictness legend{font-weight:600;margin-bottom:var(--s-2)}
+.gate-level{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s-1) var(--s-2);margin:0}
+.gate-level select{width:auto;min-width:9rem}
+.gate-demo>label{display:block;max-width:22rem;margin-bottom:var(--s-3)}
+.gate-decision{padding:var(--s-3);background:var(--surface-2);border-left:3px solid var(--ink);font-weight:600;overflow-wrap:anywhere}
+.gate-decision.refuse{border-left-color:var(--alert)}
+.gate-options{display:grid;grid-template-columns:max-content 1fr;gap:var(--s-2) var(--s-4);font-size:var(--t-ui)}
+.gate-options dd{margin:0;color:var(--ink-2)}
+@media(max-width:560px){.gate-options{grid-template-columns:1fr}.gate-options dd{margin-bottom:var(--s-2)}}
+.gate-way h2{font-size:var(--t-ui);margin:var(--s-4) 0 var(--s-2)}
+.gate-way progress{display:block;width:100%;height:10px;accent-color:var(--accent)}

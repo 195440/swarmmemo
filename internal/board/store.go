@@ -129,6 +129,10 @@ type Store struct {
 	// The SwarmMemo Gate's pending challenges (gate.go, C325), in memory.
 	gateMu     sync.Mutex
 	gatekeeper *gate.Gate
+	// gateStanding is GateStanding's answer and when it was read (C348):
+	// every widget asks /v1/gate/status, which then reads no database.
+	gateStanding   map[string]any
+	gateStandingAt int64
 	// The moderation engine (moderationwire.go); nil while MODERATION is off.
 	moderation moderationState
 	// Arrivals by client (clientstats.go), in memory until written.

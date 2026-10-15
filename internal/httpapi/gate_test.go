@@ -298,3 +298,34 @@ func TestGateOriginBindingEverywhere(t *testing.T) {
 	raw, _ := json.Marshal(signed)
 	gateCode(t, gatePost(s, "/v1/command", string(raw), foreign), 403, "invalid_origin")
 }
+
+// C348: /v1/gate/status says what raising standing from a gate earns, from
+// the trust parameters in effect, and /capabilities lists the embed's
+// attributes; with trust off, standing is said not to count.
+func TestGateStatusStanding(t *testing.T) {
+	_, off := gateServer(t)
+	if st, _ := gateStatusOf(t, off)["standing"].(map[string]any); st == nil || st["counted"] != false {
+		t.Fatalf("trust off: %v", st)
+	}
+	_, s := hostedServerWith(t, board.Features{Services: []string{"notary"}, Trust: board.TrustOn})
+	st, _ := gateStatusOf(t, s)["standing"].(map[string]any)
+	pow, _ := st["pow"].(map[string]any)
+	if st["counted"] != true || pow == nil || pow["units_per_cent"] != float64(2158000) || pow["ceiling_cents"] != float64(50) || pow["unit_hashes"] != float64(1<<20) ||
+		pow["per_day"] != float64(board.StandingPowPerDay) || st["wallet_cents"] != float64(50) {
+		t.Fatalf("standing: %v", st)
+	}
+	now := time.Now().Unix()
+	if at := int64(st["counts_at"].(float64)); at <= now || at > now+86400+int64(board.TrustRunAfter.Seconds()) || (at-int64(board.TrustRunAfter.Seconds()))%86400 != 0 {
+		t.Fatalf("counts_at %d", at)
+	}
+	g := s.capabilities()["gate"].(map[string]any)
+	raw, _ := json.Marshal(g["embed"])
+	for _, attr := range []string{"data-min", "data-bits", "data-mode", "data-fail", "invisible"} {
+		if !strings.Contains(string(raw), attr) {
+			t.Errorf("capabilities gate.embed misses %s", attr)
+		}
+	}
+	if !strings.Contains(fmt.Sprint(g["ways_through"]), "way=earn") {
+		t.Fatalf("ways_through: %v", g["ways_through"])
+	}
+}

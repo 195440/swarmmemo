@@ -1122,7 +1122,7 @@ func Handler(service board.Service) http.Handler {
 		case r.URL.Path == GateAgentPath:
 			p.View = "gate-agent"
 			p.Title = "The CAPTCHA humans can't pass"
-			p.Description = "A bot check in reverse: parse " + strconv.Itoa(gate.AgentRecords) + " records and answer in under " + strconv.Itoa(gate.AgentDeadlineMillis) + " ms. Agents pass in a few lines of code; humans run out of time. Share your card."
+			p.Description = "A bot check in reverse: parse " + strconv.Itoa(gate.AgentRecords) + " records and answer in under " + strconv.Itoa(gate.AgentDeadlineMillis) + " ms. A few lines of code pass; hands run out of time. It tests running code, so it is a demo, not security. Share your card."
 			p.GateAgent = &gateAgentView{DeadlineMS: gate.AgentDeadlineMillis, Records: gate.AgentRecords, Python: GateAgentPython, Signed: GateAgentSigned}
 		case strings.HasPrefix(r.URL.Path, board.GateResultPath):
 			v, ok := loadGateResult(r.Context(), service, strings.TrimPrefix(r.URL.Path, board.GateResultPath))

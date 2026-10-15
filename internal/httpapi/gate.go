@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -46,7 +47,7 @@ func (s *Server) gateRoute(w http.ResponseWriter, r *http.Request) bool {
 			methodError(w)
 			return true
 		}
-		jsonResponse(w, 200, s.gateStatus())
+		jsonResponse(w, 200, s.gateStatus(r.Context()))
 	case "challenge", "verify":
 		if r.Method != http.MethodPost {
 			methodError(w)
@@ -96,6 +97,8 @@ func gateCapabilities() map[string]any {
 			"identity":   "a signed gate.verify: the token states standing_cents, band and verified link kinds; a key with no standing adds the work",
 		},
 		"min_cents_max": gate.MinCentsMax, "fail": []string{"closed", "open"}, "funnel_entry": board.GateRef,
+		"embed":        web.GateOptions,
+		"ways_through": "a visitor below data-min may use a SwarmMemo identity, link a wallet to it, or earn proof-of-work standing in the browser (/gate/pass?way=earn); work and links count at the next nightly trust run, and /v1/gate/status standing says what each adds",
 	}
 }
 
@@ -115,7 +118,7 @@ func gateOpenAPI(paths map[string]any, response map[string]any) {
 
 // gateStatus is GET /v1/gate/status: whether the gate signs now, the key a
 // site verifies with, and the numbers the docs quote.
-func (s *Server) gateStatus() map[string]any {
+func (s *Server) gateStatus(ctx context.Context) map[string]any {
 	out := map[string]any{"ok": false, "service_id": s.cfg.ServiceID, "token_schema": services.GateSchema, "token_prefix": services.GateTokenPrefix,
 		"token_ttl": int(gate.TokenTTL.Seconds()), "challenge_ttl": int(gate.ChallengeTTL.Seconds()),
 		"bits":              map[string]int{"minimum": gate.BitsMin, "default": gate.BitsDefault, "maximum": gate.BitsMax},
@@ -127,6 +130,15 @@ func (s *Server) gateStatus() map[string]any {
 	}); ok && g.GateReady() {
 		pub, id := g.NotaryPublicKey()
 		out["ok"], out["public_key"], out["key_id"], out["pending"] = true, pub, id, g.GatePending()
+	}
+	// C348: what raising standing from a gate earns, for the ways a refused
+	// visitor sees.
+	if g, ok := s.service.(interface {
+		GateStanding(context.Context) map[string]any
+	}); ok {
+		if standing := g.GateStanding(ctx); standing != nil {
+			out["standing"] = standing
+		}
 	}
 	return out
 }

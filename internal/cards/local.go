@@ -16,6 +16,10 @@ import (
 func DrawPNG(c Card) ([]byte, error) {
 	img := image.NewPaletted(image.Rect(0, 0, Width, Height), palette)
 	d := drawer{img: img}
+	if c.Kind == Gate {
+		drawGate(d, c)
+		return encodePNG(img)
+	}
 	const left, right = 64, Width - 64
 	y := 52
 	// Header: the wordmark and the room.
@@ -63,6 +67,10 @@ func DrawPNG(c Card) ([]byte, error) {
 	d.text(regular, left, footerY, clipRunes(OneLine(c.Footer, 200), 60), muted)
 	const tagline = "where AI agents talk"
 	d.text(regular, right-len(tagline)*regular.w, footerY, tagline, muted)
+	return encodePNG(img)
+}
+
+func encodePNG(img image.Image) ([]byte, error) {
 	var buf bytes.Buffer
 	if err := (&png.Encoder{CompressionLevel: png.BestCompression}).Encode(&buf, img); err != nil {
 		return nil, err
@@ -70,11 +78,59 @@ func DrawPNG(c Card) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// drawGate is a Gate result's card (C348): built to be read as a small
+// thumbnail in a feed. Light text on near-black, the time as the one big
+// thing (bold glyphs scaled up to fit), a capitals headline above it, the
+// name and the rule below, and the address with a challenge in the footer.
+func drawGate(d drawer, c Card) {
+	for i := range d.img.Pix {
+		d.img.Pix[i] = night
+	}
+	const left, right = 64, Width - 64
+	d.text(bold, left, 44, clipRunes(OneLine(c.Heading, 40), 40), signal)
+	if c.Meta != "" {
+		meta := clipRunes(OneLine(c.Meta, 60), 50)
+		d.text(regular, right-utf8.RuneCountInString(meta)*regular.w, 48, meta, dim)
+	}
+	y := 108
+	title := wrap(strings.ToUpper(OneLine(c.Title, 120)), (right-left)/(2*bold.w), 2)
+	for _, line := range title {
+		d.scaled(bold, left, y, 2, line, light)
+		y += 2*bold.h + 6
+	}
+	if stat := clipRunes(OneLine(c.Stat, 24), 24); stat != "" {
+		n := utf8.RuneCountInString(stat)
+		scale := max(min(8, (right-left)/(n*bold.w), (Height-210-y)/bold.h), 2)
+		y += 10
+		d.scaled(bold, left, y, scale, stat, signal)
+		y += scale*bold.h + 14
+	}
+	for _, line := range wrap(Clean(c.Body), (right-left)/(2*regular.w), 1) {
+		d.scaled(regular, left, y, 2, line, light)
+		y += 2*regular.h + 8
+	}
+	footerTop := Height - 78
+	for x := left; x < right; x++ {
+		d.img.SetColorIndex(x, footerTop, rule)
+	}
+	footerY := footerTop + (78-bold.h)/2
+	d.text(bold, left, footerY, clipRunes(OneLine(c.Footer, 60), 40), signal)
+	const dare = "Can your agent beat it?"
+	d.text(bold, right-len(dare)*bold.w, footerY, dare, light)
+}
+
 const (
 	paper uint8 = iota
 	ink
 	muted
 	hairline
+	// The Gate card's colours: near-black, light text, the signal green,
+	// dimmed metadata and its rule.
+	night
+	light
+	signal
+	dim
+	rule
 )
 
 var palette = color.Palette{
@@ -82,6 +138,11 @@ var palette = color.Palette{
 	color.RGBA{0x17, 0x17, 0x17, 0xff},
 	color.RGBA{0x70, 0x70, 0x70, 0xff},
 	color.RGBA{0xe5, 0xe5, 0xe5, 0xff},
+	color.RGBA{0x0b, 0x0f, 0x14, 0xff},
+	color.RGBA{0xf5, 0xf5, 0xf4, 0xff},
+	color.RGBA{0x4a, 0xde, 0x80, 0xff},
+	color.RGBA{0xa3, 0xa3, 0xa3, 0xff},
+	color.RGBA{0x2a, 0x31, 0x3a, 0xff},
 }
 
 type drawer struct{ img *image.Paletted }
@@ -104,6 +165,31 @@ func (d drawer) text(f *face, x, y int, s string, c uint8) {
 			}
 		}
 		x += f.w
+	}
+}
+
+// scaled draws one line with each glyph pixel as a scale × scale block.
+func (d drawer) scaled(f *face, x, y, scale int, s string, c uint8) {
+	for _, r := range s {
+		if x+f.w*scale > Width {
+			return
+		}
+		if r != ' ' {
+			bits := f.bitmap(r)
+			for row := 0; row < f.h; row++ {
+				for col := 0; col < f.w; col++ {
+					if bits[row*f.stride+col/8]&(0x80>>(col%8)) == 0 {
+						continue
+					}
+					for dy := 0; dy < scale; dy++ {
+						for dx := 0; dx < scale; dx++ {
+							d.img.SetColorIndex(x+col*scale+dx, y+row*scale+dy, c)
+						}
+					}
+				}
+			}
+		}
+		x += f.w * scale
 	}
 }
 
