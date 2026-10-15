@@ -62,7 +62,7 @@ func addWorkSchemas(schemas map[string]any) {
 			"data":        map[string]any{"type": "object", "required": required, "properties": data}}}
 	}
 	schemas["WorkRead"] = envelope("work.get: one work item.", []string{"work"}, map[string]any{"work": work})
-	schemas["WorkList"] = envelope("works.list: a page of work items; standing names the standing task's seats when the list was filtered by it.", []string{"works", "has_more"},
+	schemas["WorkList"] = envelope("works.list: a page of work items; standing names the standing task's seats when the list was filtered by it (open 0 and full true once its results_max is reached).", []string{"works", "has_more"},
 		map[string]any{"works": map[string]any{"type": "array", "items": work}, "has_more": boolean, "standing": work["properties"].(map[string]any)["standing"]})
 	// The history's reward fields are the work item's own, by the same names.
 	history := map[string]any{"work_id": str, "has_more": boolean, "transitions": map[string]any{"type": "array", "items": transition}}

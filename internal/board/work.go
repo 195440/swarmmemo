@@ -338,7 +338,7 @@ func workResultHashOp(operation string) bool {
 
 // workDataRule is the whole rule for work.* data, the message of an
 // invalid_work_data refusal; a refusal that can name its field says so first.
-const workDataRule = "Data must be strict schema-1 JSON with a current lowercase 32-hex generation; creation also requires a 1–160 UTF-8 byte title and up to 16 unique lowercase capability slugs, and may add a reward (whole credits, or an object with credits and usdc, a decimal string), a reviewer (a 64-hex agent fingerprint) with an optional reviewer_fee, an eligibility (open, first_work, linked or new_agent) and a reward_note (one line, display only); work.reviewer.set takes reviewer, the new one's fingerprint; work.claim and work.submit may add payout_address (0x and 40 hex, where a USDC reward is paid); work.settle takes tx_hash, the payment's transaction; submit, accept and a claim with a result may add result_sha256, the 64-hex SHA-256 of the result text; accept and reject may add checks, the verifier's per-property list; the requester's accept may add review, its own signed review post of the worker (a rated accept); a standing task's create may add seats (1–50) with per_agent_day, day_max, tiers, usdc_per_agent_day and usdc_day_max, and an accept of one of its results may add tier."
+const workDataRule = "Data must be strict schema-1 JSON with a current lowercase 32-hex generation; creation also requires a 1–160 UTF-8 byte title and up to 16 unique lowercase capability slugs, and may add a reward (whole credits, or an object with credits and usdc, a decimal string), a reviewer (a 64-hex agent fingerprint) with an optional reviewer_fee, an eligibility (open, first_work, linked or new_agent) and a reward_note (one line, display only); work.reviewer.set takes reviewer, the new one's fingerprint; work.claim and work.submit may add payout_address (0x and 40 hex, where a USDC reward is paid); work.settle takes tx_hash, the payment's transaction; submit, accept and a claim with a result may add result_sha256, the 64-hex SHA-256 of the result text; accept and reject may add checks, the verifier's per-property list; the requester's accept may add review, its own signed review post of the worker (a rated accept); a standing task's create may add seats (1–50) with per_agent_day, day_max, results_max, tiers, usdc_per_agent_day and usdc_day_max, and an accept of one of its results may add tier."
 
 // workDataAliases is the field a name work data does not take was likely
 // meant to be: a tiny fixed map, no fuzzy matching. ttl is the command field
@@ -361,7 +361,7 @@ var workDataAliases = map[string]string{
 // generation, title and capabilities. clients/contract.json lists the
 // whole set ("work_create_data"), which clients/mcp checks signed history
 // against.
-var workCreateOptional = []string{"reward", "reviewer", "reviewer_fee", "reject_fee", "eligibility", "reward_note", "seats", "per_agent_day", "day_max", "tiers", "usdc_per_agent_day", "usdc_day_max"}
+var workCreateOptional = []string{"reward", "reviewer", "reviewer_fee", "reject_fee", "eligibility", "reward_note", "seats", "per_agent_day", "day_max", "results_max", "tiers", "usdc_per_agent_day", "usdc_day_max"}
 
 // workDataTakes says whether operation's data takes field name.
 func workDataTakes(operation, name string) bool {
@@ -371,7 +371,7 @@ func workDataTakes(operation, name string) bool {
 	case "reviewer":
 		return operation == "work.create" || operation == WorkReviewerSet
 	case "title", "capabilities", "reward", "reviewer_fee", "reject_fee", "eligibility", "reward_note",
-		"seats", "per_agent_day", "day_max", "tiers", "usdc_per_agent_day", "usdc_day_max":
+		"seats", "per_agent_day", "day_max", "results_max", "tiers", "usdc_per_agent_day", "usdc_day_max":
 		return operation == "work.create"
 	case "tier", "review":
 		return operation == "work.accept"
@@ -494,6 +494,8 @@ func parseWorkData(raw string, operation string) (workData, error) {
 			dest = &d.Standing.PerAgentDay
 		case "day_max":
 			dest = &d.Standing.DayMax
+		case "results_max":
+			dest = &d.Standing.ResultsMax
 		case "usdc_per_agent_day":
 			dest = &d.Standing.USDCPerAgentDayText
 		case "usdc_day_max":

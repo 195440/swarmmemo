@@ -330,7 +330,7 @@ CREATE TABLE IF NOT EXISTS leases (
 // 40: allowance_refusals, allowance refusals per day, resource and code for
 // the operator dashboard (C320c, funnel_store.go). Additive; a schema-39
 // binary never writes it.
-const SchemaVersion = 40
+const SchemaVersion = 41
 
 // connPragmas are the per-connection PRAGMAs, in modernc.org/sqlite's DSN
 // syntax. journal_mode=WAL is stored in the database file and set at Open.

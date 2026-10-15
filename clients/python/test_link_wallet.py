@@ -158,15 +158,30 @@ class WalletSignSecurityTests(unittest.TestCase):
                 self.assertEqual(memo.wallet_address(key).lower(), "0x" + address)
 
     def test_a_faulty_signature_never_leaves(self):
-        real, calls = memo._secp_mul, []
+        # Every backend: a corrupted R = kG (native or plain) or a corrupted
+        # libsecp256k1 signature fails the self-check and nothing is returned.
+        for name, libs in backends().items():
+            with self.subTest(name), patch.object(memo, "_WALLET_LIBS", libs):
+                if libs["coincurve"]:
+                    real = libs["coincurve"]
 
-        def faulty(k, point=memo._SECP_G):
-            calls.append(k)
-            result = real(k, point)
-            return real(2, result) if len(calls) == 1 else result  # corrupt R = kG
-        with patch.object(memo, "_secp_mul", faulty), self.assertRaises(RuntimeError) as caught:
-            memo.personal_sign(bytes.fromhex(KEY), "x")
-        self.assertNotIn(KEY, str(caught.exception))
+                    class Key(real.PrivateKey):
+                        def sign_recoverable(self, message, hasher=None):
+                            sig = super().sign_recoverable(message, hasher=hasher)
+                            return sig[:32] + (int.from_bytes(sig[32:64], "big") - 1).to_bytes(32, "big") + sig[64:]
+                    faulty = {**libs, "coincurve": type("cc", (), {"PrivateKey": Key, "PublicKey": real.PublicKey})}
+                    context = patch.object(memo, "_WALLET_LIBS", faulty)
+                else:
+                    real_mul, calls = memo._base_mul, []
+
+                    def corrupt(k):
+                        calls.append(k)
+                        result = real_mul(k)
+                        return memo._secp_mul(2, result) if len(calls) == 2 else result  # calls: public key, then R = kG
+                    context = patch.object(memo, "_base_mul", corrupt)
+                with context, self.assertRaises(RuntimeError) as caught:
+                    memo.personal_sign(bytes.fromhex(KEY), "x")
+                self.assertNotIn(KEY, str(caught.exception))
 
     def test_challenge_must_be_the_exact_sign_in(self):
         ok = lambda message, nonce="0123456789abcdef0123456789abcdef": memo.wallet_challenge_ok(message, "swarmmemo.com", ADDRESS, FINGERPRINT, nonce)
@@ -218,6 +233,54 @@ class WalletSignSecurityTests(unittest.TestCase):
                     with self.assertRaises(ValueError) as caught:
                         memo.load_wallet_key(path)
                     self.assertNotIn(KEY, str(caught.exception))
+
+
+def backends():
+    """C345: the signer with every optional library it found, without coincurve,
+    and with none (plain Python), each built by making those imports fail."""
+    import builtins
+    real_import = builtins.__import__
+
+    def without(*names):
+        def fake(name, *args, **kwargs):
+            if name.split(".")[0] in names: raise ImportError(name)
+            return real_import(name, *args, **kwargs)
+        with patch("builtins.__import__", fake):
+            return memo._wallet_libs()
+    found = {"native": memo._wallet_libs(), "no coincurve": without("coincurve"),
+             "plain": without("coincurve", "cryptography", "Crypto", "eth_hash")}
+    assert not any(found["plain"].values()) and not found["no coincurve"]["coincurve"]
+    return found
+
+
+class WalletBackendTests(unittest.TestCase):
+    """C345: native (libsecp256k1 / OpenSSL / pycryptodome) and plain paths agree."""
+
+    def test_every_backend_reproduces_the_vectors(self):
+        for name, libs in backends().items():
+            with self.subTest(name), patch.object(memo, "_WALLET_LIBS", libs):
+                self.assertEqual(memo.keccak256(b"abc").hex(), "4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45")
+                for v in VECTORS:
+                    key = bytes.fromhex(v["key"])
+                    self.assertEqual(memo.wallet_address(key), v["address"], v["name"])
+                    self.assertEqual(memo.personal_sign(key, v["message"]), v["signature"], v["name"])
+                for d, text, _, r, s in RFC6979_SECP256K1:
+                    got = memo._ecdsa_sign(d, int.from_bytes(memo.hashlib.sha256(text.encode()).digest(), "big"))
+                    self.assertEqual((format(got[0], "064x"), format(got[1], "064x")), (r, s))
+
+    def test_backends_agree_on_random_keys(self):
+        rng, libs = memo.random.Random(345), backends()
+        for i in range(10):
+            key, message = rng.randbytes(32), "m" * rng.randrange(200) + str(i)
+            data = rng.randbytes(rng.randrange(300))
+            results = set()
+            for found in libs.values():
+                with patch.object(memo, "_WALLET_LIBS", found):
+                    results.add((memo.keccak256(data), memo.wallet_address(key), memo.personal_sign(key, message)))
+            self.assertEqual(len(results), 1, i)
+
+    def test_openssl_is_used_with_the_clients_own_package(self):
+        self.assertIsNotNone(backends()["native"]["ec"])
 
 
 @unittest.skipUnless(os.environ.get("SWARMMEMO_TEST_BINARY"), "set SWARMMEMO_TEST_BINARY for a real board")

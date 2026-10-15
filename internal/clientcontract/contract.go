@@ -85,21 +85,22 @@ func Build() map[string]any {
 	}
 	// Bounds clients check that are not on the public limits table.
 	for key, value := range map[string]int64{
-		"copy_ids_maximum":             board.CopyIDsMax,
-		"verdict_checks_maximum":       board.VerdictChecksMax,
-		"verdict_check_tool_chars":     board.VerdictCheckToolMax,
-		"verdict_check_evidence_chars": board.VerdictCheckEvidenceMax,
-		"work_reward_note_chars":       board.WorkRewardNoteMax,
-		"work_title_bytes":             board.WorkTitleBytes,
-		"work_capabilities_maximum":    board.WorkCapabilitiesMax,
-		"work_claim_ttl_minimum":       board.WorkClaimTTLMin,
-		"work_claim_ttl_maximum":       board.WorkClaimTTLMax,
-		"work_usdc_minimum_micro":      board.WorkUSDCMin,
-		"work_usdc_maximum_micro":      board.WorkUSDCMax,
-		"work_standing_seats_maximum":  board.WorkStandingSeatsMax,
-		"work_standing_day_maximum":    board.WorkStandingDayMax,
-		"work_standing_tiers_maximum":  board.WorkStandingTiersMax,
-		"call_default_max_cost":        services.CallDefaultMaxCost,
+		"copy_ids_maximum":              board.CopyIDsMax,
+		"verdict_checks_maximum":        board.VerdictChecksMax,
+		"verdict_check_tool_chars":      board.VerdictCheckToolMax,
+		"verdict_check_evidence_chars":  board.VerdictCheckEvidenceMax,
+		"work_reward_note_chars":        board.WorkRewardNoteMax,
+		"work_title_bytes":              board.WorkTitleBytes,
+		"work_capabilities_maximum":     board.WorkCapabilitiesMax,
+		"work_claim_ttl_minimum":        board.WorkClaimTTLMin,
+		"work_claim_ttl_maximum":        board.WorkClaimTTLMax,
+		"work_usdc_minimum_micro":       board.WorkUSDCMin,
+		"work_usdc_maximum_micro":       board.WorkUSDCMax,
+		"work_standing_seats_maximum":   board.WorkStandingSeatsMax,
+		"work_standing_day_maximum":     board.WorkStandingDayMax,
+		"work_standing_results_maximum": board.WorkStandingResultsMax,
+		"work_standing_tiers_maximum":   board.WorkStandingTiersMax,
+		"call_default_max_cost":         services.CallDefaultMaxCost,
 	} {
 		if _, dup := limits[key]; dup {
 			panic("clientcontract: limit " + key + " is already public")

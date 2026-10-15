@@ -173,9 +173,9 @@ class StandingCreateTest(unittest.TestCase):
         sent = []
         client.command = lambda operation, **fields: sent.append((operation, fields)) or {"ok": True}
         client.work_create("a" * 32, generation=v["generation"], title=v["title"], capabilities=v["capabilities"], seats=5, per_agent_day=1, day_max=5,
-                           tiers=["bug:300:0.20", {"name": "bug+fix", "credits": 500, "usdc": "0.40"}], usdc_per_agent_day="0.40", usdc_day_max="2.00")
+                           tiers=["bug:300:0.20", {"name": "bug+fix", "credits": 500, "usdc": "0.40"}], usdc_per_agent_day="0.40", usdc_day_max="2.00", results_max=20)
         self.assertEqual(sent[0][1]["data"], v["data"])
-        self.assertEqual(memo.WORK_STANDING_CREATE, ("day_max", "per_agent_day", "seats", "tiers", "usdc_day_max", "usdc_per_agent_day"))
+        self.assertEqual(memo.WORK_STANDING_CREATE, ("day_max", "per_agent_day", "results_max", "seats", "tiers", "usdc_day_max", "usdc_per_agent_day"))
 
     def test_vector_tiers_are_refused(self):
         # C331: the same strings clients/javascript refuses, e.g. a fourth ":" part.
@@ -187,11 +187,28 @@ class StandingCreateTest(unittest.TestCase):
         build = lambda **f: memo.work_create_data("t", "g", **f)
         for fields in ({"seats": 0, "reward": 5}, {"seats": memo.LIMITS["work_standing_seats_maximum"] + 1}, {"day_max": 3},
                        {"seats": 2, "per_agent_day": 3}, {"seats": 2, "tiers": ["a:1"] * 4}, {"seats": 2, "tiers": ["Bad:1"]},
-                       {"seats": 2, "tiers": ["bug:0"]}, {"seats": 2, "tiers": ["bug"]}, {"seats": 2, "nonsense": 1}):
+                       {"seats": 2, "tiers": ["bug:0"]}, {"seats": 2, "tiers": ["bug"]}, {"seats": 2, "nonsense": 1},
+                       {"seats": 2, "results_max": 1}, {"seats": 2, "results_max": memo.LIMITS["work_standing_results_maximum"] + 1},
+                       {"seats": 2, "results_max": "3"}, {"results_max": 3}):
             with self.subTest(fields=fields), self.assertRaises(ValueError):
                 build(**fields)
         with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
             memo.build_parser().parse_args(["work", "create", "a" * 32, "--title", "t", "--tier", "bug:x"])
+
+
+class WorkCancelTest(unittest.TestCase):
+    """C346: the requester closes a standing task early with work.cancel, from the
+    client and the CLI, signing its reason and the work's generation."""
+
+    def test_client_and_cli_sign_work_cancel(self):
+        client = memo.Client("https://example.org", memo.crypto()[0].generate())
+        sent = []
+        client.command = lambda operation, **fields: sent.append((operation, fields)) or {"ok": True}
+        client.work_cancel("a" * 32, "closed: enough results", generation="b" * 32, request_id="r-1")
+        self.assertEqual(sent, [("work.cancel", {"message_id": "a" * 32, "reason": "closed: enough results",
+                                                 "data": '{"schema":1,"generation":"' + "b" * 32 + '"}', "request_id": "r-1"})])
+        args = memo.build_parser().parse_args(["work", "cancel", "a" * 32, "closed"])
+        self.assertEqual((args.work_action, args.message_id, args.reason), ("cancel", "a" * 32, "closed"))
 
 
 class ListOfTest(unittest.TestCase):

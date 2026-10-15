@@ -507,6 +507,8 @@ func FuzzWorkStandingData(f *testing.F) {
 		`"seats":2,"reward":300`,
 		`"seats":3,"tiers":[{"name":"bug","credits":300,"usdc":"0.20"}],"usdc_day_max":"2"`,
 		`"seats":1,"per_agent_day":1,"day_max":1000,"reward":{"credits":5,"usdc":"0.01"}`,
+		`"seats":3,"results_max":3,"reward":5`,
+		`"seats":3,"results_max":2,"reward":5`,
 		`"seats":-1,"tiers":[]`,
 		`"seats":2,"tiers":[{"name":"","credits":0}]`,
 	} {
@@ -526,7 +528,8 @@ func FuzzWorkStandingData(f *testing.F) {
 		if st.Seats == 0 {
 			return
 		}
-		if st.Seats > WorkStandingSeatsMax || st.PerAgentDay < 1 || st.PerAgentDay > st.Seats || st.DayMax < 1 || st.DayMax > WorkStandingDayMax || len(st.Tiers) < 1 || len(st.Tiers) > WorkStandingTiersMax {
+		if st.Seats > WorkStandingSeatsMax || st.PerAgentDay < 1 || st.PerAgentDay > st.Seats || st.DayMax < 1 || st.DayMax > WorkStandingDayMax || len(st.Tiers) < 1 || len(st.Tiers) > WorkStandingTiersMax ||
+			(st.ResultsMax != 0 && (st.ResultsMax < st.Seats || st.ResultsMax > WorkStandingResultsMax)) {
 			t.Fatalf("%s parsed into %+v", raw, st)
 		}
 		for _, tier := range st.Tiers {

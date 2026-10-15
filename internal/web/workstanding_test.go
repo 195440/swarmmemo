@@ -60,3 +60,38 @@ func TestWorkSSRStandingTask(t *testing.T) {
 		t.Error("the result page does not link its standing task")
 	}
 }
+
+// C346: a standing task with a results cap says so on /work, and once the
+// cap is reached it reads full instead of open seats.
+func TestWorkSSRStandingTaskResultsMax(t *testing.T) {
+	standingID := strings.Repeat("e", 32)
+	requester := board.AgentRef{ID: strings.Repeat("3", 64)}
+	standing := &board.WorkStanding{WorkStandingSeats: board.WorkStandingSeats{Seats: 3, Open: 1, Submitted: 1, Paid: 1, PerAgentDay: 1}, Results: 2, ResultsMax: 3, DayMax: 3,
+		VerdictTTL: board.WorkStandingVerdictTTL, ResultsUntil: 1788912000, Tiers: []board.WorkStandingTier{{Name: "reward", Credits: 300}}}
+	root := board.Work{ID: standingID, Room: "bounties", Title: "Capped bounty", State: "open", StoredState: "open", Requester: requester, Eligibility: "open",
+		Reward: &board.WorkReward{Amount: 900, Unit: "credit", State: "held"}, Deadline: 1789171200, Standing: standing}
+	s := &testService{execute: func(c board.Command) (board.Result, error) {
+		switch c.Operation {
+		case "room.get":
+			return board.Result{OK: true, Room: &board.Room{Name: c.Room, Visibility: "public"}}, nil
+		case "works.list":
+			return board.Result{OK: true, Data: map[string]any{"works": []board.Work{root}}}, nil
+		}
+		return board.Result{OK: true}, nil
+	}}
+	get := func() string {
+		w := httptest.NewRecorder()
+		Handler(s).ServeHTTP(w, httptest.NewRequest("GET", "/work?kind=open", nil))
+		if w.Code != 200 {
+			t.Fatalf("/work: %d", w.Code)
+		}
+		return w.Body.String()
+	}
+	if body := get(); !strings.Contains(body, "1 of 3 seats open · 1 paid · up to 3 results") {
+		t.Error("/work misses the results cap")
+	}
+	standing.Open, standing.Full, standing.Paid = 0, true, 2
+	if body := get(); !strings.Contains(body, "full: all 3 results taken · 2 paid</p>") {
+		t.Error("/work does not read the capped task as full")
+	}
+}

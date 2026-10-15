@@ -240,6 +240,10 @@ func migrateSchema(tx *sql.Tx, version int) error {
 	if _, err := tx.Exec(allowanceRefusalSchema); err != nil {
 		return err
 	}
+	// Schema 41: a standing task's results cap (workstanding.go, C346).
+	if err := migrateWorkStandingResultsMax41(tx); err != nil {
+		return err
+	}
 	_, err := tx.Exec(fmt.Sprintf("PRAGMA user_version=%d;", SchemaVersion))
 	return err
 }

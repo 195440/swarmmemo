@@ -31,6 +31,13 @@ package board
 // reject is terminal for that result (stored cancelled; its last
 // transition is the reject). The root takes results until its deadline
 // leaves less than the verdict window.
+//
+// Results cap (C346). Optional results_max bounds the results a standing
+// task takes over its life: those accepted (paid or USDC owed) and those
+// waiting for a verdict. Rejected, lapsed and hidden results do not count.
+// Once they reach it the task is full: standing.open reads 0, standing.full
+// true, and a claim is 409 results_max_reached. The requester stops a
+// standing task early with work.cancel on the task itself.
 
 import (
 	"context"
@@ -57,10 +64,13 @@ CREATE TABLE IF NOT EXISTS work_standing (
 
 // Bounds of a standing task.
 const (
-	WorkStandingSeatsMax  = 50
-	WorkStandingDayMax    = 1000
-	WorkStandingTiersMax  = 3
-	WorkStandingTierFirst = "reward" // the one tier a reward (no tiers) makes
+	WorkStandingSeatsMax = 50
+	WorkStandingDayMax   = 1000
+	WorkStandingTiersMax = 3
+	// WorkStandingResultsMax bounds results_max, the results a standing
+	// task takes over its life (C346).
+	WorkStandingResultsMax = 10000
+	WorkStandingTierFirst  = "reward" // the one tier a reward (no tiers) makes
 	// WorkStandingVerdictTTL is each result's own verdict deadline, from the
 	// claim that opened it: 3 days.
 	WorkStandingVerdictTTL int64 = 3 * 86400
@@ -87,6 +97,7 @@ func (t WorkStandingTier) usdcUnits() int64 {
 // workStandingData is a standing create's data, parsed.
 type workStandingData struct {
 	Seats, PerAgentDay, DayMax          int64
+	ResultsMax                          int64 // 0: no cap
 	Tiers                               []WorkStandingTier
 	USDCPerAgentDayText, USDCDayMaxText string
 	USDCPerAgentDay, USDCDayMax         int64
@@ -96,6 +107,7 @@ type workStandingData struct {
 type workStanding struct {
 	ID                          string
 	Seats, PerAgentDay, DayMax  int64
+	ResultsMax                  int64 // 0: no cap (C346)
 	Tiers                       []WorkStandingTier
 	USDCPerAgentDay, USDCDayMax int64
 	VerdictTTL                  int64
@@ -124,7 +136,8 @@ func (st *workStanding) maxUSDC() int64 {
 // Open is the seats a result can take now; Submitted the results waiting for
 // a verdict; Owed the accepted results whose USDC is not yet settled; Paid
 // the other accepted results; PerAgentDay the results one agent may open a
-// day.
+// day; Full, sent only when true, that the task holds all the results its
+// results_max allows and takes no more claims (C346).
 type WorkStandingSeats struct {
 	Seats       int64 `json:"seats"`
 	Open        int64 `json:"open"`
@@ -132,6 +145,7 @@ type WorkStandingSeats struct {
 	Owed        int64 `json:"owed"`
 	Paid        int64 `json:"paid"`
 	PerAgentDay int64 `json:"per_agent_day"`
+	Full        bool  `json:"full,omitempty"`
 }
 
 // WorkStandingSeatNames is WorkStandingSeats's wire names in order, read
@@ -146,10 +160,12 @@ func WorkStandingSeatNames() []string {
 }
 
 // WorkStanding is a standing root's seats as reads show them: the seat
-// summary, flattened, and the rest. Results is every result it opened.
+// summary, flattened, and the rest. Results is every result it opened;
+// ResultsMax, when set, the accepted and waiting results it takes in all.
 type WorkStanding struct {
 	WorkStandingSeats
 	Results         int64              `json:"results"`
+	ResultsMax      int64              `json:"results_max,omitempty"`
 	DayMax          int64              `json:"day_max"`
 	OpenedToday     int64              `json:"opened_today"`
 	Tiers           []WorkStandingTier `json:"tiers"`
@@ -164,7 +180,7 @@ func invalidStanding(msg string) error {
 }
 
 // WorkStandingRule is a standing create's data, the line its refusals end with.
-const WorkStandingRule = `A standing task is work.create data seats (1–50) with a reward that has credits, or tiers (1–3 of {"name":"bug","credits":N,"usdc":"0.20"}, each with credits); optional per_agent_day (default 1, at most seats), day_max (default seats, at most 1000), and usdc_per_agent_day and usdc_day_max (decimal USDC strings, each at least every tier's USDC). No reviewer, reviewer_fee or reject_fee.`
+const WorkStandingRule = `A standing task is work.create data seats (1–50) with a reward that has credits, or tiers (1–3 of {"name":"bug","credits":N,"usdc":"0.20"}, each with credits); optional per_agent_day (default 1, at most seats), day_max (default seats, at most 1000), results_max (results accepted or waiting over its life, seats to 10000; default no cap), and usdc_per_agent_day and usdc_day_max (decimal USDC strings, each at least every tier's USDC). No reviewer, reviewer_fee or reject_fee.`
 
 // parseWorkStandingTiers reads data tiers.
 func parseWorkStandingTiers(raw json.RawMessage) ([]WorkStandingTier, error) {
@@ -207,7 +223,7 @@ func parseWorkStandingTiers(raw json.RawMessage) ([]WorkStandingTier, error) {
 // fills their defaults.
 func checkWorkStandingData(d *workData, seen map[string]bool) error {
 	set := false
-	for _, name := range []string{"seats", "per_agent_day", "day_max", "tiers", "usdc_per_agent_day", "usdc_day_max"} {
+	for _, name := range []string{"seats", "per_agent_day", "day_max", "results_max", "tiers", "usdc_per_agent_day", "usdc_day_max"} {
 		set = set || seen[name]
 	}
 	if !set {
@@ -215,7 +231,7 @@ func checkWorkStandingData(d *workData, seen map[string]bool) error {
 	}
 	st := &d.Standing
 	if !seen["seats"] {
-		return invalidStanding("per_agent_day, day_max, tiers and the USDC caps go with seats.")
+		return invalidStanding("per_agent_day, day_max, results_max, tiers and the USDC caps go with seats.")
 	}
 	if st.Seats < 1 || st.Seats > WorkStandingSeatsMax {
 		return invalidStanding("seats is 1 to 50.")
@@ -232,6 +248,9 @@ func checkWorkStandingData(d *workData, seen map[string]bool) error {
 		st.DayMax = st.Seats
 	} else if st.DayMax < 1 || st.DayMax > WorkStandingDayMax {
 		return invalidStanding("day_max is 1 to 1000.")
+	}
+	if seen["results_max"] && (st.ResultsMax < st.Seats || st.ResultsMax > WorkStandingResultsMax) {
+		return invalidStanding(fmt.Sprintf("results_max is seats to %d.", WorkStandingResultsMax))
 	}
 	switch {
 	case seen["reward"] && seen["tiers"]:
@@ -278,8 +297,8 @@ func checkWorkStandingData(d *workData, seen map[string]bool) error {
 func loadWorkStanding(ctx context.Context, tx *sql.Tx, id string) (*workStanding, error) {
 	st := workStanding{ID: id}
 	var tiers string
-	err := tx.QueryRowContext(ctx, `SELECT seats,per_agent_day,day_max,tiers,usdc_per_agent_day,usdc_day_max,verdict_ttl FROM work_standing WHERE work_id=?`, id).
-		Scan(&st.Seats, &st.PerAgentDay, &st.DayMax, &tiers, &st.USDCPerAgentDay, &st.USDCDayMax, &st.VerdictTTL)
+	err := tx.QueryRowContext(ctx, `SELECT seats,per_agent_day,day_max,results_max,tiers,usdc_per_agent_day,usdc_day_max,verdict_ttl FROM work_standing WHERE work_id=?`, id).
+		Scan(&st.Seats, &st.PerAgentDay, &st.DayMax, &st.ResultsMax, &tiers, &st.USDCPerAgentDay, &st.USDCDayMax, &st.VerdictTTL)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -295,7 +314,7 @@ func loadWorkStanding(ctx context.Context, tx *sql.Tx, id string) (*workStanding
 // createWorkStanding records a new standing root and holds its credit pool.
 // The root itself promises no USDC: each result does.
 func (s *Store) createWorkStanding(ctx context.Context, tx *sql.Tx, a actor, w workRow, d workData, now int64) error {
-	st := workStanding{ID: w.ID, Seats: d.Standing.Seats, PerAgentDay: d.Standing.PerAgentDay, DayMax: d.Standing.DayMax, Tiers: d.Standing.Tiers,
+	st := workStanding{ID: w.ID, Seats: d.Standing.Seats, PerAgentDay: d.Standing.PerAgentDay, DayMax: d.Standing.DayMax, ResultsMax: d.Standing.ResultsMax, Tiers: d.Standing.Tiers,
 		USDCPerAgentDay: d.Standing.USDCPerAgentDay, USDCDayMax: d.Standing.USDCDayMax, VerdictTTL: WorkStandingVerdictTTL}
 	if st.maxUSDC() > 0 && !s.WorkUSDCEnabled() {
 		return errUSDCRewardsUnavailable()
@@ -305,8 +324,8 @@ func (s *Store) createWorkStanding(ctx context.Context, tx *sql.Tx, a actor, w w
 		return invalidStanding(fmt.Sprintf("The pool, the largest tier's credits times seats, is at most %d credits.", WorkRewardMax))
 	}
 	tiers, _ := json.Marshal(st.Tiers)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO work_standing(work_id,seats,per_agent_day,day_max,tiers,usdc_per_agent_day,usdc_day_max,verdict_ttl) VALUES(?,?,?,?,?,?,?,?)`,
-		st.ID, st.Seats, st.PerAgentDay, st.DayMax, string(tiers), st.USDCPerAgentDay, st.USDCDayMax, st.VerdictTTL); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO work_standing(work_id,seats,per_agent_day,day_max,results_max,tiers,usdc_per_agent_day,usdc_day_max,verdict_ttl) VALUES(?,?,?,?,?,?,?,?,?)`,
+		st.ID, st.Seats, st.PerAgentDay, st.DayMax, st.ResultsMax, string(tiers), st.USDCPerAgentDay, st.USDCDayMax, st.VerdictTTL); err != nil {
 		return err
 	}
 	return s.holdWorkEscrows(ctx, tx, a, w, pool, 0, now)
@@ -317,6 +336,22 @@ type standingCounts struct {
 	waiting, owed, accepted, results, today, mineToday, mineWaiting int64
 	mineWaitingID                                                   string
 	nextVerdict                                                     int64
+}
+
+// counted is the results a results_max counts: accepted (paid or USDC
+// owed) and waiting for a verdict; rejected, lapsed and hidden ones do not.
+func (c standingCounts) counted() int64 { return c.accepted + c.waiting }
+
+// full says whether the standing task holds all the results its
+// results_max allows (never without one).
+func (st *workStanding) full(c standingCounts) bool {
+	return st.ResultsMax > 0 && c.counted() >= st.ResultsMax
+}
+
+// errResultsMaxReached is a claim on a full standing task (C346).
+func errResultsMaxReached(st *workStanding, c standingCounts) error {
+	return problem(409, "results_max_reached", fmt.Sprintf("This standing task is full: it takes %s in all (results_max) and holds %d accepted and %d waiting for a verdict, so it takes no more claims. A place opens only if the requester rejects a waiting result or one lapses undecided.",
+		plural(st.ResultsMax, "result"), c.accepted, c.waiting))
 }
 
 // standingHiddenSQL is true for a result whose reply (the item's key, its
@@ -403,6 +438,8 @@ func (s *Store) checkStandingSeat(ctx context.Context, tx *sql.Tx, root workRow,
 	}
 	untilMidnight := int(86400 - now%86400)
 	switch {
+	case st.full(n):
+		return n, errResultsMaxReached(st, n)
 	case n.mineWaiting > 0:
 		return n, problem(409, "seat_limit", "You have a result waiting for a verdict on this standing task ("+n.mineWaitingID+"); send your next one once it is decided.")
 	case n.mineToday >= st.PerAgentDay:
@@ -691,8 +728,12 @@ func cmpErr(a, b error) error {
 // standingSeatNote is the acknowledgement's note on a result a standing
 // task opened.
 func standingSeatNote(st *workStanding, n standingCounts, item workRow) string {
-	return fmt.Sprintf("Your result opened its own task (work_id %s) on this standing task: seat %d of %d. The verdict is due by %s.",
-		item.ID, n.waiting+n.owed+1, st.Seats, time.Unix(item.Deadline, 0).UTC().Format(time.RFC3339))
+	capped := ""
+	if st.ResultsMax > 0 {
+		capped = fmt.Sprintf(", result %d of the %d it takes in all", n.counted()+1, st.ResultsMax)
+	}
+	return fmt.Sprintf("Your result opened its own task (work_id %s) on this standing task: seat %d of %d%s. The verdict is due by %s.",
+		item.ID, n.waiting+n.owed+1, st.Seats, capped, time.Unix(item.Deadline, 0).UTC().Format(time.RFC3339))
 }
 
 // projectWorkStanding is a standing root's seats as reads show them.
@@ -715,7 +756,7 @@ func projectWorkStanding(ctx context.Context, tx *sql.Tx, w workRow, effective s
 	if err != nil {
 		return nil, err
 	}
-	p := &WorkStanding{WorkStandingSeats: WorkStandingSeats{Seats: st.Seats, Submitted: n.waiting, Owed: n.owed, Paid: n.accepted - n.owed, PerAgentDay: st.PerAgentDay}, Results: n.results, DayMax: st.DayMax,
+	p := &WorkStanding{WorkStandingSeats: WorkStandingSeats{Seats: st.Seats, Submitted: n.waiting, Owed: n.owed, Paid: n.accepted - n.owed, PerAgentDay: st.PerAgentDay, Full: st.full(n)}, Results: n.results, ResultsMax: st.ResultsMax, DayMax: st.DayMax,
 		OpenedToday: n.today, Tiers: st.Tiers, VerdictTTL: st.VerdictTTL, ResultsUntil: w.Deadline - st.VerdictTTL}
 	if st.USDCPerAgentDay > 0 {
 		p.USDCPerAgentDay = services.FormatUSDC(st.USDCPerAgentDay)
@@ -723,8 +764,11 @@ func projectWorkStanding(ctx context.Context, tx *sql.Tx, w workRow, effective s
 	if st.USDCDayMax > 0 {
 		p.USDCDayMax = services.FormatUSDC(st.USDCDayMax)
 	}
-	if effective == "open" && now <= p.ResultsUntil && pool >= 0 && n.today < st.DayMax {
+	if effective == "open" && now <= p.ResultsUntil && pool >= 0 && n.today < st.DayMax && !p.Full {
 		p.Open = max(0, min(st.Seats-n.waiting-n.owed, (pool+lapsed)/st.maxCredits()))
+		if st.ResultsMax > 0 {
+			p.Open = min(p.Open, st.ResultsMax-n.counted())
+		}
 	}
 	return p, nil
 }
@@ -758,14 +802,15 @@ func standingSummary(ctx context.Context, tx *sql.Tx, id, generation string, a a
 // WorkStandingCapabilities is /capabilities work_coordination.standing.
 func WorkStandingCapabilities() map[string]any {
 	return map[string]any{"field": "work.create data seats", "seats_max": WorkStandingSeatsMax, "per_agent_day_default": 1, "day_max_default": "seats", "day_max_max": WorkStandingDayMax,
+		"results_max": map[string]any{"field": "work.create data results_max", "min": "seats", "max": WorkStandingResultsMax, "default": "no cap", "counts": "results accepted (paid or USDC owed) and waiting for a verdict; rejected, lapsed and hidden ones do not", "full": "standing.open 0 and standing.full true; a claim is 409 results_max_reached"},
 		"tiers":       map[string]any{"field": "work.create data tiers", "max": WorkStandingTiersMax, "shape": `{"name":"bug","credits":N,"usdc":"0.20"}`, "credits": "required in every tier", "default": "reward makes one tier named " + WorkStandingTierFirst, "accept": "work.accept data tier names one; default the first"},
 		"usdc_caps":   map[string]any{"fields": []string{"usdc_per_agent_day", "usdc_day_max"}, "counted": "USDC owed or paid on this standing task's results accepted that UTC day; usdc_per_agent_day by worker account and by payout address", "over_cap": "the result is still accepted and paid in credits only; the acknowledgement says so"},
 		"claim":       "work.claim with target RESULT_ID on the standing task opens a task whose id is RESULT_ID (the reply's first version), state submitted",
 		"pool":        "the largest tier's credits times seats, held at create; each result takes one reward from it, a reject or lapse returns it, an accept's next reward refills it from the requester's credits",
 		"verdict_ttl": WorkStandingVerdictTTL, "verdict": "each result has its own deadline, verdict_ttl after it opens; undecided by then it counts as unpaid_lapsed and its seat returns",
-		"results_until": "the standing task's deadline minus verdict_ttl", "reject": "terminal for that task (stored cancelled); the seat reopens", "cancel": "only the standing task itself, not a result",
-		"read":         map[string]any{"standing_task": "work.get standing {seats, open, submitted, owed, paid, results, ...}", "result": "work.get standing_id, and tier once accepted", "list": "/api/works?standing=ID, data.standing the same seats"},
-		"refusals":     []string{"standing_needs_result", "seats_full", "seat_limit", "result_in_use"},
+		"results_until": "the standing task's deadline minus verdict_ttl", "reject": "terminal for that task (stored cancelled); the seat reopens", "cancel": "only the standing task itself, not a result: work.cancel on it stops new results at once (the requester's way to close it early); results already waiting are still judged",
+		"read":         map[string]any{"standing_task": "work.get standing {seats, open, submitted, owed, paid, results, results_max, full, ...}", "result": "work.get standing_id, and tier once accepted", "list": "/api/works?standing=ID, data.standing the same seats"},
+		"refusals":     []string{"standing_needs_result", "seats_full", "seat_limit", "result_in_use", "results_max_reached"},
 		"instructions": "/protocol.md#standing-tasks"}
 }
 
@@ -787,5 +832,16 @@ func migrateWorkStanding35(tx *sql.Tx) error {
 		return err
 	}
 	_, err := tx.Exec(`CREATE INDEX IF NOT EXISTS works_standing ON works(standing_id,state) WHERE standing_id<>''`)
+	return err
+}
+
+// migrateWorkStandingResultsMax41 is schema 41 (C346): work_standing.results_max,
+// 0 (no cap) for every standing task created before it.
+func migrateWorkStandingResultsMax41(tx *sql.Tx) error {
+	var exists int
+	if err := tx.QueryRow("SELECT count(*) FROM pragma_table_info('work_standing') WHERE name='results_max'").Scan(&exists); err != nil || exists > 0 {
+		return err
+	}
+	_, err := tx.Exec("ALTER TABLE work_standing ADD COLUMN results_max INTEGER NOT NULL DEFAULT 0")
 	return err
 }

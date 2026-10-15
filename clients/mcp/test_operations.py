@@ -104,10 +104,13 @@ class OperationTests(unittest.TestCase):
                 "verdict_checks": {"operation": "work.reject", "sequence": 3, "author": fingerprint, "at": 4, "checks": [{"property": "tests", "state": "fail"}]},
                 "standing": {"seats": 10, "open": 7, "submitted": 3, "owed": 0, "paid": 12, "results": 15, "per_agent_day": 1, "day_max": 10, "opened_today": 2,
                              "tiers": [{"name": "bug", "credits": 2000, "usdc": "0.2"}, {"name": "bug+fix", "credits": 2000}], "usdc_day_max": "2",
-                             "verdict_ttl": 259200, "results_until": 9},
+                             "verdict_ttl": 259200, "results_until": 9, "results_max": 20},
                 "standing_id": "9" * 32, "tier": "bug+fix", "worker_subject": "agent:" + "8" * 64}
         self.assertEqual(set(work), op.WORK_REQUIRED | op.WORK_OPTIONAL, "add a sample for the new work field, then teach _work to validate it")
         self.assertEqual(op._work(self.profile, dict(work), "e" * 32), work)
+        # C346: a full standing task says so; full is only ever true.
+        full = {**work, "standing": {**work["standing"], "open": 0, "full": True}}
+        self.assertEqual(op._work(self.profile, dict(full), "e" * 32), full)
         for bad in ("agent:x", "site:" + "8" * 64, 7):
             with self.assertRaises(op.BridgeError): op._work(self.profile, {**work, "worker_subject": bad}, "e" * 32)
         with self.assertRaises(op.BridgeError): op._work(self.profile, {k: v for k, v in work.items() if k != "worker"}, "e" * 32)
@@ -119,6 +122,8 @@ class OperationTests(unittest.TestCase):
                           ("reward_note", "x" * 81), ("reward_note", 5), ("requester_may_decide_at", "7"), ("requester_may_decide_at", True), ("requester_may_decide_at", -1),
                           ("standing", {**work["standing"], "open": "7"}), ("standing", {**work["standing"], "extra": 1}), ("standing", {**work["standing"], "tiers": []}),
                           ("standing", {k: v for k, v in work["standing"].items() if k != "seats"}), ("standing", {**work["standing"], "usdc_day_max": "x"}),
+                          ("standing", {**work["standing"], "full": False}), ("standing", {**work["standing"], "full": 1}),
+                          ("standing", {**work["standing"], "results_max": "20"}), ("standing", {**work["standing"], "results_max": 0}),
                           ("standing_id", "B" * 32), ("standing_id", "b" * 32), ("tier", "Bug"), ("tier", 5)):
             with self.subTest(name=name, bad=bad), self.assertRaisesRegex(BridgeError, "invalid_response"):
                 op._work(self.profile, {**work, name: bad})
@@ -363,7 +368,8 @@ class OperationTests(unittest.TestCase):
                 {"reward": {"credits": 20, "usdc": "0.20"}, "reviewer": reviewer, "reviewer_fee": 5, "reject_fee": 10, "eligibility": "new_agent", "reward_note": "plus thanks"},
                 # A standing task (/protocol.md#standing-tasks).
                 {"seats": 10, "reward": 2000}, {"seats": 2, "reward": {"credits": 5, "usdc": "0.20"}, "per_agent_day": 2, "day_max": 1000, "usdc_day_max": "2.00"},
-                {"seats": 3, "tiers": [{"name": "bug", "credits": 300, "usdc": "0.20"}, {"name": "bug+fix", "credits": 500, "usdc": "0.40"}], "usdc_per_agent_day": "0.50"}]
+                {"seats": 3, "tiers": [{"name": "bug", "credits": 300, "usdc": "0.20"}, {"name": "bug+fix", "credits": 500, "usdc": "0.40"}], "usdc_per_agent_day": "0.50"},
+                {"seats": 2, "reward": 5, "results_max": 2}, {"seats": 2, "reward": 5, "results_max": 10000}]
         for options in good:
             item = transition(options)
             with self.subTest(options=options): self.assertEqual(op._transition(self.profile, item, "b" * 32), item)
@@ -379,7 +385,9 @@ class OperationTests(unittest.TestCase):
                {"seats": 2, "reward": {"usdc": "0.10"}}, {"seats": 2, "reward": 5, "tiers": [{"name": "a", "credits": 1}]}, {"seats": 2, "reward": 5, "reviewer": reviewer},
                {"seats": 2, "tiers": [{"name": "a", "credits": 1}, {"name": "a", "credits": 2}]}, {"seats": 2, "tiers": [{"name": "A", "credits": 1}]},
                {"seats": 2, "tiers": [{"name": "a", "usdc": "0.10"}]}, {"seats": 2, "reward": 5, "usdc_day_max": "1"},
-               {"seats": 2, "reward": {"credits": 5, "usdc": "0.50"}, "usdc_per_agent_day": "0.40"}]
+               {"seats": 2, "reward": {"credits": 5, "usdc": "0.50"}, "usdc_per_agent_day": "0.40"},
+               {"seats": 2, "reward": 5, "results_max": 1}, {"seats": 2, "reward": 5, "results_max": 10001}, {"seats": 2, "reward": 5, "results_max": "3"},
+               {"reward": 5, "results_max": 3}]
         for options in bad:
             with self.subTest(options=options), self.assertRaisesRegex(BridgeError, "invalid_response"): op._transition(self.profile, transition(options), "b" * 32)
         # Other operations still take none of them.

@@ -7,7 +7,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawn, spawnSync} from 'node:child_process';
 import {gzipSync} from 'node:zlib';
-import {createPrivateKey, createPublicKey, sign, verify} from 'node:crypto';
+import {createECDH, createPrivateKey, createPublicKey, randomBytes, sign, verify} from 'node:crypto';
 import {Client, DelegatedClient, ClientError, CONTRACT, FIELDS, canonical, delegationContext, generateKey, importKey, writeKey, loadKey, conversationRoom, loadSeal, agentSubjectID, workCreateData, standingTier, WORK_STANDING_CREATE, markdownAuto, MARKDOWN_POST_DATA, keccak256, walletAddress, personalSign, loadWalletKey, walletChallengeOK, WALLET_KEY_ENV} from './swarmmemo.mjs';
 
 const vector = JSON.parse(await readFile(new URL('../python/signing-vector.json', import.meta.url), 'utf8'));
@@ -483,7 +483,7 @@ test('work, updates, journal, docs, tools and /call helpers send the documented 
     if (name === 'tier') (options.tiers ??= []).push(value);
     else options[name] = name.startsWith('usdc') ? value : Number(value);
   }
-  assert.deepEqual([...WORK_STANDING_CREATE], ['day_max', 'per_agent_day', 'seats', 'tiers', 'usdc_day_max', 'usdc_per_agent_day']);
+  assert.deepEqual([...WORK_STANDING_CREATE], ['day_max', 'per_agent_day', 'results_max', 'seats', 'tiers', 'usdc_day_max', 'usdc_per_agent_day']);
   assert.equal(JSON.stringify(workCreateData({title: standing.title, capabilities: standing.capabilities, generation: standing.generation, ...options})), standing.data);
   for (const tier of standing.tiers_refused) assert.throws(() => standingTier(tier), errorCode('invalid_option'), tier); // C331, as Python refuses them
   await signed.createWork(id, {title: standing.title, capabilities: standing.capabilities, generation: standing.generation, ttl: 864000, requestId: 'w-1', ...options});
@@ -493,9 +493,14 @@ test('work, updates, journal, docs, tools and /call helpers send the documented 
   await signed.createWork(id, {title: 'Review', reward: 300, reviewer: 'judge', reviewerFee: 20});
   assert.deepEqual(requests.map(r => r.path === '/v1/command' ? r.body.operation : r.path), ['/api/changes?after=-1', 'agent.get', 'work.create']);
   assert.equal(requests[2].body.data, `{"schema":1,"generation":"${generation}","title":"Review","capabilities":[],"reward":300,"reviewer":"${agent}","reviewer_fee":20}`); requests.length = 0;
-  for (const bad of [{seats: 0, reward: 5}, {dayMax: 3}, {seats: 2, perAgentDay: 3}, {seats: 2, tiers: ['a:1', 'b:1', 'c:1', 'd:1']}, {seats: 2, tiers: ['Bad:1']}, {seats: 2, tiers: ['bug:0']}, {seats: 2, tiers: ['bug']}, {seats: 2, nonsense: 1}])
+  for (const bad of [{seats: 0, reward: 5}, {dayMax: 3}, {seats: 2, perAgentDay: 3}, {seats: 2, tiers: ['a:1', 'b:1', 'c:1', 'd:1']}, {seats: 2, tiers: ['Bad:1']}, {seats: 2, tiers: ['bug:0']}, {seats: 2, tiers: ['bug']}, {seats: 2, nonsense: 1},
+    {seats: 2, resultsMax: 1}, {seats: 2, resultsMax: CONTRACT.limits.work_standing_results_maximum + 1}, {seats: 2, resultsMax: '3'}, {resultsMax: 3}])
     assert.throws(() => workCreateData({title: 't', generation: 'g', ...bad}), errorCode('invalid_option'), JSON.stringify(bad));
   assert.equal(requests.length, 0);
+  // work.cancel closes a standing task early (C346), signing its reason and the generation.
+  await signed.cancelWork(id, 'closed: enough results', {generation, requestId: 'c-1'});
+  assert.deepEqual(requests.map(r => shown(r.body)), [{operation: 'work.cancel', message_id: id, reason: 'closed: enough results', request_id: 'c-1', data: `{"schema":1,"generation":"${generation}"}`}]);
+  verifySigned(requests[0].body); requests.length = 0;
   // work.settle signs the transaction that paid a USDC reward.
   const paidTx = '0x' + 'b'.repeat(64);
   await signed.settleWork(id, paidTx, {generation, requestId: 't-1'});
@@ -672,6 +677,24 @@ test('C343: personalSign reproduces the personal_sign vectors Go wrote to testda
     assert.equal(walletAddress(key), v.address, v.name); assert.equal(personalSign(key, v.message), v.signature, v.name);
   }
   for (const key of [Buffer.alloc(32), Buffer.from('fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141', 'hex'), Buffer.alloc(31), '00'.repeat(32)]) assert.throws(() => personalSign(key, 'x'), errorCode('invalid_wallet_key'));
+});
+
+test('C345: the OpenSSL (createECDH) and plain BigInt paths agree on the vectors and random keys', async () => {
+  const {vectors} = JSON.parse(await readFile(new URL('../../testdata/wallet_sign.json', import.meta.url), 'utf8'));
+  for (const v of vectors) {
+    const key = Buffer.from(v.key, 'hex');
+    assert.equal(walletAddress(key, {plain: true}), v.address, v.name); assert.equal(personalSign(key, v.message, {plain: true}), v.signature, v.name);
+  }
+  const ecdh = createECDH('secp256k1'); ecdh.setPrivateKey(Buffer.from(walletKeyHex, 'hex'));
+  assert.equal('0x' + keccak256(ecdh.getPublicKey().subarray(1)).subarray(12).toString('hex'), walletAddressHex.toLowerCase());
+  for (let i = 0; i < 10; i++) {
+    const key = randomBytes(32), message = 'm'.repeat(i * 17) + i;
+    assert.equal(walletAddress(key), walletAddress(key, {plain: true}));
+    const signature = personalSign(key, message);
+    assert.equal(signature, personalSign(key, message, {plain: true}));
+    assert.ok(['1b', '1c'].includes(signature.slice(-2)));
+    assert.ok(BigInt('0x' + signature.slice(66, 130)) <= 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141n / 2n);
+  }
 });
 
 test('C343: loadWalletKey reads an owner-only file or the environment, never quoting the key', async t => {

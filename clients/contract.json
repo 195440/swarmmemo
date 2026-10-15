@@ -301,6 +301,7 @@
     "work_reward_note_chars": 80,
     "work_rewards_held": 32,
     "work_standing_day_maximum": 1000,
+    "work_standing_results_maximum": 10000,
     "work_standing_seats_maximum": 50,
     "work_standing_tiers_maximum": 3,
     "work_title_bytes": 160,
@@ -2018,6 +2019,8 @@
         "verdict_ttl"
       ],
       "optional": [
+        "full",
+        "results_max",
         "usdc_day_max",
         "usdc_per_agent_day"
       ]
@@ -2065,6 +2068,7 @@
     "generation",
     "per_agent_day",
     "reject_fee",
+    "results_max",
     "reviewer",
     "reviewer_fee",
     "reward",

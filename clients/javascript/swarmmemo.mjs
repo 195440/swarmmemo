@@ -1,6 +1,6 @@
 // SwarmMemo canonical v1/v2 + offline private v3 vectors. Node.js 22+, built-ins only.
 // Importing this module does no I/O.
-import {createHash, createHmac, createPrivateKey, createPublicKey, randomBytes, randomUUID, sign, verify} from 'node:crypto';
+import {createECDH, createHash, createHmac, createPrivateKey, createPublicKey, randomBytes, randomUUID, sign, verify} from 'node:crypto';
 import {constants} from 'node:fs';
 import {open, readFile, rename} from 'node:fs/promises';
 import {dirname, resolve} from 'node:path';
@@ -117,6 +117,7 @@ export const CONTRACT = Object.freeze({
   "work_reward_note_chars": 80,
   "work_rewards_held": 32,
   "work_standing_day_maximum": 1000,
+  "work_standing_results_maximum": 10000,
   "work_standing_seats_maximum": 50,
   "work_standing_tiers_maximum": 3,
   "work_title_bytes": 160,
@@ -312,11 +313,11 @@ export const CONTRACT = Object.freeze({
   "verdict_check": {"required":["property","state"],"optional":["evidence","subject_sha256","tool"]},
   "votes": {"required":["down","score","up"],"optional":["weight"]},
   "work": {"required":["capabilities","claim_expires_at","created_at","deadline","eligibility","fence","generation","id","requester","requester_author","result_available","room","service_generation","service_id","simulated","state","stored_state","title","updated_at"],"optional":["attempt_grant_id","eligible","eligible_agent","eligible_preview","eligible_reason","reject_fee","request","requester_may_decide_at","requester_record","resolved_from","result_changed_since_submit","result_id","result_sha256","reviewer","reviewer_fee","reward","reward_note","reward_receipt","reward_state","reward_usdc","standing","standing_id","tier","verdict_checks","worker","worker_subject"]},
-  "work_standing": {"required":["day_max","open","opened_today","owed","paid","per_agent_day","results","results_until","seats","submitted","tiers","verdict_ttl"],"optional":["usdc_day_max","usdc_per_agent_day"]},
+  "work_standing": {"required":["day_max","open","opened_today","owed","paid","per_agent_day","results","results_until","seats","submitted","tiers","verdict_ttl"],"optional":["full","results_max","usdc_day_max","usdc_per_agent_day"]},
   "work_standing_tier": {"required":["credits","name"],"optional":["usdc"]},
   "work_transition": {"required":["accepted_at","author","fence","generation","operation","public_key","sequence","signature","signed_payload","state"],"optional":["checks","delegation_id","fallback","note","previous_reviewer","reject_fee","resolved_from","result_sha256","result_sha256_signed","reviewer"]}
  },
- "work_create_data": ["capabilities","day_max","eligibility","generation","per_agent_day","reject_fee","reviewer","reviewer_fee","reward","reward_note","schema","seats","tiers","title","usdc_day_max","usdc_per_agent_day"],
+ "work_create_data": ["capabilities","day_max","eligibility","generation","per_agent_day","reject_fee","results_max","reviewer","reviewer_fee","reward","reward_note","schema","seats","tiers","title","usdc_day_max","usdc_per_agent_day"],
  "work_rating": {
   "bands": [{"from":65,"verdict":"good"},{"from":35,"verdict":"mixed"},{"from":10,"verdict":"bad"},{"from":0,"verdict":"unusable"}],
   "bytes_maximum": 4096,
@@ -363,7 +364,7 @@ for (const code of 'invalid_post_data supersede_forbidden supersede_mismatch sup
 for (const code of 'no_query image_unavailable message_removed text_unavailable'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_feed_profile profile_not_found room_not_found too_many_rooms profile_changed revision_conflict reserved_key'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_link invalid_link_value invalid_link_proof link_limit link_not_found link_delegated link_reserved invalid_witness link_not_witnessable self_witness witness_delegated witness_limit'.split(' ')) remoteCodes.add(code);
-for (const code of 'invalid_work_data invalid_work_root invalid_work_result invalid_work_state work_generation_mismatch work_state_conflict work_fence_mismatch work_forbidden work_exists work_renew_not_extended work_fence_exhausted work_read_timeout invalid_work_reward invalid_reward_note reject_fee_unavailable work_reward_limit reviewer_not_found reviewer_is_requester not_the_reviewer not_eligible work_result_changed usdc_rewards_unavailable reward_note_amount payout_address_required no_usdc_reward work_already_paid chain_unavailable settle_tx_not_found settle_tx_failed settle_unconfirmed settle_wrong_recipient settle_amount_short settle_tx_before_work settle_tx_used settle_sender_unlinked standing_needs_result seats_full seat_limit result_in_use invalid_work_rating work_rating_requester'.split(' ')) remoteCodes.add(code);
+for (const code of 'invalid_work_data invalid_work_root invalid_work_result invalid_work_state work_generation_mismatch work_state_conflict work_fence_mismatch work_forbidden work_exists work_renew_not_extended work_fence_exhausted work_read_timeout invalid_work_reward invalid_reward_note reject_fee_unavailable work_reward_limit reviewer_not_found reviewer_is_requester not_the_reviewer not_eligible work_result_changed usdc_rewards_unavailable reward_note_amount payout_address_required no_usdc_reward work_already_paid chain_unavailable settle_tx_not_found settle_tx_failed settle_unconfirmed settle_wrong_recipient settle_amount_short settle_tx_before_work settle_tx_used settle_sender_unlinked standing_needs_result seats_full seat_limit result_in_use results_max_reached invalid_work_rating work_rating_requester'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_delegation_context invalid_delegation_data invalid_delegation_proof delegation_not_found delegation_scope_mismatch delegation_exists delegation_limit delegation_already_revoked delegation_generation_mismatch delegation_quota_exhausted delegation_required delegation_context_mismatch delegation_inactive delegation_forbidden'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_resource invalid_service invalid_service_data invalid_memory_key invalid_vouch standing_required no_share prefix_blocked transfers_frozen memory_not_found transfer_not_found handle_reserved not_transferable transfer_not_pending request_in_flight price_exceeds_max memory_limit vouch_limit self_vouch hold_limit service_unavailable trust_unavailable content_refused wakeup_conflict wakeup_limit wakeup_not_found notary_not_found notary_limit'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_seal invalid_envelope not_sealed sealed_required seal_rotation_required seal_epoch_exists seal_members_mismatch'.split(' ')) remoteCodes.add(code);
@@ -613,7 +614,15 @@ export async function loadKey(path) {
 // dependency: Keccak-256 (node:crypto's sha3-256 pads differently), secp256k1
 // and RFC 6979 ECDSA with low s and v 27 or 28, as wallets and the board's
 // SignPersonal sign; it agrees with testdata/wallet_sign.json byte for byte.
-// Not constant time: it signs one challenge, locally, once.
+// C345: both scalar multiplications by a secret (the key, for its public key, and
+// the nonce, for R = kG) run in OpenSSL through createECDH, constant time; only
+// s = k^-1 (z + r d) mod n stays in BigInt. node:crypto cannot sign the digest
+// itself: sign(null, digest) with a secp256k1 key hashes it again with SHA-256
+// (there is no prehashed mode) and draws a random nonce, not RFC 6979's, so the
+// signature would neither be personal_sign nor match the shared vectors.
+// Keccak stays plain JS (it hashes no secret). Without secp256k1 in OpenSSL it
+// falls back to plain BigInt, which is not constant time. Every signature is
+// self-checked against the public key, on public data only, before it leaves.
 export const WALLET_KEY_ENV = 'SWARMMEMO_WALLET_KEY';
 const SECP_P = 2n ** 256n - 2n ** 32n - 977n, SECP_N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141n;
 const SECP_G = [0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798n, 0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8n];
@@ -658,14 +667,27 @@ function secpAdd(p, q) {
 }
 function secpMul(k, point = SECP_G) { let result = null; for (; k; k >>= 1n, point = secpAdd(point, point)) if (k & 1n) result = secpAdd(result, point); return result; }
 const word = n => Buffer.from(n.toString(16).padStart(64, '0'), 'hex');
+let nativeECDH = true;
+// baseMul is k times the generator for a secret k: OpenSSL when it has the curve.
+function baseMul(k, plain) {
+  if (!plain && nativeECDH) {
+    try {
+      const ecdh = createECDH('secp256k1'); ecdh.setPrivateKey(word(k));
+      const point = ecdh.getPublicKey();
+      return [BigInt('0x' + point.subarray(1, 33).toString('hex')), BigInt('0x' + point.subarray(33).toString('hex'))];
+    } catch { nativeECDH = false; }
+  }
+  return secpMul(k);
+}
 function walletScalar(key) {
   const d = Buffer.isBuffer(key) && key.length === 32 ? BigInt('0x' + key.toString('hex')) : 0n;
   if (d <= 0n || d >= SECP_N) fail('invalid_wallet_key', 'A wallet key is 32 bytes, a valid secp256k1 private key.');
   return d;
 }
 // walletAddress is the EVM address (EIP-55 mixed case) of a 32-byte private key.
-export function walletAddress(key) {
-  const [x, y] = secpMul(walletScalar(key)), lower = keccak256(Buffer.concat([word(x), word(y)])).subarray(12).toString('hex');
+// {plain: true} here and in personalSign skips OpenSSL (tests compare the paths).
+export function walletAddress(key, {plain = false} = {}) {
+  const [x, y] = baseMul(walletScalar(key), plain), lower = keccak256(Buffer.concat([word(x), word(y)])).subarray(12).toString('hex');
   const nibbles = keccak256(Buffer.from(lower)).toString('hex');
   return '0x' + [...lower].map((c, i) => parseInt(nibbles[i], 16) >= 8 ? c.toUpperCase() : c).join('');
 }
@@ -685,23 +707,24 @@ function* rfc6979Nonces(d, z) {
 // ecdsaSign is deterministic (RFC 6979) low-s ECDSA of digest z: [r, s, recovery id].
 // The signature is verified against d's public key before it is returned: a wrong
 // signature over a deterministic nonce would give the key away, so none leaves.
-function ecdsaSign(d, z) {
+function ecdsaSign(d, z, plain) {
+  const pub = baseMul(d, plain);
   for (const nonce of rfc6979Nonces(d, z)) {
-    const [rx, ry] = secpMul(nonce), r = rx % SECP_N;
+    const [rx, ry] = baseMul(nonce, plain), r = rx % SECP_N;
     let s = inverse(nonce, SECP_N) * (z + r * d) % SECP_N, recovery = Number(ry & 1n);
     if (r && s && rx < SECP_N) {
       if (s > SECP_N / 2n) { s = SECP_N - s; recovery ^= 1; }
-      const w = inverse(s, SECP_N), check = secpAdd(secpMul(z * w % SECP_N), secpMul(r * w % SECP_N, secpMul(d)));
+      const w = inverse(s, SECP_N), check = secpAdd(secpMul(z * w % SECP_N), secpMul(r * w % SECP_N, pub));
       if (!check || check[0] % SECP_N !== r || Number(check[1] & 1n) !== recovery) fail('wallet_sign_failed', 'The wallet signature failed its self-check; nothing was sent.');
       return [r, s, recovery];
     }
   }
 }
 // personalSign is a wallet's personal_sign of message: 0x and 130 hex digits, r || s || v.
-export function personalSign(key, message) {
+export function personalSign(key, message, {plain = false} = {}) {
   const d = walletScalar(key), raw = Buffer.from(text(message), 'utf8');
   const z = BigInt('0x' + keccak256(Buffer.concat([Buffer.from(`\x19Ethereum Signed Message:\n${raw.length}`), raw])).toString('hex'));
-  const [r, s, recovery] = ecdsaSign(d, z);
+  const [r, s, recovery] = ecdsaSign(d, z, plain);
   return '0x' + word(r).toString('hex') + word(s).toString('hex') + (27 + recovery).toString(16);
 }
 // walletChallengeOK is whether message is, line for line, the board's Sign-In with
@@ -788,8 +811,8 @@ export function standingTier(value) {
 }
 // work.create data, as the Python client's work_create_data builds it: schema, generation, title,
 // capabilities, then reward, reviewer (a fingerprint), reviewerFee, eligibility, rewardNote and
-// a standing task's seats, perAgentDay, dayMax, tiers, usdcPerAgentDay and usdcDayMax (decimal
-// strings); the server checks how they go together.
+// a standing task's seats, perAgentDay, dayMax, resultsMax, tiers, usdcPerAgentDay and usdcDayMax
+// (decimal strings); the server checks how they go together.
 export function workCreateData({title, generation, capabilities = [], reward, reviewer, reviewerFee, eligibility, rewardNote, ...standing}) {
   const options = new Set(WORK_STANDING_CREATE.map(camel));
   for (const name of Object.keys(standing)) if (!options.has(name)) fail('invalid_option', `work.create data takes no ${name}.`);
@@ -797,11 +820,12 @@ export function workCreateData({title, generation, capabilities = [], reward, re
   for (const [name, value] of [['reward', reward], ['reviewer', reviewer], ['reviewer_fee', reviewerFee], ['eligibility', eligibility], ['reward_note', rewardNote]]) if (value !== undefined && value !== null) data[name] = value;
   const set = WORK_STANDING_CREATE.filter(name => standing[camel(name)] !== undefined && standing[camel(name)] !== null);
   if (set.length) {
-    const {seats, perAgentDay, dayMax, tiers} = standing, limits = CONTRACT.limits;
+    const {seats, perAgentDay, dayMax, resultsMax, tiers} = standing, limits = CONTRACT.limits;
     const whole = (v, low, high) => Number.isSafeInteger(v) && v >= low && v <= high;
     if (!whole(seats, 1, limits.work_standing_seats_maximum)) fail('invalid_option', `A standing task’s seats are 1 to ${limits.work_standing_seats_maximum}.`);
     if (perAgentDay != null && !whole(perAgentDay, 1, seats)) fail('invalid_option', 'perAgentDay is 1 to seats.');
     if (dayMax != null && !whole(dayMax, 1, limits.work_standing_day_maximum)) fail('invalid_option', `dayMax is 1 to ${limits.work_standing_day_maximum}.`);
+    if (resultsMax != null && !whole(resultsMax, seats, limits.work_standing_results_maximum)) fail('invalid_option', `resultsMax is seats to ${limits.work_standing_results_maximum}.`);
     if (tiers != null && (!Array.isArray(tiers) || tiers.length < 1 || tiers.length > limits.work_standing_tiers_maximum)) fail('invalid_option', `tiers are 1 to ${limits.work_standing_tiers_maximum}.`);
     for (const name of set) data[name] = name === 'tiers' ? tiers.map(standingTier) : standing[camel(name)];
   }
@@ -1005,7 +1029,9 @@ export class Client {
   // {credits, usdc}) is held in escrow now; reviewer, a fingerprint or public handle, judges for
   // reviewerFee; ttl is the deadline in seconds. seats makes it a standing task: many results, each
   // judged and paid on its own, from reward or up to 3 tiers ({name, credits, usdc?} or
-  // NAME:CREDITS[:USDC]), with perAgentDay, dayMax, usdcPerAgentDay and usdcDayMax (workCreateData).
+  // NAME:CREDITS[:USDC]), with perAgentDay, dayMax, usdcPerAgentDay and usdcDayMax (workCreateData);
+  // resultsMax caps the results it takes in all (accepted or waiting): then it reads full and refuses
+  // claims with results_max_reached. cancelWork closes it early.
   // generation defaults to the service's (GET /api/changes?after=-1).
   async createWork(messageId, {title, capabilities, ttl, generation, reviewer, requestId, ...fields} = {}) {
     if (generation === undefined) {
@@ -1045,6 +1071,12 @@ export class Client {
   async rejectWork(messageId, fence, reason, {generation, checks, requestId} = {}) {
     const data = await this.#workData(messageId, generation, undefined, checks);
     return this.send(this.prepare({operation: 'work.reject', message_id: messageId, amount: fence, reason, data, ...(requestId ? {request_id: requestId} : {})}));
+  }
+  // work.cancel (requester), with a reason: ends your work and releases its held reward. On a standing
+  // task it closes it early: no new claims, while results already waiting are still yours to judge.
+  async cancelWork(messageId, reason, {generation, requestId} = {}) {
+    const data = await this.#workData(messageId, generation);
+    return this.send(this.prepare({operation: 'work.cancel', message_id: messageId, reason, data, ...(requestId ? {request_id: requestId} : {})}));
   }
   // work.settle: the transaction that paid your accepted work's USDC reward (reward_usdc.pay_to, at least
   // reward_usdc.amount); the board reads it on chain before the reward reads paid (/protocol.md#work-rewards-in-usdc).

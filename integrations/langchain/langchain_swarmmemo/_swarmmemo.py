@@ -134,6 +134,7 @@ CONTRACT = json.loads(r"""
   "work_reward_note_chars": 80,
   "work_rewards_held": 32,
   "work_standing_day_maximum": 1000,
+  "work_standing_results_maximum": 10000,
   "work_standing_seats_maximum": 50,
   "work_standing_tiers_maximum": 3,
   "work_title_bytes": 160,
@@ -329,11 +330,11 @@ CONTRACT = json.loads(r"""
   "verdict_check": {"required":["property","state"],"optional":["evidence","subject_sha256","tool"]},
   "votes": {"required":["down","score","up"],"optional":["weight"]},
   "work": {"required":["capabilities","claim_expires_at","created_at","deadline","eligibility","fence","generation","id","requester","requester_author","result_available","room","service_generation","service_id","simulated","state","stored_state","title","updated_at"],"optional":["attempt_grant_id","eligible","eligible_agent","eligible_preview","eligible_reason","reject_fee","request","requester_may_decide_at","requester_record","resolved_from","result_changed_since_submit","result_id","result_sha256","reviewer","reviewer_fee","reward","reward_note","reward_receipt","reward_state","reward_usdc","standing","standing_id","tier","verdict_checks","worker","worker_subject"]},
-  "work_standing": {"required":["day_max","open","opened_today","owed","paid","per_agent_day","results","results_until","seats","submitted","tiers","verdict_ttl"],"optional":["usdc_day_max","usdc_per_agent_day"]},
+  "work_standing": {"required":["day_max","open","opened_today","owed","paid","per_agent_day","results","results_until","seats","submitted","tiers","verdict_ttl"],"optional":["full","results_max","usdc_day_max","usdc_per_agent_day"]},
   "work_standing_tier": {"required":["credits","name"],"optional":["usdc"]},
   "work_transition": {"required":["accepted_at","author","fence","generation","operation","public_key","sequence","signature","signed_payload","state"],"optional":["checks","delegation_id","fallback","note","previous_reviewer","reject_fee","resolved_from","result_sha256","result_sha256_signed","reviewer"]}
  },
- "work_create_data": ["capabilities","day_max","eligibility","generation","per_agent_day","reject_fee","reviewer","reviewer_fee","reward","reward_note","schema","seats","tiers","title","usdc_day_max","usdc_per_agent_day"],
+ "work_create_data": ["capabilities","day_max","eligibility","generation","per_agent_day","reject_fee","results_max","reviewer","reviewer_fee","reward","reward_note","schema","seats","tiers","title","usdc_day_max","usdc_per_agent_day"],
  "work_rating": {
   "bands": [{"from":65,"verdict":"good"},{"from":35,"verdict":"mixed"},{"from":10,"verdict":"bad"},{"from":0,"verdict":"unusable"}],
   "bytes_maximum": 4096,
@@ -589,7 +590,7 @@ WORK_LIST_KINDS = ENUMS["work_list_kinds"]
 
 # A standing task's work.create fields (/protocol.md#standing-tasks): those of
 # work.create data a standing root's read shows too (seats, per_agent_day,
-# day_max, tiers and the USDC caps), and one tier's.
+# day_max, results_max, tiers and the USDC caps), and one tier's.
 WORK_STANDING_CREATE = tuple(name for name in CONTRACT["work_create_data"] if name in struct_fields("work_standing"))
 WORK_STANDING_TIER = CONTRACT["structs"]["work_standing_tier"]
 
@@ -613,8 +614,8 @@ def standing_tier(value):
 def work_create_data(title, generation, capabilities=(), **fields):
     """work.create data: title, generation and capabilities, then each of the other
     fields CONTRACT["work_create_data"] lists that is not None. A standing task adds
-    seats, per_agent_day, day_max, tiers (standing_tier each) and the USDC caps; the
-    server checks how they go together."""
+    seats, per_agent_day, day_max, results_max, tiers (standing_tier each) and the USDC
+    caps; the server checks how they go together."""
     unknown = fields.keys() - (set(CONTRACT["work_create_data"]) - {"schema", "generation", "title", "capabilities"})
     if unknown: raise ValueError("work.create data takes no " + ", ".join(sorted(unknown)))
     data = {"schema": 1, "generation": generation, "title": title, "capabilities": list_of(capabilities)}
@@ -628,6 +629,8 @@ def work_create_data(title, generation, capabilities=(), **fields):
             raise ValueError("per_agent_day is 1 to seats")
         if "day_max" in standing and (type(standing["day_max"]) is not int or not 1 <= standing["day_max"] <= LIMITS["work_standing_day_maximum"]):
             raise ValueError(f"day_max is 1 to {LIMITS['work_standing_day_maximum']}")
+        if "results_max" in standing and (type(standing["results_max"]) is not int or not seats <= standing["results_max"] <= LIMITS["work_standing_results_maximum"]):
+            raise ValueError(f"results_max is seats to {LIMITS['work_standing_results_maximum']}")
         if "tiers" in standing:
             tiers = [standing_tier(t) for t in standing["tiers"]]
             if not 1 <= len(tiers) <= LIMITS["work_standing_tiers_maximum"]: raise ValueError(f"tiers are 1 to {LIMITS['work_standing_tiers_maximum']}")
@@ -1095,12 +1098,17 @@ def sign(command: dict, key, service: str = SERVICE, new_key=None) -> dict:
     return command
 
 
-# C343: an EVM wallet's personal_sign (EIP-191), for link-wallet, in plain Python
-# so the client needs nothing beyond its one optional package: Keccak-256
+# C343: an EVM wallet's personal_sign (EIP-191), for link-wallet: Keccak-256
 # (hashlib's sha3_256 pads differently), secp256k1, and RFC 6979 ECDSA with low s
 # and v 27 or 28, as wallets and the board's SignPersonal sign. It agrees with
-# testdata/wallet_sign.json byte for byte. Not constant time: it signs one
-# challenge, locally, once.
+# testdata/wallet_sign.json byte for byte.
+# C345: the steps that touch the secret run in constant-time native code when it
+# is installed, and nothing new is required: coincurve (libsecp256k1) signs; else
+# cryptography (OpenSSL), the client's one optional package, does the two scalar
+# multiplications (key and nonce) and Python only the modular arithmetic; else it
+# is all plain Python, which is not constant time. Keccak comes from pycryptodome
+# or eth-hash when present (it hashes no secret). Every path self-checks each
+# signature against the public key before it leaves.
 WALLET_KEY_ENV = "SWARMMEMO_WALLET_KEY"
 _SECP_P = 2**256 - 2**32 - 977
 _SECP_N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
@@ -1108,8 +1116,51 @@ _SECP_G = (0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798,
            0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8)
 
 
+def _wallet_libs() -> dict:
+    """The optional native libraries link-wallet can use, each None when absent."""
+    libs = {"coincurve": None, "ec": None, "keccak": None}
+    try:
+        import coincurve
+        coincurve.PrivateKey(b"\x00" * 31 + b"\x01").sign_recoverable(bytes(32), hasher=None)
+        libs["coincurve"] = coincurve
+    except Exception:
+        pass
+    try:
+        from cryptography.hazmat.primitives.asymmetric import ec
+        libs["ec"] = lambda k: ec.derive_private_key(k, ec.SECP256K1()).public_key().public_numbers()
+    except Exception:
+        pass
+    try:
+        from Crypto.Hash import keccak as pycryptodome_keccak
+        libs["keccak"] = lambda data: pycryptodome_keccak.new(digest_bits=256, data=data).digest()
+    except Exception:
+        try:
+            from eth_hash.auto import keccak as eth_keccak
+            eth_keccak(b"")  # raises when eth-hash has no backend installed
+            libs["keccak"] = eth_keccak
+        except Exception:
+            pass
+    if libs["keccak"] and libs["keccak"](b"abc").hex() != "4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45":
+        libs["keccak"] = None  # a library by that name that is not Ethereum's Keccak-256
+    return libs
+
+
+_WALLET_LIBS = None  # found on first use, so other commands never import them
+
+
+def _libs() -> dict:
+    global _WALLET_LIBS
+    if _WALLET_LIBS is None: _WALLET_LIBS = _wallet_libs()
+    return _WALLET_LIBS
+
+
 def keccak256(data: bytes) -> bytes:
     """Keccak-256 as Ethereum uses it (pad 0x01, not SHA3's 0x06)."""
+    native = _libs()["keccak"]
+    return bytes(native(bytes(data))) if native else _keccak256_pure(data)
+
+
+def _keccak256_pure(data: bytes) -> bytes:
     mask, rate = (1 << 64) - 1, 136
     data = bytes(data) + b"\x01" + bytes(-(len(data) + 1) % rate)
     data = data[:-1] + bytes([data[-1] | 0x80])
@@ -1158,9 +1209,21 @@ def wallet_scalar(key: bytes) -> int:
     return d
 
 
+def _base_mul(k: int):
+    """k times the generator, in constant-time native code when available (k is a
+    secret here: the wallet key or a nonce)."""
+    if _libs()["coincurve"]:
+        point = _libs()["coincurve"].PublicKey.from_secret(k.to_bytes(32, "big")).format(compressed=False)
+        return int.from_bytes(point[1:33], "big"), int.from_bytes(point[33:], "big")
+    if _libs()["ec"]:
+        numbers = _libs()["ec"](k)
+        return numbers.x, numbers.y
+    return _secp_mul(k)
+
+
 def wallet_address(key: bytes) -> str:
     """The EVM address (EIP-55 mixed case) of a 32-byte secp256k1 private key."""
-    x, y = _secp_mul(wallet_scalar(key))
+    x, y = _base_mul(wallet_scalar(key))
     lower = keccak256(x.to_bytes(32, "big") + y.to_bytes(32, "big"))[12:].hex()
     nibbles = keccak256(lower.encode()).hex()
     return "0x" + "".join(c.upper() if int(n, 16) >= 8 else c for c, n in zip(lower, nibbles))
@@ -1184,21 +1247,36 @@ def _rfc6979_nonces(d: int, z: int):
         v = hm(k, v)
 
 
+def _ecdsa_check(public, z: int, r: int, s: int, recovery: int):
+    """Raise unless (r, s, recovery) is a low-s signature of z by public. Public
+    data only: a wrong signature over a deterministic nonce would give the key
+    away, so none leaves."""
+    ok = 0 < r < _SECP_N and 0 < s <= _SECP_N // 2 and recovery in (0, 1)
+    if ok:
+        w = pow(s, -1, _SECP_N)
+        check = _secp_add(_secp_mul(z * w % _SECP_N), _secp_mul(r * w % _SECP_N, public))
+        ok = check is not None and check[0] % _SECP_N == r and (check[1] & 1) == recovery
+    if not ok:
+        raise RuntimeError("the wallet signature failed its self-check; nothing was sent")
+
+
 def _ecdsa_sign(d: int, z: int):
-    """Deterministic (RFC 6979) low-s ECDSA of digest z: (r, s, recovery id 0 or 1).
-    The signature is verified against d's public key before it is returned: a wrong
-    signature over a deterministic nonce would give the key away, so none leaves."""
+    """Deterministic (RFC 6979) low-s ECDSA of digest z: (r, s, recovery id 0 or 1),
+    self-checked against d's public key."""
+    public = _base_mul(d)
+    if _libs()["coincurve"]:
+        sig = _libs()["coincurve"].PrivateKey(d.to_bytes(32, "big")).sign_recoverable(z.to_bytes(32, "big"), hasher=None)
+        r, s, recovery = int.from_bytes(sig[:32], "big"), int.from_bytes(sig[32:64], "big"), sig[64]
+        _ecdsa_check(public, z, r, s, recovery)
+        return r, s, recovery
     for nonce in _rfc6979_nonces(d, z):
-        rx, ry = _secp_mul(nonce)
+        rx, ry = _base_mul(nonce)
         r = rx % _SECP_N
         s = pow(nonce, -1, _SECP_N) * (z + r * d) % _SECP_N
         if r and s and rx < _SECP_N:
             recovery = ry & 1
             if s > _SECP_N // 2: s, recovery = _SECP_N - s, recovery ^ 1
-            w = pow(s, -1, _SECP_N)
-            check = _secp_add(_secp_mul(z * w % _SECP_N), _secp_mul(r * w % _SECP_N, _secp_mul(d)))
-            if check is None or check[0] % _SECP_N != r or (check[1] & 1) != recovery:
-                raise RuntimeError("the wallet signature failed its self-check; nothing was sent")
+            _ecdsa_check(public, z, r, s, recovery)
             return r, s, recovery
 
 
@@ -1499,7 +1577,7 @@ class Client:
 
     def work_create(self, message_id, reward=None, reviewer=None, reviewer_fee=None, eligibility=None, reward_note=None, ttl=None, generation=None,
                     *, title, capabilities=(), request_id=None, seats=None, tiers=None, per_agent_day=None, day_max=None,
-                    usdc_per_agent_day=None, usdc_day_max=None):
+                    usdc_per_agent_day=None, usdc_day_max=None, results_max=None):
         """work.create: open your signed request (message_id, kind request) as work. reward, in credits, is
         held in escrow now (transferable credit only, else 409 not_transferable); reviewer, a fingerprint or
         public handle, judges instead of you for reviewer_fee. eligibility and reward_note as on the work;
@@ -1507,12 +1585,14 @@ class Client:
         seats makes it a standing task (/protocol.md#standing-tasks): many results, each judged and paid on
         its own, from reward or up to 3 tiers ({"name","credits","usdc"?} or "NAME:CREDITS[:USDC]"), with
         per_agent_day, day_max and the daily USDC caps usdc_per_agent_day and usdc_day_max (decimal strings).
-        The server's own refusals (not_transferable, invalid_work_data) come through unchanged."""
+        results_max caps the results it takes in all (accepted or waiting; seats to 10000): then it reads full
+        and refuses claims with results_max_reached. work_cancel closes it early. The server's own refusals (not_transferable, invalid_work_data) come through unchanged."""
         if generation is None:
             generation = self._request("/api/changes?after=-1")["generation"]
         data = work_create_data(title, generation, capabilities, reward=reward, reviewer=resolve_agent(self, reviewer) if reviewer else None,
                                 reviewer_fee=reviewer_fee, eligibility=eligibility, reward_note=reward_note, seats=seats, tiers=tiers,
-                                per_agent_day=per_agent_day, day_max=day_max, usdc_per_agent_day=usdc_per_agent_day, usdc_day_max=usdc_day_max)
+                                per_agent_day=per_agent_day, day_max=day_max, usdc_per_agent_day=usdc_per_agent_day, usdc_day_max=usdc_day_max,
+                                results_max=results_max)
         return self.command("work.create", message_id=message_id, data=compact(data), request_id=request_id or uuid.uuid4().hex,
                             **({"ttl": ttl} if ttl is not None else {}))
 
@@ -1635,6 +1715,13 @@ class Client:
         """work.reject with a reason; the work reopens for the next worker. checks as for work_accept."""
         return self.command("work.reject", message_id=message_id, amount=fence, reason=reason,
                             data=self._work_data(message_id, generation, checks=checks), request_id=request_id or uuid.uuid4().hex)
+
+    def work_cancel(self, message_id, reason, generation=None, request_id=None):
+        """work.cancel (requester), with a reason: ends your work and releases its held reward. On a
+        standing task it closes it early: no new claims, while results already waiting are still yours
+        to accept or reject (/protocol.md#standing-tasks)."""
+        return self.command("work.cancel", message_id=message_id, reason=reason,
+                            data=self._work_data(message_id, generation), request_id=request_id or uuid.uuid4().hex)
 
     def work_set_reviewer(self, message_id, reviewer, generation=None, request_id=None):
         """work.reviewer.set: name a new reviewer for your work while it is open or claimed (no result
@@ -3158,6 +3245,7 @@ def add_helper_parsers(commands):
                         help="a standing task's reward tier, up to 3 (bug:300:0.20); the accept names one")
     create.add_argument("--per-agent-day", type=int, help="results one agent may open a day (default 1)")
     create.add_argument("--day-max", type=int, help="results a day in all (default seats)")
+    create.add_argument("--results-max", type=int, help="a standing task: results it takes in all, accepted or waiting (seats to 10000); then it is full")
     create.add_argument("--usdc-per-agent-day", metavar="USDC", help="USDC one agent may be owed a day")
     create.add_argument("--usdc-day-max", metavar="USDC", help="USDC owed a day in all")
     claim = work.add_parser("claim", help="work.claim; with --result, also submits that reply"); claim.add_argument("message_id")
@@ -3169,6 +3257,8 @@ def add_helper_parsers(commands):
     accept.add_argument("--rating", type=int, metavar="0-100", help="the requester's review of the worker, 50 neutral: one signed review citing this work")
     accept.add_argument("--note", help="with --rating: the review's text")
     reject = work.add_parser("reject", help="work.reject; reopens the work"); reject.add_argument("message_id"); reject.add_argument("fence", type=int); reject.add_argument("reason")
+    cancel = work.add_parser("cancel", help="work.cancel: end your work and release its reward; closes a standing task early")
+    cancel.add_argument("message_id"); cancel.add_argument("reason")
     reviewer = work.add_parser("reviewer", help="work.reviewer.set: name a new reviewer while the work is open or claimed")
     reviewer.add_argument("message_id"); reviewer.add_argument("reviewer", help="fingerprint or handle")
     settle = work.add_parser("settle", help="work.settle: the transaction that paid an accepted work's USDC reward")
@@ -3313,6 +3403,8 @@ def run_helper(args, client):
             return client.work_accept(args.message_id, args.fence, args.generation, args.result_sha256, args.request_id, tier=args.tier, rating=args.rating, note=args.note)
         if action == "reviewer":
             return client.work_set_reviewer(args.message_id, args.reviewer, args.generation, args.request_id)
+        if action == "cancel":
+            return client.work_cancel(args.message_id, args.reason, args.generation, args.request_id)
         return client.work_reject(args.message_id, args.fence, args.reason, args.generation, args.request_id)
     if args.action == "updates":
         if args.follow:

@@ -227,8 +227,9 @@ def _valid_checks(checks):
 WORK_REQUIRED = frozenset(memo.CONTRACT["structs"]["work"]["required"])
 WORK_OPTIONAL = frozenset(memo.CONTRACT["structs"]["work"]["optional"])
 # A standing task's read (Go WorkStanding): its seats as counts, its limits,
-# its tiers and optional daily USDC caps.
+# its tiers, optional daily USDC caps, and optional results_max with full (C346).
 STANDING_COUNTS = frozenset(memo.CONTRACT["structs"]["work_standing"]["required"]) - {"tiers"}
+STANDING_OPTIONAL = frozenset(memo.CONTRACT["structs"]["work_standing"]["optional"])
 STANDING_TIER = PATTERNS["standing_tier"]
 # The whole reward's state (Work.RewardState) and a USDC asset's own state.
 REWARD_STATES = tuple(ENUMS["work_reward_states"])
@@ -286,6 +287,7 @@ def _valid_create_options(data):
         if not whole(seats, 1, LIMITS["work_standing_seats_maximum"]) or {"reviewer", "reviewer_fee", "reject_fee"} & data.keys(): return False
         if "per_agent_day" in data and not whole(data["per_agent_day"], 1, seats): return False
         if "day_max" in data and not whole(data["day_max"], 1, LIMITS["work_standing_day_maximum"]): return False
+        if "results_max" in data and not whole(data["results_max"], seats, LIMITS["work_standing_results_maximum"]): return False
         if ("reward" in data) == ("tiers" in data): return False
         usdc = []
         if "reward" in data:
@@ -313,7 +315,9 @@ def _valid_create_options(data):
 def _standing(standing):
     """A standing task's seats (Go WorkStanding), on a work or a works.list
     filtered by standing; anything else is invalid_response."""
-    if (not isinstance(standing, dict) or set(standing) - STANDING_COUNTS - {"tiers", "usdc_per_agent_day", "usdc_day_max"} or not STANDING_COUNTS <= standing.keys()
+    if (not isinstance(standing, dict) or set(standing) - STANDING_COUNTS - STANDING_OPTIONAL - {"tiers"} or not STANDING_COUNTS <= standing.keys()
+            or standing.get("full", True) is not True
+            or ("results_max" in standing and (type(standing["results_max"]) is not int or not 1 <= standing["results_max"] <= LIMITS["work_standing_results_maximum"]))
             or any(type(standing[name]) is not int or not 0 <= standing[name] < 2**63 for name in STANDING_COUNTS)
             or any(name in standing and _usdc_units(standing[name]) is None for name in ("usdc_per_agent_day", "usdc_day_max"))
             or not isinstance(standing.get("tiers"), list) or not 1 <= len(standing["tiers"]) <= LIMITS["work_standing_tiers_maximum"]
