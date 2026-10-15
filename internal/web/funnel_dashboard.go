@@ -51,6 +51,35 @@ type funnelDashboard struct {
 	LapsingMore                   int
 	LapsingRule                   string
 	MinN, Taxonomy                int
+	// Trust is the trust section (funnel_trust.go); nil before any run.
+	Trust *dashTrust
+	// Refusals is the allowance refusals by day: a row per day and
+	// resource, its count per code.
+	Refusals []dashRefusal
+}
+
+// dashRefusal is one day's allowance refusals of one resource.
+type dashRefusal struct {
+	Day, Resource     string
+	Own, Dry, NoShare int64 // quota_exhausted, global_quota_exhausted, no_share
+}
+
+// buildRefusals folds the report's refusals into a row per day and resource.
+func (d *funnelDashboard) buildRefusals(list []board.FunnelRefusal) {
+	for _, r := range list {
+		if n := len(d.Refusals); n == 0 || d.Refusals[n-1].Day != r.Day || d.Refusals[n-1].Resource != r.Resource {
+			d.Refusals = append(d.Refusals, dashRefusal{Day: r.Day, Resource: r.Resource})
+		}
+		row := &d.Refusals[len(d.Refusals)-1]
+		switch r.Code {
+		case "quota_exhausted":
+			row.Own += r.N
+		case "global_quota_exhausted":
+			row.Dry += r.N
+		case "no_share":
+			row.NoShare += r.N
+		}
+	}
 }
 
 type dashStep struct {
@@ -190,6 +219,8 @@ func buildFunnelDashboard(rep *board.FunnelReport) *funnelDashboard {
 	d.buildLoop(rep.Loop)
 	d.buildFeedback(rep.Feedback)
 	d.buildLapsing(rep.Lapsing)
+	d.Trust = buildDashTrust(rep.Trust)
+	d.buildRefusals(rep.Refusals)
 	d.Takeaways = funnelTakeaways(rep, worst, segs, cohorts)
 	return d
 }

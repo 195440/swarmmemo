@@ -4,7 +4,7 @@
 // on; against a server with both off the suite checks the 404 and stops.
 //
 // In light and dark, with and without reduced motion, at 320, 390 and 1280 px:
-// no horizontal overflow, named controls, the stake figure driven by keyboard
+// no horizontal overflow, named controls, the judgement figure driven by keyboard
 // and click (its readout matches the published parameters), and, while trust
 // is on, the network drawn from /api/trust/graph (hover or keyboard focus
 // shows an agent, Enter would open it) or its text list when the graph is
@@ -29,7 +29,7 @@ const sane = async (page, where) => {
   });
   assert.deepEqual(problems, [], where);
 };
-const read = (page) => page.locator('[data-fig="stake"] [data-out="read"]').textContent();
+const read = (page) => page.locator('[data-fig="edge"] [data-out="read"]').textContent();
 
 (async () => {
   const browser = await chromium.launch({headless: true, ...(process.env.CHROMIUM_PATH ? {executablePath: process.env.CHROMIUM_PATH} : {}), args: process.env.PLAYWRIGHT_NO_SANDBOX === 'true' ? ['--no-sandbox'] : []});
@@ -87,23 +87,24 @@ const read = (page) => page.locator('[data-fig="stake"] [data-out="read"]').text
       assert.deepEqual(unnamed, [], 'controls without a name');
       for (const id of ['allowance', 'standing', 'check']) assert.equal(await page.locator('#' + id).count(), 1, '#' + id);
 
-      // The stake figure: a vouch moves 0.25% x weight; a vote moves nothing.
-      assert.match(await read(page), /A vouch at weight 10 stakes 2\.5% of your standing: 12\.5 of your 500 cents/);
-      const weight = page.locator('[data-fig="stake"] [data-in="weight"]');
-      await weight.focus();
+      // The judgement figure: a rated accept at x is a U x (x - 50)/50 edge;
+      // only what the judge holds above node_cap can pass along it.
+      assert.match(await read(page), /A rated accept at 80 is a 120¢ edge\. You keep your own costs first, up to 750¢; of your 1,000¢, 120¢ can pass along it\. Your vote weighs 1\.00\./);
+      const score = page.locator('[data-fig="edge"] [data-in="score"]');
+      await score.focus();
       await page.keyboard.press('End');
-      assert.equal(await page.locator('[data-fig="stake"] [data-out="weight"]').textContent(), '50');
-      assert.match(await read(page), /weight 50 stakes 12\.5% of your standing: 62\.5 of your 500 cents/);
+      assert.equal(await page.locator('[data-fig="edge"] [data-out="score"]').textContent(), '100');
+      assert.match(await read(page), /at 100 is a 200¢ edge/);
       await page.getByRole('radio', {name: 'Up vote'}).check({force: true});
-      assert.match(await read(page), /An up vote moves nothing/);
-      assert.ok(await page.locator('[data-fig="stake"] [data-in="weight"]').isHidden(), 'the vouch weight hides for a vote');
-      const cents = page.locator('[data-fig="stake"] [data-in="cents"]');
+      assert.match(await read(page), /An up vote is a 20¢ edge/);
+      assert.ok(await page.locator('[data-fig="edge"] [data-in="score"]').isHidden(), 'the rating hides for a vote');
+      const cents = page.locator('[data-fig="edge"] [data-in="cents"]');
       await cents.focus();
       await page.keyboard.press('Home');
-      assert.match(await read(page), /ranks the post at your vote weight, 0\.00/);
-      await page.getByRole('radio', {name: 'Accept work'}).check({force: true});
-      assert.match(await read(page), /An accepted work item at weight 10/);
-      await sane(page, 'stake ' + tag);
+      assert.match(await read(page), /of your 0¢, 0¢ can pass along it\. Your vote weighs 0\.00/);
+      await page.getByRole('radio', {name: 'Witness'}).check({force: true});
+      assert.match(await read(page), /A verified witness is a 40¢ edge/);
+      await sane(page, 'edge ' + tag);
 
       // The network: drawn from the API, or its text when there is nothing to draw.
       if (graph) {
@@ -132,12 +133,12 @@ const read = (page) => page.locator('[data-fig="stake"] [data-out="read"]').text
           assert.match(await net.textContent(), /No trust run with standing has finished yet|network is empty/);
         }
       } else {
-        assert.match(await page.locator('#tx').textContent(), /Trust estimates are not published on this server yet/);
+        assert.match(await page.locator('#tx').textContent(), /Standing is not published on this server yet/);
       }
 
-      // A click-fuzz on the stake figure.
+      // A click-fuzz on the judgement figure.
       if (run === runs[1] || process.env.TX_FUZZ_ALL) {
-        const controls = page.locator('#tx [data-fig="stake"] input:visible');
+        const controls = page.locator('#tx [data-fig="edge"] input:visible');
         const end = Date.now() + FUZZ_MS;
         let presses = 0, seed = 7;
         const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
@@ -161,7 +162,7 @@ const read = (page) => page.locator('[data-fig="stake"] [data-out="read"]').text
         await page.goto(origin + '/trust/network');
         await page.waitForLoadState('networkidle');
         assert.equal(await page.locator('h1').textContent(), 'The trust network');
-        assert.equal(await page.locator('[data-fig="stake"]').count(), 0);
+        assert.equal(await page.locator('[data-fig="edge"]').count(), 0);
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `/trust/network overflows (${tag})`);
       }
 
@@ -173,7 +174,7 @@ const read = (page) => page.locator('[data-fig="stake"] [data-out="read"]').text
       assert.deepEqual(errors, [], 'no script errors (' + tag + ')');
       await context.close();
     }
-    console.log('trust explainer: the short page, the stake figure, the network (drawn, keyboard, text list), themes, 320/390/1280px, fuzz and read-only requests pass');
+    console.log('trust explainer: the short page, the judgement figure, the network (drawn, keyboard, text list), themes, 320/390/1280px, fuzz and read-only requests pass');
   } finally {
     await browser.close();
   }

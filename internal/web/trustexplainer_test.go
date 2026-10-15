@@ -24,12 +24,12 @@ func (s *explainerService) Features() board.Features { return s.features }
 
 func (s *explainerService) AllowanceStats(context.Context, int) (map[string]any, error) {
 	return map[string]any{"params_version": 0, "resources": []any{map[string]any{"resource": "post_bytes", "day": "2026-09-29", "budget": 64 << 20,
-		"tiers": []any{map[string]any{"tier": 4, "size": 40 << 20, "claimed": 3336, "claimants": 1}, map[string]any{"tier": 1, "size": 6 << 20, "want": 6 << 20},
-			map[string]any{"tier": 3, "size": 12 << 20, "want": 12 << 20}, map[string]any{"tier": 2, "size": 6 << 20, "want": 6 << 20}}}}}, nil
+		"slices": []any{map[string]any{"slice": "standing", "size": 48 << 20, "drawn": 1 << 20, "claimants": 1}, map[string]any{"slice": "floor", "size": 16 << 20, "drawn": 3336, "claimants": 2},
+			map[string]any{"slice": "grant", "size": 0}}}}}, nil
 }
 
 func (s *explainerService) TrustDistribution(context.Context) (map[string]any, error) {
-	return map[string]any{"mode": "shadow", "run": 2, "collateral_log10_bins": []int64{1, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, "tier_counts": map[string]int64{"3": 7}}, nil
+	return map[string]any{"run": 2, "cents_log10_bins": []int64{1, 6, 0, 0, 0, 0, 0, 0}, "bands": map[string]int64{"signed": 7}}, nil
 }
 
 func (s *explainerService) TrustRuns(context.Context, int64, int) ([]map[string]any, int64, error) {
@@ -42,8 +42,8 @@ func (s *explainerService) TrustRun(context.Context, int64) (map[string]any, err
 
 var explainerGraph = &board.TrustGraph{Run: 2, Nodes: []board.TrustGraphNode{
 	{ID: "aa11", Handle: "atlas", Standing: 2.71, StandingCents: 512, Band: 2, BandName: "proven", Roots: []string{"domain", "github"}, Core: true},
-	{ID: "bb22", Standing: 1.0, StandingCents: 9, Band: 3, BandName: "signed", Roots: []string{}, Core: true},
-	{ID: "cc33", Handle: "newcomer", Band: 3, BandName: "signed", Roots: []string{}},
+	{ID: "bb22", Standing: 1.0, StandingCents: 9, Band: 1, BandName: "signed", Roots: []string{}, Core: true},
+	{ID: "cc33", Handle: "newcomer", Band: 1, BandName: "signed", Roots: []string{}},
 }, Edges: []board.TrustGraphEdge{{From: "aa11", To: "cc33", Kind: "vouch", Count: 1, Weight: 10}}}
 
 func (s *explainerService) TrustGraph(context.Context, int) (*board.TrustGraph, error) {
@@ -69,7 +69,7 @@ func TestTrustExplainerOffIsNotFound(t *testing.T) {
 			t.Errorf("flags-off 404 carries %q", unwanted)
 		}
 	}
-	if TrustExplainerOn(board.Features{}) || !TrustExplainerOn(board.Features{Ledger: board.LedgerShadow}) || !TrustExplainerOn(board.Features{Trust: board.TrustShadow}) {
+	if TrustExplainerOn(board.Features{}) || !TrustExplainerOn(board.Features{Ledger: board.LedgerShadow}) || !TrustExplainerOn(board.Features{Trust: board.TrustOn}) {
 		t.Fatal("TrustExplainerOn does not follow the ledger and trust flags")
 	}
 	// The network needs trust: with the ledger alone it is a 404 too.
@@ -91,7 +91,7 @@ func article(t *testing.T, body string) string {
 }
 
 func TestTrustExplainerRenders(t *testing.T) {
-	s := &explainerService{features: board.Features{Ledger: board.LedgerOn, Trust: board.TrustShadow}}
+	s := &explainerService{features: board.Features{Ledger: board.LedgerOn, Trust: board.TrustOn}}
 	w := getTrustPage(t, s, "/trust")
 	body := w.Body.String()
 	if w.Code != 200 {
@@ -99,25 +99,22 @@ func TestTrustExplainerRenders(t *testing.T) {
 	}
 	for _, want := range []string{"Keys are free, so nothing here is shared out per key", `data-view="trust"`, `class="tx-theme"`,
 		`id="allowance"`, `id="standing"`, `id="network"`, `id="check"`,
-		`data-fig="pour"`, `data-fig="stake"`, `data-fig="network"`, `data-src="/api/trust/graph"`,
-		`data-key="allowance.resources.0.tiers.1.water" data-value="6291456"`, `.claimed" data-value="3336"`,
-		// The stake figure states its default without the script, from the published parameters.
-		`data-stake-ppm="2500"`, `data-vouch="10"`, `data-vouch-max="50"`, "stakes 2.5% of your standing: 12.5 of your 500 cents move to the target. At weight 50, 62.5.", "your vote weight, 1.00",
+		`data-fig="pour"`, `data-fig="edge"`, `data-fig="network"`, `data-src="/api/trust/graph"`,
+		`data-key="allowance.resources.0.slices.1.size" data-value="16777216"`, `.drawn" data-value="3336"`,
+		// The judgement figure states its default without the script, from the published parameters.
+		`data-unit="200"`, `data-coarse-x="75"`, `data-node-cap="750"`, `data-ev-work="1000000"`,
+		"A rated accept at 80 is a 120¢ edge. You keep your own costs first, up to 750¢; of your 1,000¢, 120¢ can pass along it. Your vote weighs 1.00.",
 		// The network's text list, in the API's order, links each agent.
 		`href="/agent/aa11">atlas</a>`, `data-key="nodes.0.standing_cents" data-value="512"`, "proven · domain, github", "Run 2: 3 agents, the 2 with the most standing",
 		`href="/trust/network"`, `href="/api/trust/graph"`, `<script type="module" src="/assets/trust-network.js?v=`,
-		`href="/api/trust/runs/2"`, `/api/trust/runs/2/snapshot`, `href="/trust-model"`, WaterfallSentence} {
+		`href="/api/trust/runs/2"`, `/api/trust/runs/2/snapshot`, `href="/trust-model"`, ShareRuleSentence} {
 		if !strings.Contains(body, want) {
 			t.Errorf("/trust lacks %q", want)
 		}
 	}
-	// Tiers in order, trusted first, though the API lists anonymous first.
-	if got := regexp.MustCompile(`<tr data-tier="(\d)">`).FindAllStringSubmatch(body, -1); len(got) != 4 || got[0][1] != "1" || got[3][1] != "4" {
-		t.Errorf("tier rows: %v", got)
-	}
-	// The grant pool is not a subject tier and is not drawn.
-	if strings.Contains(body, `data-tier="0"`) {
-		t.Error("the grant pool is drawn as a tier")
+	// Slices in order, grants first, though the API lists standing first.
+	if got := regexp.MustCompile(`<tr><th scope="row">([A-Za-z ]+)</th><td class="tx-bar-cell">`).FindAllStringSubmatch(body, -1); len(got) != 3 || got[0][1] != "Grants" || got[2][1] != "By standing" {
+		t.Errorf("slice rows: %v", got)
 	}
 	if regexp.MustCompile(`\sstyle=`).MatchString(body) {
 		t.Error("inline style attribute")
@@ -136,13 +133,13 @@ func TestTrustExplainerRenders(t *testing.T) {
 	// With the ledger alone the page renders without the trust blocks.
 	ledgerOnly := getTrustPage(t, &explainerService{features: board.Features{Ledger: board.LedgerOn}}, "/trust").Body.String()
 	if strings.Contains(ledgerOnly, `data-fig="network"`) || strings.Contains(ledgerOnly, `id="run-live"`) || strings.Contains(ledgerOnly, "trust-network.js") ||
-		!strings.Contains(ledgerOnly, "Trust estimates are not published on this server yet.") {
+		!strings.Contains(ledgerOnly, "Standing is not published on this server yet.") {
 		t.Error("ledger-only /trust offers trust blocks")
 	}
 }
 
 func TestTrustNetworkPage(t *testing.T) {
-	s := &explainerService{features: board.Features{Trust: board.TrustShadow}}
+	s := &explainerService{features: board.Features{Trust: board.TrustOn}}
 	w := getTrustPage(t, s, "/trust/network")
 	body := w.Body.String()
 	if w.Code != 200 {
@@ -154,7 +151,7 @@ func TestTrustNetworkPage(t *testing.T) {
 			t.Errorf("/trust/network lacks %q", want)
 		}
 	}
-	for _, unwanted := range []string{`data-fig="stake"`, `data-fig="pour"`, "/assets/trust.js"} {
+	for _, unwanted := range []string{`data-fig="edge"`, `data-fig="pour"`, "/assets/trust.js"} {
 		if strings.Contains(body, unwanted) {
 			t.Errorf("/trust/network carries %q", unwanted)
 		}

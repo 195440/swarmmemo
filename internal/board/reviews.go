@@ -156,6 +156,10 @@ type pendingReview struct {
 	account  string
 	author   string
 	previous string // the account's current review of the subject, if any
+	// seasoned: the account had a visible public post VoterMinAge old when
+	// it reviewed, so its review weighs at least a whole vote (the vote
+	// floor, trust.Params.FlooredVoteWeight).
+	seasoned bool
 }
 
 type reviewEvidenceRow struct {
@@ -341,10 +345,6 @@ func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, e
 	if owner && r.Relationship != "owner" {
 		raised = "owner"
 	}
-	var seasoned int
-	if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM events e JOIN rooms r ON r.name=e.room WHERE e.account=? AND e.hidden=0 AND r.visibility='public' AND e.created_at<=?)", p.account, now-int64(VoterMinAge.Seconds())).Scan(&seasoned); err != nil {
-		return nil, nil, err
-	}
 	parent := ""
 	if ps, ok := sub.Parent(); ok && ps.ID != sub.ID {
 		parent = ps.ID
@@ -410,9 +410,12 @@ func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, e
 			class = e.class
 		}
 	}
+	if err = tx.QueryRowContext(ctx, "SELECT "+seasonedAccountSQL("?"), p.account, now-int64(VoterMinAge.Seconds())).Scan(&p.seasoned); err != nil {
+		return nil, nil, err
+	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO reviews(event_id,root_event,subject,account,author,root,verdict,relationship,relationship_raised,works,as_described,safe,good,rubric,rubric_version,rubric_sha256,score,band_lo,band_hi,grade,flags,evidence_class,seasoned,review,created_at,current,version)
  VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?)`, eventID, root, sub.ID, p.account, p.author, p.account, r.Verdict, r.Relationship, raised,
-		dim("works"), dim("as_described"), dim("safe"), dim("good"), rubricID, rubricVersion, sum, score, lo, hi, r.Grade, strings.Join(r.Flags, ","), class, seasoned, p.raw, now, version); err != nil {
+		dim("works"), dim("as_described"), dim("safe"), dim("good"), rubricID, rubricVersion, sum, score, lo, hi, r.Grade, strings.Join(r.Flags, ","), class, p.seasoned, p.raw, now, version); err != nil {
 		return nil, nil, err
 	}
 	pending := false
@@ -443,7 +446,7 @@ func (s *Store) indexReview(ctx context.Context, tx *sql.Tx, p *pendingReview, e
 	if err = s.tellSubjectOwners(ctx, tx, p, eventID, origin, now); err != nil {
 		return nil, nil, err
 	}
-	reward, err := s.offerReviewReward(ctx, tx, p, eventID, class, raised, seasoned == 1, now)
+	reward, err := s.offerReviewReward(ctx, tx, p, eventID, class, raised, now)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -513,17 +516,16 @@ func (s *Store) subjectOwners(ctx context.Context, q allowance.Querier, sub revi
 }
 
 // toolOwners are the owners of every tool subject: SwarmMemo's own
-// accounts, the one list the trust run already reads (trust parameters'
-// service_accounts), so the operator's personas' reviews of its own tools
-// weigh 0 and their replies are owner replies. The trust run drops edges to
-// service accounts, so a judgement of a tool moves no standing to them.
+// accounts (operatorAccountSet, the one list of them), so the operator's
+// personas' reviews of its own tools weigh 0 and their replies are owner
+// replies.
 func (s *Store) toolOwners(ctx context.Context, q allowance.Querier) ([]SubjectOwner, error) {
-	p, err := trustParams(ctx, q, s.now().Unix())
+	ops, err := operatorAccountSet(ctx, q)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]SubjectOwner, 0, len(p.ServiceAccounts))
-	for _, a := range p.ServiceAccounts {
+	out := make([]SubjectOwner, 0, len(ops))
+	for _, a := range funnelSortedKeys(ops) {
 		o := SubjectOwner{Account: a, Link: "operator"}
 		if err = scanAll(ctx, q, "SELECT handle FROM identities WHERE account=? AND successor='' LIMIT 1", []any{a}, func(r *sql.Rows) error { return r.Scan(&o.Handle) }); err != nil {
 			return nil, err
@@ -1645,7 +1647,7 @@ func priorNote() string {
 }
 
 func reviewOrderNote() map[string]any {
-	return map[string]any{"version": ReviewOrderVersion, "weight": "evidence class × v(standing) × relationship × decay, capped per subject per UTC day",
+	return map[string]any{"version": ReviewOrderVersion, "weight": "evidence class × v(standing) (1 for a reviewer with a visible public post a day old when it reviewed) × relationship × decay, capped per subject per UTC day",
 		"evidence_weights": ReviewEvidenceWeights, "relationship_factors": ReviewRelationshipFactors, "v": "1 for an account with a public post a day old when it reviewed, else 0 (today's rule until the standing cutover)",
 		"half_life_days": ReviewHalfLifeDays, "burst_cap": ReviewBurstCap, "burst_days": ReviewBurstDays, "verdict_values": map[string]any{"good": 1, "mixed": 0.5, "bad": 0, "unusable": 0, "unverified": "not counted"},
 		"own_root": "a review by an account of the subject owner's own root (RFC 0020 §3.3) is listed with own_root and relationship factor 0, so it is in no score",
@@ -1705,9 +1707,12 @@ var communityWeights = sync.OnceValue(func() string {
 	decay := "pow(2.0, -(?1-r.created_at)/" + sqlNumber(ReviewHalfLifeDays*86400) + ")"
 	burst, capped := strconv.Itoa(ReviewBurstDays*86400), sqlNumber(ReviewBurstCap)
 	from := ` FROM reviews r JOIN events e ON e.id=r.event_id%s WHERE r.subject=?2 AND r.current=1 AND e.hidden=0 AND r.relationship NOT IN ('lab','outside_source') AND ` + aboutCurrentVersion
-	return `WITH days AS MATERIALIZED (SELECT r.created_at/86400 AS day, sum(` + cw + `*r.seasoned*` + rf + `*` + decay + `) AS total` + fmt.Sprintf(from, "") + ` AND r.created_at>?1-` + burst + ` GROUP BY day),
+	// v is v(the reviewer's standing) (RFC 0021 §12, standingVSQL), a whole
+	// vote at least for a review by a seasoned account (the vote floor).
+	v := "max(r.seasoned," + standingVSQL("r.account") + ")"
+	return `WITH days AS MATERIALIZED (SELECT r.created_at/86400 AS day, sum(` + cw + `*` + v + `*` + rf + `*` + decay + `) AS total` + fmt.Sprintf(from, "") + ` AND r.created_at>?1-` + burst + ` GROUP BY day),
 parts AS (SELECT r.event_id,r.account,r.verdict,r.evidence_class,r.works,r.as_described,r.safe,r.good,r.score,r.created_at,
- ` + cw + ` AS cw, r.seasoned AS v, ` + rf + ` AS rf, ` + own + ` AS own, ` + decay + ` AS decay, ` + sqlCase("r.verdict", verdicts, "NULL") + ` AS value,
+ ` + cw + ` AS cw, ` + v + ` AS v, ` + rf + ` AS rf, ` + own + ` AS own, ` + decay + ` AS decay, ` + sqlCase("r.verdict", verdicts, "NULL") + ` AS value,
  CASE WHEN ?1-r.created_at<` + burst + ` AND days.total>` + capped + ` THEN ` + capped + `/days.total ELSE 1.0 END AS burst` + fmt.Sprintf(from, " LEFT JOIN days ON days.day=r.created_at/86400") + `),
 w AS (SELECT parts.*, round(cw*v*rf*decay*burst, 6) AS w FROM parts)
 `

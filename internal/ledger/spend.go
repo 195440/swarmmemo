@@ -1,6 +1,7 @@
 package ledger
 
-// Lots, the implicit claim, Spend, Balance and Mint (RFC0012 §2.2–2.3).
+// Lots, the implicit claim, Spend, Balance and Mint (RFC0012 §2.2, RFC 0021
+// §12).
 
 import (
 	"context"
@@ -16,7 +17,7 @@ type lot struct {
 	ID            int64
 	Account       string
 	Bucket        allowance.Bucket
-	OriginTier    int64
+	Origin        int64
 	OriginAccount string
 	Hops          int64
 	IssuedDay     int64
@@ -39,7 +40,7 @@ const spendOrder = "CASE bucket WHEN 'free' THEN 0 WHEN 'granted' THEN 1 WHEN 'e
 func scanLot(scan func(...any) error) (lot, error) {
 	var x lot
 	var bucket string
-	err := scan(&x.ID, &x.Account, &bucket, &x.OriginTier, &x.OriginAccount, &x.Hops, &x.IssuedDay, &x.ExpiresAt, &x.HalfLife, &x.DecayedDay, &x.Initial, &x.Remaining, &x.Held)
+	err := scan(&x.ID, &x.Account, &bucket, &x.Origin, &x.OriginAccount, &x.Hops, &x.IssuedDay, &x.ExpiresAt, &x.HalfLife, &x.DecayedDay, &x.Initial, &x.Remaining, &x.Held)
 	x.Bucket = allowance.Bucket(bucket)
 	return x, err
 }
@@ -104,7 +105,7 @@ func nonpaid(parts []part) int64 {
 }
 
 // insertLot creates a lot; creditLot merges into a live lot of the same
-// account, bucket, origin tier, issue day, expiry and decay clock when one
+// account, bucket, origin, issue day, expiry and decay clock when one
 // exists (so an account holds at most LotsPerAccount live lots per resource).
 // Lots from other accounts merge whoever sent them: the sender stays in the
 // journal, so many small transfers from many senders fill one lot, not the
@@ -113,7 +114,7 @@ func nonpaid(parts []part) int64 {
 // lot that capOwn limits.
 func insertLot(ctx context.Context, q allowance.Querier, r allowance.Resource, x lot, now int64) (int64, error) {
 	res, err := q.ExecContext(ctx, "INSERT INTO ledger_lots(account,resource,bucket,origin_tier,origin_account,hops,issued_day,expires_at,half_life_days,decayed_day,initial,remaining,held,state,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,0,'live',?)",
-		x.Account, string(r), string(x.Bucket), x.OriginTier, x.OriginAccount, x.Hops, x.IssuedDay, x.ExpiresAt, x.HalfLife, x.DecayedDay, x.Initial, x.Remaining, now)
+		x.Account, string(r), string(x.Bucket), x.Origin, x.OriginAccount, x.Hops, x.IssuedDay, x.ExpiresAt, x.HalfLife, x.DecayedDay, x.Initial, x.Remaining, now)
 	if err != nil {
 		return 0, err
 	}
@@ -127,7 +128,7 @@ func creditLot(ctx context.Context, q allowance.Querier, r allowance.Resource, x
 		origin = "origin_account<>?"
 	}
 	err := q.QueryRowContext(ctx, "SELECT id FROM ledger_lots WHERE account=? AND resource=? AND state='live' AND bucket=? AND origin_tier=? AND "+origin+" AND issued_day=? AND expires_at=? AND half_life_days=? AND decayed_day=? ORDER BY id LIMIT 1",
-		x.Account, string(r), string(x.Bucket), x.OriginTier, x.Account, x.IssuedDay, x.ExpiresAt, x.HalfLife, x.DecayedDay).Scan(&id)
+		x.Account, string(r), string(x.Bucket), x.Origin, x.Account, x.IssuedDay, x.ExpiresAt, x.HalfLife, x.DecayedDay).Scan(&id)
 	if err == nil {
 		_, err = q.ExecContext(ctx, "UPDATE ledger_lots SET remaining=remaining+?,initial=initial+?,hops=max(hops,?) WHERE id=?", x.Remaining, x.Remaining, x.Hops, id)
 		return id, err
@@ -227,7 +228,7 @@ func (l *Ledger) Usage(ctx context.Context, q allowance.Querier, subject string,
 }
 
 // op is one ledger operation on one (resource, day): the parameters and
-// levers read once, the day opened, adjusted and spilled.
+// levers read once, the day opened and adjusted.
 type op struct {
 	p       *AllowanceParams
 	version int64
@@ -237,27 +238,29 @@ type op struct {
 	day     int64
 	now     int64
 	d, orig dayState
-	// hourBound is set by planSpend when the anonymous tier's hourly
-	// release (tier4Released) is what left a spend short.
+	// hourBound is set by planSpend when the anonymous share's hourly
+	// release (anonReleased) is what left a spend short.
 	hourBound bool
-	// noShareTier is set by planSpend to the tier of a free lot it could not
-	// draw from because the parameters give that tier no share (noShare).
-	noShareTier int
+	// noShareLot is set by planSpend when a free lot could not draw because
+	// the parameters give its kind of subject no share (noShareOrigin), and
+	// noShareBand to that subject's band.
+	noShareLot  bool
+	noShareBand allowance.Band
 }
 
 // refusal is the refusal of a spend planSpend left short: the day's, or,
-// when the anonymous tier's hourly release bound it, global_quota_exhausted
-// with retry_after at the next hour, when more is released. A tier the
-// parameters give no share is tier_has_no_share, without retry_after:
-// waiting never helps.
+// when the anonymous share's hourly release bound it,
+// global_quota_exhausted with retry_after at the next hour, when more is
+// released. A band the parameters give no share is no_share, naming the
+// resource and the band, without retry_after: waiting never helps.
 func (o *op) refusal(short string, c claimRow) error {
 	code := o.shortCode(short, c)
-	if code == "tier_has_no_share" {
-		t := c.Tier
-		if !o.noShare(t) {
-			t = o.noShareTier
+	if code == "no_share" {
+		b := c.Band
+		if !o.noShare(b) && o.noShareLot {
+			b = o.noShareBand
 		}
-		return &allowance.Err{Code: code, Resource: o.r, Tier: t}
+		return &allowance.Err{Code: code, Resource: o.r, Band: b}
 	}
 	if code == "global_quota_exhausted" && o.hourBound {
 		return &allowance.Err{Code: code, RetryAfter: int(3600 - mod(o.now, 3600))}
@@ -270,7 +273,7 @@ func (o *op) entry(kind, account string, amount int64) entry {
 }
 
 // open is the prelude of every write: OpenDay (lazily, inside the first spend
-// of the day), adjust for levers and budget changes, then Spill.
+// of the day), then adjust for levers and budget changes.
 func (l *Ledger) open(ctx context.Context, q allowance.Querier, r allowance.Resource, now int64) (*op, error) {
 	p, version, err := l.params(ctx, q, now)
 	if err != nil {
@@ -302,14 +305,7 @@ func (l *Ledger) open(ctx context.Context, q allowance.Querier, r allowance.Reso
 	o.d, o.orig = d, d
 	if adjust(&o.d, rp, lv) {
 		e := o.entry("lever", "", o.d.BudgetEffective)
-		e.Detail = fmt.Sprintf("pools adjusted: budget %d, effective %d, unallocated %d", o.d.Budget, o.d.BudgetEffective, o.d.Unallocated)
-		if err = journal(ctx, q, e); err != nil {
-			return nil, err
-		}
-	}
-	for _, ev := range spill(&o.d, rp, now) {
-		e := o.entry("spill", "", ev.Amount)
-		e.Detail = fmt.Sprintf("tier %d to tier %d at %d", ev.Tier, ev.Tier+1, ev.At)
+		e.Detail = fmt.Sprintf("slices adjusted: budget %d, effective %d, unallocated %d", o.d.Budget, o.d.BudgetEffective, o.d.Unallocated)
 		if err = journal(ctx, q, e); err != nil {
 			return nil, err
 		}
@@ -322,9 +318,10 @@ func (o *op) save(ctx context.Context, q allowance.Querier) error {
 }
 
 // claim is the implicit claim: the first spend by s on this day classifies
-// it, issues its share as a free lot and journals it. The share is an
-// entitlement: nothing is drawn from the pools until it is spent. A subject
-// has at most one claim per day and resource; the tier is fixed here.
+// it, issues its share (floor part plus standing part, the share rule) as a
+// free lot and journals it. The share is an entitlement: nothing is drawn
+// from the slices until it is spent. A subject has at most one claim per day
+// and resource; its band and parts are fixed here.
 func (l *Ledger) claim(ctx context.Context, q allowance.Querier, o *op, s allowance.Subject) (claimRow, error) {
 	c, ok, err := loadClaim(ctx, q, o.r, o.day, s.ID)
 	if err != nil || ok {
@@ -334,29 +331,48 @@ func (l *Ledger) claim(ctx context.Context, q allowance.Querier, o *op, s allowa
 	if err != nil {
 		return c, err
 	}
-	rg, err := rootGranted(ctx, q, o.r, o.day, st.Root)
+	rd, err := loadRootDay(ctx, q, o.r, o.day, st.Root)
 	if err != nil {
 		return c, err
 	}
-	t := int(st.Tier)
-	ent := entitlement(&o.d, o.rp, o.lv, st, rg)
-	o.d.Pools[t].ClaimedWeight += st.WeightPPM
-	o.d.Pools[t].Claimants++
-	c = claimRow{Tier: t, Weight: st.WeightPPM, Root: st.Root, Entitlement: ent, Granted: ent, Source: st.Source}
+	sh, err := share(ctx, q, &o.d, o.rp, o.lv, st, rd, s.ID)
+	if err != nil {
+		return c, err
+	}
+	floor, standing := sh.Floor, sh.Standing
+	ent := floor + standing
+	if eligible(o.r, o.rp, o.lv, st) {
+		o.d.Slices[sliceFloor].Claimants++
+		if st.ShareCents > 0 && rd.Claims == 0 {
+			o.d.Slices[sliceStanding].Weight += st.ShareCents
+		}
+	}
+	origin := int64(originFloor)
+	switch {
+	case st.Band == allowance.BandAnonymous:
+		origin = originAnonymous
+		o.d.Anon.Claimants++
+	case standing > 0:
+		origin = originStanding
+	}
+	if standing > 0 {
+		o.d.Slices[sliceStanding].Claimants++
+	}
+	c = claimRow{Band: st.Band, Standing: standing, Root: st.Root, Entitlement: ent, Granted: ent, Source: st.Source}
 	if ent > 0 {
-		exp, hl := freeExpiry(o.p, t, o.day)
-		c.LotID, err = insertLot(ctx, q, o.r, lot{Account: s.ID, Bucket: allowance.Free, OriginTier: int64(t), OriginAccount: s.ID, IssuedDay: o.day, ExpiresAt: exp, HalfLife: hl, DecayedDay: o.day, Initial: ent, Remaining: ent}, o.now)
+		exp, hl := freeExpiry(o.p, o.day)
+		c.LotID, err = insertLot(ctx, q, o.r, lot{Account: s.ID, Bucket: allowance.Free, Origin: origin, OriginAccount: s.ID, IssuedDay: o.day, ExpiresAt: exp, HalfLife: hl, DecayedDay: o.day, Initial: ent, Remaining: ent}, o.now)
 		if err != nil {
 			return c, err
 		}
 	}
 	if _, err = q.ExecContext(ctx, "INSERT INTO allowance_claims(resource,day,subject,tier,weight,root,entitlement,granted,source,lot_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-		string(o.r), o.day, s.ID, t, c.Weight, c.Root, c.Entitlement, c.Granted, c.Source, c.LotID, o.now); err != nil {
+		string(o.r), o.day, s.ID, int64(c.Band), c.Standing, c.Root, c.Entitlement, c.Granted, c.Source, c.LotID, o.now); err != nil {
 		return c, err
 	}
 	e := o.entry("claim", s.ID, ent)
 	e.Bucket, e.LotID = allowance.Free, c.LotID
-	e.Detail = fmt.Sprintf("tier %d, entitlement %d", t, ent)
+	e.Detail = fmt.Sprintf("%s, floor %d, standing %d", st.Band.Name(), floor, standing)
 	if err = journal(ctx, q, e); err != nil {
 		return c, err
 	}
@@ -371,10 +387,10 @@ func (l *Ledger) claim(ctx context.Context, q allowance.Querier, o *op, s allowa
 // less what it already gave (spent or transferred). Only the in-memory copy
 // changes (its spendable part shrinks); nothing is written.
 func (o *op) capOwn(lots []lot, c claimRow) {
-	if c.LotID == 0 || c.Tier < 1 || c.Tier > 4 {
+	if c.LotID == 0 {
 		return
 	}
-	limit := min(c.Entitlement, o.rp.Cap[c.Tier-1])
+	limit := min(c.Entitlement, o.rp.Cap)
 	for i := range lots {
 		if x := &lots[i]; x.ID == c.LotID {
 			if allowed := max(0, limit-(x.Initial-x.Remaining)); x.spendable() > allowed {
@@ -385,55 +401,51 @@ func (o *op) capOwn(lots []lot, c claimRow) {
 }
 
 // noShare reports whether the parameters, not a lever or the day's demand,
-// give tier t no share of the resource: its cap is 0, or its share_max_ppm
-// is 0 (for tiers 1–3 only when the tier does not borrow from lower tiers;
-// for tier 4 unless the tier-4 share lever overrides it). Such a tier's
-// refusal is tier_has_no_share: waiting for 00:00 UTC never helps.
-func (o *op) noShare(t int) bool {
-	if t < 1 || t > 4 {
-		return false
-	}
-	if o.rp.Cap[t-1] == 0 {
-		return true
-	}
-	if t == 4 {
-		return o.lv.Tier4SharePPM < 0 && o.rp.ShareMaxPPM[3] == 0
-	}
-	return o.rp.ShareMaxPPM[t-1] == 0 && !o.rp.Borrow[t-1]
+// give band b no share of the resource: the cap is 0, or b is anonymous and
+// anonymous_share_ppm is 0. Such a refusal is no_share: waiting for 00:00
+// UTC never helps.
+func (o *op) noShare(b allowance.Band) bool {
+	return o.rp.Cap == 0 || b == allowance.BandAnonymous && o.rp.AnonymousSharePPM == 0
 }
 
-// shortCode refines a refusal. A subject whose tier the parameters give no
-// share of the resource is tier_has_no_share. A subject whose share today is
-// zero only because its tier had no water when it claimed meets the shared
-// budget running out (global_quota_exhausted), not its own share being used
-// up. A share a lever set to zero stays quota_exhausted.
+// noShareOrigin is noShare for a free lot of origin x, whoever holds it now.
+func (o *op) noShareOrigin(x int64) bool {
+	return o.rp.Cap == 0 || x == originAnonymous && o.rp.AnonymousSharePPM == 0
+}
+
+// shortCode refines a refusal. A subject whose band the parameters give no
+// share of the resource is no_share. A subject whose share today is zero only
+// because the slices had no water when it claimed meets the shared budget
+// running out (global_quota_exhausted), not its own share being used up. A
+// share a lever set to zero stays quota_exhausted.
 func (o *op) shortCode(short string, c claimRow) string {
-	if short == "quota_exhausted" && o.noShare(c.Tier) {
-		return "tier_has_no_share"
+	if short == "quota_exhausted" && o.noShare(c.Band) {
+		return "no_share"
 	}
-	if short != "quota_exhausted" || c.Granted != 0 || c.Tier < 1 || c.Tier > 4 || o.rp.Cap[c.Tier-1] == 0 {
+	if short != "quota_exhausted" || c.Granted != 0 {
 		return short
 	}
-	if c.Tier == 4 && anonymousOff(o.r, o.lv) || c.Tier == 3 && o.lv.ProvenOnly {
+	if !eligible(o.r, o.rp, o.lv, allowance.Standing{Band: c.Band}) {
 		return short
 	}
 	return "global_quota_exhausted"
 }
 
 // planSpend takes units from lots in spend order (from those ok accepts) on a
-// copy of the day. Free units are drawn from the pools of the lot's origin
-// tier as they are taken (overbooking: only actual spend counts against the
-// day's budget); a lot whose tier has run dry yields what the pools still
-// hold, and the spend moves on to the next bucket. short is the refusal when
-// the lots cannot cover units: global_quota_exhausted when dry pools stood in
-// the way, tier_has_no_share when the only pools in the way are those of a
-// tier the parameters give no share (noShare), quota_exhausted when the
+// copy of the day. Free units are drawn as they are taken, from the lot's own
+// slice and then what the other slice lends (overbooking: only actual spend
+// counts against the day's budget), an anonymous lot's within the anonymous
+// share; a lot whose water has run dry yields what the slices still hold,
+// and the spend moves on to the next bucket. short is the refusal when the
+// lots cannot cover units: global_quota_exhausted when dry slices stood in
+// the way, no_share when the only lots in the way are of a kind the
+// parameters give no share (noShareOrigin), quota_exhausted when the
 // subject's own units are used up.
 func (o *op) planSpend(lots []lot, units int64, ok func(lot) bool) (parts []part, d dayState, short string) {
 	d = o.d
 	var got int64
 	dry := false
-	o.hourBound, o.noShareTier = false, 0
+	o.hourBound, o.noShareLot = false, false
 	for _, x := range lots {
 		if got >= units {
 			break
@@ -446,19 +458,21 @@ func (o *op) planSpend(lots []lot, units int64, ok func(lot) bool) (parts []part
 			continue
 		}
 		if x.Bucket == allowance.Free {
-			t := int(x.OriginTier)
-			can := drawable(&d, o.rp, t)
+			can := drawable(&d, o.rp, x.Origin, o.now)
 			hourly := false
-			if t == 4 {
-				room, byHour := tier4Room(&d, o.rp, o.lv, o.now)
+			if x.Origin == originAnonymous {
+				room, byHour := anonRoom(&d, o.rp, o.lv, o.now)
 				if room < can {
 					can, hourly = room, byHour
 				}
 			}
 			if can < take {
 				take = can
-				if can == 0 && o.noShare(t) {
-					o.noShareTier = t
+				if can == 0 && o.noShareOrigin(x.Origin) {
+					o.noShareLot, o.noShareBand = true, allowance.BandSigned
+					if x.Origin == originAnonymous {
+						o.noShareBand = allowance.BandAnonymous
+					}
 				} else {
 					dry = true
 					o.hourBound = o.hourBound || hourly
@@ -467,7 +481,7 @@ func (o *op) planSpend(lots []lot, units int64, ok func(lot) bool) (parts []part
 			if take <= 0 {
 				continue
 			}
-			draw(&d, o.rp, t, take)
+			draw(&d, o.rp, x.Origin, take, o.now)
 		}
 		parts = append(parts, part{Lot: x, Take: take})
 		got += take
@@ -476,8 +490,8 @@ func (o *op) planSpend(lots []lot, units int64, ok func(lot) bool) (parts []part
 		if dry {
 			return nil, o.d, "global_quota_exhausted"
 		}
-		if o.noShareTier != 0 {
-			return nil, o.d, "tier_has_no_share"
+		if o.noShareLot {
+			return nil, o.d, "no_share"
 		}
 		return nil, o.d, "quota_exhausted"
 	}
@@ -538,9 +552,9 @@ func expireLot(ctx context.Context, q allowance.Querier, r allowance.Resource, a
 }
 
 // debit takes units from the subject's lots for a spend or fee, drawing the
-// free part from the day's pools: refusals are quota_exhausted (its own share
-// is used up) or global_quota_exhausted (its tier's water, borrowing included,
-// has run dry, or the day's spend ceiling).
+// free part from the day's slices: refusals are quota_exhausted (its own
+// share is used up), no_share, or global_quota_exhausted (the slices' water,
+// what spills included, has run dry, or the day's spend ceiling).
 func (l *Ledger) debit(ctx context.Context, q allowance.Querier, o *op, s allowance.Subject, c claimRow, units int64, kind string, ref Ref) error {
 	if units == 0 {
 		return nil
@@ -636,6 +650,7 @@ func (l *Ledger) Spend(ctx context.Context, q allowance.Querier, s allowance.Sub
 		return Receipt{}, err
 	}
 	if refusal != nil {
+		l.noteRefusal(o.day, r, refusal)
 		return Receipt{}, refusal
 	}
 	return Receipt{Resource: r, Used: units, ParamsVersion: o.version}, nil
@@ -665,41 +680,26 @@ func (l *Ledger) Balance(ctx context.Context, q allowance.Querier, s allowance.S
 		return Balance{}, err
 	}
 	if ok {
-		// The tier is fixed at the claim; the classifier only adds its public
-		// reason (a read).
-		b.Standing = allowance.Standing{Tier: allowance.Tier(c.Tier), WeightPPM: c.Weight, Root: c.Root, Source: c.Source}
-		if st, err := l.classify(ctx, q, s, now); err == nil && int(st.Tier) == c.Tier {
-			b.Standing.Reason = st.Reason
+		// The band and the parts are fixed at the claim; the classifier only
+		// adds its cents and public reason (a read).
+		b.Standing = allowance.Standing{Band: c.Band, Root: c.Root, Source: c.Source}
+		if st, err := l.classify(ctx, q, s, now); err == nil && st.Band == c.Band {
+			b.Standing.Cents, b.Standing.ShareCents, b.Standing.Reason = st.Cents, st.ShareCents, st.Reason
 		}
-		b.Entitlement = min(c.Granted, rp.Cap[c.Tier-1])
+		b.FloorPart, b.StandingPart = c.parts(rp)
+		b.Entitlement = b.FloorPart + b.StandingPart
 	} else {
-		lv, err := l.levers(ctx, q, now)
-		if err != nil {
-			return Balance{}, err
-		}
 		st, err := l.classify(ctx, q, s, now)
 		if err != nil {
 			return Balance{}, err
 		}
-		d, opened, err := loadDay(ctx, q, r, day)
-		if err != nil {
-			return Balance{}, err
-		}
-		if !opened {
-			prev, err := previousDay(ctx, q, r, day)
-			if err != nil {
-				return Balance{}, err
-			}
-			d = computeOpen(r, day, rp, lv, prev, version, now)
-		}
-		adjust(&d, rp, lv)
-		spill(&d, rp, now)
-		rg, err := rootGranted(ctx, q, r, day, st.Root)
-		if err != nil {
-			return Balance{}, err
-		}
 		b.Standing = st
-		b.Entitlement = entitlement(&d, rp, lv, st, rg)
+		sh, err := l.ProspectiveShare(ctx, q, r, st, s.ID, now)
+		if err != nil {
+			return Balance{}, err
+		}
+		b.FloorPart, b.StandingPart = sh.Floor, sh.Standing
+		b.Entitlement = b.FloorPart + b.StandingPart
 		b.Prospective = true
 	}
 	lots, err := liveLots(ctx, q, s.ID, r, now)
@@ -726,7 +726,7 @@ func (l *Ledger) Balance(ctx context.Context, q allowance.Querier, s allowance.S
 }
 
 // Mint issues a granted, earned or paid lot. Granted and earned units are
-// drawn from the day's tier-0 pool, so issuance stays within the budget;
+// drawn from the day's grant slice, so issuance stays within the budget;
 // paid units come from a funding adapter and never decay. Reason is public.
 func (l *Ledger) Mint(ctx context.Context, q allowance.Querier, account string, r allowance.Resource, b allowance.Bucket, units int64, reason string, now int64) error {
 	return l.MintRef(ctx, q, account, r, b, units, reason, Ref{}, now)
@@ -759,17 +759,17 @@ func (l *Ledger) mint(ctx context.Context, q allowance.Querier, account string, 
 	if err != nil {
 		return 0, err
 	}
-	x := lot{Account: account, Bucket: b, OriginTier: 0, OriginAccount: account, IssuedDay: o.day, DecayedDay: o.day, Initial: units, Remaining: units}
+	x := lot{Account: account, Bucket: b, Origin: originGrant, OriginAccount: account, IssuedDay: o.day, DecayedDay: o.day, Initial: units, Remaining: units}
 	kind := "topup"
 	switch b {
 	case allowance.Granted, allowance.Earned:
-		if o.d.Pools[0].avail() < units {
+		if o.d.Slices[sliceGrant].avail() < units {
 			if err = o.save(ctx, q); err != nil {
 				return 0, err
 			}
 			return 0, refuse("global_quota_exhausted")
 		}
-		o.d.Pools[0].Claimed += units
+		o.d.Slices[sliceGrant].Claimed += units
 		x.HalfLife, kind = o.p.GrantedHalfLifeDays, "grant"
 		if b == allowance.Earned {
 			x.HalfLife, kind = o.p.EarnedHalfLifeDays, "earn"

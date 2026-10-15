@@ -47,7 +47,7 @@ func leverLog(t *testing.T, s *Store) []LeverLogEntry {
 func TestLeversInertUntilPulled(t *testing.T) {
 	s := openTest(t, Config{})
 	l := leversNow(t, s)
-	if l.SignedOnly || l.ProvenOnly || l.FreezeTransfers || l.PauseNewKeys || l.Tier4SharePPM != -1 || l.BudgetCutPPM != nil || l.Version != 0 {
+	if l.SignedOnly || l.ProvenOnly || l.FreezeTransfers || l.PauseNewKeys || l.AnonymousSharePPM != -1 || l.BudgetCutPPM != nil || l.Version != 0 {
 		t.Fatalf("levers: %+v", l)
 	}
 	run(t, s, Command{Operation: "post", Room: "lobby", Text: "anonymous", RequestID: "anon"})
@@ -65,7 +65,7 @@ func TestEveryLeverPullAndRelease(t *testing.T) {
 		args  []string
 		check func(allowance.Levers) bool
 	}{
-		{LeverTier4Shrink, []string{"250000"}, func(l allowance.Levers) bool { return l.Tier4SharePPM == 250000 }},
+		{LeverAnonymousShrink, []string{"250000"}, func(l allowance.Levers) bool { return l.AnonymousSharePPM == 250000 }},
 		{LeverSignedOnly, nil, func(l allowance.Levers) bool { return l.SignedOnly }},
 		{LeverPauseNewKeys, nil, func(l allowance.Levers) bool { return l.PauseNewKeys && l.PauseNewKeysSince == testTime }},
 		{LeverCutBudget, []string{"post_bytes", "500000"}, func(l allowance.Levers) bool { return l.BudgetCutPPM[allowance.PostBytes] == 500000 }},
@@ -90,7 +90,7 @@ func TestEveryLeverPullAndRelease(t *testing.T) {
 		release(t, s, c.name, which...)
 		after := leversNow(t, s)
 		after.Version = zero.Version
-		if c.check(after) || after.SignedOnly || after.ProvenOnly || after.FreezeTransfers || after.PauseNewKeys || after.Tier4SharePPM != -1 || len(after.BudgetCutPPM) != 0 {
+		if c.check(after) || after.SignedOnly || after.ProvenOnly || after.FreezeTransfers || after.PauseNewKeys || after.AnonymousSharePPM != -1 || len(after.BudgetCutPPM) != 0 {
 			t.Fatalf("%s released: %+v", c.name, after)
 		}
 		if _, err := s.ReleaseLever(testContext, c.name, which, "", ""); err == nil || !strings.Contains(err.Error(), "not pulled") {
@@ -238,10 +238,10 @@ func TestLeverPullValidation(t *testing.T) {
 		{Name: LeverSignedOnly, Reason: "x", Args: []string{"extra"}},
 		{Name: LeverSignedOnly, Reason: "x", Until: testTime},
 		{Name: LeverSignedOnly, Reason: "x", Until: testTime * 1000},
-		{Name: LeverTier4Shrink, Reason: "x"},
-		{Name: LeverTier4Shrink, Reason: "x", Args: []string{"1000001"}},
-		{Name: LeverTier4Shrink, Reason: "x", Args: []string{"-1"}},
-		{Name: LeverTier4Shrink, Reason: "x", Args: []string{"0.5"}},
+		{Name: LeverAnonymousShrink, Reason: "x"},
+		{Name: LeverAnonymousShrink, Reason: "x", Args: []string{"1000001"}},
+		{Name: LeverAnonymousShrink, Reason: "x", Args: []string{"-1"}},
+		{Name: LeverAnonymousShrink, Reason: "x", Args: []string{"0.5"}},
 		{Name: LeverCutBudget, Reason: "x", Args: []string{"post_bytes"}},
 		{Name: LeverCutBudget, Reason: "x", Args: []string{"gold", "10"}},
 		{Name: LeverCutBudget, Reason: "x", Args: []string{"post_bytes", "0"}},
@@ -258,11 +258,11 @@ func TestLeverPullValidation(t *testing.T) {
 	if log := leverLog(t, s); len(log) != 0 {
 		t.Fatalf("refused pulls logged: %+v", log)
 	}
-	// tier4-shrink 0 is a valid pull (tier 4 gets nothing), and so is a
+	// anonymous-shrink 0 is a valid pull (anonymous callers get nothing), and so is a
 	// mapped IPv4 prefix, stored as IPv4.
-	pull(t, s, LeverTier4Shrink, "0")
-	if l := leversNow(t, s); l.Tier4SharePPM != 0 {
-		t.Fatalf("tier4 0: %+v", l)
+	pull(t, s, LeverAnonymousShrink, "0")
+	if l := leversNow(t, s); l.AnonymousSharePPM != 0 {
+		t.Fatalf("anonymous 0: %+v", l)
 	}
 	pull(t, s, LeverBlockPrefix, "::ffff:192.0.2.0/120")
 	if b, _ := s.leverSource().PrefixBlocked(testContext, s.db, "192.0.2.200", testTime); !b {

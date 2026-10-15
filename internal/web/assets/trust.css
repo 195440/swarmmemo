@@ -72,17 +72,17 @@ html.tx-theme .brand-dot{color:inherit}
 .tx-fig{margin:var(--s-4) 0;max-width:720px;font-family:var(--sans)}
 .tx-fig figcaption{font:13px/1.55 var(--sans);color:var(--muted);margin:0 0 var(--s-3)}
 
-/* the day's tiers: one bar each, water against the day, drawn part darker */
-.tx-tiers{font:13px/1.4 var(--sans);width:100%;font-variant-numeric:tabular-nums;border-collapse:collapse}
-.tx-tiers th,.tx-tiers td{padding:var(--s-2) var(--s-2);white-space:nowrap;border-bottom:1px solid var(--line)}
-.tx-tiers th[scope=row]{font-weight:600}
-.tx-tiers thead th{color:var(--muted);font-weight:500}
+/* the day's slices: one bar each, size against the day, drawn part darker */
+.tx-slices{font:13px/1.4 var(--sans);width:100%;font-variant-numeric:tabular-nums;border-collapse:collapse}
+.tx-slices th,.tx-slices td{padding:var(--s-2) var(--s-2);white-space:nowrap;border-bottom:1px solid var(--line)}
+.tx-slices th[scope=row]{font-weight:600}
+.tx-slices thead th{color:var(--muted);font-weight:500}
 .tx-bar-cell{width:50%;min-width:60px}
 .tx-bar{display:block;width:100%;height:10px}
 .tx-bar-water{fill:var(--water);opacity:.28}
 .tx-bar-drawn{fill:var(--water)}
 
-/* the stake interactive */
+/* the judgement interactive */
 .tx-ctl{display:flex;flex-wrap:wrap;gap:var(--s-3) var(--s-4);align-items:flex-end}
 .tx-ctl [hidden]{display:none!important}
 .tx:not(.tx-js) .tx-ctl,.tx:not(.tx-js) .tx-meters{display:none}
@@ -140,7 +140,7 @@ html.tx-theme .brand-dot{color:inherit}
   .tx-dek{font-size:18px!important}
   .tx-seg label{padding:0 var(--s-2);font-size:12.5px;min-height:34px}
   .tx-range{flex-basis:140px}
-  .tx-tiers th,.tx-tiers td{padding:var(--s-2) 4px}
+  .tx-slices th,.tx-slices td{padding:var(--s-2) 4px}
   .tn-stage{height:min(60vh,380px)}
 }
 @media(forced-colors:active){

@@ -101,20 +101,20 @@ func (c *PublicDataConfig) keyPath(name string) string {
 // pdLimit is a fixed-window budget: per minute and per UTC day.
 type pdLimit struct{ PerMinute, PerDay int64 }
 
-// publicDataTierLimits are the per-caller request limits by the caller's
-// tier (allowance.Tier): a bulk call counts one request per dataset request.
-var publicDataTierLimits = map[allowance.Tier]pdLimit{
-	allowance.TierPool:      {600, 100000},
-	allowance.TierTrusted:   {600, 100000},
-	allowance.TierProven:    {120, 20000},
-	allowance.TierSigned:    {30, 2000},
-	allowance.TierAnonymous: {10, 200},
+// publicDataBandLimits are the per-caller request limits by the caller's
+// band (allowance.Band, RFC 0021 §12): a bulk call counts one request per
+// dataset request.
+var publicDataBandLimits = map[allowance.Band]pdLimit{
+	allowance.BandTrusted:   {600, 100000},
+	allowance.BandProven:    {120, 20000},
+	allowance.BandSigned:    {30, 2000},
+	allowance.BandAnonymous: {10, 200},
 }
 
 // publicDataAnonymousNote is what fetch and bulk allow without a key: the
-// anonymous tier's per-caller limits.
+// anonymous band's per-caller limits.
 func publicDataAnonymousNote(bulk bool) string {
-	l := publicDataTierLimits[allowance.TierAnonymous]
+	l := publicDataBandLimits[allowance.BandAnonymous]
 	note := fmt.Sprintf("per network, %d dataset requests a minute and %d a day", l.PerMinute, l.PerDay)
 	if bulk {
 		note += "; a bulk call counts each of its requests"
@@ -285,9 +285,9 @@ func (p *publicData) Datasets() map[string]any {
 	for _, ds := range pdCatalogue {
 		list = append(list, ds.describe(p.available(ds)))
 	}
-	tiers := map[string]any{}
-	for t, l := range publicDataTierLimits {
-		tiers[t.Name()] = map[string]int64{"per_minute": l.PerMinute, "per_day": l.PerDay}
+	bands := map[string]any{}
+	for b, l := range publicDataBandLimits {
+		bands[b.Name()] = map[string]int64{"per_minute": l.PerMinute, "per_day": l.PerDay}
 	}
 	return map[string]any{
 		"envelope_version": PublicDataSchemaVersion,
@@ -297,8 +297,8 @@ func (p *publicData) Datasets() map[string]any {
 			"bulk":  `service.call {"schema":1,"method":"bulk","args":{"requests":[{"dataset":ID,"params":{...}}]},"max_cost":N}`,
 		},
 		"bulk_max":          PublicDataBulkMax,
-		"rate_limits":       tiers,
-		"rate_limit_note":   "per caller, by the caller's tier; a bulk call counts one request per dataset request",
+		"rate_limits":       bands,
+		"rate_limit_note":   "per caller, by the caller's band; a bulk call counts one request per dataset request",
 		"stale_max_seconds": int64(PublicDataStaleMax / time.Second),
 	}
 }
@@ -383,23 +383,23 @@ func (p *publicData) Quote(c Call) (Quote, error) {
 	return Quote{Resource: allowance.Credit, Max: total}, nil
 }
 
-// Admit is the per-caller rate limit, by the caller's tier, checked before
-// anything is reserved.
+// Admit is the per-caller rate limit, by the caller's band, checked before
+// anything is reserved. An unsigned caller is always anonymous.
 func (p *publicData) Admit(ctx context.Context, q allowance.Querier, c Call) error {
 	reqs, err := parsePublicData(c.Method, c.Args, c.Now)
 	if err != nil {
 		return err
 	}
-	tier := allowance.TierAnonymous
+	band := allowance.BandAnonymous
 	if c.Subject.Signed {
-		tier = allowance.TierSigned
-	}
-	if p.classifier != nil {
-		if st, err := p.classifier.Classify(ctx, q, c.Subject, c.Now); err == nil && st.Tier <= allowance.TierAnonymous {
-			tier = st.Tier
+		band = allowance.BandSigned
+		if p.classifier != nil {
+			if st, err := p.classifier.Classify(ctx, q, c.Subject, c.Now); err == nil && st.Band <= allowance.BandTrusted {
+				band = st.Band
+			}
 		}
 	}
-	limit := publicDataTierLimits[tier]
+	limit := publicDataBandLimits[band]
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	w := p.callers[c.Subject.ID]

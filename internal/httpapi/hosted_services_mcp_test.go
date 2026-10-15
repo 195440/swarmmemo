@@ -129,14 +129,11 @@ func hostedServicesServer(t *testing.T, more ...string) (*Server, *fakePaidTools
 	p := ledger.DefaultAllowanceParams()
 	rp := p.Resources[allowance.Credit]
 	rp.Budget, rp.SpendCeiling, rp.InboundCap = 10_000_000, 10_000_000, 10_000_000
-	rp.Cap = []int64{1_000_000, 1_000_000, 1_000_000, 1_000_000}
-	rp.Floor = []int64{100_000, 100_000, 100_000, 100_000}
-	rp.RootCap = []int64{10_000_000, 10_000_000, 10_000_000, 10_000_000}
-	rp.ShareMaxPPM = []int64{1_000_000, 1_000_000, 1_000_000, 1_000_000}
-	// The defaults give the anonymous tier, a hosted identity's until it is
-	// claimed, no memory; this deployment gives it some.
+	rp.Cap, rp.Floor, rp.AnonymousSharePPM = 1_000_000, 100_000, 1_000_000
+	// The defaults give anonymous subjects, a hosted identity until it is
+	// claimed, no memory; this deployment gives them some.
 	mp := p.Resources[allowance.MemoryBytes]
-	mp.Cap[3], mp.Floor[3], mp.RootCap[3], mp.ShareMaxPPM[3] = 1<<20, 16<<10, 1<<20, 1_000_000
+	mp.Floor, mp.AnonymousSharePPM = 16<<10, 1_000_000
 	if _, err = store.SetAllowanceParams(t.Context(), ledger.AllowanceNamespace, p.Marshal(), "test", 0); err != nil {
 		t.Fatal(err)
 	}
@@ -336,30 +333,27 @@ func TestHostedServiceToolsListing(t *testing.T) {
 	}
 }
 
-// Under parameters that give the anonymous tier (a hosted identity's until
-// it is claimed) no memory, memory_put is refused tier_has_no_share, naming
-// memory and the way forward, never global_quota_exhausted: the pool is not
-// dry, the tier has no share of it.
-func TestHostedMemoryPutTierHasNoShare(t *testing.T) {
+// Under parameters that give anonymous subjects (a hosted identity until it
+// is claimed) no memory, memory_put is refused no_share, naming memory and
+// the way forward, never global_quota_exhausted: the budget is not dry, the
+// band has no share of it.
+func TestHostedMemoryPutNoShare(t *testing.T) {
 	s, _ := hostedServicesServer(t)
 	p := ledger.DefaultAllowanceParams()
 	rp := p.Resources[allowance.Credit]
 	rp.Budget, rp.SpendCeiling, rp.InboundCap = 10_000_000, 10_000_000, 10_000_000
-	rp.Cap = []int64{1_000_000, 1_000_000, 1_000_000, 1_000_000}
-	rp.Floor = []int64{100_000, 100_000, 100_000, 100_000}
-	rp.RootCap = []int64{10_000_000, 10_000_000, 10_000_000, 10_000_000}
-	rp.ShareMaxPPM = []int64{1_000_000, 1_000_000, 1_000_000, 1_000_000}
+	rp.Cap, rp.Floor, rp.AnonymousSharePPM = 1_000_000, 100_000, 1_000_000
 	mp := p.Resources[allowance.MemoryBytes]
-	// As on prod: a cap and floor for tier 4, but share_max_ppm 0.
-	mp.Cap[3], mp.Floor[3], mp.RootCap[3], mp.ShareMaxPPM[3] = 1<<20, 16<<10, 1<<20, 0
+	// As on prod: a floor, but anonymous_share_ppm 0.
+	mp.Floor, mp.AnonymousSharePPM = 16<<10, 0
 	if _, err := s.service.(*board.Store).SetAllowanceParams(t.Context(), ledger.AllowanceNamespace, p.Marshal(), "test", 0); err != nil {
 		t.Fatal(err)
 	}
 	me := newIdentity(t, s, "")
 	url := "/mcp/t/" + me["token"].(string)
 	_, failure := callTool(t, s, url, "", "memory_put", map[string]any{"key": "notes/today", "value": "x"})
-	if !strings.Contains(failure, "tier_has_no_share") || strings.Contains(failure, "global_quota_exhausted") ||
+	if !strings.Contains(failure, "no_share") || strings.Contains(failure, "global_quota_exhausted") ||
 		!strings.Contains(failure, "memory") || !strings.Contains(failure, "claim") {
-		t.Fatalf("memory_put with no tier-4 share: %q", failure)
+		t.Fatalf("memory_put with no anonymous share: %q", failure)
 	}
 }

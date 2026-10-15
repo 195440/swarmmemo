@@ -11,6 +11,7 @@ import (
 
 	"swarmmemo/internal/allowance"
 	"swarmmemo/internal/find"
+	"swarmmemo/internal/trust"
 )
 
 // Review rewards (reviewrewards.go, C201) on the real engine and ledger:
@@ -61,7 +62,8 @@ func (rt *rewardsTest) restart() {
 
 func (rt *rewardsTest) at(now int64) { rt.now = now }
 
-// agent registers key and makes it seasoned: a public post three days old.
+// agent registers key and makes it established: a public post three days
+// old and standing of C_ref (v = 1).
 func (rt *rewardsTest) agent(key ed25519.PrivateKey) string {
 	rt.t.Helper()
 	was := rt.now
@@ -69,6 +71,7 @@ func (rt *rewardsTest) agent(key ed25519.PrivateKey) string {
 	run(rt.t, rt.s, signed(key, Command{Operation: "agent.register", Timestamp: rt.now}))
 	run(rt.t, rt.s, signed(key, Command{Operation: "post", Text: "hello", RequestID: randomID(), Timestamp: rt.now}))
 	rt.now = was
+	setStanding(rt.t, rt.s, map[string]int64{keyID(key): trust.DefaultParams().CRefCents})
 	return keyID(key)
 }
 
@@ -251,6 +254,10 @@ func TestReviewRewardRootsAndRelationships(t *testing.T) {
 	}
 	link(k1, "acme.org")
 	link(k2, "acme.org")
+	// The trust run roots both at the domain.
+	if _, err := s.db.Exec("UPDATE trust_scores SET root='domain:acme.org' WHERE account IN (?,?)", ids["k1"], ids["k2"]); err != nil {
+		t.Fatal(err)
+	}
 	link(owner, "example.com") // owns every api*.example.com subject
 
 	wantReward(t, rt.review(k1, api(2), map[string]any{}, "", rt.paidCall(ids["k1"], apiURL(2))).Reward, "pending", 100, "")
@@ -425,7 +432,7 @@ func TestReviewRewardPoolExhaustion(t *testing.T) {
 	p := s.allowanceDefaults()
 	rp := p.Resources[allowance.Credit]
 	rp.Budget, rp.SpendCeiling, rp.InboundCap, rp.GrantSharePPM = 150, 150, 100_000, 1_000_000
-	rp.Cap, rp.Floor, rp.RootCap = []int64{0, 0, 0, 0}, []int64{0, 0, 0, 0}, []int64{0, 0, 0, 0}
+	rp.Cap, rp.Floor = 0, 0
 	if _, err := s.SetAllowanceParams(testContext, "allowance", p.Marshal(), "a small pool", 0); err != nil {
 		t.Fatal(err)
 	}

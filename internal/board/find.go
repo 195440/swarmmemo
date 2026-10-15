@@ -29,10 +29,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"swarmmemo/internal/allowance"
 	"swarmmemo/internal/find"
 	"swarmmemo/internal/reviews"
 	"swarmmemo/internal/services"
+	"swarmmemo/internal/trust"
 )
 
 // Find's bounds on this board.
@@ -587,7 +587,7 @@ func usdMicro(amount int64, decimals int) int64 {
 
 // findOfferings are the active offerings, each with its subject's reviews
 // (an offering is reviewed at its page's address, C200).
-func (s *Store) findOfferings(ctx context.Context, v find.Vocab, standing map[string]string, quality map[string]subjectQuality) ([]find.Doc, error) {
+func (s *Store) findOfferings(ctx context.Context, v find.Vocab, standing map[string]findStandingOf, quality map[string]subjectQuality) ([]find.Doc, error) {
 	if !s.OfferingsEnabled() {
 		return nil, nil
 	}
@@ -630,7 +630,7 @@ func (s *Store) findOfferings(ctx context.Context, v find.Vocab, standing map[st
 				}
 			}
 		}
-		d.Quality.Standing = standing[account]
+		d.Quality.Standing, d.Quality.StandingV = standing[account].band, standing[account].v
 		docs = append(docs, d)
 	}
 	return docs, rows.Err()
@@ -638,7 +638,7 @@ func (s *Store) findOfferings(ctx context.Context, v find.Vocab, standing map[st
 
 // findAgents are the public agents with a handle or a profile, one per
 // account, with standing, availability and the reviews of their subject.
-func (s *Store) findAgents(ctx context.Context, v find.Vocab, now int64, standing map[string]string, quality map[string]subjectQuality) ([]find.Doc, error) {
+func (s *Store) findAgents(ctx context.Context, v find.Vocab, now int64, standing map[string]findStandingOf, quality map[string]subjectQuality) ([]find.Doc, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT i.id,i.account,i.handle,coalesce(p.description,''),coalesce(p.capabilities,'[]'),coalesce(p.availability,''),coalesce(p.expires_at,0)
  FROM identities i LEFT JOIN peer_cards p ON p.account=i.account
  WHERE i.successor='' AND (i.handle<>'' OR p.account IS NOT NULL) AND `+publicAccountSQL("i.account")+`
@@ -694,7 +694,7 @@ func (s *Store) findAgents(ctx context.Context, v find.Vocab, now int64, standin
 				d.Quality, d.Review = q.Quality, SubjectReviewURL(sub, true)
 			}
 		}
-		d.Quality.Standing = standing[account]
+		d.Quality.Standing, d.Quality.StandingV = standing[account].band, standing[account].v
 		if r := reps[account]; r != nil {
 			d.Quality.Reputation = r.Mark()
 			if r.Delivered != nil {
@@ -721,23 +721,38 @@ func (s *Store) findReputations(ctx context.Context, accounts []string, now int6
 	return s.reputations(ctx, tx, accounts, now)
 }
 
-// findStanding is each account's tier name from the current trust run; an
-// empty map while there is none.
-func (s *Store) findStanding(ctx context.Context) map[string]string {
-	out := map[string]string{}
-	rows, err := s.db.QueryContext(ctx, `SELECT c.account,t.tier FROM trust_current c JOIN trust_scores t ON t.run_id=c.run_id AND t.account=c.account WHERE t.tier IN (1,2,3) LIMIT ?`, findRowsMax*2)
+// findStanding is each account's band and v(standing) in the latest trust
+// run (RFC 0021 §12: Find ranks by v(standing)); an empty map before any.
+func (s *Store) findStanding(ctx context.Context) map[string]findStandingOf {
+	out := map[string]findStandingOf{}
+	now := s.now().Unix()
+	p, err := s.trustParamsAt(ctx, s.db, now)
+	if err != nil {
+		return out
+	}
+	run, ok, err := trust.Latest(ctx, s.db)
+	if err != nil || !ok {
+		return out
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT account,collateral FROM trust_scores WHERE run_id=? AND collateral>0 ORDER BY collateral DESC LIMIT ?`, run.ID, findRowsMax*2)
 	if err != nil {
 		return out
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var account string
-		var tier allowance.Tier
-		if rows.Scan(&account, &tier) == nil {
-			out[account] = tier.Name()
+		var cents int64
+		if rows.Scan(&account, &cents) == nil {
+			out[account] = findStandingOf{band: p.Band(cents).Name(), v: float64(p.VoteWeight(cents)) / 1e6}
 		}
 	}
 	return out
+}
+
+// findStandingOf is an agent's standing as Find weighs it.
+type findStandingOf struct {
+	band string
+	v    float64
 }
 
 // subjectQuality is one subject's quality as the reviews core reads it.

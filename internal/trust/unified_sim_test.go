@@ -260,7 +260,7 @@ func sumAt[T int64 | float64](v []T, ids []int) float64 {
 }
 
 func voteWeights[T int64 | float64](v []T, ids []int) float64 {
-	st := StandingJudgements()
+	st := DefaultParams()
 	var s float64
 	for _, i := range ids {
 		s += float64(st.VoteWeight(int64(v[i]))) / 1e6
@@ -467,7 +467,7 @@ func TestUnifiedAccuracyMultiplier(t *testing.T) {
 			for _, p := range js[i+1:] {
 				later = append(later, judge.Point{X: p.x, W: 1e6})
 			}
-			if len(later) < judge.KMin {
+			if len(later) < judge.PriorWeight {
 				continue
 			}
 			sort.Slice(later, func(a, b int) bool { return later[a].X < later[b].X })

@@ -466,11 +466,12 @@ func generatedSections(t *testing.T) map[string]string {
 		}
 	}
 	sections := map[string]string{"operations": ops.String(), "limits": limits.String(), "errors": errs.String(), "hooks": wrapList("", hooks, ""), "vias": via.String(),
-		"funnel":      funnelProtocolSection(),     // funnel_test.go
-		"nudges":      nudgeProtocolSection(),      // nudges_test.go
-		"work-record": workRecordProtocolSection(), // workreputation_test.go
-		"reputation":  reputationProtocolSection(), // reputation_test.go
-		"storefront":  storefrontProtocolSection(), // storefront_test.go
+		"funnel":        funnelProtocolSection(),     // funnel_test.go
+		"nudges":        nudgeProtocolSection(),      // nudges_test.go
+		"work-record":   workRecordProtocolSection(), // workreputation_test.go
+		"reputation":    reputationProtocolSection(), // reputation_test.go
+		"storefront":    storefrontProtocolSection(), // storefront_test.go
+		"standing-ways": StandingWaysTable(),         // standingroots.go (C326)
 		// protocol_sections_test.go
 		"updates-reasons":   updatesReasonsProtocolSection(),
 		"ranking-params":    rankingParamsProtocolSection(),

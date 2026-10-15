@@ -88,7 +88,7 @@ const llmsLeanBytes = 34_500
 // which to use for what; the detail is on each tool's page and in
 // /llms-full.txt, which keeps everything.
 func TestLLMSTxtLeadsWithFirstCallsAndStaysLean(t *testing.T) {
-	f := board.Features{Services: services.Known(), Ledger: board.LedgerOn, Trust: board.TrustAllocation, VoteRecords: true}
+	f := board.Features{Services: services.Known(), Ledger: board.LedgerOn, Trust: board.TrustOn, VoteRecords: true}
 	s, _ := catalogServer(f)
 	llms := makeRequest(s, "GET", "/llms.txt", "", "").Body.String()
 	full := makeRequest(s, "GET", "/llms-full.txt", "", "").Body.String()

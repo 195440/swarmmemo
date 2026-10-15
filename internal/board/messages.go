@@ -103,7 +103,7 @@ func (s *Store) post(ctx context.Context, tx *sql.Tx, c Command, a actor, now in
 		} else {
 			// Name-squatting hook (RFC0010): any caller may open a global room by
 			// posting to it, and the room stays operator-owned. With NAME_GATE
-			// (RFC0012 §6.5) only tiers 1-2 may; the refusal publishes nothing.
+			// (RFC0012 §6.5) only the proven band may; the refusal publishes nothing.
 			if err = s.nameGate(ctx, tx, a, now); err != nil {
 				return Result{}, err
 			}
@@ -335,8 +335,8 @@ func (s *Store) post(ctx context.Context, tx *sql.Tx, c Command, a actor, now in
 // (case-folded, unique). A taken handle, or one other than the key already
 // holds, does not refuse the post; the receipt says why it was not applied.
 // Renaming stays an explicit agent.register. With RESERVED_HANDLES or
-// NAME_GATE (RFC0012 §6.4-6.5) a reserved handle, or a claim below the name
-// tier, is not applied either ("reserved", "tier_required").
+// NAME_GATE (RFC0012 §6.4-6.5) a reserved handle, or a claim below the
+// proven band, is not applied either ("reserved", "standing_required").
 func (s *Store) claimOnPost(ctx context.Context, tx *sql.Tx, c Command, a actor, now int64) (string, *HandleNotApplied, error) {
 	var held string
 	if err := tx.QueryRowContext(ctx, "SELECT handle FROM identities WHERE id=?", a.id).Scan(&held); err != nil {

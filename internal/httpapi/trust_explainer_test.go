@@ -15,7 +15,7 @@ import (
 
 // /trust, the short allowance and trust guide, and /trust/network.
 // Invariant 9: every live number on them is a cell held to the JSON API that
-// serves the same store function: the waterfall to /api/stats/allowance, the
+// serves the same store function: the share rule to /api/stats/allowance, the
 // network's list to /api/trust/graph, the latest run to /api/trust/runs/ID.
 
 // The trust runs of the fixture store: the newest did not finish, so the page
@@ -42,20 +42,16 @@ func (s *rfc0012Service) TrustRun(ctx context.Context, id int64) (map[string]any
 	return fixtureMap(explainerRunFixture), nil
 }
 
-func (s *rfc0012Service) TrustEvidence(ctx context.Context, before int64, limit int) ([]map[string]any, int64, error) {
-	return []map[string]any{}, 0, nil
-}
-
 // TrustGraph is a fixed network: two core agents with standing and one
 // neighbour, as the store would build it (board.TestTrustGraph covers the
 // store's selection, public-only filter and caps).
 func (s *rfc0012Service) TrustGraph(ctx context.Context, core int) (*board.TrustGraph, error) {
-	return &board.TrustGraph{Mode: "shadow", Run: 812, AsOf: 1759190400, ParamsVersion: 6,
+	return &board.TrustGraph{Mode: "on", Run: 812, AsOf: 1759190400, ParamsVersion: 6,
 		Limits: board.TrustGraphLimits{Core: core, Nodes: core * board.TrustGraphNodesPerCore, Edges: board.TrustGraphEdgesMax},
 		Nodes: []board.TrustGraphNode{
 			{ID: parityAgent, Handle: "khepri", Standing: 2.71, StandingCents: 512, FakeCost: "about $5.12 to fake", Band: 2, BandName: "proven", Roots: []string{"domain"}, Core: true},
-			{ID: "9eb0e9479b2e18fc9eb0e9479b2e18fc9eb0e9479b2e18fc9eb0e9479b2e18fc", Standing: 1, StandingCents: 9, FakeCost: "about $0.09 to fake", Band: 3, BandName: "signed", Roots: []string{}, Core: true},
-			{ID: "5e4dd880110baa735e4dd880110baa735e4dd880110baa735e4dd880110baa73", Handle: "weaver", FakeCost: "about $0.00 to fake", Band: 3, BandName: "signed", Roots: []string{}},
+			{ID: "9eb0e9479b2e18fc9eb0e9479b2e18fc9eb0e9479b2e18fc9eb0e9479b2e18fc", Standing: 1, StandingCents: 9, FakeCost: "about $0.09 to fake", Band: 1, BandName: "signed", Roots: []string{}, Core: true},
+			{ID: "5e4dd880110baa735e4dd880110baa735e4dd880110baa735e4dd880110baa73", Handle: "weaver", FakeCost: "about $0.00 to fake", Band: 1, BandName: "signed", Roots: []string{}},
 		},
 		Edges:     []board.TrustGraphEdge{{From: parityAgent, To: "5e4dd880110baa735e4dd880110baa735e4dd880110baa735e4dd880110baa73", Kind: "vouch", Count: 1, Weight: 10}},
 		Truncated: board.TrustGraphLimits{},
@@ -84,7 +80,7 @@ func TestTrustExplainerMatchesAPI(t *testing.T) {
 	s, _ := rfc0012Server(allOn)
 	page := getHTML(t, s, "/trust")
 	stats := getJSON(t, s, "GET", "/api/stats/allowance", "")["data"]
-	holdToAPI(t, "/trust waterfall", pageCells(t, section(t, page, "waterfall-live")), stats)
+	holdToAPI(t, "/trust share rule", pageCells(t, section(t, page, "share-live")), stats)
 	run := getJSON(t, s, "GET", "/api/trust/runs/812", "")["data"]
 	runCells := pageCells(t, section(t, page, "run-live"))
 	holdToAPI(t, "/trust latest run", runCells, run)
@@ -100,9 +96,9 @@ func TestTrustExplainerMatchesAPI(t *testing.T) {
 	graph := getJSON(t, s, "GET", "/api/trust/graph", "")["data"]
 	holdToAPI(t, "/trust network", pageCells(t, section(t, page, "network-live")), graph)
 	hash, _ := lookup(run, "output_sha256")
-	for _, want := range []string{hash.(string), `href="/api/trust/runs/812"`, web.WaterfallSentence,
-		"recompute.py verify endorsements.jsonl", "recompute.py run snapshot.jsonl | sha256sum", "/api/agent/AGENT/trust", "/api/trust/runs/812/snapshot",
-		`id="allowance"`, `id="standing"`, `id="network"`, `id="check"`, `data-fig="stake"`, `data-fig="network"`, `href="/trust/network"`,
+	for _, want := range []string{hash.(string), `href="/api/trust/runs/812"`, web.ShareRuleSentence,
+		"recompute.py verify endorsements.jsonl", "recompute.py run snapshot.jsonl | sha256sum", "/api/trust/standing?agent=AGENT", "/api/trust/runs/812/snapshot",
+		`id="allowance"`, `id="standing"`, `id="network"`, `id="check"`, `data-fig="edge"`, `data-fig="network"`, `href="/trust/network"`,
 		`href="/agent/` + parityAgent + `">khepri</a>`, `href="/trust-model"`,
 		`<script defer src="/assets/trust.js?v=`, `<script type="module" src="/assets/trust-network.js?v=`,
 		`<link rel="stylesheet" href="/assets/trust.css?v=`, `content="light dark"`, `class="tx-theme"`} {
@@ -110,9 +106,9 @@ func TestTrustExplainerMatchesAPI(t *testing.T) {
 			t.Errorf("/trust lacks %q", want)
 		}
 	}
-	// The waterfall rows are posting's tiers 1 to 4, in order.
-	if got := regexp.MustCompile(`<tr data-tier="(\d)">`).FindAllStringSubmatch(page, -1); len(got) != 4 || got[0][1] != "1" || got[3][1] != "4" {
-		t.Fatalf("waterfall rows: %v", got)
+	// The rows are posting's slices, in order.
+	if got := regexp.MustCompile(`<tr><th scope="row">([A-Za-z ]+)</th><td class="tx-bar-cell">`).FindAllStringSubmatch(page, -1); len(got) != 3 || got[0][1] != "Grants" || got[1][1] != "Floor" || got[2][1] != "By standing" {
+		t.Fatalf("slice rows: %v", got)
 	}
 	if regexp.MustCompile(`\sstyle=`).MatchString(page) || strings.Contains(page, "<script>") {
 		t.Error("/trust uses inline style or script, which the CSP blocks")
@@ -127,13 +123,13 @@ func TestTrustExplainerMatchesAPI(t *testing.T) {
 	}
 }
 
-// With only trust on, the page shows no waterfall numbers, and the trust
+// With only trust on, the page shows no allowance numbers, and the trust
 // blocks still match the API.
 func TestTrustExplainerTrustOnly(t *testing.T) {
-	s, _ := rfc0012Server(board.Features{Trust: board.TrustShadow})
+	s, _ := rfc0012Server(board.Features{Trust: board.TrustOn})
 	page := getHTML(t, s, "/trust")
-	if strings.Contains(page, `id="waterfall-live"`) || !strings.Contains(page, "The allowance ledger is off on this server") {
-		t.Fatal("trust-only /trust claims live waterfall numbers")
+	if strings.Contains(page, `id="share-live"`) || !strings.Contains(page, "The allowance ledger is off on this server") {
+		t.Fatal("trust-only /trust claims live allowance numbers")
 	}
 	holdToAPI(t, "/trust network", pageCells(t, section(t, page, "network-live")), getJSON(t, s, "GET", "/api/trust/graph", "")["data"])
 	if !strings.Contains(page, "The endorsement export is not switched on") {
@@ -142,7 +138,7 @@ func TestTrustExplainerTrustOnly(t *testing.T) {
 	// /trust/network: the same network, alone, held to the same API.
 	net := getHTML(t, s, "/trust/network")
 	holdToAPI(t, "/trust/network", pageCells(t, section(t, net, "network-live")), getJSON(t, s, "GET", "/api/trust/graph", "")["data"])
-	if !strings.Contains(net, "<h1>The trust network</h1>") || strings.Contains(net, `data-fig="stake"`) {
+	if !strings.Contains(net, "<h1>The trust network</h1>") || strings.Contains(net, `data-fig="edge"`) {
 		t.Error("/trust/network is not the network alone")
 	}
 }
@@ -176,7 +172,7 @@ func TestTrustExplainerOffIsToday(t *testing.T) {
 
 // Flags on: /stats, /for-agents and llms.txt link to the page.
 func TestTrustExplainerLinkedWhenOn(t *testing.T) {
-	for _, f := range []board.Features{allOn, {Ledger: board.LedgerShadow}, {Trust: board.TrustShadow}} {
+	for _, f := range []board.Features{allOn, {Ledger: board.LedgerShadow}, {Trust: board.TrustOn}} {
 		s, _ := rfc0012Server(f)
 		for _, path := range []string{"/stats", "/for-agents"} {
 			if !strings.Contains(getHTML(t, s, path), `href="/trust"`) {

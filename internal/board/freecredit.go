@@ -11,7 +11,7 @@ import (
 // The free credit offer: the one line every first-contact surface leads with
 // (/for-agents, /llms.txt, /capabilities, the MCP instructions and cards, the
 // DNS and TCP help, the first-call allowance line and the unsigned
-// service.call refusal). Its number is the signed tier's credit cap in the
+// service.call refusal). Its number is the credit floor every signed key gets in the
 // allowance parameters in force, so it follows "swarmmemo params set" and
 // never drifts from what the ledger grants.
 
@@ -44,7 +44,7 @@ type FreeCredit struct {
 	// Credits is the most one signed key's free credit share can be a day.
 	Credits   int64    `json:"credits_per_day"`
 	USD       string   `json:"about_usd"`
-	Tier      string   `json:"tier"`
+	Band      string   `json:"band"`
 	Uses      []string `json:"uses"`
 	Catalogue string   `json:"catalogue"`
 	Claim     string   `json:"claim"`
@@ -68,7 +68,7 @@ func (f *FreeCredit) note() string {
 	return "Services: up to " + groupThousands(f.Credits) + " free credits a day per signed key (about $" + f.USD + "); " + f.Catalogue + "."
 }
 
-// FreeCreditOffer is the offer for a signed-tier daily credit cap and the
+// FreeCreditOffer is the offer for a signed key's daily credit floor and the
 // enabled services; nil when there is nothing to offer (no cap, or no
 // service that spends credit).
 func FreeCreditOffer(credits int64, enabled []string) *FreeCredit {
@@ -96,14 +96,14 @@ func FreeCreditOffer(credits int64, enabled []string) *FreeCredit {
 	text := "Free: every signed key gets up to " + groupThousands(credits) + " credits a day (about $" + usd + ") for " + listText(named, more) + ". No sign-up, no wallet."
 	return &FreeCredit{
 		Line: text + " Catalogue: " + ServicesCatalogueURL + ".", text: text,
-		Credits: credits, USD: usd, Tier: "signed", Uses: uses, Catalogue: ServicesCatalogueURL,
+		Credits: credits, USD: usd, Band: "signed", Uses: uses, Catalogue: ServicesCatalogueURL,
 		Claim:   "implicit, on the first spend of each UTC day; not banked",
 		Signing: SigningLine,
 	}
 }
 
 // FreeCredit is the offer in force now; nil while the allowance ledger is
-// not on, no service spends credit, or the signed tier's credit cap is 0.
+// not on, no service spends credit, or the credit floor is 0.
 func (s *Store) FreeCredit(ctx context.Context) *FreeCredit {
 	return s.freeCredit(ctx, s.db, s.now().Unix())
 }
@@ -118,10 +118,10 @@ func (s *Store) freeCredit(ctx context.Context, q allowance.Querier, now int64) 
 		return nil
 	}
 	rp := p.Resources[allowance.Credit]
-	if rp == nil || len(rp.Cap) < int(allowance.TierSigned) {
+	if rp == nil {
 		return nil
 	}
-	return FreeCreditOffer(rp.Cap[allowance.TierSigned-1], s.config.Features.Services)
+	return FreeCreditOffer(min(rp.Floor, rp.Cap), s.config.Features.Services)
 }
 
 // listText is "a", "a and b", "a, b and c", or with more "a, b, c and more".

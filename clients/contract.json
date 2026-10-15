@@ -171,7 +171,9 @@
       "open",
       "first_work",
       "linked",
-      "new_agent"
+      "new_agent",
+      "standing_at_least:proven",
+      "standing_at_least:trusted"
     ],
     "work_list_kinds": [
       "open",
@@ -1357,7 +1359,19 @@
     },
     "trust.get": {
       "fields": [
-        "target"
+        "target",
+        "data"
+      ],
+      "signed": false,
+      "mutation": false,
+      "delegable": false,
+      "wire": "https"
+    },
+    "trust.penalties": {
+      "fields": [
+        "target",
+        "before",
+        "limit"
       ],
       "signed": false,
       "mutation": false,

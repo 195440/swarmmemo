@@ -762,10 +762,7 @@ func TestBundlerCallDrawsTheAllowance(t *testing.T) {
 	p := ledger.DefaultAllowanceParams()
 	rp := p.Resources[allowance.Credit]
 	rp.Budget, rp.SpendCeiling, rp.InboundCap = 1_600_000, 1_600_000, 1_600_000
-	rp.Cap = []int64{400_000, 200_000, 100_000, 30_000}
-	rp.Floor = []int64{1600, 1600, 1600, 30_000}
-	rp.RootCap = []int64{1_600_000, 800_000, 400_000, 30_000}
-	rp.ShareMaxPPM = []int64{1_000_000, 1_000_000, 1_000_000, 1_000_000}
+	rp.Floor, rp.Cap, rp.AnonymousSharePPM = 30_000, 100_000, 1_000_000
 	body := p.Marshal()
 	l := ledger.New(ledger.Config{Params: ledger.ParamsStore{Overrides: map[string]ledger.Namespace{ledger.AllowanceNamespace: {Body: func() []byte { return body }, Validate: func([]byte) error { return nil }}}}})
 	h.engine = NewEngine(Config{DB: h.db, Registry: h.engine.Registry(), Meter: l, Now: func() int64 { return h.now }})

@@ -16,7 +16,7 @@ import (
 // full within the TCP answer size, so the dig line /for-agents shows for it
 // works.
 func TestDNSAndLineHelpListTheCatalogue(t *testing.T) {
-	f := board.Features{Services: services.Known(), Trust: board.TrustShadow}
+	f := board.Features{Services: services.Known(), Trust: board.TrustOn}
 	d := testDNS(t)
 	d.help = newCatalogHelp(f, "https://swarmmemo.com", nil)
 	budget := (*dns).Limits(nil).Response
@@ -77,7 +77,7 @@ func TestDNSAndLineHelpListTheCatalogue(t *testing.T) {
 // same line /llms.txt does, within the TCP answer size. The zone's own usage
 // answer stays small enough for plain UDP and points at help.ZONE.
 func TestHelpLeadsWithTheFreeCredit(t *testing.T) {
-	f := board.Features{Ledger: board.LedgerOn, Services: services.Known(), Trust: board.TrustShadow}
+	f := board.Features{Ledger: board.LedgerOn, Services: services.Known(), Trust: board.TrustOn}
 	offer := board.FreeCreditOffer(100_000, f.Services)
 	line := offer.LineAt("https://swarmmemo.com")
 	help := newCatalogHelp(f, "https://swarmmemo.com", nil)
@@ -144,7 +144,7 @@ func TestHelpFitsTheTCPAnswerInTheWorstCase(t *testing.T) {
 	defer web.SetCardImages(false)
 	production := []string{"memory", "wakeup", "notary", "inference", "x402", "public_data", "runs", "screen"}
 	budget := (*dns).Limits(nil).Response
-	for _, trust := range []board.TrustMode{board.TrustOff, board.TrustShadow, board.TrustAllocation} {
+	for _, trust := range []board.TrustMode{board.TrustOff, board.TrustOn, board.TrustOn} {
 		for _, noKey := range []bool{false, true} {
 			f := board.Features{Ledger: board.LedgerOn, Services: production, Trust: trust}
 			offer := board.FreeCreditOffer(100_000_000, f.Services)

@@ -12,7 +12,7 @@ import (
 // vouches (withdrawn ones are not edges); an account that is not public is
 // never named, even when a vouch reaches it; the caps hold and are counted.
 func TestTrustGraph(t *testing.T) {
-	s, seed, alice, bob, _ := trustFixture(t, nil)
+	s, seed, alice, bob, _ := trustFixture(t)
 	if _, err := s.db.Exec(endorsementSchema); err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestTrustGraph(t *testing.T) {
 	}
 	s.trust.graph.m = nil // the cache holds the empty graph read above
 	g, err = s.TrustGraph(testContext, 100)
-	if err != nil || g.Run != sum.ID || g.Mode != "shadow" || g.ParamsVersion == 0 {
+	if err != nil || g.Run != sum.ID || g.Mode != "on" || g.ParamsVersion == 0 {
 		t.Fatalf("graph: %+v %v", g, err)
 	}
 	byID := map[string]TrustGraphNode{}
@@ -58,7 +58,7 @@ func TestTrustGraph(t *testing.T) {
 		}
 	}
 	sd, ok := byID[keyID(seed)]
-	if !ok || !sd.Core || sd.StandingCents <= 0 || len(sd.Roots) != 1 || sd.Roots[0] != "arbiter" {
+	if !ok || !sd.Core || sd.StandingCents <= 0 || len(sd.Roots) != 1 || sd.Roots[0] != "money" {
 		t.Fatalf("the seed: %+v", sd)
 	}
 	if a, ok := byID[keyID(alice)]; !ok || !a.Core || a.StandingCents <= 0 {

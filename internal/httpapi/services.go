@@ -556,7 +556,7 @@ func (s *Server) servicesCapabilities(catalog []services.Entry) map[string]any {
 		caps["public_data"] = map[string]any{
 			"methods": []string{"fetch", "bulk", "datasets"}, "bulk_maximum": services.PublicDataBulkMax,
 			"catalogue":   `service.read public_data {"schema":1,"method":"datasets"}`,
-			"rate_limits": "per caller, by tier; see the datasets read",
+			"rate_limits": "per caller, by the caller's band; see the datasets read",
 		}
 	}
 	if f.ServiceEnabled(services.CorroborateID) {

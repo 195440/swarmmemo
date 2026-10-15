@@ -25,8 +25,8 @@ package board
 // day, and a daily total paid. The verdict never matters; votes never pay.
 //
 // Amount: base × evidence factor × v(s), whole credits. v(s) is the vote
-// weight (trust.FlooredVoteWeightPPM, the one weight function): today 1
-// for a seasoned account, else 0, until standing is active.
+// weight of the reviewer's standing, a whole vote for a reviewer seasoned
+// when it reviewed (trust.Params.FlooredVoteWeight, RFC 0021 §12 and §14).
 
 import (
 	"context"
@@ -43,7 +43,6 @@ import (
 	"swarmmemo/internal/allowance"
 	"swarmmemo/internal/ledger"
 	"swarmmemo/internal/services"
-	"swarmmemo/internal/trust"
 )
 
 // ReviewRewardsParamsNamespace holds the reward parameters, versioned like
@@ -258,7 +257,7 @@ var rewardNoneNotes = map[string]string{
 	"relationship":           "Owner, affiliate and paid reviews earn no review reward.",
 	"owner_root":             "The reviewer shares a root (a verified domain) with the subject's owner.",
 	"evidence_class":         "Rewards need verified evidence of paid use (call:), work (work:) or a fetch (fetch:); an opinion earns nothing.",
-	"no_standing":            "v(standing) is 0: an account earns once it has a public post at least a day old.",
+	"no_standing":            "v(standing) is 0: an account earns once it has a public post at least a day old, or standing (standing.ways lists the steps).",
 	"already_rewarded":       "Your root already has a reward for this subject.",
 	"no_slots_left":          "The first reviewers of this subject in the window already earned its rewards.",
 	"account_daily_cap":      "You reached today's review rewards; the cap resets at 00:00 UTC.",
@@ -288,38 +287,6 @@ func pendingEvidenceReward(ids []string) *ReviewReward {
 
 func noReward(reason string) *ReviewReward {
 	return &ReviewReward{State: "none", Reason: reason, Note: rewardNoneNotes[reason]}
-}
-
-// standingVPPM is v(s) for an account, in ppm, through q: the vote weight
-// with today's rule as its floor (1e6 for a seasoned account); while
-// standing is not active, today's rule alone.
-func (s *Store) standingVPPM(ctx context.Context, q allowance.Querier, account string, seasoned bool, now int64) (int64, error) {
-	p := s.standingActive(ctx, q, now)
-	if p == nil {
-		return standingV(nil, seasoned, 0), nil
-	}
-	var cents int64
-	v, err := trust.CurrentStanding(ctx, q, account)
-	if err != nil {
-		return 0, err
-	}
-	if v != nil {
-		cents = v.StandingCents
-	}
-	return standingV(p, seasoned, cents), nil
-}
-
-// standingV is v(s) in ppm under p, the active standing parameters (nil
-// while standing is not active: today's rule, 1e6 for a seasoned account,
-// else 0), for an account with cents of standing.
-func standingV(p *trust.Params, seasoned bool, cents int64) int64 {
-	if p == nil {
-		if seasoned {
-			return 1_000_000
-		}
-		return 0
-	}
-	return p.Standing.FlooredVoteWeightPPM(seasoned, cents)
 }
 
 // rewardAmount is base × factor × v, in whole credits, rounded.
@@ -365,7 +332,7 @@ func subjectRewards(ctx context.Context, q allowance.Querier, subject string) ([
 // offerReviewReward decides a fresh review's reward in the posting
 // transaction, once its rows are written, and records a pending one. It
 // returns what the receipt says; nil while REVIEWS is off.
-func (s *Store) offerReviewReward(ctx context.Context, tx *sql.Tx, p *pendingReview, eventID, class, raised string, seasoned bool, now int64) (*ReviewReward, error) {
+func (s *Store) offerReviewReward(ctx context.Context, tx *sql.Tx, p *pendingReview, eventID, class, raised string, now int64) (*ReviewReward, error) {
 	if !s.ReviewsEnabled() {
 		return nil, nil
 	}
@@ -422,7 +389,7 @@ func (s *Store) offerReviewReward(ctx context.Context, tx *sql.Tx, p *pendingRev
 		}
 		return noReward("owner_root"), nil
 	}
-	v, err := s.standingVPPM(ctx, tx, p.account, seasoned, now)
+	v, err := s.voteWeightPPM(ctx, tx, p.account, p.seasoned, now)
 	if err != nil {
 		return nil, err
 	}
@@ -889,7 +856,7 @@ func (s *Store) reviewRewardsCapabilities(ctx context.Context) map[string]any {
 	sort.Strings(classes)
 	out := map[string]any{
 		"on": t.on(), "params": t.reviewRewardsParams, "params_version": t.version, "namespace": ReviewRewardsParamsNamespace, "params_url": "/api/params/" + ReviewRewardsParamsNamespace,
-		"amount":   "base_credits × evidence factor × v(standing), whole credits; the verdict never changes it and votes never pay",
+		"amount":   "base_credits × evidence factor × v(standing) (1 for a reviewer with a visible public post a day old when it reviewed), whole credits; the verdict never changes it and votes never pay",
 		"eligible": "a current, visible community review (not lab or outside_source) whose class, from verified evidence only, has a factor (" + fmt.Sprint(classes) + "); relationship not owner, affiliate or paid; the reviewer's root not the subject owner's root; v(standing) above 0",
 		"coverage": fmt.Sprintf("once per root per subject; only the first %d independent roots of a subject in %d days", t.FirstRoots, t.WindowDays),
 		"caps":     map[string]any{"per_account_per_day": t.PerAccountPerDay, "per_subject_per_day": t.PerSubjectPerDay, "daily_credits": t.DailyCredits, "source": "the day's credit grant pool (tier 0); never minted outside it"},

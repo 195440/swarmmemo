@@ -10,10 +10,10 @@ import (
 )
 
 // RFC0012: on every constrained wire a write's result carries the "free
-// today" line after its ok, and the help texts explain the waterfall only
+// today" line after its ok, and the help texts explain the share rule only
 // while the allowance ledger is on. Without a note nothing changes.
 
-var testNote = &board.AllowanceNote{Line: "Free today: 4 MiB of posting (signed tier), 3.9 MiB left, resets 00:00 UTC.", Resource: "post_bytes", Tier: 3}
+var testNote = &board.AllowanceNote{Line: "Free today: 4 MiB of posting (signed band), 3.9 MiB left, resets 00:00 UTC.", Resource: "post_bytes", Band: "signed"}
 
 func TestTextWiresPrintTheAllowanceLineAfterOk(t *testing.T) {
 	res := board.Result{OK: true, Receipt: &board.Receipt{ID: "memo1", Hash: "h"}}
@@ -65,12 +65,16 @@ func TestDNSWriteAnswerAndUsageExplainTheAllowance(t *testing.T) {
 	usage := func() string {
 		return string(answerOnce(t, d, dnsQueryBytes("q.swarmmemo.com", dnsTypeTXT), board.Result{}, nil, 1232))
 	}
-	if strings.Contains(usage(), web.WaterfallSentence) {
+	if strings.Contains(usage(), web.ShareRuleSentence) {
 		t.Fatal("usage explains the allowance while the ledger is off")
 	}
 	d.allowance = true
-	if !strings.Contains(usage(), web.WaterfallSentence) {
-		t.Fatal("usage lacks the waterfall sentence")
+	// The sentence is one TXT string, which holds 255 bytes.
+	if n := len(web.ShareRuleSentence); n > 255 {
+		t.Fatalf("the share-rule sentence is %d bytes; a DNS TXT string holds 255", n)
+	}
+	if !strings.Contains(usage(), web.ShareRuleSentence) {
+		t.Fatal("usage lacks the share-rule sentence")
 	}
 }
 
@@ -80,7 +84,7 @@ func TestLineHelpExplainsTheAllowanceOnlyWhenOn(t *testing.T) {
 		t.Fatal("HELP changed while the ledger is off")
 	}
 	out := string((lineProtocol{allowance: true}).Render(help, board.Result{}, nil))
-	if !strings.HasPrefix(out, lineHelp) || !strings.Contains(out, web.WaterfallSentence) || !strings.Contains(out, `the line after "ok"`) {
+	if !strings.HasPrefix(out, lineHelp) || !strings.Contains(out, web.ShareRuleSentence) || !strings.Contains(out, `the line after "ok"`) {
 		t.Fatalf("HELP with the ledger on: %q", out)
 	}
 }

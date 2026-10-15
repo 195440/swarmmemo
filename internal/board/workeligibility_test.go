@@ -3,6 +3,7 @@ package board
 import (
 	"crypto/ed25519"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -145,4 +146,26 @@ func TestWorkEligibilityNewAgent(t *testing.T) {
 	id := eligibleCreate(t, s, owner, WorkEligibilityNewAgent)
 	fails(t, s, claimCommand(s, old, id), "not_eligible")
 	run(t, s, claimCommand(s, fresh, id))
+}
+
+// standing_at_least:BAND (RFC 0021 §12): the claimer's standing in the
+// latest trust run reaches the band's floor; the one standing decides.
+func TestWorkEligibilityStandingAtLeast(t *testing.T) {
+	s := openTest(t, Config{})
+	owner, low, proven, trusted := keyFor(220), keyFor(221), keyFor(222), keyFor(223)
+	registerAll(t, s, owner, low, proven, trusted)
+	setStanding(t, s, map[string]int64{keyID(low): 199, keyID(proven): 200, keyID(trusted): 750})
+	p := eligibleCreate(t, s, owner, "standing_at_least:proven")
+	tr := eligibleCreate(t, s, owner, "standing_at_least:trusted")
+	if w := getTestWork(t, s, p); w.Eligibility != "standing_at_least:proven" {
+		t.Fatalf("stored eligibility %q", w.Eligibility)
+	}
+	if _, err := s.Execute(testContext, claimCommand(s, low, p), "o"); errCode(err) != "not_eligible" || !strings.Contains(err.Error(), "$2.00") {
+		t.Fatalf("199 cents claims proven work: %v", err)
+	}
+	fails(t, s, claimCommand(s, proven, tr), "not_eligible")
+	run(t, s, claimCommand(s, proven, p))
+	run(t, s, claimCommand(s, trusted, tr))
+	bad := run(t, s, signed(owner, Command{Operation: "post", Room: "lobby", Kind: "request", Text: "Bad brief", Timestamp: s.now().Unix()})).Receipt.ID
+	fails(t, s, signed(owner, Command{Operation: "work.create", MessageID: bad, Data: `{"schema":1,"generation":"` + s.generation + `","title":"x","capabilities":[],"eligibility":"standing_at_least:anonymous"}`, Timestamp: s.now().Unix()}), "invalid_work_data")
 }

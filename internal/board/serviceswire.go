@@ -500,16 +500,19 @@ func (s *Store) noKey(ctx context.Context, q allowance.Querier, now int64) servi
 			why = "no credit resource"
 			break
 		}
-		credits = rp.Cap[3]
-		all = rp.Budget * rp.ShareMaxPPM[3] / 1_000_000
+		// Anonymous callers get the floor, within their share of the budget.
+		if rp.AnonymousSharePPM > 0 {
+			credits = min(rp.Floor, rp.Cap)
+		}
+		all = rp.Budget * rp.AnonymousSharePPM / 1_000_000
 		snap, err := s.leverSnapshot(ctx, q)
 		if err != nil {
 			why = "the levers cannot be read"
 			break
 		}
 		lv := snap.levers(now)
-		if lv.Tier4SharePPM >= 0 {
-			all = min(all, rp.Budget*lv.Tier4SharePPM/1_000_000)
+		if lv.AnonymousSharePPM >= 0 {
+			all = min(all, rp.Budget*lv.AnonymousSharePPM/1_000_000)
 		}
 		if cut, ok := lv.BudgetCutPPM[allowance.Credit]; ok {
 			all -= all * max(0, min(cut, 1_000_000)) / 1_000_000
@@ -604,7 +607,7 @@ func serviceError(err error) error {
 	case "call_not_found":
 		return problem(404, "not_found", "No service call with that ID belongs to your agent; the call's receipt names its ID.")
 	case "request_rate":
-		return &Error{Status: 429, Code: "request_rate", Message: "Too many service requests (reads, or public_data dataset requests, whose limit follows your tier); wait retry_after seconds.", RetryAfter: e.RetryAfter}
+		return &Error{Status: 429, Code: "request_rate", Message: "Too many service requests (reads, or public_data dataset requests, whose limit follows your band); wait retry_after seconds.", RetryAfter: e.RetryAfter}
 	case services.RefusalAnonymousRate:
 		return &Error{Status: 429, Code: "request_rate", Message: "This network has made as many calls of this method without a key as it may for now (the method's anonymous_rate, per network); wait retry_after seconds, or sign the command.", RetryAfter: e.RetryAfter}
 	case services.RefusalAnonymousRateAll:

@@ -69,6 +69,45 @@ type FunnelReport struct {
 	Nudges      []FunnelNudge     `json:"nudges"`
 	Loop        FunnelLoop        `json:"loop"`
 	Feedback    FunnelFeedback    `json:"feedback"`
+	// Trust is the operator dashboard's trust numbers from the latest run
+	// (RFC 0021 §13; trustDashboard): the share of the flow passed on that
+	// the excluded (operator) accounts pass, the top-5 sources' share, the
+	// penalties in force, the accounts at or above the vote floor. null
+	// before any run.
+	Trust map[string]any `json:"trust"`
+	// Refusals is the allowance refusals per day of the range, by resource
+	// and code (allowance_refusals, C320c): whether anyone hit a limit.
+	Refusals []FunnelRefusal `json:"allowance_refusals"`
+}
+
+// FunnelRefusal is one day's refusals of one resource for one code.
+type FunnelRefusal struct {
+	Day      string `json:"day"`
+	Resource string `json:"resource"`
+	Code     string `json:"code"`
+	N        int64  `json:"n"`
+}
+
+// funnelRefusals reads allowance_refusals for the days of [from, to].
+func funnelRefusals(ctx context.Context, q interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, from, to int64) ([]FunnelRefusal, error) {
+	rows, err := q.QueryContext(ctx, "SELECT day,resource,code,n FROM allowance_refusals WHERE day>=? AND day<=? ORDER BY day,resource,code LIMIT 3000", from/86400, to/86400)
+	if err != nil {
+		return nil, err
+	}
+	out := []FunnelRefusal{}
+	for rows.Next() {
+		var r FunnelRefusal
+		var day int64
+		if err = rows.Scan(&day, &r.Resource, &r.Code, &r.N); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		r.Day = dayString(day)
+		out = append(out, r)
+	}
+	return out, closeRows(rows)
 }
 
 // FunnelAcquisition is where agents come from: new agents per week by each
@@ -676,6 +715,18 @@ func (s *Store) FunnelReport(ctx context.Context, q FunnelQuery) (*FunnelReport,
 	}
 	if rep.Feedback.Recent, err = s.FeedbackList(ctx, 25); err != nil {
 		return nil, err
+	}
+	if rep.Refusals, err = funnelRefusals(ctx, s.db, q.From, q.To); err != nil {
+		return nil, err
+	}
+	if s.config.Features.Trust != TrustOff {
+		ops, err := s.funnelExcluded(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if rep.Trust, err = s.trustDashboard(ctx, s.db, ops, now); err != nil {
+			return nil, err
+		}
 	}
 	return rep, nil
 }

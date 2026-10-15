@@ -10,10 +10,10 @@ import (
 	"sort"
 )
 
-// Inputs are the paged, read-only sources of one run (§4.3 schedule). The
-// board implements it (trustwire.go): Read calls emit once per record, reading
-// pages of at most PageRows rows, each in its own short read transaction, so
-// nothing holds the store's one connection while the run computes.
+// Inputs are the paged, read-only sources of one run. The board implements
+// it (trustwire.go): Read calls emit once per record, reading pages of at
+// most PageRows rows, each in its own short read transaction, so nothing
+// holds the store's one connection while the run computes.
 type Inputs interface {
 	Read(ctx context.Context, asOf int64, p Params, emit func(Record) error) error
 }
@@ -21,10 +21,14 @@ type Inputs interface {
 // PageRows is the largest page an input reader may read in one transaction.
 const PageRows = 2000
 
+// SnapshotSchema is the snapshot format of RFC 0021 runs (parameter
+// version 8 on). Snapshots of retired versions are schema 1.
+const SnapshotSchema = 2
+
 // Snapshot is everything one run reads, as typed records. Its JSONL form (one
 // Record per line, any order) is the golden fixture's input format and what a
-// third party rebuilds from /v1/export, /v1/export?stream=endorsements,
-// /api/ledger, /api/trust/runs and /api/params/trust to recompute a run.
+// run publishes at /api/trust/runs/ID/snapshot, so a third party can
+// recompute it (scripts/trust/recompute.py run).
 type Snapshot struct {
 	Meta         Meta
 	Params       Params
@@ -35,37 +39,25 @@ type Snapshot struct {
 	Breakers     []Record // type "breaker"
 	Transfers    []Record // type "transfer"
 	Claims       []Record // type "claim"
-	Priors       []Record // type "prior"
-	Penalties    []Record // type "penalty"
-	Sponsorships []Record // type "sponsorship"
-	// Standing inputs (RFC0015, parameter version 2): edges that are not
-	// endorsement records, and credit spent.
-	Acts   []Record // type "edge"
-	Spends []Record // type "spend"
-	// SignalLinks (type "signal_link": account link_account) are pairs of
-	// accounts that wrote from one network with one client (C160), read only
-	// while standing.signal_link_days is set. They come from operator-only
-	// request signals, so Records and WriteJSONL never include them: the
-	// published snapshot leaves them out, and a run that read some says how
-	// many in inputs.standing.inputs.signal_links.
-	SignalLinks []Record
-	// Judgement inputs (RFC 0020, C303a shadow; read from rule 3): the
-	// window's community reviews (type "review") and the owners of their
-	// subjects (type "owner"). Rule 3 never reads them; the
-	// judgements_shadow section does.
-	Reviews []Record
-	Owners  []Record
-	// Carry (type "carry", rule 4 only) is the previous rule 4 run's carry
-	// (JudgementCarry.Records): published in full in that run's canonical
-	// output and at /api/trust/runs/ID (inputs.judgements_carry).
-	Carry []Record
+	Payments     []Record // type "payment"
+	Acts         []Record // type "edge"
+	Reviews      []Record // type "review"
+	Owners       []Record // type "owner"
+	// The public penalty log (RFC 0021 §8): its entries' members, burned
+	// roots, backers' liabilities and lifts.
+	Penalties   []Record // type "penalty"
+	Burns       []Record // type "burn"
+	Liabilities []Record // type "liability"
+	Lifts       []Record // type "lift"
+	// Carry is the previous run's carry (Carry.Records): what the world
+	// edges held, published in full in that run's canonical output.
+	Carry []Record // type "carry"
 }
 
 // Meta is the run's frame: its as-of time and the input positions it read.
 type Meta struct {
 	Schema            int64 `json:"schema"`
 	AsOf              int64 `json:"as_of"`
-	PriorRuns         int64 `json:"prior_runs"`
 	PauseNewKeysSince int64 `json:"pause_new_keys_since"`
 	EventsSeq         int64 `json:"events_seq"`
 	EndorsementsSeq   int64 `json:"endorsements_seq"`
@@ -74,48 +66,48 @@ type Meta struct {
 
 // Record is one input line. Type selects the fields that apply:
 //
-//	meta         schema as_of prior_runs pause_new_keys_since events_seq endorsements_seq ledger_seq
+//	meta         schema as_of pause_new_keys_since events_seq endorsements_seq ledger_seq
 //	params       version body
 //	account      account first_seen
 //	post         id account created_at reply_to reply_to_account
-//	endorsement  seq kind voter target message_id value sponsor created_at
-//	             (kind: vote, vouch, legacy_vote, unsigned; target is the
-//	             account the edge points at: the author of the voted post's
-//	             edit-chain root, or the vouched account)
-//	proof        account kind link_value state created_at checked_at link_account
-//	             registered_at (a domain's registry creation time, when known)
-//	             root assessed (from version 5, an assessed root's key and
-//	             assessment: wallet, github, pow)
+//	endorsement  seq kind voter target message_id value created_at
+//	             (kind: vote, vouch, unsigned; target is the account the edge
+//	             points at: the author of the voted post's edit-chain root,
+//	             or the vouched account)
+//	proof        account kind link_value state created_at checked_at
+//	             link_account registered_at root assessed rank (registered_at:
+//	             a domain's registry creation time; rank: its list rank; root
+//	             and assessed: an assessed root's key and assessment)
 //	breaker      account started_at trust_until
 //	transfer     from to amount created_at
 //	claim        account day claimed spent
-//	prior        account flow_sum standing (standing: nonzero in the latest run)
-//	penalty      account evidence fraction_ppm ends_at
-//	sponsorship  invitee sponsor_account high_water
-//	edge         kind id from to created_at (kind: work_accept, the accepting
-//	             key's account → the worker's, id the work item; witness, the
-//	             witness's account → the witnessed agent's, verdict verified)
-//	spend        account day amount (paid and earned credit spent that day)
-//	             to link_value (from version 3: the payee, an account or a
-//	             host, when the payment went to one: a self-dealt spend is
-//	             not seed)
+//	payment      id kind account to amount created_at link_value (money in
+//	             US cents: to "" is a payment to SwarmMemo, else to another
+//	             account; link_value the payee's payout address, if any)
+//	edge         kind id from to created_at value (work_accept: the
+//	             accepting account → the worker; witness: the witness → the
+//	             witnessed agent, value 1 verified or −1 failed, id the claim)
 //	review       id account target value kind link_value state created_at
-//	             (RFC 0020 shadow: a community review, current or superseded;
-//	             target the judged subject (judge.ReviewSubject), value its x
-//	             (judge.FromReview), kind its evidence class, link_value its
-//	             effective relationship, state its verdict)
+//	             (a community review, current or superseded: target the
+//	             judged subject, value its x, kind its evidence class,
+//	             link_value its effective relationship, state its verdict)
 //	owner        target account (an account that owns a reviewed subject)
-//	carry        kind and, by kind (rule 4: the previous run's carry):
-//	             run as_of amount (the escrow); judgement id account
-//	             created_at value amount (its author, entry time, c0 and
-//	             provisional raw mark); balance account amount; owed id
-//	             account amount
+//	penalty      id kind account created_at ends_at value state evidence
+//	             (one per member of a penalty log entry: kind its trigger,
+//	             value its level k, state "pending" until a run applies it,
+//	             evidence its reason or evidence reference)
+//	burn         id root (a proof root the entry burned, for good)
+//	liability    id account fraction_ppm created_at ends_at value (a
+//	             backer's loss under the entry, its level k)
+//	lift         id created_at (an operator override reversing the entry)
+//	carry        kind: run (as_of), or world (account amount time
+//	             fraction_ppm last_active direct standing backed): the
+//	             previous run's world accumulators (Carry)
 type Record struct {
 	Type string `json:"type"`
 	// meta
 	Schema            int64 `json:"schema,omitempty"`
 	AsOf              int64 `json:"as_of,omitempty"`
-	PriorRuns         int64 `json:"prior_runs,omitempty"`
 	PauseNewKeysSince int64 `json:"pause_new_keys_since,omitempty"`
 	EventsSeq         int64 `json:"events_seq,omitempty"`
 	EndorsementsSeq   int64 `json:"endorsements_seq,omitempty"`
@@ -124,41 +116,34 @@ type Record struct {
 	Version int64           `json:"version,omitempty"`
 	Body    json.RawMessage `json:"body,omitempty"`
 	// shared
+	ID        string `json:"id,omitempty"`
+	Kind      string `json:"kind,omitempty"`
 	Account   string `json:"account,omitempty"`
 	CreatedAt int64  `json:"created_at,omitempty"`
+	Value     int64  `json:"value,omitempty"`
+	State     string `json:"state,omitempty"`
+	Target    string `json:"target,omitempty"`
 	// account
 	FirstSeen int64 `json:"first_seen,omitempty"`
 	// post
-	ID             string `json:"id,omitempty"`
 	ReplyTo        string `json:"reply_to,omitempty"`
 	ReplyToAccount string `json:"reply_to_account,omitempty"`
 	// endorsement
 	Seq       int64  `json:"seq,omitempty"`
-	Kind      string `json:"kind,omitempty"`
 	Voter     string `json:"voter,omitempty"`
-	Target    string `json:"target,omitempty"`
 	MessageID string `json:"message_id,omitempty"`
-	Value     int64  `json:"value,omitempty"`
-	Sponsor   bool   `json:"sponsor,omitempty"`
-	// Weight is a vouch's author-chosen weight (1..50; 0 is the default),
-	// read from parameter version 4.
-	Weight int64 `json:"weight,omitempty"`
-	// proof (Kind shared)
-	LinkValue   string `json:"link_value,omitempty"`
-	State       string `json:"state,omitempty"`
-	CheckedAt   int64  `json:"checked_at,omitempty"`
-	LinkAccount string `json:"link_account,omitempty"`
-	// RegisteredAt is a domain's registration time (the registry's RDAP
-	// creation date), when known; read from parameter version 3.
-	RegisteredAt int64 `json:"registered_at,omitempty"`
-	// Root and Assessed are an assessed proof's root key and assessment
-	// (from version 5: wallet, github and pow; roots.go).
-	Root     string `json:"root,omitempty"`
-	Assessed int64  `json:"assessed,omitempty"`
+	// proof
+	LinkValue    string `json:"link_value,omitempty"`
+	CheckedAt    int64  `json:"checked_at,omitempty"`
+	LinkAccount  string `json:"link_account,omitempty"`
+	RegisteredAt int64  `json:"registered_at,omitempty"`
+	Root         string `json:"root,omitempty"`
+	Assessed     int64  `json:"assessed,omitempty"`
+	Rank         int64  `json:"rank,omitempty"`
 	// breaker
 	StartedAt  int64 `json:"started_at,omitempty"`
 	TrustUntil int64 `json:"trust_until,omitempty"`
-	// transfer
+	// transfer, payment
 	From   string `json:"from,omitempty"`
 	To     string `json:"to,omitempty"`
 	Amount int64  `json:"amount,omitempty"`
@@ -166,24 +151,26 @@ type Record struct {
 	Day     int64 `json:"day,omitempty"`
 	Claimed int64 `json:"claimed,omitempty"`
 	Spent   int64 `json:"spent,omitempty"`
-	// prior
-	FlowSum  int64 `json:"flow_sum,omitempty"`
-	Standing bool  `json:"standing,omitempty"`
-	// penalty
+	// penalty, liability
 	Evidence    string `json:"evidence,omitempty"`
 	FractionPPM int64  `json:"fraction_ppm,omitempty"`
 	EndsAt      int64  `json:"ends_at,omitempty"`
-	// sponsorship
-	Invitee   string `json:"invitee,omitempty"`
-	SponsorOf string `json:"sponsor_account,omitempty"`
-	HighWater int64  `json:"high_water,omitempty"`
+	// carry (world)
+	Time       int64 `json:"time,omitempty"`
+	LastActive int64 `json:"last_active,omitempty"`
+	Direct     int64 `json:"direct,omitempty"`
+	Standing   int64 `json:"standing,omitempty"`
+	Backed     int64 `json:"backed,omitempty"`
 }
 
 // Add files one record under its type.
 func (s *Snapshot) Add(r Record) error {
 	switch r.Type {
 	case "meta":
-		s.Meta = Meta{Schema: r.Schema, AsOf: r.AsOf, PriorRuns: r.PriorRuns, PauseNewKeysSince: r.PauseNewKeysSince, EventsSeq: r.EventsSeq, EndorsementsSeq: r.EndorsementsSeq, LedgerSeq: r.LedgerSeq}
+		if r.Schema != SnapshotSchema {
+			return fmt.Errorf("trust input: snapshot schema %d is not %d (a retired run's snapshot: scripts/trust/recompute.py verifies it)", r.Schema, SnapshotSchema)
+		}
+		s.Meta = Meta{Schema: r.Schema, AsOf: r.AsOf, PauseNewKeysSince: r.PauseNewKeysSince, EventsSeq: r.EventsSeq, EndorsementsSeq: r.EndorsementsSeq, LedgerSeq: r.LedgerSeq}
 	case "params":
 		p, err := ParseParams(r.Version, r.Body)
 		if err != nil {
@@ -204,22 +191,22 @@ func (s *Snapshot) Add(r Record) error {
 		s.Transfers = append(s.Transfers, r)
 	case "claim":
 		s.Claims = append(s.Claims, r)
-	case "prior":
-		s.Priors = append(s.Priors, r)
-	case "penalty":
-		s.Penalties = append(s.Penalties, r)
-	case "sponsorship":
-		s.Sponsorships = append(s.Sponsorships, r)
+	case "payment":
+		s.Payments = append(s.Payments, r)
 	case "edge":
 		s.Acts = append(s.Acts, r)
-	case "spend":
-		s.Spends = append(s.Spends, r)
 	case "review":
 		s.Reviews = append(s.Reviews, r)
 	case "owner":
 		s.Owners = append(s.Owners, r)
-	case "signal_link":
-		s.SignalLinks = append(s.SignalLinks, r)
+	case "penalty":
+		s.Penalties = append(s.Penalties, r)
+	case "burn":
+		s.Burns = append(s.Burns, r)
+	case "liability":
+		s.Liabilities = append(s.Liabilities, r)
+	case "lift":
+		s.Lifts = append(s.Lifts, r)
 	case "carry":
 		s.Carry = append(s.Carry, r)
 	default:
@@ -229,15 +216,15 @@ func (s *Snapshot) Add(r Record) error {
 }
 
 // Records lists the snapshot as records: meta, params, then each type in
-// canonical order, which is also the order WriteJSONL uses. SignalLinks are
-// never listed: they are operator-only (C160).
+// canonical order, which is also the order WriteJSONL uses.
 func (s *Snapshot) Records() []Record {
 	m := s.Meta
 	out := []Record{
-		{Type: "meta", Schema: m.Schema, AsOf: m.AsOf, PriorRuns: m.PriorRuns, PauseNewKeysSince: m.PauseNewKeysSince, EventsSeq: m.EventsSeq, EndorsementsSeq: m.EndorsementsSeq, LedgerSeq: m.LedgerSeq},
+		{Type: "meta", Schema: SnapshotSchema, AsOf: m.AsOf, PauseNewKeysSince: m.PauseNewKeysSince, EventsSeq: m.EventsSeq, EndorsementsSeq: m.EndorsementsSeq, LedgerSeq: m.LedgerSeq},
 		{Type: "params", Version: s.Params.Version, Body: s.Params.Body()},
 	}
-	for _, list := range [][]Record{s.Accounts, s.Posts, s.Endorsements, s.Proofs, s.Breakers, s.Transfers, s.Claims, s.Priors, s.Penalties, s.Sponsorships, s.Acts, s.Spends, s.Reviews, s.Owners, s.Carry} {
+	for _, list := range [][]Record{s.Accounts, s.Posts, s.Endorsements, s.Proofs, s.Breakers, s.Transfers, s.Claims, s.Payments, s.Acts, s.Reviews, s.Owners,
+		s.Penalties, s.Burns, s.Liabilities, s.Lifts, s.Carry} {
 		out = append(out, sortRecords(list)...)
 	}
 	return out

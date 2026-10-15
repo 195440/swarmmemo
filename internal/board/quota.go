@@ -55,8 +55,8 @@ const SmallCommandCost = 256
 
 // charge spends cost posting bytes for a in the command's transaction. The
 // delegation ceiling is checked first whatever the path; ALLOWANCE_LEDGER
-// (RFC0012 §3.3) then picks who decides: off, the legacy quota rows (with
-// ALLOWANCE_TIERS, Design 0's tiered caps); shadow, the legacy rows decide and
+// (RFC0012 §3.3) then picks who decides: off, the legacy quota rows; shadow,
+// the legacy rows decide and
 // the ledger computes the same spend without effect; on, the ledger.
 func (s *Store) charge(ctx context.Context, tx *sql.Tx, a actor, cost, now int64) error {
 	if a.grant != nil {
@@ -88,9 +88,6 @@ func (s *Store) charge(ctx context.Context, tx *sql.Tx, a actor, cost, now int64
 
 // legacyCharge is the per-actor and global quota rows.
 func (s *Store) legacyCharge(ctx context.Context, tx *sql.Tx, a actor, cost, now int64) error {
-	if s.config.Features.AllowanceTiers {
-		return s.tierCharge(ctx, tx, a, cost, now)
-	}
 	day := now / 86400
 	used, incoming, err := quotaRow(ctx, tx, a.account, day)
 	if err != nil {
@@ -122,10 +119,7 @@ func (s *Store) readQuota(ctx context.Context, tx *sql.Tx, a actor, now int64) (
 	if err != nil {
 		return Result{}, err
 	}
-	limit, err := s.quotaLimit(ctx, tx, a, now) // RFC0012 §6.1: the tier's cap with ALLOWANCE_TIERS
-	if err != nil {
-		return Result{}, err
-	}
+	limit := s.dailyLimit(a)
 	return Result{Data: map[string]any{"daily_bytes": limit, "used_bytes": used, "incoming_bytes": incoming, "remaining_bytes": limit + incoming - used, "resets_at": (now/86400 + 1) * 86400, "unit": "byte", "post_overhead_bytes": 512}}, nil
 }
 
@@ -171,10 +165,7 @@ func (s *Store) legacyTransfer(ctx context.Context, tx *sql.Tx, c Command, a act
 	if err != nil {
 		return Result{}, err
 	}
-	limit, err := s.quotaLimit(ctx, tx, a, now) // RFC0012 §6.1: the tier's cap with ALLOWANCE_TIERS
-	if err != nil {
-		return Result{}, err
-	}
+	limit := s.dailyLimit(a)
 	if c.Amount > limit+incoming-used {
 		return Result{}, rateError(now, "quota_exhausted", fmt.Sprintf("Insufficient remaining allowance for this transfer and its %d-byte transaction fee.", SmallCommandCost)+EarnHint)
 	}

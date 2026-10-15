@@ -1,10 +1,15 @@
 package ledger
 
-// Versioned parameters (RFC0012 §2.7). Every number of the waterfall is a
-// parameter, never a constant: the compiled-in set is version 0 of the
-// "allowance" namespace; "swarmmemo params set" appends versions, never edits
-// one. Bodies are strict JSON: unknown, missing or duplicate keys, trailing
-// data and values out of bounds are refused.
+// Versioned parameters (RFC0012 §2.7, RFC 0021 §12). Every number of the
+// share rule is a parameter, never a constant: the compiled-in set is version
+// 0 of the "allowance" namespace; "swarmmemo params set" appends versions,
+// never edits one. Bodies are strict JSON: unknown, missing or duplicate
+// keys, trailing data and values out of bounds are refused.
+//
+// The current body is schema 2 (the share rule). Schema 1 bodies (RFC 0012's
+// per-tier arrays), already stored in the params table, still parse: they
+// are converted to schema 2 on reading (allowanceParamsV1.convert). "params set" takes
+// schema 2 only.
 
 import (
 	"bytes"
@@ -17,7 +22,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"slices"
 	"sort"
 	"sync"
 
@@ -27,6 +31,9 @@ import (
 // AllowanceNamespace is the namespace of the ledger's parameters.
 const AllowanceNamespace = "allowance"
 
+// AllowanceSchema is the schema of the bodies the ledger writes.
+const AllowanceSchema = 2
+
 // Bounds shared by the parser and the ledger.
 const (
 	maxUnits       = int64(1) << 42 // any budget, cap or amount
@@ -35,49 +42,54 @@ const (
 	maxParamsBytes = 64 << 10
 )
 
-// ResourceParams are one resource's waterfall parameters. Per-tier arrays are
-// indexed by tier - 1: cap, floor, root_cap and share_max_ppm have four
-// entries (tiers 1–4); reserve_min_ppm, headroom_pct and borrow have three
-// (tiers 1–3).
+// ResourceParams are one resource's share-rule parameters (RFC 0021 §12).
+// Of the day's budget (less a pulled cut-budget lever), the grant slice
+// (grant_share_ppm) funds operator grants; of the rest, the floor slice
+// (floor_slice_ppm) gives every claimant min(floor, slice / expected
+// claimants), and the standing slice (the remainder) is shared in proportion
+// to standing, each root once; no claimant's entitlement exceeds cap.
+// anonymous_share_ppm caps what anonymous lots draw of the day's budget (0:
+// anonymous callers get nothing of the resource). spill_start and
+// spill_interval pace how much of one slice's unspent water the other slice's
+// spends may draw (unused water spills once).
 type ResourceParams struct {
-	Unit           string  `json:"unit"`
-	Budget         int64   `json:"budget"`
-	SpendCeiling   int64   `json:"spend_ceiling"`
-	GrantSharePPM  int64   `json:"grant_share_ppm"`
-	Cap            []int64 `json:"cap"`
-	Floor          []int64 `json:"floor"`
-	RootCap        []int64 `json:"root_cap"`
-	ReserveMinPPM  []int64 `json:"reserve_min_ppm"`
-	HeadroomPct    []int64 `json:"headroom_pct"`
-	ShareMaxPPM    []int64 `json:"share_max_ppm"`
-	Borrow         []bool  `json:"borrow"`
-	SpillStart     int64   `json:"spill_start"`
-	SpillInterval  int64   `json:"spill_interval"`
-	TransferFee    int64   `json:"transfer_fee"`
-	InboundCap     int64   `json:"inbound_cap"`
-	NewKeyFloor    int64   `json:"new_key_floor"`
-	ClientSharePPM int64   `json:"client_share_ppm"`
+	Unit              string `json:"unit"`
+	Budget            int64  `json:"budget"`
+	SpendCeiling      int64  `json:"spend_ceiling"`
+	GrantSharePPM     int64  `json:"grant_share_ppm"`
+	FloorSlicePPM     int64  `json:"floor_slice_ppm"`
+	Floor             int64  `json:"floor"`
+	Cap               int64  `json:"cap"`
+	AnonymousSharePPM int64  `json:"anonymous_share_ppm"`
+	SpillStart        int64  `json:"spill_start"`
+	SpillInterval     int64  `json:"spill_interval"`
+	TransferFee       int64  `json:"transfer_fee"`
+	InboundCap        int64  `json:"inbound_cap"`
+	NewKeyFloor       int64  `json:"new_key_floor"`
+	ClientSharePPM    int64  `json:"client_share_ppm"`
 }
 
-// AllowanceParams is the body of the "allowance" namespace.
+// AllowanceParams is the body of the "allowance" namespace. ClaimExpiryDays
+// is how many days past the end of its UTC day a free lot lives, the same for
+// every claimant; TransferableFree lets free units move by transfer.
 type AllowanceParams struct {
-	Schema                int                                    `json:"schema"`
-	Resources             map[allowance.Resource]*ResourceParams `json:"resources"`
-	ClaimExpiryDays       int64                                  `json:"claim_expiry_days"`
-	ClaimHalfLifeDays     int64                                  `json:"claim_half_life_days"`
-	ClaimRatePPM          int64                                  `json:"claim_rate_ppm"`
-	GrantedHalfLifeDays   int64                                  `json:"granted_half_life_days"`
-	GrantedRatePPM        int64                                  `json:"granted_rate_ppm"`
-	EarnedHalfLifeDays    int64                                  `json:"earned_half_life_days"`
-	EarnedRatePPM         int64                                  `json:"earned_rate_ppm"`
-	Dust                  int64                                  `json:"dust"`
-	TransferableFreeTiers []int64                                `json:"transferable_free_tiers"`
-	PaidTransferable      bool                                   `json:"paid_transferable"`
-	TransferDelay         int64                                  `json:"transfer_delay"`
-	DormantDays           int64                                  `json:"dormant_days"`
-	SpikeX                int64                                  `json:"spike_x"`
-	SpikeFloor            int64                                  `json:"spike_floor"`
-	TrustResetDays        int64                                  `json:"trust_reset_days"`
+	Schema              int                                    `json:"schema"`
+	Resources           map[allowance.Resource]*ResourceParams `json:"resources"`
+	ClaimExpiryDays     int64                                  `json:"claim_expiry_days"`
+	ClaimHalfLifeDays   int64                                  `json:"claim_half_life_days"`
+	ClaimRatePPM        int64                                  `json:"claim_rate_ppm"`
+	GrantedHalfLifeDays int64                                  `json:"granted_half_life_days"`
+	GrantedRatePPM      int64                                  `json:"granted_rate_ppm"`
+	EarnedHalfLifeDays  int64                                  `json:"earned_half_life_days"`
+	EarnedRatePPM       int64                                  `json:"earned_rate_ppm"`
+	Dust                int64                                  `json:"dust"`
+	TransferableFree    bool                                   `json:"transferable_free"`
+	PaidTransferable    bool                                   `json:"paid_transferable"`
+	TransferDelay       int64                                  `json:"transfer_delay"`
+	DormantDays         int64                                  `json:"dormant_days"`
+	SpikeX              int64                                  `json:"spike_x"`
+	SpikeFloor          int64                                  `json:"spike_floor"`
+	TrustResetDays      int64                                  `json:"trust_reset_days"`
 }
 
 // KnownResources is the resource registry (§2.1): a new resource is a
@@ -97,52 +109,45 @@ func RatePPM(h int64) int64 {
 	return int64(math.Round((1 - math.Exp2(-1/float64(h))) * 1e6))
 }
 
-// DefaultAllowanceParams is version 0, the defaults of RFC0012 §2.
+// defaultFloorSlicePPM is the floor slice's share: a quarter (RFC 0021 §12).
+const defaultFloorSlicePPM = 250_000
+
+// DefaultAllowanceParams is version 0: RFC 0021 §12's share rule, generous
+// until SwarmMemo is resource-constrained (the owner, 2026-10-14, C320c: in
+// two weeks of allowance_usage the busiest anonymous caller used under 1% of
+// its post bytes and 20% of its credits). Each daily budget is twice the one
+// in force before the share rule (post 64 → 128 MiB, memory 16 → 32 MiB,
+// credit 1.6M → 3.2M), and the floor everyone gets, anonymous callers
+// included, is today's anonymous share: 4 MiB of posts, 256 KiB of memory,
+// 8,000 credits. Signed accounts also keep at least their waterfall share
+// for TransitionFloorDays (pools.go).
 func DefaultAllowanceParams() AllowanceParams {
 	const mib = 1 << 20
 	post := &ResourceParams{
-		Unit: "byte", Budget: 64 * mib, SpendCeiling: 128 * mib, GrantSharePPM: 0,
-		Cap:           []int64{16 * mib, 8 * mib, 4 * mib, 4 * mib},
-		Floor:         []int64{64 << 10, 64 << 10, 64 << 10, 16 << 10},
-		RootCap:       []int64{64 * mib, 32 * mib, 16 * mib, 16 * mib},
-		ReserveMinPPM: []int64{100_000, 100_000, 200_000},
-		HeadroomPct:   []int64{50, 50, 50},
-		ShareMaxPPM:   []int64{ppm, ppm, ppm, ppm},
-		Borrow:        []bool{true, true, true},
-		SpillStart:    3600, SpillInterval: 3600,
-		TransferFee: 256, InboundCap: 64 * mib, NewKeyFloor: 0, ClientSharePPM: ppm,
+		Unit: "byte", Budget: 128 * mib, SpendCeiling: 256 * mib, GrantSharePPM: 0,
+		FloorSlicePPM: defaultFloorSlicePPM, Floor: 4 * mib, Cap: 16 * mib, AnonymousSharePPM: ppm,
+		SpillStart: 3600, SpillInterval: 3600,
+		TransferFee: 256, InboundCap: 128 * mib, NewKeyFloor: 0, ClientSharePPM: ppm,
 	}
 	memory := &ResourceParams{
-		Unit: "byte", Budget: 16 * mib, SpendCeiling: 32 * mib, GrantSharePPM: 0,
-		Cap:           []int64{4 * mib, 2 * mib, 1 * mib, 0},
-		Floor:         []int64{16 << 10, 16 << 10, 16 << 10, 0},
-		RootCap:       []int64{16 * mib, 8 * mib, 4 * mib, 0},
-		ReserveMinPPM: []int64{100_000, 100_000, 200_000},
-		HeadroomPct:   []int64{50, 50, 50},
-		ShareMaxPPM:   []int64{ppm, ppm, ppm, 0},
-		Borrow:        []bool{true, true, true},
-		SpillStart:    3600, SpillInterval: 3600,
-		TransferFee: 256, InboundCap: 16 * mib, NewKeyFloor: 0, ClientSharePPM: ppm,
+		Unit: "byte", Budget: 32 * mib, SpendCeiling: 64 * mib, GrantSharePPM: 0,
+		FloorSlicePPM: defaultFloorSlicePPM, Floor: 256 << 10, Cap: 4 * mib, AnonymousSharePPM: 250_000,
+		SpillStart: 3600, SpillInterval: 3600,
+		TransferFee: 256, InboundCap: 32 * mib, NewKeyFloor: 0, ClientSharePPM: ppm,
 	}
 	credit := &ResourceParams{
-		Unit: "credit", Budget: 0, SpendCeiling: 0, GrantSharePPM: 0,
-		Cap:           []int64{0, 0, 0, 0},
-		Floor:         []int64{0, 0, 0, 0},
-		RootCap:       []int64{0, 0, 0, 0},
-		ReserveMinPPM: []int64{100_000, 100_000, 200_000},
-		HeadroomPct:   []int64{50, 50, 50},
-		ShareMaxPPM:   []int64{ppm, ppm, ppm, 0},
-		Borrow:        []bool{true, true, true},
-		SpillStart:    3600, SpillInterval: 3600,
+		Unit: "credit", Budget: 3_200_000, SpendCeiling: 3_200_000, GrantSharePPM: 0,
+		FloorSlicePPM: defaultFloorSlicePPM, Floor: 8_000, Cap: 400_000, AnonymousSharePPM: 100_000,
+		SpillStart: 3600, SpillInterval: 3600,
 		TransferFee: 1, InboundCap: 0, NewKeyFloor: 0, ClientSharePPM: ppm,
 	}
 	return AllowanceParams{
-		Schema:          1,
+		Schema:          AllowanceSchema,
 		Resources:       map[allowance.Resource]*ResourceParams{allowance.PostBytes: post, allowance.MemoryBytes: memory, allowance.Credit: credit},
 		ClaimExpiryDays: 0, ClaimHalfLifeDays: 0, ClaimRatePPM: 0,
 		GrantedHalfLifeDays: 14, GrantedRatePPM: RatePPM(14),
 		EarnedHalfLifeDays: 30, EarnedRatePPM: RatePPM(30),
-		Dust: 64, TransferableFreeTiers: []int64{1, 2, 3, 4}, PaidTransferable: true,
+		Dust: 64, TransferableFree: true, PaidTransferable: true,
 		TransferDelay: 48 * 3600, DormantDays: 30, SpikeX: 4, SpikeFloor: 8, TrustResetDays: 30,
 	}
 }
@@ -153,12 +158,8 @@ func (p AllowanceParams) Clone() AllowanceParams {
 	out.Resources = make(map[allowance.Resource]*ResourceParams, len(p.Resources))
 	for r, rp := range p.Resources {
 		c := *rp
-		c.Cap, c.Floor, c.RootCap = slices.Clone(rp.Cap), slices.Clone(rp.Floor), slices.Clone(rp.RootCap)
-		c.ReserveMinPPM, c.HeadroomPct, c.ShareMaxPPM = slices.Clone(rp.ReserveMinPPM), slices.Clone(rp.HeadroomPct), slices.Clone(rp.ShareMaxPPM)
-		c.Borrow = slices.Clone(rp.Borrow)
 		out.Resources[r] = &c
 	}
-	out.TransferableFreeTiers = slices.Clone(p.TransferableFreeTiers)
 	return out
 }
 
@@ -172,10 +173,10 @@ func (p AllowanceParams) Marshal() []byte {
 }
 
 // Validate checks every bound. A body that parses and validates is safe to
-// run the waterfall on: no division by zero, no overflow past maxUnits.
+// run the share rule on: no division by zero, no overflow past maxUnits.
 func (p AllowanceParams) Validate() error {
-	if p.Schema != 1 {
-		return errors.New("schema must be 1")
+	if p.Schema != AllowanceSchema {
+		return fmt.Errorf("schema must be %d", AllowanceSchema)
 	}
 	if len(p.Resources) != len(KnownResources) {
 		return fmt.Errorf("resources must name exactly %d resources", len(KnownResources))
@@ -217,14 +218,6 @@ func (p AllowanceParams) Validate() error {
 			return fmt.Errorf("%s must be %d, round((1 - 2^(-1/h)) * 1e6) of its half-life", rate.name, RatePPM(rate.h))
 		}
 	}
-	if len(p.TransferableFreeTiers) > 4 {
-		return errors.New("transferable_free_tiers names at most tiers 1–4")
-	}
-	for i, t := range p.TransferableFreeTiers {
-		if t < 1 || t > 4 || i > 0 && t <= p.TransferableFreeTiers[i-1] {
-			return errors.New("transferable_free_tiers must be ascending tiers from 1 to 4")
-		}
-	}
 	return nil
 }
 
@@ -238,41 +231,19 @@ func (rp *ResourceParams) validate(unit string) error {
 	if rp.SpendCeiling < rp.Budget || rp.SpendCeiling > 8*rp.Budget {
 		return errors.New("spend_ceiling must be from budget to 8 × budget")
 	}
-	if len(rp.Cap) != 4 || len(rp.Floor) != 4 || len(rp.RootCap) != 4 || len(rp.ShareMaxPPM) != 4 {
-		return errors.New("cap, floor, root_cap and share_max_ppm have one entry per tier 1–4")
-	}
-	if len(rp.ReserveMinPPM) != 3 || len(rp.HeadroomPct) != 3 || len(rp.Borrow) != 3 {
-		return errors.New("reserve_min_ppm, headroom_pct and borrow have one entry per tier 1–3")
-	}
-	if !inPPM(rp.GrantSharePPM) {
-		return errors.New("grant_share_ppm must be 0–1000000")
-	}
-	var reserves int64
-	for i := 0; i < 4; i++ {
-		if rp.Cap[i] < 0 || rp.Cap[i] > maxUnits {
-			return fmt.Errorf("cap[%d] must be 0–%d", i+1, maxUnits)
-		}
-		if rp.Floor[i] < 0 || rp.Floor[i] > rp.Cap[i] {
-			return fmt.Errorf("floor[%d] must be 0–cap", i+1)
-		}
-		if rp.RootCap[i] < 0 || rp.RootCap[i] > maxUnits {
-			return fmt.Errorf("root_cap[%d] must be 0–%d", i+1, maxUnits)
-		}
-		if !inPPM(rp.ShareMaxPPM[i]) {
-			return fmt.Errorf("share_max_ppm[%d] must be 0–1000000", i+1)
-		}
-		if i < 3 {
-			if !inPPM(rp.ReserveMinPPM[i]) {
-				return fmt.Errorf("reserve_min_ppm[%d] must be 0–1000000", i+1)
-			}
-			reserves += rp.ReserveMinPPM[i]
-			if rp.HeadroomPct[i] < 0 || rp.HeadroomPct[i] > 1000 {
-				return fmt.Errorf("headroom_pct[%d] must be 0–1000", i+1)
-			}
+	for _, f := range []struct {
+		name string
+		v    int64
+	}{{"grant_share_ppm", rp.GrantSharePPM}, {"floor_slice_ppm", rp.FloorSlicePPM}, {"anonymous_share_ppm", rp.AnonymousSharePPM}} {
+		if !inPPM(f.v) {
+			return fmt.Errorf("%s must be 0–1000000", f.name)
 		}
 	}
-	if reserves > ppm {
-		return errors.New("reserve_min_ppm must sum to at most 1000000")
+	if rp.Cap < 0 || rp.Cap > maxUnits {
+		return fmt.Errorf("cap must be 0–%d", maxUnits)
+	}
+	if rp.Floor < 0 || rp.Floor > rp.Cap {
+		return errors.New("floor must be 0–cap")
 	}
 	if rp.SpillStart < 0 || rp.SpillStart > 86399 {
 		return errors.New("spill_start must be 0–86399 seconds")
@@ -297,14 +268,130 @@ func (rp *ResourceParams) validate(unit string) error {
 
 func inPPM(v int64) bool { return v >= 0 && v <= ppm }
 
-// ParseAllowanceParams parses and validates a strict body.
+// ParseAllowanceParams parses and validates a strict body of schema 2, or of
+// schema 1, converted to schema 2 (allowanceParamsV1.convert). It is what the ledger
+// reads with; ParseAllowanceParamsSet is what a new version must pass.
 func ParseAllowanceParams(body []byte) (AllowanceParams, error) {
+	var head struct {
+		Schema int `json:"schema"`
+	}
+	if err := json.Unmarshal(body, &head); err == nil && head.Schema == 1 {
+		var v1 allowanceParamsV1
+		if err = strictUnmarshal(body, &v1); err != nil {
+			return AllowanceParams{}, err
+		}
+		p, err := v1.convert()
+		if err != nil {
+			return AllowanceParams{}, err
+		}
+		if err = p.Validate(); err != nil {
+			return AllowanceParams{}, fmt.Errorf("schema 1 body converts to an invalid schema 2: %w", err)
+		}
+		return p, nil
+	}
+	return ParseAllowanceParamsSet(body)
+}
+
+// ParseAllowanceParamsSet parses and validates a strict schema 2 body: the
+// only kind "params set" stores.
+func ParseAllowanceParamsSet(body []byte) (AllowanceParams, error) {
 	var p AllowanceParams
 	if err := strictUnmarshal(body, &p); err != nil {
 		return AllowanceParams{}, err
 	}
 	if err := p.Validate(); err != nil {
 		return AllowanceParams{}, err
+	}
+	return p, nil
+}
+
+// resourceParamsV1 is one resource of a schema 1 body (RFC 0012 §2.3's tier
+// waterfall). Per-tier arrays were indexed by tier − 1.
+type resourceParamsV1 struct {
+	Unit           string  `json:"unit"`
+	Budget         int64   `json:"budget"`
+	SpendCeiling   int64   `json:"spend_ceiling"`
+	GrantSharePPM  int64   `json:"grant_share_ppm"`
+	Cap            []int64 `json:"cap"`
+	Floor          []int64 `json:"floor"`
+	RootCap        []int64 `json:"root_cap"`
+	ReserveMinPPM  []int64 `json:"reserve_min_ppm"`
+	HeadroomPct    []int64 `json:"headroom_pct"`
+	ShareMaxPPM    []int64 `json:"share_max_ppm"`
+	Borrow         []bool  `json:"borrow"`
+	SpillStart     int64   `json:"spill_start"`
+	SpillInterval  int64   `json:"spill_interval"`
+	TransferFee    int64   `json:"transfer_fee"`
+	InboundCap     int64   `json:"inbound_cap"`
+	NewKeyFloor    int64   `json:"new_key_floor"`
+	ClientSharePPM int64   `json:"client_share_ppm"`
+}
+
+// allowanceParamsV1 is a schema 1 body.
+type allowanceParamsV1 struct {
+	Schema                int                                      `json:"schema"`
+	Resources             map[allowance.Resource]*resourceParamsV1 `json:"resources"`
+	ClaimExpiryDays       int64                                    `json:"claim_expiry_days"`
+	ClaimHalfLifeDays     int64                                    `json:"claim_half_life_days"`
+	ClaimRatePPM          int64                                    `json:"claim_rate_ppm"`
+	GrantedHalfLifeDays   int64                                    `json:"granted_half_life_days"`
+	GrantedRatePPM        int64                                    `json:"granted_rate_ppm"`
+	EarnedHalfLifeDays    int64                                    `json:"earned_half_life_days"`
+	EarnedRatePPM         int64                                    `json:"earned_rate_ppm"`
+	Dust                  int64                                    `json:"dust"`
+	TransferableFreeTiers []int64                                  `json:"transferable_free_tiers"`
+	PaidTransferable      bool                                     `json:"paid_transferable"`
+	TransferDelay         int64                                    `json:"transfer_delay"`
+	DormantDays           int64                                    `json:"dormant_days"`
+	SpikeX                int64                                    `json:"spike_x"`
+	SpikeFloor            int64                                    `json:"spike_floor"`
+	TrustResetDays        int64                                    `json:"trust_reset_days"`
+}
+
+// convert maps a schema 1 body to schema 2, deterministically:
+//
+//   - kept as they were: unit, budget, spend_ceiling, grant_share_ppm,
+//     spill_start, spill_interval, transfer_fee, inbound_cap, new_key_floor,
+//     client_share_ppm and every global parameter but the next one;
+//   - transferable_free: true only when transferable_free_tiers named every
+//     tier 1–4 (any narrowing converts to false, the safe side);
+//   - floor: the signed tier's cap (cap[2], tier 3): what every signed key
+//     was offered (the free credit line read it), now bounded by the floor
+//     slice over the claimants; at least the signed tier's floor;
+//   - cap: the largest of cap[0..3];
+//   - anonymous_share_ppm: tier 4's share_max_ppm[3], or 0 when tier 4's
+//     cap[3] was 0 (anonymous callers got nothing of the resource);
+//   - floor_slice_ppm: 250000;
+//   - root_cap, reserve_min_ppm, headroom_pct, borrow and the other tiers'
+//     share_max_ppm have no counterpart and are dropped.
+func (v1 allowanceParamsV1) convert() (AllowanceParams, error) {
+	p := AllowanceParams{
+		Schema: AllowanceSchema, Resources: map[allowance.Resource]*ResourceParams{},
+		ClaimExpiryDays: v1.ClaimExpiryDays, ClaimHalfLifeDays: v1.ClaimHalfLifeDays, ClaimRatePPM: v1.ClaimRatePPM,
+		GrantedHalfLifeDays: v1.GrantedHalfLifeDays, GrantedRatePPM: v1.GrantedRatePPM,
+		EarnedHalfLifeDays: v1.EarnedHalfLifeDays, EarnedRatePPM: v1.EarnedRatePPM,
+		Dust: v1.Dust, PaidTransferable: v1.PaidTransferable, TransferDelay: v1.TransferDelay,
+		DormantDays: v1.DormantDays, SpikeX: v1.SpikeX, SpikeFloor: v1.SpikeFloor, TrustResetDays: v1.TrustResetDays,
+	}
+	all := len(v1.TransferableFreeTiers) == 4
+	for i, t := range v1.TransferableFreeTiers {
+		all = all && t == int64(i+1)
+	}
+	p.TransferableFree = all
+	for r, o := range v1.Resources {
+		if o == nil || len(o.Cap) != 4 || len(o.Floor) != 4 || len(o.ShareMaxPPM) != 4 {
+			return AllowanceParams{}, fmt.Errorf("resources.%s: cap, floor and share_max_ppm have one entry per tier 1–4", r)
+		}
+		anon := o.ShareMaxPPM[3]
+		if o.Cap[3] == 0 {
+			anon = 0
+		}
+		p.Resources[r] = &ResourceParams{
+			Unit: o.Unit, Budget: o.Budget, SpendCeiling: o.SpendCeiling, GrantSharePPM: o.GrantSharePPM,
+			FloorSlicePPM: defaultFloorSlicePPM, Floor: max(o.Floor[2], o.Cap[2]), Cap: max(o.Cap[0], o.Cap[1], o.Cap[2], o.Cap[3]),
+			AnonymousSharePPM: anon, SpillStart: o.SpillStart, SpillInterval: o.SpillInterval,
+			TransferFee: o.TransferFee, InboundCap: o.InboundCap, NewKeyFloor: o.NewKeyFloor, ClientSharePPM: o.ClientSharePPM,
+		}
 	}
 	return p, nil
 }
@@ -449,7 +536,7 @@ type Namespace struct {
 var (
 	namespacesMu sync.RWMutex
 	namespaces   = map[string]Namespace{
-		AllowanceNamespace: {Version: 0, Body: func() []byte { return DefaultAllowanceParams().Marshal() }, Validate: func(b []byte) error { _, err := ParseAllowanceParams(b); return err }},
+		AllowanceNamespace: {Version: 0, Body: func() []byte { return DefaultAllowanceParams().Marshal() }, Validate: func(b []byte) error { _, err := ParseAllowanceParamsSet(b); return err }},
 	}
 )
 

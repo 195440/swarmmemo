@@ -23,14 +23,12 @@ import (
 //
 //   - the vote count, shown on every post: distinct voters, up minus down
 //     (VoteScore over event_scores.ups and downs);
-//   - the ranking weight, which orders hot and top: each vote weighs the
-//     voter's floored standing weight (RFC0015 §13). A vote from an account
-//     that was seasoned when it voted (a visible public post at least
-//     VoterMinAge old, the old admission rule) weighs one whole vote, as
-//     before; any other vote weighs v(standing), which is 0 below the
-//     standing floor and always 0 in shadow. event_scores.score keeps the
-//     seasoned part (whole votes); standingVoteWeights adds the rest when
-//     standing is active, so switching standing.mode is a parameter change.
+//   - the ranking weight, which orders hot and top: a vote from an account
+//     seasoned when it voted (a visible public post at least VoterMinAge
+//     old) weighs one whole vote, today's rule as the floor (RFC 0021 §14);
+//     any other vote weighs the voter's v(standing) in the latest trust run
+//     (§12), 0 below the vote floor. event_scores.score keeps the seasoned
+//     part; standingVoteWeights adds the rest (rankWeight).
 //
 // A fresh key is free, so a million of them move the count a million and the
 // ranking nothing. Every vote is stored raw (post, voter account, value,
@@ -624,8 +622,10 @@ func (rd *rankRead) voteWeights(ctx context.Context, s *Store, tx *sql.Tx) (map[
 	return rd.weights, nil
 }
 
-// rankWeight is a post's ranking weight in votes: its seasoned votes (whole
-// votes) plus the standing part, in ppm.
+// rankWeight is a post's ranking weight in votes: its seasoned votes, each
+// a whole vote (the floor, trust.FlooredVoteWeight: RFC 0021 §14, nobody
+// loses vote weight at the cutover), plus Σ value × v(s) of the other votes
+// (standingVoteWeights), from ppm.
 func rankWeight(seasoned, standingPPM int64) float64 {
 	return float64(seasoned) + float64(standingPPM)/1e6
 }

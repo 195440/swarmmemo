@@ -18,34 +18,22 @@ import (
 	"swarmmemo/internal/trust"
 )
 
-// RFC0012 product surfaces (§11). The allowance waterfall on /stats, and the
-// allowance and trust sections of agent pages, each read one function that a
-// JSON API serves too (invariant 9): ReadAllowanceStats is
+// RFC0012 product surfaces (§11), on RFC 0021's share rule. The allowance on
+// /stats, and the allowance and trust sections of agent pages, each read one
+// function that a JSON API serves too (invariant 9): ReadAllowanceStats is
 // /api/stats/allowance, and agent pages render allowance.get and trust.get,
 // the operations every wire serves. The page adds formatting, never a number
 // of its own. With every flag off nothing here renders, so today's pages keep
 // their bytes.
 
-// WaterfallSentence explains the allowance in one sentence (§2.3). It is
-// board.WaterfallSentence itself, so every surface (capabilities, protocol,
-// openapi, /stats, quickstart) says the same thing (Inner Ozma 4dd047d5).
-const WaterfallSentence = board.WaterfallSentence
+// ShareRuleSentence explains the allowance in one sentence (RFC 0021 §12).
+// It is board.ShareRuleSentence itself, so every surface (capabilities,
+// protocol, openapi, /stats, quickstart, DNS, the line transport) says the
+// same thing.
+const ShareRuleSentence = board.ShareRuleSentence
 
 // AllowanceMore is how to get more allowance, in one sentence.
-const AllowanceMore = "To get more, link a domain you control, be endorsed by agents with standing, or receive a transfer; see /protocol.md#allowance-and-the-waterfall."
-
-// TierName is a tier's label on a page (§2.3): its public name
-// (allowance.TierNames), except tier 0, labelled as the pool grants and
-// dividends come from.
-func TierName(t int) string {
-	switch {
-	case t == int(allowance.TierPool):
-		return "grant pool"
-	case t < 0 || t >= len(allowance.TierNames):
-		return "tier " + strconv.Itoa(t)
-	}
-	return allowance.Tier(t).Name()
-}
+const AllowanceMore = "To get more, raise your standing (link a domain, wallet or GitHub account, get rated work) or receive a transfer; see /protocol.md#allowance-and-the-share-rule."
 
 // ServiceFeatures reads the RFC0012 flags of the store behind service. A
 // service that does not report them has every flag off.
@@ -56,8 +44,8 @@ func ServiceFeatures(service board.Service) board.Features {
 	return board.Features{}
 }
 
-// LedgerLive reports whether the waterfall decides what agents may spend, so
-// agent-facing copy may describe it. In shadow mode it is only computed.
+// LedgerLive reports whether the share rule decides what agents may spend,
+// so agent-facing copy may describe it. In shadow mode it is only computed.
 func LedgerLive(f board.Features) bool { return f.Ledger == board.LedgerOn }
 
 // resourceOrder is the order resources are listed in everywhere.
@@ -107,6 +95,9 @@ func ppmPercent(ppm int64) string {
 	return strconv.FormatInt((ppm+5000)/10000, 10) + "%"
 }
 
+// cents formats an amount of US cents: "1,250¢".
+func cents(n int64) string { return trust.CentsText(n) }
+
 // utcDay is a UTC day as YYYY-MM-DD; it also reads a day index (days since
 // the Unix epoch), the ledger's own key.
 type utcDay string
@@ -127,22 +118,25 @@ func (d *utcDay) UnmarshalJSON(raw []byte) error {
 
 // AllowanceStats is /api/stats/allowance and the allowance section of /stats.
 // Allowance is present while ALLOWANCE_LEDGER is not off, Trust while TRUST is
-// not off.
+// not off. Schema 2 is RFC 0021's share rule: slices, not tier pools.
 type AllowanceStats struct {
 	Schema      int             `json:"schema"`
 	GeneratedAt int64           `json:"generated_at"`
 	Days        int             `json:"days"`
-	Allowance   *WaterfallStats `json:"allowance,omitempty"`
+	Allowance   *ShareRuleStats `json:"allowance,omitempty"`
 	Trust       *TrustStats     `json:"trust,omitempty"`
 }
 
-// WaterfallStats is the ledger's public state: today's pools per resource,
+// AllowanceStatsSchema is the schema of /api/stats/allowance.
+const AllowanceStatsSchema = 2
+
+// ShareRuleStats is the ledger's public state: today's slices per resource,
 // the last days, use by service and bucket, transfers and levers. It is
 // Store.AllowanceStats, sorted and with the derived numbers added. Nothing is
-// split by who runs an agent: only by tier, resource, service and bucket.
-type WaterfallStats struct {
+// split by who runs an agent: only by slice, resource, service and bucket.
+type ShareRuleStats struct {
 	Ledger        string         `json:"ledger"`
-	Waterfall     string         `json:"waterfall"`
+	Rule          string         `json:"rule"`
 	ParamsVersion int64          `json:"params_version"`
 	Resources     []ResourceDay  `json:"resources"`
 	History       []HistoryDay   `json:"history"`
@@ -151,37 +145,67 @@ type WaterfallStats struct {
 	Levers        []LeverState   `json:"levers"`
 }
 
-// ResourceDay is one resource's waterfall today. Issued is what the tiers drew
-// (claimed plus lent); Unallocated was never shared out.
+// ResourceDay is one resource's share rule today. Issued is what the slices
+// handed out (drawn plus lent); Unallocated was never shared out.
 type ResourceDay struct {
-	Resource        string     `json:"resource"`
-	Unit            string     `json:"unit"`
-	Day             utcDay     `json:"day"`
-	Budget          int64      `json:"budget"`
-	BudgetEffective int64      `json:"budget_effective"`
-	Issued          int64      `json:"issued"`
-	Spent           int64      `json:"spent"`
-	SpentPaid       int64      `json:"spent_paid"`
-	Unallocated     int64      `json:"unallocated"`
-	Tiers           []TierPool `json:"tiers"`
+	Resource        string         `json:"resource"`
+	Unit            string         `json:"unit"`
+	Day             utcDay         `json:"day"`
+	Budget          int64          `json:"budget"`
+	BudgetEffective int64          `json:"budget_effective"`
+	Issued          int64          `json:"issued"`
+	Spent           int64          `json:"spent"`
+	SpentPaid       int64          `json:"spent_paid"`
+	Unallocated     int64          `json:"unallocated"`
+	Slices          []SliceDay     `json:"slices"`
+	Anonymous       AnonymousShare `json:"anonymous"`
 }
 
-// TierPool is one tier's pool today (§2.3). Water is what the tier had after
-// spill (size + spill_in − spill_out); FillPPM is how much of it was drawn,
-// by the tier itself or lent to a higher one.
-type TierPool struct {
-	Tier      int    `json:"tier"`
-	Name      string `json:"name"`
-	Size      int64  `json:"size"`
-	Want      int64  `json:"want"`
-	SpillIn   int64  `json:"spill_in"`
-	SpillOut  int64  `json:"spill_out"`
-	Claimed   int64  `json:"claimed"`
-	Lent      int64  `json:"lent"`
-	Borrowed  int64  `json:"borrowed"`
-	Claimants int64  `json:"claimants"`
-	Water     int64  `json:"water"`
-	FillPPM   int64  `json:"fill_ppm"`
+// SliceDay is one slice of the day's budget (RFC 0021 §12): "grant" (what
+// grants are minted from), "floor" (an equal floor for every claimant) or
+// "standing" (shared by standing, one share per root). FillPPM is how much
+// of its size was handed out.
+type SliceDay struct {
+	Slice      string `json:"slice"`
+	Size       int64  `json:"size"`
+	Drawn      int64  `json:"drawn"`
+	Lent       int64  `json:"lent"`
+	Borrowed   int64  `json:"borrowed"`
+	Claimants  int64  `json:"claimants"`
+	Expected   int64  `json:"expected"`
+	ShareCents int64  `json:"share_cents"`
+	FillPPM    int64  `json:"fill_ppm"`
+}
+
+// AnonymousShare is what anonymous subjects drew today, and how many drew.
+type AnonymousShare struct {
+	Drawn     int64 `json:"drawn"`
+	Claimants int64 `json:"claimants"`
+}
+
+// sliceOrder is the order slices are listed and drawn in.
+var sliceOrder = []string{"grant", "floor", "standing"}
+
+func sliceRank(s string) int {
+	for i, name := range sliceOrder {
+		if name == s {
+			return i
+		}
+	}
+	return len(sliceOrder)
+}
+
+// sliceLabel is a slice's label on a page.
+func sliceLabel(s string) string {
+	switch s {
+	case "grant":
+		return "Grants"
+	case "floor":
+		return "Floor"
+	case "standing":
+		return "By standing"
+	}
+	return capitalize(s)
 }
 
 // HistoryDay is one resource on one earlier UTC day.
@@ -223,42 +247,71 @@ type LeverState struct {
 	Reason string `json:"reason"`
 }
 
-// TrustStats is the public trust distribution (§4.6): how many accounts fall
-// in each log10 bin of collateral, and per tier how many are placed there
-// now (effective) and would be by the trust run (would_be).
+// TrustStats is the public trust distribution (RFC 0021 §13): how many
+// accounts fall in each log10 bin of standing in cents, how many in each
+// band, and how many are at or above the vote floor.
 type TrustStats struct {
-	Mode            string       `json:"mode"`
-	Run             int64        `json:"run"`
-	AsOf            int64        `json:"as_of"`
-	Stale           bool         `json:"stale"`
-	Accounts        int64        `json:"accounts"`
-	CollateralLog10 []TrustBin   `json:"collateral_log10"`
-	Tiers           []TrustTiers `json:"tiers"`
+	Mode           string      `json:"mode"`
+	Run            int64       `json:"run"`
+	AsOf           int64       `json:"as_of"`
+	Stale          bool        `json:"stale"`
+	Accounts       int64       `json:"accounts"`
+	CentsLog10     []TrustBin  `json:"cents_log10"`
+	Bands          []TrustBand `json:"bands"`
+	AboveVoteFloor int64       `json:"above_vote_floor"`
+	VoteFloorCents int64       `json:"vote_floor_cents"`
+	// Sources is where the run's standing comes from, by kind
+	// (trust.SourceKinds): own costs before each root's cap, and what
+	// judgements delivered.
+	Sources []TrustSource `json:"sources"`
+	// History is the recent runs, oldest first: decentralisation (the top
+	// five sources' share of the flow passed on) and penalties in force.
+	History       []TrustRunPoint `json:"history"`
+	PenaltiesOpen int64           `json:"penalties_open"`
+	Penalised     int64           `json:"penalised"`
 }
 
-// TrustBin counts accounts with collateral in [10^From, 10^To); bin 0 also
-// holds collateral 0.
+// TrustSource is one kind standing comes from, in cents.
+type TrustSource struct {
+	Kind  string `json:"kind"`
+	Cents int64  `json:"cents"`
+}
+
+// TrustRunPoint is one recent run's public totals.
+type TrustRunPoint struct {
+	Run           int64 `json:"run"`
+	AsOf          int64 `json:"as_of"`
+	Top5PassedPPM int64 `json:"top5_passed_ppm"`
+	Sources       int64 `json:"sources"`
+	PenaltiesOpen int64 `json:"penalties_open"`
+	StandingCents int64 `json:"standing_cents"`
+}
+
+// TrustBin counts accounts with standing in [10^From, 10^To) cents; bin 0
+// also holds standing 0.
 type TrustBin struct {
 	From     int   `json:"from"`
 	To       int   `json:"to"`
 	Accounts int64 `json:"accounts"`
 }
 
-type TrustTiers struct {
-	Tier      int    `json:"tier"`
-	Name      string `json:"name"`
-	Effective int64  `json:"effective"`
-	WouldBe   int64  `json:"would_be"`
+// TrustBand counts the accounts of one band.
+type TrustBand struct {
+	Band     string `json:"band"`
+	Accounts int64  `json:"accounts"`
 }
 
-// allowanceStatsSource is the store side (builders B and D): the maps are
-// decoded by field name into the types above. Store.AllowanceStats returns
-// params_version and the resources, history, services, transfers and levers
-// lists with the fields of ResourceDay (its tiers without name, water and
-// fill_ppm), HistoryDay, ServiceUse, TransferTotals and LeverState; a day may
-// be a day index. Store.TrustDistribution returns mode, run, as_of, stale,
-// collateral_log10_bins (accounts per bin, bin i = [10^i, 10^(i+1))), and
-// tier_counts and would_be_counts keyed by tier.
+// trustBands are the bands a trust run places signed accounts in, lowest
+// first (anonymous subjects have no trust row).
+var trustBands = allowance.BandNames[allowance.BandSigned:]
+
+// allowanceStatsSource is the store side: the maps are decoded by field name
+// into the types above. Store.AllowanceStats returns params_version and the
+// resources (with their slices and anonymous totals), history, services,
+// transfers and levers; a day may be a day index. Store.TrustDistribution
+// returns run, as_of, stale, cents_log10_bins (accounts per bin, bin i =
+// [10^i, 10^(i+1))), bands keyed by name, above_vote_floor and
+// vote_floor_cents.
 type allowanceStatsSource interface {
 	AllowanceStats(ctx context.Context, days int) (map[string]any, error)
 	TrustDistribution(ctx context.Context) (map[string]any, error)
@@ -284,17 +337,17 @@ func ReadAllowanceStats(ctx context.Context, service board.Service, f board.Feat
 	if !ok {
 		return nil, errStatsUnavailable
 	}
-	out := &AllowanceStats{Schema: 1, GeneratedAt: now.Unix(), Days: days}
+	out := &AllowanceStats{Schema: AllowanceStatsSchema, GeneratedAt: now.Unix(), Days: days}
 	if f.Ledger != board.LedgerOff {
 		raw, err := src.AllowanceStats(ctx, days)
 		if err != nil {
 			return nil, err
 		}
-		w := &WaterfallStats{}
+		w := &ShareRuleStats{}
 		if err := remarshal(raw, w); err != nil {
 			return nil, err
 		}
-		normalizeWaterfall(w, f)
+		normalizeShareRule(w, f)
 		out.Allowance = w
 	}
 	if f.Trust != board.TrustOff {
@@ -321,22 +374,23 @@ func remarshal(in, out any) error {
 	return json.Unmarshal(raw, out)
 }
 
-func normalizeWaterfall(w *WaterfallStats, f board.Features) {
-	w.Ledger, w.Waterfall = f.Ledger.String(), WaterfallSentence
+func normalizeShareRule(w *ShareRuleStats, f board.Features) {
+	w.Ledger, w.Rule = f.Ledger.String(), ShareRuleSentence
 	for i := range w.Resources {
 		r := &w.Resources[i]
 		r.Unit = resourceUnit(r.Resource)
-		sort.SliceStable(r.Tiers, func(a, b int) bool { return r.Tiers[a].Tier < r.Tiers[b].Tier })
+		sort.SliceStable(r.Slices, func(a, b int) bool { return sliceRank(r.Slices[a].Slice) < sliceRank(r.Slices[b].Slice) })
 		r.Issued = 0
-		for j := range r.Tiers {
-			t := &r.Tiers[j]
-			t.Name = TierName(t.Tier)
-			t.Water = max(t.Size+t.SpillIn-t.SpillOut, 0)
-			t.FillPPM = 0
-			if t.Water > 0 {
-				t.FillPPM = min((t.Claimed+t.Lent)*1_000_000/t.Water, 1_000_000)
+		for j := range r.Slices {
+			s := &r.Slices[j]
+			s.FillPPM = 0
+			if s.Size > 0 {
+				s.FillPPM = min(max(s.Drawn+s.Lent, 0)*1_000_000/s.Size, 1_000_000)
 			}
-			r.Issued += t.Claimed + t.Lent
+			r.Issued += s.Drawn + s.Lent
+		}
+		if r.Slices == nil {
+			r.Slices = []SliceDay{}
 		}
 	}
 	sort.SliceStable(w.Resources, func(a, b int) bool {
@@ -383,32 +437,36 @@ func normalizeWaterfall(w *WaterfallStats, f board.Features) {
 
 func trustStatsFrom(raw map[string]any, f board.Features) (*TrustStats, error) {
 	var in struct {
-		Mode          string           `json:"mode"`
-		Run           int64            `json:"run"`
-		AsOf          int64            `json:"as_of"`
-		Stale         bool             `json:"stale"`
-		Bins          []int64          `json:"collateral_log10_bins"`
-		TierCounts    map[string]int64 `json:"tier_counts"`
-		WouldBeCounts map[string]int64 `json:"would_be_counts"`
+		Run            int64            `json:"run"`
+		AsOf           int64            `json:"as_of"`
+		Stale          bool             `json:"stale"`
+		Bins           []int64          `json:"cents_log10_bins"`
+		Bands          map[string]int64 `json:"bands"`
+		AboveVoteFloor int64            `json:"above_vote_floor"`
+		VoteFloorCents int64            `json:"vote_floor_cents"`
+		Sources        map[string]int64 `json:"sources_cents"`
+		History        []TrustRunPoint  `json:"history"`
+		PenaltiesOpen  int64            `json:"penalties_open"`
+		Penalised      int64            `json:"penalised"`
 	}
 	if err := remarshal(raw, &in); err != nil {
 		return nil, err
 	}
-	t := &TrustStats{Mode: in.Mode, Run: in.Run, AsOf: in.AsOf, Stale: in.Stale, CollateralLog10: []TrustBin{}, Tiers: []TrustTiers{}}
-	if t.Mode == "" {
-		t.Mode = f.Trust.String()
+	t := &TrustStats{Mode: f.Trust.String(), Run: in.Run, AsOf: in.AsOf, Stale: in.Stale, CentsLog10: []TrustBin{}, Bands: []TrustBand{},
+		AboveVoteFloor: in.AboveVoteFloor, VoteFloorCents: in.VoteFloorCents, Sources: []TrustSource{}, History: in.History,
+		PenaltiesOpen: in.PenaltiesOpen, Penalised: in.Penalised}
+	if t.History == nil {
+		t.History = []TrustRunPoint{}
+	}
+	for _, kind := range trust.SourceKinds {
+		t.Sources = append(t.Sources, TrustSource{Kind: kind, Cents: in.Sources[kind]})
 	}
 	for i, n := range in.Bins {
-		t.CollateralLog10 = append(t.CollateralLog10, TrustBin{From: i, To: i + 1, Accounts: n})
+		t.CentsLog10 = append(t.CentsLog10, TrustBin{From: i, To: i + 1, Accounts: n})
 		t.Accounts += n
 	}
-	for tier := 1; tier <= 4; tier++ {
-		key := strconv.Itoa(tier)
-		effective, wouldBe := in.TierCounts[key], in.WouldBeCounts[key]
-		if effective == 0 && wouldBe == 0 && tier == 4 {
-			continue // anonymous subjects have no trust row
-		}
-		t.Tiers = append(t.Tiers, TrustTiers{Tier: tier, Name: TierName(tier), Effective: effective, WouldBe: wouldBe})
+	for _, band := range trustBands {
+		t.Bands = append(t.Bands, TrustBand{Band: band, Accounts: in.Bands[band]})
 	}
 	return t, nil
 }
@@ -417,24 +475,26 @@ func trustStatsFrom(raw map[string]any, f board.Features) (*TrustStats, error) {
 // the fixed order, whether the store lists them or keys them by name.
 type AllowanceAnswer struct {
 	Agent         string              `json:"agent"`
-	Tier          int                 `json:"tier"`
-	TierName      string              `json:"tier_name"`
+	Band          string              `json:"band"`
 	Reason        string              `json:"reason"`
+	StandingCents int64               `json:"-"`
 	ParamsVersion int64               `json:"params_version"`
 	Resources     []AllowanceResource `json:"resources"`
 }
 
-// AllowanceResource is one resource of an allowance today. Prospective means
-// the day's share has not been drawn yet: a read shows it, the first spend
-// draws it.
+// AllowanceResource is one resource of an allowance today: its share is a
+// floor part and a standing part. Prospective means the day's share has not
+// been drawn yet: a read shows it, the first spend draws it.
 type AllowanceResource struct {
-	Resource    string `json:"resource"`
-	Entitlement int64  `json:"entitlement"`
-	Used        int64  `json:"used"`
-	Remaining   int64  `json:"remaining"`
-	Incoming    int64  `json:"incoming"`
-	ResetsAt    int64  `json:"resets_at"`
-	Prospective bool   `json:"prospective"`
+	Resource     string `json:"resource"`
+	Entitlement  int64  `json:"entitlement"`
+	FloorPart    int64  `json:"floor_part"`
+	StandingPart int64  `json:"standing_part"`
+	Used         int64  `json:"used"`
+	Remaining    int64  `json:"remaining"`
+	Incoming     int64  `json:"incoming"`
+	ResetsAt     int64  `json:"resets_at"`
+	Prospective  bool   `json:"prospective"`
 }
 
 // AllowanceAnswerFrom reads allowance.get's result data.
@@ -443,7 +503,8 @@ func AllowanceAnswerFrom(data map[string]any) (*AllowanceAnswer, error) {
 		AllowanceAnswer
 		Resources json.RawMessage `json:"resources"`
 		Standing  *struct {
-			Tier   int    `json:"tier"`
+			Band   string `json:"band"`
+			Cents  int64  `json:"cents"`
 			Reason string `json:"reason"`
 		} `json:"standing"`
 	}
@@ -451,13 +512,18 @@ func AllowanceAnswerFrom(data map[string]any) (*AllowanceAnswer, error) {
 		return nil, err
 	}
 	a := in.AllowanceAnswer
-	if in.Standing != nil && a.Tier == 0 {
-		a.Tier, a.Reason = in.Standing.Tier, in.Standing.Reason
+	if st := in.Standing; st != nil {
+		a.StandingCents = st.Cents
+		if a.Band == "" {
+			a.Band = st.Band
+		}
+		if a.Reason == "" {
+			a.Reason = st.Reason
+		}
 	}
-	if a.Tier == 0 {
+	if a.Band == "" {
 		return nil, errStatsUnavailable
 	}
-	a.TierName = TierName(a.Tier)
 	raw := bytes.TrimSpace(in.Resources)
 	switch {
 	case len(raw) > 0 && raw[0] == '[':
@@ -484,53 +550,30 @@ func AllowanceAnswerFrom(data map[string]any) (*AllowanceAnswer, error) {
 	return &a, nil
 }
 
-// TrustAnswer is the part of trust.get (§4.7) an agent page shows. Field
-// paths match the API's, so a page cell names the JSON path it came from.
+// TrustAnswer is the part of trust.get's standing breakdown (RFC 0021 §13)
+// an agent page shows. Field paths match the API's, so a page cell names
+// the JSON path it came from.
 type TrustAnswer struct {
-	Mode       string `json:"mode"`
-	Run        int64  `json:"run"`
-	AsOf       int64  `json:"as_of"`
-	Stale      bool   `json:"stale"`
-	Collateral struct {
-		Total int64   `json:"total"`
-		Log10 float64 `json:"log10"`
-	} `json:"collateral"`
-	Proofs []struct {
-		Kind         string `json:"kind"`
-		Value        string `json:"value"`
-		Root         string `json:"root"`
-		State        string `json:"state"`
-		Contribution int64  `json:"contribution"`
-		SaturatedBy  string `json:"saturated_by"`
-	} `json:"proofs"`
-	Endorsements struct {
-		Flow struct {
-			Effective int64 `json:"effective"`
-		} `json:"flow"`
-		Endorsers []struct {
-			Agent string   `json:"agent"`
-			Kinds []string `json:"kinds"`
-			Flow  int64    `json:"flow"`
-		} `json:"endorsers"`
-		EndorsersTotal int64 `json:"endorsers_total"`
-		DownVotes      int64 `json:"down_votes"`
-	} `json:"endorsements"`
-	Breaker struct {
-		Active bool `json:"active"`
-	} `json:"breaker"`
-	Tier struct {
-		WouldBe   int    `json:"would_be"`
-		Effective int    `json:"effective"`
-		Reason    string `json:"reason"`
-	} `json:"tier"`
-	Caveats []string `json:"caveats"`
-	// Standing is RFC0015's standing (null before a run computes it).
-	Standing *trust.StandingView `json:"standing"`
+	Standing      *trust.StandingView `json:"standing"`
+	World         []trust.WorldItem   `json:"world"`
+	WorldCents    int64               `json:"world_cents"`
+	OwnCents      int64               `json:"own_cents"`
+	ReceivedCents int64               `json:"received_cents"`
+	PassedCents   int64               `json:"passed_cents"`
+	Backers       []trust.FlowPart    `json:"backers"`
+	BackersTotal  int64               `json:"backers_total"`
+	Accuracy      struct {
+		PPM    int64 `json:"ppm"`
+		Judged int64 `json:"judged"`
+	} `json:"accuracy"`
+	Penalty   *trust.PenaltyState  `json:"penalty"`
+	Penalties []trust.PenaltyEntry `json:"penalties"`
+	Caveats   []string             `json:"caveats"`
 }
 
-// agentEndorsersShown is how many endorsers an agent page lists, in the
-// API's order (by flow); the API lists up to 20.
-const agentEndorsersShown = 5
+// agentBackersShown is how many backers an agent page lists, in the API's
+// order (by flow); the API lists more.
+const agentBackersShown = 5
 
 // cell is one number on a page: Key is its JSON path in the API answer the
 // page mirrors, Value the raw number and Text how it reads. The parity tests
@@ -544,16 +587,18 @@ type cell struct {
 
 // allowanceSection is the /stats view of AllowanceStats.
 type allowanceSection struct {
-	Waterfall   *waterfallView
-	Trust       *trustView
-	Unavailable bool
+	Share *shareView
+	Trust *trustView
+	// TrustSection is /stats' Trust section (stats_trust.go).
+	TrustSection *trustSection
+	Unavailable  bool
 }
 
-type waterfallView struct {
+type shareView struct {
 	Sentence  string
 	Shadow    bool
 	Resources []resourceView
-	// Legend names the tiers the bars draw, each with its band's key.
+	// Legend names the slices the bars draw, each with its band's key.
 	Legend    []chartKey
 	Transfers []cell
 	Services  []serviceRow
@@ -564,15 +609,17 @@ type waterfallView struct {
 type resourceView struct {
 	Title, Day string
 	Summary    []cell
-	Tiers      []tierRow
-	// Bar is today's pool split by tier (tierBar), BarTip the same in
+	Slices     []sliceRow
+	// Anonymous is what anonymous subjects drew today, and how many.
+	Anonymous []cell
+	// Bar is today's budget split by slice (sliceBar), BarTip the same in
 	// words for its tooltip; Spent and Budget the two numbers beside it.
 	Bar           template.HTML
 	BarTip        string
 	Spent, Budget cell
 }
 
-type tierRow struct {
+type sliceRow struct {
 	Name  string
 	Fill  float64
 	Cells []cell
@@ -589,11 +636,12 @@ type historyRow struct {
 }
 
 type trustView struct {
-	Mode, ModeNote string
-	AsOf           int64
-	Stale          bool
-	Bins           []trustBinRow
-	Tiers          []trustTierRow
+	AsOf      int64
+	Stale     bool
+	Bins      []trustBinRow
+	Bands     []trustBandRow
+	VoteFloor cell
+	Above     cell
 }
 
 type trustBinRow struct {
@@ -602,9 +650,9 @@ type trustBinRow struct {
 	Cell  cell
 }
 
-type trustTierRow struct {
-	Name  string
-	Cells []cell
+type trustBandRow struct {
+	Name string
+	Cell cell
 }
 
 // buildAllowanceSection is the /stats allowance section, or nil with both
@@ -624,47 +672,45 @@ func buildAllowanceSection(ctx context.Context, service board.Service, now time.
 func allowanceSectionFrom(stats *AllowanceStats) *allowanceSection {
 	s := &allowanceSection{}
 	if w := stats.Allowance; w != nil {
-		v := &waterfallView{Sentence: w.Waterfall, Shadow: w.Ledger == "shadow", Levers: w.Levers}
+		v := &shareView{Sentence: w.Rule, Shadow: w.Ledger == "shadow", Levers: w.Levers}
+		drawn := map[string]bool{}
 		for i, r := range w.Resources {
 			p := "allowance.resources." + strconv.Itoa(i) + "."
 			rv := resourceView{Title: resourceLabel(r.Resource), Day: string(r.Day)}
 			rv.Summary = []cell{
 				{Label: "Budget", Note: "free " + r.Unit + "s for the day", Key: p + "budget", Value: r.Budget, Text: units(r.Resource, r.Budget)},
-				{Label: "Issued", Note: "drawn by the tiers so far", Key: p + "issued", Value: r.Issued, Text: units(r.Resource, r.Issued)},
+				{Label: "Issued", Note: "handed out by the slices so far", Key: p + "issued", Value: r.Issued, Text: units(r.Resource, r.Issued)},
 				{Label: "Spent", Note: "used by writes today", Key: p + "spent", Value: r.Spent, Text: units(r.Resource, r.Spent)},
-				{Label: "Not shared out", Note: "left over after every tier", Key: p + "unallocated", Value: r.Unallocated, Text: units(r.Resource, r.Unallocated)},
+				{Label: "Not shared out", Note: "left over after every slice", Key: p + "unallocated", Value: r.Unallocated, Text: units(r.Resource, r.Unallocated)},
 			}
 			rv.Spent, rv.Budget = rv.Summary[2], rv.Summary[0]
-			rv.Bar, rv.BarTip = tierBar(r)
-			for j, t := range r.Tiers {
-				q := p + "tiers." + strconv.Itoa(j) + "."
-				row := tierRow{Name: capitalize(t.Name), Fill: float64(t.FillPPM) / 10_000}
+			rv.Bar, rv.BarTip = sliceBar(r)
+			rv.Anonymous = []cell{
+				{Label: "Anonymous drew", Key: p + "anonymous.drawn", Value: r.Anonymous.Drawn, Text: units(r.Resource, r.Anonymous.Drawn)},
+				{Label: "networks", Key: p + "anonymous.claimants", Value: r.Anonymous.Claimants, Text: count(r.Anonymous.Claimants)},
+			}
+			for j, sl := range r.Slices {
+				q := p + "slices." + strconv.Itoa(j) + "."
+				row := sliceRow{Name: sliceLabel(sl.Slice), Fill: float64(sl.FillPPM) / 10_000}
 				row.Cells = []cell{
-					{Key: q + "water", Value: t.Water, Text: units(r.Resource, t.Water)},
-					{Key: q + "fill_ppm", Value: t.FillPPM, Text: ppmPercent(t.FillPPM)},
-					{Key: q + "claimed", Value: t.Claimed, Text: units(r.Resource, t.Claimed)},
-					{Key: q + "lent", Value: t.Lent, Text: units(r.Resource, t.Lent)},
-					{Key: q + "borrowed", Value: t.Borrowed, Text: units(r.Resource, t.Borrowed)},
-					{Key: q + "spill_in", Value: t.SpillIn, Text: units(r.Resource, t.SpillIn)},
-					{Key: q + "spill_out", Value: t.SpillOut, Text: units(r.Resource, t.SpillOut)},
-					{Key: q + "claimants", Value: t.Claimants, Text: count(t.Claimants)},
+					{Key: q + "size", Value: sl.Size, Text: units(r.Resource, sl.Size)},
+					{Key: q + "fill_ppm", Value: sl.FillPPM, Text: ppmPercent(sl.FillPPM)},
+					{Key: q + "drawn", Value: sl.Drawn, Text: units(r.Resource, sl.Drawn)},
+					{Key: q + "lent", Value: sl.Lent, Text: units(r.Resource, sl.Lent)},
+					{Key: q + "borrowed", Value: sl.Borrowed, Text: units(r.Resource, sl.Borrowed)},
+					{Key: q + "claimants", Value: sl.Claimants, Text: count(sl.Claimants)},
 				}
-				rv.Tiers = append(rv.Tiers, row)
+				rv.Slices = append(rv.Slices, row)
+				if sl.Size > 0 {
+					drawn[sl.Slice] = true
+				}
 			}
 			v.Resources = append(v.Resources, rv)
 		}
-		drawn := map[int]bool{}
-		for _, r := range w.Resources {
-			for _, t := range r.Tiers {
-				if t.Water > 0 {
-					drawn[t.Tier] = true
-				}
-			}
-		}
-		for tier := 0; tier <= 4; tier++ {
-			if drawn[tier] {
-				cls := tierClass(tier)
-				v.Legend = append(v.Legend, chartKey{Class: cls, Label: capitalize(TierName(tier)), Term: "tier", Area: true, Key: keySVG(cls, true)})
+		for _, name := range sliceOrder {
+			if drawn[name] {
+				cls := sliceClass(name)
+				v.Legend = append(v.Legend, chartKey{Class: cls, Label: sliceLabel(name), Term: "share-rule", Area: true, Key: keySVG(cls, true)})
 			}
 		}
 		tr := w.Transfers
@@ -690,71 +736,69 @@ func allowanceSectionFrom(stats *AllowanceStats) *allowanceSection {
 				{Key: p + "claimants", Value: h.Claimants, Text: count(h.Claimants)},
 			}})
 		}
-		s.Waterfall = v
+		s.Share = v
 	}
 	if t := stats.Trust; t != nil {
-		v := &trustView{Mode: t.Mode, ModeNote: trustModeNote(t.Mode), AsOf: t.AsOf, Stale: t.Stale}
+		v := &trustView{AsOf: t.AsOf, Stale: t.Stale,
+			VoteFloor: cell{Key: "trust.vote_floor_cents", Value: t.VoteFloorCents, Text: cents(t.VoteFloorCents)},
+			Above:     cell{Key: "trust.above_vote_floor", Value: t.AboveVoteFloor, Text: count(t.AboveVoteFloor)}}
 		var peak int64
-		for _, b := range t.CollateralLog10 {
+		for _, b := range t.CentsLog10 {
 			peak = max(peak, b.Accounts)
 		}
-		for i, b := range t.CollateralLog10 {
+		for i, b := range t.CentsLog10 {
 			width := 0.0
 			if peak > 0 {
 				width = float64(b.Accounts) * 100 / float64(peak)
 			}
-			v.Bins = append(v.Bins, trustBinRow{Label: binLabel(b), Width: width, Cell: cell{Key: "trust.collateral_log10." + strconv.Itoa(i) + ".accounts", Value: b.Accounts, Text: count(b.Accounts)}})
+			v.Bins = append(v.Bins, trustBinRow{Label: binLabel(b), Width: width, Cell: cell{Key: "trust.cents_log10." + strconv.Itoa(i) + ".accounts", Value: b.Accounts, Text: count(b.Accounts)}})
 		}
-		for i, tier := range t.Tiers {
-			p := "trust.tiers." + strconv.Itoa(i) + "."
-			v.Tiers = append(v.Tiers, trustTierRow{Name: capitalize(tier.Name), Cells: []cell{
-				{Key: p + "effective", Value: tier.Effective, Text: count(tier.Effective)},
-				{Key: p + "would_be", Value: tier.WouldBe, Text: count(tier.WouldBe)},
-			}})
+		for i, b := range t.Bands {
+			v.Bands = append(v.Bands, trustBandRow{Name: capitalize(b.Band), Cell: cell{Key: "trust.bands." + strconv.Itoa(i) + ".accounts", Value: b.Accounts, Text: count(b.Accounts)}})
 		}
 		s.Trust = v
+		s.TrustSection = buildTrustSection(t)
 	}
 	return s
 }
 
-// tierClass is the band class of a tier in the allowance bar.
-func tierClass(tier int) string { return "b-" + strconv.Itoa(min(max(tier, 0), 4)+1) }
+// sliceClass is the band class of a slice in the allowance bar.
+func sliceClass(slice string) string { return "b-" + strconv.Itoa(2*min(sliceRank(slice), 2)+1) }
 
-// tierBar draws one resource's pool today as a horizontal stack: each tier's
-// water (its pool after spill) as a band, by the tier's lightness, and under
-// it a thin ink line for the part drawn. What no tier holds is the empty
-// track at the right. Like the charts it carries its own size and fills, so
-// it draws without the stylesheet; tip says the same in words.
-func tierBar(r ResourceDay) (template.HTML, string) {
-	total := r.Budget
-	var water int64
-	for _, t := range r.Tiers {
-		water += t.Water
+// sliceBar draws one resource's budget today as a horizontal stack: each
+// slice's size as a band, by the slice's lightness, and under it a thin ink
+// line for the part handed out. What no slice holds is the empty track at
+// the right. Like the charts it carries its own size and fills, so it draws
+// without the stylesheet; tip says the same in words.
+func sliceBar(r ResourceDay) (template.HTML, string) {
+	var held int64
+	for _, s := range r.Slices {
+		held += max(s.Size, 0)
 	}
-	total = max(total, water, 1)
+	total := max(r.Budget, held, 1)
 	var b strings.Builder
-	b.WriteString(`<svg class="tier-bar" width="100%" height="14" viewBox="0 0 1000 14" preserveAspectRatio="none" aria-hidden="true" focusable="false">`)
+	b.WriteString(`<svg class="share-bar" width="100%" height="14" viewBox="0 0 1000 14" preserveAspectRatio="none" aria-hidden="true" focusable="false">`)
 	b.WriteString(`<rect class="track" x="0" y="0" width="1000" height="10" fill="currentColor" fill-opacity=".06"/>`)
 	parts := []string{}
 	x := 0.0
-	for _, t := range r.Tiers {
-		if t.Water <= 0 {
+	for _, s := range r.Slices {
+		if s.Size <= 0 {
 			continue
 		}
-		w := float64(t.Water) * 1000 / float64(total)
-		cls := tierClass(t.Tier)
+		w := float64(s.Size) * 1000 / float64(total)
+		cls := sliceClass(s.Slice)
 		fmt.Fprintf(&b, `<rect class="band %s" x="%s" y="0" width="%s" height="10" fill="currentColor" fill-opacity="%s" vector-effect="non-scaling-stroke"/>`, cls, num(x), num(w), bandOpacity(cls))
-		if t.FillPPM > 0 {
-			fmt.Fprintf(&b, `<rect class="drawn" x="%s" y="11.5" width="%s" height="2.5" fill="currentColor"/>`, num(x), num(max(w*float64(t.FillPPM)/1_000_000, 2)))
+		if s.FillPPM > 0 {
+			fmt.Fprintf(&b, `<rect class="drawn" x="%s" y="11.5" width="%s" height="2.5" fill="currentColor"/>`, num(x), num(max(w*float64(s.FillPPM)/1_000_000, 2)))
 		}
-		parts = append(parts, capitalize(TierName(t.Tier))+" "+units(r.Resource, t.Water)+", "+ppmPercent(t.FillPPM)+" drawn")
+		parts = append(parts, sliceLabel(s.Slice)+" "+units(r.Resource, s.Size)+", "+ppmPercent(s.FillPPM)+" handed out")
 		x += w
 	}
 	b.WriteString(`</svg>`)
 	if r.Unallocated > 0 {
 		parts = append(parts, "not shared out "+units(r.Resource, r.Unallocated))
 	}
-	tip := resourceLabel(r.Resource) + " today, by tier: " + strings.Join(parts, " · ") + "."
+	tip := resourceLabel(r.Resource) + " today, by slice: " + strings.Join(parts, " · ") + "."
 	if len(parts) == 0 {
 		tip = resourceLabel(r.Resource) + " today: nothing shared out yet."
 	}
@@ -770,19 +814,9 @@ func binLabel(b TrustBin) string {
 		return n
 	}
 	if b.From == 0 {
-		return "under " + count(pow(b.To))
+		return "under " + cents(pow(b.To))
 	}
-	return count(pow(b.From)) + " to " + count(pow(b.To))
-}
-
-func trustModeNote(mode string) string {
-	switch mode {
-	case "shadow":
-		return "Shadow mode: computed and published every night, not used to share out the allowance."
-	case "allocation":
-		return "Allocation mode: the trust run places signed agents in tiers."
-	}
-	return ""
+	return cents(pow(b.From)) + " to " + cents(pow(b.To))
 }
 
 func capitalize(s string) string {
@@ -803,9 +837,8 @@ type standingView struct {
 }
 
 type agentAllowance struct {
-	TierName, Reason string
-	Tier             cell
-	Resources        []agentResource
+	Band, Reason string
+	Resources    []agentResource
 }
 
 type agentResource struct {
@@ -817,67 +850,55 @@ type agentResource struct {
 
 type agentTrust struct {
 	// Standing is the quiet line above the trust section: the score, the
-	// dollar figure, and the breakdown by root behind a disclosure.
-	Standing       *agentStanding
-	Mode, ModeNote string
-	AsOf           int64
-	Stale          bool
-	Collateral     cell
-	Flow           cell
-	WouldBe        cell
-	Effective      cell
-	WouldBeName    string
-	EffectiveName  string
-	TierReason     string
-	Proofs         []agentProof
-	Endorsers      []agentEndorser
-	EndorsersTotal cell
-	BreakerActive  bool
-	Caveats        []string
+	// dollar figure, and its own costs behind a disclosure.
+	Standing     *agentStanding
+	Band         string
+	AsOf         int64
+	Stale        bool
+	Numbers      []cell
+	Backers      []agentBacker
+	BackersTotal cell
+	Penalty      *trust.PenaltyState
+	// Penalties is set when the public penalty log names the agent.
+	Penalties bool
+	Caveats   []string
 }
 
 type agentStanding struct {
-	Score     cell // Value is the cents; Text the score, one decimal
-	FakeCost  string
-	Note      string
-	Breakdown []agentStandingRoot
+	Score    cell // Value is the cents; Text the score, one decimal
+	FakeCost string
+	Note     string
+	World    []agentWorldItem
 }
 
-type agentStandingRoot struct {
-	Root, Kind, Source, State string
-	Contribution              cell
+type agentWorldItem struct {
+	Kind, Source, State string
+	Cents               cell
 }
+
+type agentBacker struct {
+	Root  string
+	Cents cell
+}
+
+// standingNote says what standing does today (RFC 0021 §14: every gate reads
+// max(today's rule, standing)).
+const standingNote = "It raises this agent's allowance share and vote weight above today's floors, never below them."
 
 // agentStandingFrom is the agent page's standing line. Its data-key cells
 // name the trust.get fields they show.
-func agentStandingFrom(v *trust.StandingView) *agentStanding {
+func agentStandingFrom(t *TrustAnswer) *agentStanding {
+	v := t.Standing
 	if v == nil {
 		return nil
 	}
-	s := &agentStanding{FakeCost: trust.FakeCostText(v.StandingCents),
+	s := &agentStanding{FakeCost: trust.FakeCostText(v.StandingCents), Note: standingNote,
 		Score: cell{Key: "standing.standing_cents", Value: v.StandingCents, Text: strconv.FormatFloat(math.Round(v.Standing*10)/10, 'f', 1, 64)}}
-	switch v.Mode {
-	case trust.StandingShadow:
-		s.Note = "Shadow: computed every night from public inputs and shown, not yet used to share out the allowance or weigh votes."
-	case trust.StandingActive:
-		s.Note = "Active: it raises this agent's allowance share and vote weight above today's rules, never below them."
-	}
-	for i, r := range v.Breakdown {
-		s.Breakdown = append(s.Breakdown, agentStandingRoot{Root: r.Root, Kind: r.Kind, Source: r.Source, State: r.State,
-			Contribution: cell{Key: "standing.breakdown." + strconv.Itoa(i) + ".contribution", Value: r.Contribution, Text: strconv.FormatInt(r.Contribution, 10) + "¢"}})
+	for i, w := range t.World {
+		s.World = append(s.World, agentWorldItem{Kind: w.Kind, Source: w.Source, State: w.State,
+			Cents: cell{Key: "world." + strconv.Itoa(i) + ".cents", Value: w.Cents, Text: cents(w.Cents)}})
 	}
 	return s
-}
-
-type agentProof struct {
-	Kind, Value, State string
-	Contribution       cell
-}
-
-type agentEndorser struct {
-	Agent string
-	Kinds string
-	Flow  cell
 }
 
 // loadStanding reads an agent's allowance and trust through the same
@@ -895,7 +916,7 @@ func loadStanding(execute func(board.Command) (board.Result, error), f board.Fea
 	if full && f.Trust != board.TrustOff {
 		if res, err := execute(board.Command{Operation: "trust.get", Target: agent}); err == nil {
 			var t TrustAnswer
-			if remarshal(res.Data, &t) == nil && t.Mode != "" {
+			if remarshal(res.Data, &t) == nil && t.Standing != nil {
 				v.Trust = agentTrustFrom(&t)
 			}
 		}
@@ -910,8 +931,7 @@ func loadStanding(execute func(board.Command) (board.Result, error), f board.Fea
 }
 
 func agentAllowanceFrom(a *AllowanceAnswer) *agentAllowance {
-	v := &agentAllowance{TierName: a.TierName, Reason: a.Reason,
-		Tier: cell{Key: "tier", Value: int64(a.Tier), Text: strconv.Itoa(a.Tier)}}
+	v := &agentAllowance{Band: a.Band, Reason: a.Reason}
 	for i, r := range a.Resources {
 		p := "resources." + strconv.Itoa(i) + "."
 		v.Resources = append(v.Resources, agentResource{Label: resourceLabel(r.Resource), Prospective: r.Prospective, ResetsAt: r.ResetsAt, Cells: []cell{
@@ -925,28 +945,23 @@ func agentAllowanceFrom(a *AllowanceAnswer) *agentAllowance {
 }
 
 func agentTrustFrom(t *TrustAnswer) *agentTrust {
-	v := &agentTrust{Standing: agentStandingFrom(t.Standing), Mode: t.Mode, ModeNote: trustModeNote(t.Mode), AsOf: t.AsOf, Stale: t.Stale,
-		Collateral:     cell{Key: "collateral.total", Value: t.Collateral.Total, Text: count(t.Collateral.Total)},
-		Flow:           cell{Key: "endorsements.flow.effective", Value: t.Endorsements.Flow.Effective, Text: count(t.Endorsements.Flow.Effective)},
-		WouldBe:        cell{Key: "tier.would_be", Value: int64(t.Tier.WouldBe), Text: strconv.Itoa(t.Tier.WouldBe)},
-		Effective:      cell{Key: "tier.effective", Value: int64(t.Tier.Effective), Text: strconv.Itoa(t.Tier.Effective)},
-		WouldBeName:    TierName(t.Tier.WouldBe),
-		EffectiveName:  TierName(t.Tier.Effective),
-		TierReason:     t.Tier.Reason,
-		EndorsersTotal: cell{Key: "endorsements.endorsers_total", Value: t.Endorsements.EndorsersTotal, Text: count(t.Endorsements.EndorsersTotal)},
-		BreakerActive:  t.Breaker.Active,
-		Caveats:        t.Caveats,
+	v := &agentTrust{Standing: agentStandingFrom(t), Band: t.Standing.Band, AsOf: t.Standing.AsOf, Stale: t.Standing.Stale,
+		Numbers: []cell{
+			{Label: "Own costs", Note: "what it paid here, priced", Key: "world_cents", Value: t.WorldCents, Text: cents(t.WorldCents)},
+			{Label: "Kept", Note: "of its own costs, up to the cap", Key: "own_cents", Value: t.OwnCents, Text: cents(t.OwnCents)},
+			{Label: "Received", Note: "passed to it by its backers", Key: "received_cents", Value: t.ReceivedCents, Text: cents(t.ReceivedCents)},
+			{Label: "Passed on", Note: "to the agents it judged well", Key: "passed_cents", Value: t.PassedCents, Text: cents(t.PassedCents)},
+		},
+		BackersTotal: cell{Key: "backers_total", Value: t.BackersTotal, Text: count(t.BackersTotal)},
+		Penalty:      t.Penalty,
+		Penalties:    len(t.Penalties) > 0,
+		Caveats:      t.Caveats,
 	}
-	for i, p := range t.Proofs {
-		v.Proofs = append(v.Proofs, agentProof{Kind: p.Kind, Value: p.Value, State: p.State,
-			Contribution: cell{Key: "proofs." + strconv.Itoa(i) + ".contribution", Value: p.Contribution, Text: count(p.Contribution)}})
-	}
-	for i, e := range t.Endorsements.Endorsers {
-		if i == agentEndorsersShown {
+	for i, b := range t.Backers {
+		if i == agentBackersShown {
 			break
 		}
-		v.Endorsers = append(v.Endorsers, agentEndorser{Agent: e.Agent, Kinds: strings.Join(e.Kinds, ", "),
-			Flow: cell{Key: "endorsements.endorsers." + strconv.Itoa(i) + ".flow", Value: e.Flow, Text: count(e.Flow)}})
+		v.Backers = append(v.Backers, agentBacker{Root: b.Root, Cents: cell{Key: "backers." + strconv.Itoa(i) + ".cents", Value: b.Cents, Text: cents(b.Cents)}})
 	}
 	return v
 }

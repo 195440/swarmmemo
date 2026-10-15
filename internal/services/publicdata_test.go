@@ -194,10 +194,10 @@ func pdRoutes(v *pdEnv) map[string]func(r *http.Request) (string, int) {
 	}
 }
 
-type tierClassifier struct{ tier allowance.Tier }
+type bandClassifier struct{ band allowance.Band }
 
-func (c tierClassifier) Classify(context.Context, allowance.Querier, allowance.Subject, int64) (allowance.Standing, error) {
-	return allowance.Standing{Tier: c.tier}, nil
+func (c bandClassifier) Classify(context.Context, allowance.Querier, allowance.Subject, int64) (allowance.Standing, error) {
+	return allowance.Standing{Band: c.band}, nil
 }
 
 type pdEnv struct {
@@ -965,7 +965,7 @@ func pdHold(t *testing.T, v *pdEnv, key string) servicestest.Entry {
 	return servicestest.Entry{}
 }
 
-func TestPublicDataRateLimitsFollowTier(t *testing.T) {
+func TestPublicDataRateLimitsFollowBand(t *testing.T) {
 	now := unix("2026-07-12") - unix("2026-07-12")%60 // the start of a minute
 	bulk := `{"requests":[` + strings.TrimSuffix(strings.Repeat(`{"dataset":"sea_ice_extent"},`, 10), ",") + `]}`
 	v := newPDEnv(t, false)
@@ -987,8 +987,8 @@ func TestPublicDataRateLimitsFollowTier(t *testing.T) {
 	if _, _, err = v.call(t, "fetch", `{"dataset":"sea_ice_extent"}`, now+60); err != nil {
 		t.Fatalf("the next minute: %v", err)
 	}
-	// A trusted caller is not held to the signed tier's limit.
-	v.cls = tierClassifier{allowance.TierTrusted}
+	// A trusted caller is not held to the signed band's limit.
+	v.cls = bandClassifier{allowance.BandTrusted}
 	v.build(t)
 	for i := 0; i < 5; i++ {
 		if _, _, err := v.call(t, "bulk", bulk, now+120+int64(i)); err != nil {

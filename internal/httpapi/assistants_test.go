@@ -22,7 +22,7 @@ import (
 
 // everyService is every built-in service, so the assistant profile's
 // allowlist is tested against the whole catalogue.
-var everyService = board.Features{Ledger: board.LedgerOn, Trust: board.TrustShadow, Services: []string{"memory", "wakeup", "notary", "screen", "inference", "x402", "public_data", "runs", "echo"}}
+var everyService = board.Features{Ledger: board.LedgerOn, Trust: board.TrustOn, Services: []string{"memory", "wakeup", "notary", "screen", "inference", "x402", "public_data", "runs", "echo"}}
 
 // mcpPost sends one JSON-RPC request to an MCP path (mcpRequest) and decodes
 // its result into result.

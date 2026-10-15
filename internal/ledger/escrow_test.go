@@ -50,7 +50,7 @@ func (h *harness) mintCredit(account string, b allowance.Bucket, units int64) {
 func escrowParams() AllowanceParams {
 	p := anonCreditParams()
 	rp := p.Resources[allowance.Credit]
-	rp.TransferFee, rp.GrantSharePPM = 3, ppm
+	rp.TransferFee, rp.GrantSharePPM = 3, 500_000 // grants 5,000; free shares from the other 5,000
 	return p
 }
 

@@ -22,7 +22,7 @@ import (
 
 // openAnonServices opens a store with the notary and memory on the real
 // ledger, keyed by network prefix, with a credit budget of 1,000: each
-// network gets cap credits a day and the anonymous tier sharePPM of the
+// network gets cap credits a day and anonymous callers sharePPM of the
 // budget.
 func openAnonServices(t *testing.T, cap, sharePPM int64) *Store {
 	t.Helper()
@@ -38,11 +38,13 @@ func setAnonCredit(t *testing.T, s *Store, cap, sharePPM int64) {
 	t.Helper()
 	p := s.allowanceDefaults()
 	rp := p.Resources[allowance.Credit]
-	rp.Budget, rp.SpendCeiling, rp.InboundCap = 1000, 1000, 1000
-	rp.Cap = []int64{400, 200, 100, cap}
-	rp.Floor = []int64{16, 16, 16, cap}
-	rp.RootCap = []int64{1000, 800, 400, cap}
-	rp.ShareMaxPPM = []int64{1_000_000, 1_000_000, 1_000_000, sharePPM}
+	// A budget of 1,000, or 100 floors when the floor is larger, so the
+	// floor slice is not thinned by a test's many networks.
+	budget := max(1000, 100*cap)
+	rp.Budget, rp.SpendCeiling, rp.InboundCap = budget, budget, budget
+	// One floor for everyone (RFC 0021 §9): cap credits a day per network or
+	// account without standing, the anonymous share of the budget sharePPM.
+	rp.Floor, rp.Cap, rp.FloorSlicePPM, rp.AnonymousSharePPM = cap, 1000, 1_000_000, sharePPM
 	if _, err := s.SetAllowanceParams(testContext, ledger.AllowanceNamespace, p.Marshal(), "anonymous credit test", 0); err != nil {
 		t.Fatal(err)
 	}
@@ -90,8 +92,8 @@ func TestAnonServicesAllowlistAndBilling(t *testing.T) {
 	}
 	var subject string
 	var tier int
-	if err = s.db.QueryRow("SELECT subject,tier FROM allowance_claims WHERE resource='credit'").Scan(&subject, &tier); err != nil || !strings.HasPrefix(subject, "anon:") || tier != 4 || strings.Contains(subject, "198.51.100") {
-		t.Fatalf("billed to the network's pseudonym in tier 4: %q %d %v", subject, tier, err)
+	if err = s.db.QueryRow("SELECT subject,tier FROM allowance_claims WHERE resource='credit'").Scan(&subject, &tier); err != nil || !strings.HasPrefix(subject, "anon:") || tier != int(allowance.BandAnonymous) || strings.Contains(subject, "198.51.100") {
+		t.Fatalf("billed to the network's pseudonym, anonymous band: %q %d %v", subject, tier, err)
 	}
 	// Every method the catalogue does not mark anonymous needs a key, and
 	// the refusal names the ones that do not.

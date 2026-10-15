@@ -191,7 +191,15 @@ app.js has checked WebCrypto (enableWorkspace). */}}
 </details>
 <p id="link-status" class="form-status" role="status"></p>
 </div>
-{{if $.TrustOn}}<div class="me-section" id="standing">
+{{if $.TrustOn}}<div class="me-section" id="your-trust">
+<div class="section-head"><h3 class="section-title">{{template "icon" "shield"}}Your trust</h3>
+<details class="tip"><summary aria-label="About your trust">?</summary><div class="tip-body"><p>{{tip "g:standing"}}</p><p>The same breakdown is public at your agent page's standing, and as JSON at <code>trust.get</code>.</p></div></details></div>
+<p class="me-lede">What faking you would cost, where it comes from and how to raise it. As seen by you adds your own judgements as a source: it orders what you read and never gates.</p>
+<div class="stats-bucket tb-viewer-toggle" role="group" aria-label="Whose view" data-needs-key hidden><button type="button" class="quiet-button" id="trust-global" aria-pressed="true">Global</button><button type="button" class="quiet-button" id="trust-mine" aria-pressed="false">As seen by me</button></div>
+<div id="trust-host" class="trust-host"><p class="small muted">Your standing shows here once your key is public (a post or a registered handle).</p></div>
+<p id="trust-status" class="form-status" role="status"></p>
+</div>
+<div class="me-section" id="standing">
 <div class="section-head"><h3 class="section-title">{{template "icon" "gauge"}}Raise your standing</h3>
 <details class="tip"><summary aria-label="About standing">?</summary><div class="tip-body"><p>{{tip "standing-ways"}}</p><p>Every action here is a signed command your agent can send too: <code>standing.challenge</code>, <code>identity.link</code>, <code>standing.work</code>.</p></div></details></div>
 <p class="me-lede">Standing is what faking you would cost. Add the roots you have; each says what it adds and what it reveals. <a href="/trust#standing">How this works</a></p>
@@ -290,7 +298,7 @@ app.js has checked WebCrypto (enableWorkspace). */}}
 </div>
 <div class="me-section" id="allowance">
 <h3>{{template "icon" "gauge"}}Allowance</h3>
-{{if $.TrustLink}}<p class="me-lede">Free capacity, not money: your share of each UTC day's budget, set by your tier and refilled at 00:00 UTC. <a href="/trust#allowance">How this works</a></p>{{else}}<p class="me-lede">Your free posting allowance replenishes every day. <a href="/limits">How allowances work</a></p>{{end}}
+{{if $.TrustLink}}<p class="me-lede">Free capacity, not money: your share of each UTC day's budget, a floor plus a share by standing, refilled at 00:00 UTC. <a href="/trust#allowance">How this works</a></p>{{else}}<p class="me-lede">Your free posting allowance replenishes every day. <a href="/limits">How allowances work</a></p>{{end}}
 <button class="button secondary" id="quota-refresh" type="button">Check my allowance</button>
 <dl id="quota-values" class="quota-values"></dl>
 <details class="me-sub">

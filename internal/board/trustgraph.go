@@ -12,9 +12,7 @@ package board
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"sort"
 	"strings"
 	"sync"
@@ -66,8 +64,9 @@ type TrustGraphLimits struct {
 }
 
 // TrustGraphNode is one identity: its fingerprint (the account), handle,
-// standing in the latest run, band, and the kinds of the roots behind it
-// (domain, wallet, github, pow, spend, arbiter; never their values).
+// standing in the latest run, band (allowance.Band: 1 signed, 2 proven,
+// 3 trusted), and the kinds of its own costs (domain, wallet, github, pow,
+// money, time_present, payments; never their values).
 type TrustGraphNode struct {
 	ID            string   `json:"id"`
 	Handle        string   `json:"handle"`
@@ -103,12 +102,20 @@ type trustGraphEntry struct {
 	g  *TrustGraph
 }
 
-// BandName names a standing band: 1 trusted, 2 proven, 3 signed.
+// BandName names a standing band (allowance.Band): 1 signed, 2 proven,
+// 3 trusted; anything else reads as signed.
 func BandName(band int64) string {
-	if band == int64(allowance.TierTrusted) || band == int64(allowance.TierProven) {
-		return allowance.Tier(band).Name()
+	if band == int64(allowance.BandTrusted) || band == int64(allowance.BandProven) {
+		return allowance.Band(band).Name()
 	}
-	return allowance.TierSigned.Name()
+	return allowance.BandSigned.Name()
+}
+
+// graphScore is what the network shows of an account's standing.
+type graphScore struct {
+	cents, band int64
+	roots       []string
+	penalised   bool
 }
 
 // TrustGraph is the public trust network of the latest finished run with
@@ -152,41 +159,37 @@ func buildTrustGraph(ctx context.Context, q allowance.Querier, core int, now int
 	if ok, err := tableExists(ctx, q, "trust_runs"); err != nil || !ok {
 		return g, err
 	}
-	var mode string
-	err := q.QueryRowContext(ctx, `SELECT id,as_of,params_version,coalesce(json_extract(inputs,'$.params.standing.mode'),'') FROM trust_runs
- WHERE state='done' ORDER BY id DESC LIMIT 1`).Scan(&g.Run, &g.AsOf, &g.ParamsVersion, &mode)
-	if errors.Is(err, sql.ErrNoRows) || err == nil && mode == "" {
-		g.Run, g.AsOf, g.ParamsVersion = 0, 0, 0
-		return g, nil
-	}
+	run, ok, err := trust.Latest(ctx, q)
 	if err != nil {
 		return nil, err
 	}
+	if !ok {
+		return g, nil
+	}
+	g.Run, g.AsOf, g.ParamsVersion = run.ID, run.AsOf, run.Version
 
 	// The core: public accounts with standing, highest first.
-	scores := map[string]*trust.StandingPart{}
+	scores := map[string]*graphScore{}
 	var coreIDs []string
-	const withStanding = `FROM trust_scores t WHERE t.run_id=? AND coalesce(json_extract(t.parts,'$.standing.cents'),0)>0 AND `
+	const withStanding = `FROM trust_scores t WHERE t.run_id=? AND t.collateral>0 AND `
 	var total int
 	if err = q.QueryRowContext(ctx, "SELECT count(*) "+withStanding+publicAccountSQL("t.account"), g.Run).Scan(&total); err != nil {
 		return nil, err
 	}
 	g.Truncated.Core = max(0, total-core)
-	rows, err := q.QueryContext(ctx, "SELECT t.account,t.parts "+withStanding+publicAccountSQL("t.account")+
-		" ORDER BY json_extract(t.parts,'$.standing.cents') DESC, t.account LIMIT ?", g.Run, core)
+	rows, err := q.QueryContext(ctx, "SELECT t.account,t.collateral,t.tier,t.parts "+withStanding+publicAccountSQL("t.account")+
+		" ORDER BY t.collateral DESC, t.account LIMIT ?", g.Run, core)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
 		var account, parts string
-		if err = rows.Scan(&account, &parts); err != nil {
+		var cents, band int64
+		if err = rows.Scan(&account, &cents, &band, &parts); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		var p trust.Parts
-		if json.Unmarshal([]byte(parts), &p) == nil && p.Standing != nil {
-			scores[account] = p.Standing
-		}
+		scores[account] = newGraphScore(cents, band, parts)
 		coreIDs = append(coreIDs, account)
 	}
 	rows.Close()
@@ -288,7 +291,7 @@ func buildTrustGraph(ctx context.Context, q allowance.Querier, core int, now int
 	}
 	cents := func(a string) int64 {
 		if p := scores[a]; p != nil {
-			return p.Cents
+			return p.cents
 		}
 		return 0
 	}
@@ -342,35 +345,10 @@ func buildTrustGraph(ctx context.Context, q allowance.Querier, core int, now int
 	if err != nil {
 		return nil, err
 	}
-	penalised := map[string]bool{}
-	if ok, err := tableExists(ctx, q, "trust_penalties"); err != nil {
-		return nil, err
-	} else if ok {
-		r, err := q.QueryContext(ctx, `SELECT DISTINCT p.account FROM trust_penalties p JOIN trust_evidence e ON e.id=p.evidence_id WHERE p.ends_at>? AND e.lifted_at=0`, now)
-		if err != nil {
-			return nil, err
-		}
-		for r.Next() {
-			var a string
-			if err = r.Scan(&a); err != nil {
-				r.Close()
-				return nil, err
-			}
-			penalised[a] = true
-		}
-		r.Close()
-		if err = r.Err(); err != nil {
-			return nil, err
-		}
-	}
 	for _, a := range ids {
-		n := TrustGraphNode{ID: a, Handle: handles[a], Band: 3, Roots: []string{}, Penalised: penalised[a], Core: inCore[a]}
+		n := TrustGraphNode{ID: a, Handle: handles[a], Band: int64(allowance.BandSigned), Roots: []string{}, Core: inCore[a]}
 		if p := scores[a]; p != nil {
-			n.StandingCents, n.Band = p.Cents, p.Band
-			n.Roots = rootKinds(p.Breakdown)
-		}
-		if n.Band < 1 || n.Band > 3 {
-			n.Band = 3
+			n.StandingCents, n.Band, n.Roots, n.Penalised = p.cents, p.band, p.roots, p.penalised
 		}
 		n.Standing, n.FakeCost, n.BandName = trust.StandingScore(n.StandingCents), trust.FakeCostText(n.StandingCents), BandName(n.Band)
 		g.Nodes = append(g.Nodes, n)
@@ -378,51 +356,53 @@ func buildTrustGraph(ctx context.Context, q allowance.Querier, core int, now int
 	return g, nil
 }
 
-// rootKinds are the kinds of the roots that seed a standing, in a fixed
-// order: never their values.
-func rootKinds(breakdown []trust.StandingRoot) []string {
+// newGraphScore reads a trust_scores row's standing, band and parts: the
+// kinds of its own costs (never their values) and whether it is penalised.
+func newGraphScore(cents, band int64, parts string) *graphScore {
+	gs := &graphScore{cents: cents, band: band, roots: []string{}}
+	var p trust.Parts
+	if json.Unmarshal([]byte(parts), &p) != nil {
+		return gs
+	}
 	have := map[string]bool{}
-	for _, r := range breakdown {
-		if r.SeedCents <= 0 {
-			continue
+	for _, it := range p.World {
+		if it.Cents > 0 {
+			kind := it.Kind
+			if kind == "proof" {
+				kind = it.Source
+			}
+			have[kind] = true
 		}
-		kind := r.Root
-		if i := strings.IndexByte(kind, ':'); i > 0 {
-			kind = kind[:i]
-		}
-		have[kind] = true
 	}
-	out := []string{}
-	for _, k := range []string{"domain", "wallet", "github", "pow", "spend", "arbiter"} {
+	for _, k := range []string{"domain", "wallet", "github", "pow", "money", "time_present", "payments"} {
 		if have[k] {
-			out = append(out, k)
+			gs.roots = append(gs.roots, k)
 		}
 	}
-	return out
+	gs.penalised = p.Penalty != nil && p.Penalty.Role == "member"
+	return gs
 }
 
-// readStandingParts adds the run's standing parts of these accounts to into.
-func readStandingParts(ctx context.Context, q allowance.Querier, run int64, accounts []string, into map[string]*trust.StandingPart) error {
+// readStandingParts adds the run's standing of these accounts to into.
+func readStandingParts(ctx context.Context, q allowance.Querier, run int64, accounts []string, into map[string]*graphScore) error {
 	for start := 0; start < len(accounts); start += 200 {
 		chunk := accounts[start:min(len(accounts), start+200)]
 		args := []any{run}
 		for _, a := range chunk {
 			args = append(args, a)
 		}
-		r, err := q.QueryContext(ctx, "SELECT account,parts FROM trust_scores WHERE run_id=? AND account IN (?"+strings.Repeat(",?", len(chunk)-1)+")", args...)
+		r, err := q.QueryContext(ctx, "SELECT account,collateral,tier,parts FROM trust_scores WHERE run_id=? AND account IN (?"+strings.Repeat(",?", len(chunk)-1)+")", args...)
 		if err != nil {
 			return err
 		}
 		for r.Next() {
 			var a, parts string
-			if err = r.Scan(&a, &parts); err != nil {
+			var cents, band int64
+			if err = r.Scan(&a, &cents, &band, &parts); err != nil {
 				r.Close()
 				return err
 			}
-			var p trust.Parts
-			if json.Unmarshal([]byte(parts), &p) == nil && p.Standing != nil {
-				into[a] = p.Standing
-			}
+			into[a] = newGraphScore(cents, band, parts)
 		}
 		r.Close()
 		if err = r.Err(); err != nil {

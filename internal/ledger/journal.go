@@ -1,6 +1,6 @@
 package ledger
 
-// The public journal and the waterfall statistics (RFC0012 §8.2, §11).
+// The public journal and the share-rule statistics (RFC0012 §8.2, §11).
 // Public ledger rules: anonymous subjects appear only as daily totals per
 // pseudonym (Usage), never as journal lines; references appear only when the
 // caller passed a public one; hold ids and request keys are never shown.
@@ -83,26 +83,7 @@ func (l *Ledger) RecordShadow(ctx context.Context, q allowance.Querier, account 
 	return journal(ctx, q, entry{Day: now / 86400, Now: now, Kind: "shadow", Account: account, Resource: r, Amount: amount, Ref: Ref{Service: "board", Op: op}, Version: version, Detail: detail})
 }
 
-// ReservedAbove is the unspent water today in the pools of the tiers above
-// the subject's: reserves the waterfall keeps for higher tiers, which the
-// legacy rows would hand to anyone.
-func (l *Ledger) ReservedAbove(ctx context.Context, q allowance.Querier, s allowance.Subject, r allowance.Resource, now int64) (int64, error) {
-	st, err := l.classify(ctx, q, s, now)
-	if err != nil {
-		return 0, err
-	}
-	d, ok, err := loadDay(ctx, q, r, now/86400)
-	if err != nil || !ok {
-		return 0, err
-	}
-	var reserved int64
-	for t := 1; t < int(st.Tier); t++ {
-		reserved += max(0, d.Pools[t].avail())
-	}
-	return reserved, nil
-}
-
-// Stats reads the waterfall state for the last days UTC days (at most 31),
+// Stats reads the share-rule state for the last days UTC days (at most 31),
 // newest first, with today's transfers and today's spending by service.
 func (l *Ledger) Stats(ctx context.Context, q allowance.Querier, days int, now int64) (Stats, error) {
 	days = int(clamp(int64(days), 1, 31))
@@ -138,8 +119,11 @@ func (l *Ledger) Stats(ctx context.Context, q allowance.Querier, days int, now i
 		}
 		ds := DayStats{Resource: d.Resource, Day: d.Day, Budget: d.Budget, BudgetEffective: d.BudgetEffective, Unallocated: d.Unallocated,
 			Spent: d.SpentNonpaid + d.SpentPaid, SpentPaid: d.SpentPaid, ParamsVersion: d.ParamsVersion, Buckets: map[allowance.Bucket]int64{}}
-		for t, p := range d.Pools {
-			ds.Tiers = append(ds.Tiers, PoolStats{Tier: t, Size: p.Size, Want: p.Want, SpillIn: p.SpillIn, SpillOut: p.SpillOut, Claimed: p.Claimed, Lent: p.Lent, Borrowed: p.Borrowed, Claimants: p.Claimants})
+		if !d.legacy {
+			for s, p := range d.Slices {
+				ds.Slices = append(ds.Slices, SliceStats{Slice: SliceNames[s], Size: p.Size, Drawn: p.Claimed, Lent: p.Lent, Borrowed: p.Borrowed, Claimants: p.Claimants, Expected: p.Expected, ShareCents: p.Weight})
+			}
+			ds.AnonymousDrawn, ds.AnonymousClaimants = d.Anon.Claimed, d.Anon.Claimants
 		}
 		if err = bucketsInUse(ctx, q, &ds); err != nil {
 			return Stats{}, err

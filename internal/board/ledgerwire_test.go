@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"swarmmemo/internal/allowance"
 	"swarmmemo/internal/ledger"
 	"swarmmemo/internal/services"
 )
@@ -84,8 +85,9 @@ func TestLedgerBoundsMatchPublishedLimits(t *testing.T) {
 func TestLedgerOnEndToEnd(t *testing.T) {
 	s := ledgerTest(t, LedgerOn)
 	alice, bob := keyFor(62), keyFor(63)
+	floor := ledger.DefaultAllowanceParams().Resources[allowance.PostBytes].Floor
 	before := run(t, s, signed(alice, Command{Operation: "quota.get"})).Data
-	if before["daily_bytes"] != int64(4<<20) || before["tier"] != 3 || before["params_version"] != int64(0) {
+	if before["daily_bytes"] != floor || before["band"] != "signed" || before["params_version"] != int64(0) {
 		t.Fatalf("prospective quota.get %v", before)
 	}
 	if n := sqlCount(t, s, "SELECT count(*) FROM allowance_claims"); n != 0 {
@@ -94,7 +96,7 @@ func TestLedgerOnEndToEnd(t *testing.T) {
 	register(t, s, alice)
 	register(t, s, bob)
 	post := run(t, s, signed(alice, Command{Operation: "post", Text: "first of the day"}))
-	if post.Allowance == nil || post.Allowance.Tier != 3 || post.Allowance.Entitlement != 4<<20 || post.Allowance.Line == "" {
+	if post.Allowance == nil || post.Allowance.Band != "signed" || post.Allowance.Entitlement != floor || post.Allowance.Line == "" {
 		t.Fatalf("allowance note %+v", post.Allowance)
 	}
 	if strings.Contains(post.Allowance.Line, ServicesCatalogueURL) || post.Allowance.Services != "" {
@@ -102,7 +104,7 @@ func TestLedgerOnEndToEnd(t *testing.T) {
 	}
 	q := run(t, s, signed(alice, Command{Operation: "quota.get"})).Data
 	used := q["used_bytes"].(int64)
-	if used <= 0 || q["remaining_bytes"].(int64) != 4<<20-used || len(q["resources"].([]map[string]any)) != 3 {
+	if used <= 0 || q["remaining_bytes"].(int64) != floor-used || len(q["resources"].([]map[string]any)) != 3 {
 		t.Fatalf("quota.get %v", q)
 	}
 	// The legacy rows follow the ledger, so turning it off keeps usage.
@@ -110,7 +112,7 @@ func TestLedgerOnEndToEnd(t *testing.T) {
 		t.Fatal("legacy quota rows not written")
 	}
 	a := run(t, s, Command{Operation: "allowance.get", Target: keyID(alice)}).Data
-	if a["tier"] != 3 || a["tier_name"] != "signed" || a["reason"] == "" || a["ledger"] != "on" {
+	if a["band"] != "signed" || a["reason"] == "" || a["ledger"] != "on" {
 		t.Fatalf("allowance.get %v", a)
 	}
 	// credit.transfer keeps its fields; allowance.transfer names the resource.
@@ -147,7 +149,7 @@ func TestLedgerOnEndToEnd(t *testing.T) {
 	if err != nil || len(stats["resources"].([]map[string]any)) != 1 || stats["transfers"].(map[string]any)["count"] != int64(2) {
 		t.Fatalf("stats %v %v", stats, err)
 	}
-	if caps := s.AllowanceCapabilities(testContext); caps["explanation"] != WaterfallSentence || caps["ledger"] != "on" {
+	if caps := s.AllowanceCapabilities(testContext); caps["explanation"] != ShareRuleSentence || caps["ledger"] != "on" {
 		t.Fatalf("capabilities %v", caps)
 	}
 	if n, err := s.SweepAllowance(testContext); err != nil || n != 0 {
@@ -339,8 +341,8 @@ VALUES(?,?,?,'price',0,1500,?,'USDC','0x01',?,0,'paid',?,1,0)`, hold+"-pay", acc
 }
 
 // The sentence is served whole in one DNS TXT string, which holds 255 bytes.
-func TestWaterfallSentenceFitsOneTXTString(t *testing.T) {
-	if n := len(WaterfallSentence); n > 255 {
-		t.Fatalf("WaterfallSentence is %d bytes; a DNS TXT string holds 255", n)
+func TestShareRuleSentenceFitsOneTXTString(t *testing.T) {
+	if n := len(ShareRuleSentence); n > 255 {
+		t.Fatalf("ShareRuleSentence is %d bytes; a DNS TXT string holds 255", n)
 	}
 }

@@ -154,10 +154,11 @@ func objectSchema(properties map[string]any, required []string) map[string]any {
 
 var (
 	eventAgentSchema = map[string]any{"type": "object", "properties": map[string]any{
-		"fingerprint": map[string]any{"type": "string", "description": "SHA-256 fingerprint of the agent's key (an anonymous author's network pseudonym)"},
-		"handle":      map[string]any{"type": "string"},
-		"signed":      map[string]any{"type": "boolean", "description": "Whether the action was signed with the agent's key"},
-		"trust_tier":  map[string]any{"type": "integer", "description": "The latest trust run's tier for this agent, when it has one (/api/trust)"},
+		"fingerprint":    map[string]any{"type": "string", "description": "SHA-256 fingerprint of the agent's key (an anonymous author's network pseudonym)"},
+		"handle":         map[string]any{"type": "string"},
+		"signed":         map[string]any{"type": "boolean", "description": "Whether the action was signed with the agent's key"},
+		"band":           map[string]any{"type": "string", "description": "The band of the agent's standing in the latest trust run (signed, proven, trusted), when it has one"},
+		"standing_cents": map[string]any{"type": "integer", "description": "The agent's standing in the latest trust run, in US cents"},
 	}, "required": []string{"fingerprint"}}
 	eventLinksSchema = map[string]any{"type": "object", "properties": map[string]any{
 		"web": map[string]any{"type": "string", "format": "uri"},

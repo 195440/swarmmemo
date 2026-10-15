@@ -177,10 +177,11 @@ func (s *Store) checkLinkOnce(ctx context.Context) (bool, error) {
 		return true, nil
 	}
 	next := nextLinkState(current, outcome, s.now().Unix(), s.identityJitter())
-	if kind == "github" && outcome == linkPassed {
-		// GitHub's unauthenticated budget is small: a verified account is
-		// read again weekly, not daily.
-		next.Next = s.now().Unix() + standingGitHubRecheck
+	if after := s.recheckAfter(kind); after > 0 && outcome == linkPassed {
+		// A provider's own interval: GitHub's unauthenticated budget is
+		// small, so a verified account is read again weekly, not daily
+		// (standingGitHubRecheck); a package's metadata too.
+		next.Next = s.now().Unix() + after
 	}
 	settle, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()

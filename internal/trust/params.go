@@ -6,66 +6,87 @@ import (
 	"fmt"
 	"math"
 	"regexp"
-	"slices"
 	"strings"
+
+	"swarmmemo/internal/judge"
 )
 
-// Params is the trust parameter namespace (RFC0012 §2.7, §4). Every number
-// the run uses is here, so re-pricing is a new version, never a code change.
-// Amounts are integers: ppm for fractions, the collateral unit for prices,
-// flow units (1/UnitPerShare of a fair share) for flow.
+// Params is the trust parameter namespace (RFC 0021 §11). Every number the
+// run uses is here, so re-pricing is a new version, never a code change.
+// Amounts are integers: ppm for fractions, US cents for prices.
+//
+// RFC 0021 has four knobs (grace_days, dormant_half_life_days,
+// half_life_days and evidence_weight_ppm); unit_cents and min_judges are
+// fixed, theta2, v_floor, c_ref and node_cap are derived from unit_cents
+// (published so a reader sees them, and checked against the formula); the
+// rest is data: price rows, the day price, the domain suffixes and the
+// operator accounts (read only by the operator dashboard: no rule treats
+// them differently).
 //
 // Decay and ramp curves never evaluate a float at run time: each curve
 // publishes DayFactorPPM = round(1e6 × 2^(−1/half_life_days)) and the run
-// applies it once per whole day with floor (see decayPPM). Validation checks
-// the factor against the half-life; the run reads only the factor.
+// applies it once per whole day with floor (see decayTable). Validation
+// checks the factor against the half-life; the run reads only the factor.
 type Params struct {
-	Version         int64                 `json:"-"`
-	Schema          int64                 `json:"schema"`
-	CollateralUnit  string                `json:"collateral_unit"`
-	Seeds           []string              `json:"seeds"`
-	SeedsReason     string                `json:"seeds_reason"`
-	ServiceAccounts []string              `json:"service_accounts"`
-	Proofs          map[string]ProofPrice `json:"proofs"`
-	// DomainSuffixes are public suffixes of two or more labels ("co.uk"); a
-	// domain root is the suffix plus one label, otherwise the last two labels.
-	DomainSuffixes []string        `json:"domain_suffixes"`
-	ProofFreshDays int64           `json:"proof_fresh_days"`
-	History        HistoryPrice    `json:"history"`
-	WindowDays     int64           `json:"window_days"`
-	NMax           int64           `json:"n_max"`
-	KOut           int64           `json:"k_out"`
-	Edges          map[string]Edge `json:"edges"`
-	UnitPerShare   int64           `json:"unit_per_share"`
-	EdgeCapPPM     int64           `json:"edge_cap_ppm"`
-	LambdaPPM      int64           `json:"lambda_ppm"`
-	RootCapShares  int64           `json:"root_cap_shares"`
-	FillSteps      int64           `json:"fill_steps"`
-	OwnAvgRuns     int64           `json:"own_avg_runs"`
-	ActiveDays     int64           `json:"active_days"`   // H counts accounts active in this many days
-	ActivityDays   int64           `json:"activity_days"` // the active-day share looks back this far
-	SeedsB         AnchorRule      `json:"seeds_b"`
-	MaxWork        int64           `json:"max_work"`
-	MaxSeconds     int64           `json:"max_seconds"`
-	ThetaTrusted   int64           `json:"theta_trusted"` // flow units for tier 1
-	ThetaProven    int64           `json:"theta_proven"`  // proof collateral for tier 2
-	UnitPrice      int64           `json:"endorsement_unit_price"`
-	WeightCapPPM   int64           `json:"weight_cap_ppm"`
-	WeightPerUnit  int64           `json:"weight_per_unit_ppm"`
-	Detectors      Detectors       `json:"detectors"`
-	Liability      Liability       `json:"liability"`
-	Sponsor        Sponsor         `json:"sponsor"`
-	// Standing is RFC0015's standing (standing.go). Absent in parameter
-	// version 1, whose runs it leaves byte for byte unchanged.
-	Standing *StandingParams `json:"standing,omitempty"`
+	Version        int64  `json:"-"`
+	Schema         int64  `json:"schema"`
+	CollateralUnit string `json:"collateral_unit"`
+
+	// The knobs. G: a world edge holds this long after the last active
+	// day; Hd: then it halves every Hd days; H: the half-life of judgement
+	// edges, accuracy and funded_days; the evidence weights by class.
+	GraceDays           int64            `json:"grace_days"`
+	DormantHalfLifeDays int64            `json:"dormant_half_life_days"`
+	DormantDayFactorPPM int64            `json:"dormant_day_factor_ppm"`
+	HalfLifeDays        int64            `json:"half_life_days"`
+	DayFactorPPM        int64            `json:"day_factor_ppm"`
+	EvidenceWeightPPM   map[string]int64 `json:"evidence_weight_ppm"`
+
+	// Fixed: U, a full judgement edge in cents and the liability's half
+	// point; m, the score prior's weight and the independent later
+	// judgements a judgement needs before its accuracy counts.
+	UnitCents int64 `json:"unit_cents"`
+	MinJudges int64 `json:"min_judges"`
+
+	// Derived from U (checked): theta2 = U (proven), v_floor = U/4,
+	// c_ref = 2.5 U, node_cap = 3.75 U (trusted). V0PPM is v(s)'s base.
+	Theta2Cents  int64 `json:"theta2_cents"`
+	VFloorCents  int64 `json:"v_floor_cents"`
+	CRefCents    int64 `json:"c_ref_cents"`
+	NodeCapCents int64 `json:"node_cap_cents"`
+	V0PPM        int64 `json:"v0_ppm"`
+
+	// Data: the price rows (§10), the day price of time present and its
+	// cap (§2), the coarse acts' x on an edge, the evidence class of each
+	// act that is not a review, the public suffixes, the operator accounts.
+	Proofs         map[string]ProofPrice `json:"proofs"`
+	DomainSuffixes []string              `json:"domain_suffixes"`
+	ProofFreshDays int64                 `json:"proof_fresh_days"`
+	DayPriceCents  int64                 `json:"day_price_cents"`
+	TimeCapCents   int64                 `json:"time_cap_cents"`
+	CoarseX        int64                 `json:"coarse_x"`
+	ActEvidence    map[string]string     `json:"act_evidence"`
+
+	// Penalties (§8): fixed by the RFC.
+	Detectors Detectors `json:"detectors"`
+	Penalty   Penalty   `json:"penalty"`
+
+	// Run bounds.
+	WindowDays int64 `json:"window_days"`
+	NMax       int64 `json:"n_max"`
+	MaxWork    int64 `json:"max_work"`
+	MaxSeconds int64 `json:"max_seconds"`
 }
 
-// ProofPrice prices one proof kind at min(forge, rent) × curve(age).
+// ProofPrice prices one proof kind at min(forge, rent), times its curve.
 //
-// An assessed row (from version 4: wallet, github, pow; roots.go) prices a
-// proof by the assessment its record carries instead: Assess names the rule
-// (capped or saturating), UnitsPerCent converts the assessment to cents, and
-// min(forge, rent) is the cap. Both fields are absent on a fixed-price row.
+// An assessed row (wallet, github, pow; roots.go) prices a proof by the
+// assessment its record carries: Assess names the rule (capped or
+// saturating), UnitsPerCent converts the assessment to cents, and
+// min(forge, rent) is the cap. The domain row (Assess "domain", §10) is
+// AgeCents × ramp(registration age) + RankCents × max(0, 1 − log₁₀(rank)/6),
+// at most min(forge, rent); an unknown age or rank counts 0, and a domain
+// with neither yet prices at FallbackCents (the old flat domain value).
 type ProofPrice struct {
 	Forge        int64  `json:"forge"`
 	Rent         int64  `json:"rent"`
@@ -74,35 +95,15 @@ type ProofPrice struct {
 	DayFactorPPM int64  `json:"day_factor_ppm"`
 	Assess       string `json:"assess,omitempty"`
 	UnitsPerCent int64  `json:"units_per_cent,omitempty"`
+	AgeCents     int64  `json:"age_cents,omitempty"`
+	RankCents    int64  `json:"rank_cents,omitempty"`
+	// FallbackCents prices a verified domain whose registration age and
+	// rank are not fetched yet (the domain row), and is the least a
+	// verified wallet prices at (the wallet row, AssessedContribution).
+	FallbackCents int64 `json:"fallback_cents,omitempty"`
 }
 
-// HistoryPrice prices distinct days of public activity that drew engagement
-// from another root with standing.
-type HistoryPrice struct {
-	DayPrice     int64 `json:"day_price"`
-	DaysCap      int64 `json:"days_cap"`
-	HalfLifeDays int64 `json:"half_life_days"`
-	DayFactorPPM int64 `json:"day_factor_ppm"`
-}
-
-// Edge is one endorsement edge kind (§4.2).
-type Edge struct {
-	BasePPM      int64 `json:"base_ppm"`
-	HalfLifeDays int64 `json:"half_life_days"`
-	DayFactorPPM int64 `json:"day_factor_ppm"`
-}
-
-// AnchorRule is seed set B's public rule (§4.3 step 1).
-type AnchorRule struct {
-	MinRoots    int64 `json:"min_roots"`
-	ThetaAnchor int64 `json:"theta_anchor"`
-	MinAgeDays  int64 `json:"min_age_days"`
-	ActiveDays  int64 `json:"active_days"`
-	OfDays      int64 `json:"of_days"`
-	MinMembers  int64 `json:"min_members"`
-}
-
-// Detectors are the versioned evidence detectors (§4.5).
+// Detectors are the versioned evidence detectors (§8, RFC 0012 §4.5).
 type Detectors struct {
 	Version        int64 `json:"version"`
 	FunnelK        int64 `json:"funnel_k"`
@@ -112,35 +113,47 @@ type Detectors struct {
 	RingInsidePPM  int64 `json:"ring_inside_ppm"`
 }
 
-// Liability is the endorser penalty rule (§4.5).
-type Liability struct {
-	PhiPPM      int64 `json:"phi_ppm"`
-	PhiMaxPPM   int64 `json:"phi_max_ppm"`
-	PenaltyDays int64 `json:"penalty_days"`
-	EdgeDays    int64 `json:"edge_days"`
+// Penalty is RFC 0021 §8's burn: the k-th penalty on a root within
+// EscalationDays lasts BaseDays × DurationFactor^(k−1) days; a backer (an
+// edge into the penalised set within BackerEdgeDays) loses
+// f = c / (c + U) of its standing, its k-th liability within EscalationDays
+// min(1, BackerFactor^(k−1) × f).
+type Penalty struct {
+	BaseDays       int64 `json:"base_days"`
+	DurationFactor int64 `json:"duration_factor"`
+	BackerFactor   int64 `json:"backer_factor"`
+	EscalationDays int64 `json:"escalation_days"`
+	BackerEdgeDays int64 `json:"backer_edge_days"`
+	MaxLevel       int64 `json:"max_level"`
 }
 
-// Sponsor is the sponsor dividend rule (§4.5).
-type Sponsor struct {
-	WindowDays    int64  `json:"window_days"`
-	SlotsPerShare int64  `json:"slots_per_share"`
-	DividendPPM   int64  `json:"dividend_ppm"`
-	DividendDays  int64  `json:"dividend_days"`
-	DailyCap      int64  `json:"daily_cap"`
-	Resource      string `json:"resource"`
-}
-
-// ParamsNamespace is the parameter namespace of the trust module (§2.7).
+// ParamsNamespace is the parameter namespace of the trust module.
 const ParamsNamespace = "trust"
 
-// DefaultVersion is the compiled-in trust parameter version. Version 1 was
-// version 0 (the RFC defaults) plus seed set A (§2.7, §13); version 2 adds
-// RFC0015's standing, in shadow; version 3 applies the trust-model
-// simulation's fixes to standing (StandingParams.Rule and after); version 4
-// makes edge weights absolute (rule 2: keep_weight, edge_weights); version
-// 5 prices the assessed roots, wallet, github and pow (roots.go); version 6
-// makes endorsements stakes (rule 3: stake_ppm and after).
-const DefaultVersion = StandingStakesVersion
+// UnifiedVersion is RFC 0021's parameter version (rule 5, the one trust
+// graph): the first the run computes. Versions 1 to 7 (RFC 0012's seeds
+// and tiers, RFC 0015's rules 0-3, RFC 0020's marks) are retired: their
+// runs stay published with their output_sha256, and scripts/trust/
+// recompute.py still verifies versions 1 to 6 (docs/rfcs/0021 §14).
+const UnifiedVersion = 8
+
+// ProofsVersion is version 8 plus the price rows of C326's proof
+// providers (roots.go, proofRowsV9): OAuth identities, Farcaster, ENS,
+// package maintainers and the refundable bond. Rows only: the run is rule 5
+// unchanged, and a snapshot without these kinds computes the same standing.
+const ProofsVersion = 9
+
+// DefaultVersion is the compiled-in trust parameter version: RFC 0021 with
+// C326's price rows, active from the deploy that ships it (no parameter
+// write is needed).
+const DefaultVersion = ProofsVersion
+
+// Evidence classes (RFC 0015 §5.4, judge.EvidenceWeightPPM).
+var evidenceClasses = []string{"free_use", "observed", "opinion", "paid_use", "work"}
+
+// judgementActs are the acts that are not reviews, each read as one
+// evidence class (Params.ActEvidence).
+var judgementActs = []string{judge.ActVote, judge.ActVouch, judge.ActWitness, judge.ActWorkAccept}
 
 // DayFactor is round(1e6 × 2^(−1/h)), the published daily factor of a curve
 // with half-life h days. It is evaluated when parameters are made or checked,
@@ -152,67 +165,81 @@ func DayFactor(halfLifeDays int64) int64 {
 	return int64(math.Round(1e6 * math.Pow(2, -1/float64(halfLifeDays))))
 }
 
-// DefaultParams is the compiled-in trust parameter set, version 6: the RFC
-// defaults with seed set A and the service accounts (version 1), plus
-// RFC0015's standing in shadow with the simulation's fixes and absolute
-// edge weights (version 4; versions 2 and 3 are the same with StandingV2,
-// StandingV3), plus the assessed roots' pricing rows (version 5; version 4
-// is the same without them), plus endorsements as stakes (version 6;
-// version 5 is the same with StandingV5).
+// DefaultParams is the compiled-in parameter set (version 9): RFC 0021's
+// knobs (G 120 days, Hd 180, H 180, the evidence weights), U = 200¢ and
+// m = 2, the values derived from them, the price rows of §10 and C326's
+// (proofRowsV9). UnifiedParams is version 8, the same without C326's rows.
 func DefaultParams() Params {
-	edge := func(base, h int64) Edge { return Edge{BasePPM: base, HalfLifeDays: h, DayFactorPPM: DayFactor(h)} }
-	free := ProofPrice{Curve: "none"}
 	p := Params{
-		Version:         DefaultVersion,
-		Schema:          1,
-		CollateralUnit:  "usd_cent",
-		Seeds:           slices.Clone(SeedsA),
-		SeedsReason:     SeedsAReason,
-		ServiceAccounts: slices.Clone(ServiceAccountsA),
+		Version:             DefaultVersion,
+		Schema:              2,
+		CollateralUnit:      "usd_cent",
+		GraceDays:           120,
+		DormantHalfLifeDays: 180,
+		DormantDayFactorPPM: DayFactor(180),
+		HalfLifeDays:        judge.HalfLifeDays,
+		DayFactorPPM:        judge.DayFactorPPM,
+		EvidenceWeightPPM:   maps2(judge.EvidenceWeightPPM),
+		UnitCents:           200,
+		MinJudges:           judge.PriorWeight,
+		V0PPM:               250000,
 		Proofs: map[string]ProofPrice{
-			"domain":  {Forge: 1200, Rent: 400, Curve: "ramp", HalfLifeDays: 180, DayFactorPPM: DayFactor(180)},
-			"ed25519": free,
-			"board":   free,
-			"url":     free,
-			"nostr":   free,
+			// §10: age (RDAP) + rank (Tranco), ≤ 600¢; unknown counts 0;
+			// with neither fetched yet, the old flat 400¢.
+			"domain":  {Forge: 1200, Rent: 600, Curve: "ramp", HalfLifeDays: 365, DayFactorPPM: DayFactor(365), Assess: AssessDomain, AgeCents: 200, RankCents: 400, FallbackCents: 400},
+			"ed25519": {Curve: "none"},
+			"board":   {Curve: "none"},
+			"url":     {Curve: "none"},
+			"nostr":   {Curve: "none"},
 		},
 		DomainSuffixes: []string{"ac.uk", "co.jp", "co.nz", "co.uk", "co.za", "com.au", "com.br", "com.cn", "github.io", "gov.uk", "net.au", "org.au", "org.uk", "pages.dev", "vercel.app"},
 		ProofFreshDays: 30,
-		History:        HistoryPrice{DayPrice: 10, DaysCap: 90, HalfLifeDays: 90, DayFactorPPM: DayFactor(90)},
-		WindowDays:     90,
+		DayPriceCents:  10,
+		TimeCapCents:   900,
+		CoarseX:        75,
+		ActEvidence:    map[string]string{judge.ActVote: "opinion", judge.ActVouch: "opinion", judge.ActWitness: "observed", judge.ActWorkAccept: "work"},
+		Detectors:      Detectors{Version: 2, FunnelK: 5, FunnelDays: 7, FunnelSpendPPM: 100000, RingMin: 3, RingInsidePPM: 800000},
+		Penalty:        Penalty{BaseDays: 30, DurationFactor: 4, BackerFactor: 2, EscalationDays: 365, BackerEdgeDays: 30, MaxLevel: 8},
+		WindowDays:     judge.HalfLifeDays,
 		NMax:           20000,
-		KOut:           64,
-		Edges: map[string]Edge{
-			"vote":        edge(600000, 14),
-			"vouch":       edge(1000000, 30),
-			"reply":       edge(300000, 14),
-			"legacy_vote": edge(0, 14),
-		},
-		UnitPerShare:  20,
-		EdgeCapPPM:    1000000,
-		LambdaPPM:     500000,
-		RootCapShares: 3,
-		FillSteps:     5,
-		OwnAvgRuns:    30,
-		ActiveDays:    7,
-		ActivityDays:  30,
-		SeedsB:        AnchorRule{MinRoots: 2, ThetaAnchor: 1000, MinAgeDays: 14, ActiveDays: 5, OfDays: 30, MinMembers: 3},
-		MaxWork:       200000000,
-		MaxSeconds:    120,
-		ThetaTrusted:  10,
-		ThetaProven:   200,
-		UnitPrice:     25,
-		WeightCapPPM:  2000000,
-		WeightPerUnit: 1000,
-		Detectors:     Detectors{Version: 1, FunnelK: 5, FunnelDays: 7, FunnelSpendPPM: 100000, RingMin: 3, RingInsidePPM: 800000},
-		Liability:     Liability{PhiPPM: 1000000, PhiMaxPPM: 1000000, PenaltyDays: 30, EdgeDays: 30},
-		Sponsor:       Sponsor{WindowDays: 7, SlotsPerShare: 3, DividendPPM: 1000000, DividendDays: 90, DailyCap: 100, Resource: "credit"},
-		Standing:      DefaultStanding(),
+		MaxWork:        400000000,
+		MaxSeconds:     300,
+	}
+	p.Derive()
+	for kind, row := range assessedRows() {
+		p.Proofs[kind] = row
+	}
+	for kind, row := range proofRowsV9() {
+		p.Proofs[kind] = row
+	}
+	return p
+}
+
+// UnifiedParams is parameter version 8: DefaultParams without C326's rows.
+func UnifiedParams() Params {
+	p := DefaultParams()
+	p.Version = UnifiedVersion
+	for kind := range proofRowsV9() {
+		delete(p.Proofs, kind)
 	}
 	for kind, row := range assessedRows() {
 		p.Proofs[kind] = row
 	}
 	return p
+}
+
+// Derive sets the values RFC 0021 derives from U.
+func (p *Params) Derive() {
+	U := p.UnitCents
+	p.Theta2Cents, p.VFloorCents, p.CRefCents, p.NodeCapCents = U, U/4, U*5/2, U*15/4
+}
+
+func maps2(m map[string]int64) map[string]int64 {
+	out := make(map[string]int64, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // Body is the canonical JSON of the parameter set (sorted keys, no spaces),
@@ -227,9 +254,20 @@ func (p Params) Body() []byte {
 
 var accountRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
+// ErrRetiredVersion is the refusal of a retired parameter version.
+type ErrRetiredVersion struct{ Version int64 }
+
+func (e ErrRetiredVersion) Error() string {
+	return fmt.Sprintf("trust params: version %d is retired (RFC 0021 replaced it with version %d, the one trust graph); its runs stay published with their output_sha256, and scripts/trust/recompute.py verifies versions 1 to 6", e.Version, UnifiedVersion)
+}
+
 // ParseParams reads a trust parameter body strictly: unknown fields, missing
-// sections and values outside their bounds are errors.
+// sections and values outside their bounds are errors, and so is a retired
+// version (before UnifiedVersion).
 func ParseParams(version int64, body []byte) (Params, error) {
+	if version < UnifiedVersion {
+		return Params{}, ErrRetiredVersion{version}
+	}
 	var p Params
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
@@ -260,128 +298,99 @@ func (p Params) Validate() error {
 		check(v >= lo && v <= hi, "%s must be %d–%d, not %d", name, lo, hi, v)
 	}
 	curve := func(name string, h, factor int64) {
-		in(name+".half_life_days", h, 1, 3650)
-		check(factor >= DayFactor(h)-1 && factor <= DayFactor(h)+1, "%s.day_factor_ppm must be round(1e6×2^(−1/%d)) = %d, not %d", name, h, DayFactor(h), factor)
+		in(name+"half_life_days", h, 1, 3650)
+		check(factor >= DayFactor(h)-1 && factor <= DayFactor(h)+1, "%sday_factor_ppm must be round(1e6×2^(−1/%d)) = %d, not %d", name, h, DayFactor(h), factor)
 	}
-	check(p.Schema == 1, "schema must be 1")
-	check(p.CollateralUnit != "" && len(p.CollateralUnit) <= 32, "collateral_unit must be a short name")
-	check(len(p.Seeds) >= 1 && len(p.Seeds) <= 32, "seeds must list 1–32 accounts")
-	check(p.SeedsReason != "", "seeds_reason is required")
-	service := map[string]bool{}
-	check(len(p.ServiceAccounts) <= 256, "service_accounts lists at most 256 accounts")
-	for _, a := range p.ServiceAccounts {
-		check(accountRE.MatchString(a), "service account %q is not a fingerprint", a)
-		service[a] = true
+	check(p.Schema == 2, "schema must be 2")
+	check(p.CollateralUnit == "usd_cent", "collateral_unit must be usd_cent")
+	in("grace_days", p.GraceDays, 0, 3650)
+	in("dormant_half_life_days", p.DormantHalfLifeDays, 1, 3650)
+	check(p.DormantDayFactorPPM >= DayFactor(p.DormantHalfLifeDays)-1 && p.DormantDayFactorPPM <= DayFactor(p.DormantHalfLifeDays)+1,
+		"dormant_day_factor_ppm must be round(1e6×2^(−1/%d)) = %d", p.DormantHalfLifeDays, DayFactor(p.DormantHalfLifeDays))
+	curve("", p.HalfLifeDays, p.DayFactorPPM)
+	check(len(p.EvidenceWeightPPM) == len(evidenceClasses), "evidence_weight_ppm names exactly %s", strings.Join(evidenceClasses, ", "))
+	for _, c := range evidenceClasses {
+		w, ok := p.EvidenceWeightPPM[c]
+		check(ok, "evidence_weight_ppm.%s is required", c)
+		in("evidence_weight_ppm."+c, w, 0, 1e6)
 	}
-	seen := map[string]bool{}
-	for _, s := range p.Seeds {
-		check(accountRE.MatchString(s), "seed %q is not a fingerprint", s)
-		check(!service[s], "seed %s is a service account", s)
-		check(!seen[s], "seed %s is listed twice", s)
-		seen[s] = true
-	}
+	in("unit_cents", p.UnitCents, 4, 1e7)
+	in("min_judges", p.MinJudges, 1, 100)
+	d := p
+	d.Derive()
+	check(p.Theta2Cents == d.Theta2Cents && p.VFloorCents == d.VFloorCents && p.CRefCents == d.CRefCents && p.NodeCapCents == d.NodeCapCents,
+		"theta2_cents, v_floor_cents, c_ref_cents and node_cap_cents are U, U/4, 2.5U and 3.75U (%d, %d, %d, %d)", d.Theta2Cents, d.VFloorCents, d.CRefCents, d.NodeCapCents)
+	in("v0_ppm", p.V0PPM, 0, 1e6)
 	for _, kind := range []string{"domain", "ed25519", "board", "url", "nostr"} {
-		pr, ok := p.Proofs[kind]
+		_, ok := p.Proofs[kind]
 		check(ok, "proofs.%s is required", kind)
-		if !ok {
-			continue
-		}
-		in("proofs."+kind+".forge", pr.Forge, 0, 1e9)
-		in("proofs."+kind+".rent", pr.Rent, 0, 1e9)
-		check(pr.Assess == "" && pr.UnitsPerCent == 0, "proofs.%s is a fixed price: no assess or units_per_cent", kind)
-		switch pr.Curve {
-		case "ramp":
-			curve("proofs."+kind, pr.HalfLifeDays, pr.DayFactorPPM)
-		case "none":
-			check(pr.HalfLifeDays == 0 && pr.DayFactorPPM == 0, "proofs.%s: curve none takes no half-life", kind)
+	}
+	for kind, pr := range p.Proofs {
+		name := "proofs." + kind + "."
+		in(name+"forge", pr.Forge, 0, 1e7)
+		in(name+"rent", pr.Rent, 0, 1e7)
+		want, assessed := assessedKinds[kind]
+		switch {
+		case kind == "domain":
+			check(pr.Assess == AssessDomain && pr.Curve == "ramp", "proofs.domain is priced by age and rank (assess domain, curve ramp)")
+			curve(name, pr.HalfLifeDays, pr.DayFactorPPM)
+			in(name+"age_cents", pr.AgeCents, 0, 1e7)
+			in(name+"rank_cents", pr.RankCents, 0, 1e7)
+			in(name+"fallback_cents", pr.FallbackCents, 0, 1e7)
+		case assessed:
+			in(name+"units_per_cent", pr.UnitsPerCent, 1, 1e9)
+			check(pr.Assess == want, "%sassess must be %s", name, want)
+			check(pr.Curve == "none" && pr.HalfLifeDays == 0 && pr.DayFactorPPM == 0, "proofs.%s: an assessed row takes curve none", kind)
+		case kind == "ed25519" || kind == "board" || kind == "url" || kind == "nostr":
+			check(pr.Curve == "none" && pr.Assess == "" && pr.Forge == 0 && pr.Rent == 0, "proofs.%s prices nothing: it proves control, not cost", kind)
 		default:
-			check(false, "proofs.%s.curve must be ramp or none", kind)
+			check(false, "proofs.%s is not a known proof kind", kind)
+		}
+		switch {
+		case kind == "wallet":
+			check(pr.AgeCents == 0 && pr.RankCents == 0, "%sage_cents and rank_cents are the domain row's", name)
+			in(name+"fallback_cents", pr.FallbackCents, 0, 1e7)
+		case kind != "domain":
+			check(pr.AgeCents == 0 && pr.RankCents == 0 && pr.FallbackCents == 0, "%sage_cents, rank_cents and fallback_cents are the domain and wallet rows'", name)
 		}
 	}
-	// The assessed rows are optional (version 4 has all three), each with
-	// its one rule, no curve, and a cap small enough for exact integers.
-	assessed := 0
-	for _, kind := range AssessedKinds() {
-		pr, ok := p.Proofs[kind]
-		if !ok {
-			continue
-		}
-		assessed++
-		in("proofs."+kind+".forge", pr.Forge, 0, 1e7)
-		in("proofs."+kind+".rent", pr.Rent, 0, 1e7)
-		in("proofs."+kind+".units_per_cent", pr.UnitsPerCent, 1, 1e9)
-		check(pr.Assess == assessedKinds[kind], "proofs.%s.assess must be %s", kind, assessedKinds[kind])
-		check(pr.Curve == "none" && pr.HalfLifeDays == 0 && pr.DayFactorPPM == 0, "proofs.%s: an assessed row takes curve none", kind)
-	}
-	check(len(p.Proofs) == 5+assessed, "proofs names exactly domain, ed25519, board, url and nostr, and optionally wallet, github and pow")
 	check(len(p.DomainSuffixes) <= 1024, "domain_suffixes lists at most 1024 suffixes")
 	for _, s := range p.DomainSuffixes {
 		check(strings.Count(s, ".") >= 1 && s == strings.ToLower(s) && !strings.HasPrefix(s, ".") && !strings.HasSuffix(s, "."), "domain suffix %q must be lowercase with two or more labels", s)
 	}
 	in("proof_fresh_days", p.ProofFreshDays, 1, 365)
-	in("history.day_price", p.History.DayPrice, 0, 1e7)
-	in("history.days_cap", p.History.DaysCap, 0, 3650)
-	curve("history", p.History.HalfLifeDays, p.History.DayFactorPPM)
-	in("window_days", p.WindowDays, 1, 365)
-	in("n_max", p.NMax, 1, 20000)
-	in("k_out", p.KOut, 1, 256)
-	for _, kind := range []string{"vote", "vouch", "reply", "legacy_vote"} {
-		e, ok := p.Edges[kind]
-		check(ok, "edges.%s is required", kind)
-		if !ok {
-			continue
-		}
-		in("edges."+kind+".base_ppm", e.BasePPM, 0, 1e6)
-		curve("edges."+kind, e.HalfLifeDays, e.DayFactorPPM)
+	in("day_price_cents", p.DayPriceCents, 0, 1e5)
+	in("time_cap_cents", p.TimeCapCents, 0, 1e7)
+	in("coarse_x", p.CoarseX, judge.Neutral+1, judge.Max)
+	check(len(p.ActEvidence) == len(judgementActs), "act_evidence names exactly %v", judgementActs)
+	for _, act := range judgementActs {
+		c, ok := p.ActEvidence[act]
+		_, known := p.EvidenceWeightPPM[c]
+		check(ok && known, "act_evidence.%s must name an evidence class", act)
 	}
-	check(len(p.Edges) == 4, "edges names exactly vote, vouch, reply and legacy_vote")
-	in("unit_per_share", p.UnitPerShare, 1, 1000)
-	in("edge_cap_ppm", p.EdgeCapPPM, 0, 10e6)
-	in("lambda_ppm", p.LambdaPPM, 0, 1e6)
-	in("root_cap_shares", p.RootCapShares, 1, 100)
-	in("fill_steps", p.FillSteps, 1, 20)
-	in("own_avg_runs", p.OwnAvgRuns, 1, 90)
-	in("active_days", p.ActiveDays, 1, 90)
-	in("activity_days", p.ActivityDays, 1, 90)
-	in("seeds_b.min_roots", p.SeedsB.MinRoots, 1, 16)
-	in("seeds_b.theta_anchor", p.SeedsB.ThetaAnchor, 0, 1e9)
-	in("seeds_b.min_age_days", p.SeedsB.MinAgeDays, 0, 3650)
-	in("seeds_b.of_days", p.SeedsB.OfDays, 1, 90)
-	in("seeds_b.active_days", p.SeedsB.ActiveDays, 0, p.SeedsB.OfDays)
-	in("seeds_b.min_members", p.SeedsB.MinMembers, 1, 1000)
-	in("max_work", p.MaxWork, 1, 1e10)
-	in("max_seconds", p.MaxSeconds, 1, 3600)
-	in("theta_trusted", p.ThetaTrusted, 0, 1e6)
-	in("theta_proven", p.ThetaProven, 0, 1e9)
-	in("endorsement_unit_price", p.UnitPrice, 0, 1e7)
-	in("weight_cap_ppm", p.WeightCapPPM, 0, 100e6)
-	in("weight_per_unit_ppm", p.WeightPerUnit, 0, 1e6)
 	in("detectors.version", p.Detectors.Version, 1, 1e6)
 	in("detectors.funnel_k", p.Detectors.FunnelK, 2, 1000)
 	in("detectors.funnel_days", p.Detectors.FunnelDays, 1, 90)
 	in("detectors.funnel_spend_ppm", p.Detectors.FunnelSpendPPM, 0, 1e6)
 	in("detectors.ring_min", p.Detectors.RingMin, 2, 1000)
 	in("detectors.ring_inside_ppm", p.Detectors.RingInsidePPM, 0, 1e6)
-	in("liability.phi_ppm", p.Liability.PhiPPM, 0, 10e6)
-	in("liability.phi_max_ppm", p.Liability.PhiMaxPPM, 0, 1e6)
-	in("liability.penalty_days", p.Liability.PenaltyDays, 1, 365)
-	in("liability.edge_days", p.Liability.EdgeDays, 1, 365)
-	in("sponsor.window_days", p.Sponsor.WindowDays, 0, 90)
-	in("sponsor.slots_per_share", p.Sponsor.SlotsPerShare, 0, 100)
-	in("sponsor.dividend_ppm", p.Sponsor.DividendPPM, 0, 1e9)
-	in("sponsor.dividend_days", p.Sponsor.DividendDays, 0, 365)
-	in("sponsor.daily_cap", p.Sponsor.DailyCap, 0, 1e9)
-	check(p.Sponsor.Resource == "credit" || p.Sponsor.Resource == "post_bytes" || p.Sponsor.Resource == "memory_bytes", "sponsor.resource must be a metered resource")
-	if p.Standing != nil {
-		p.Standing.validate(in, check, curve)
-	}
+	in("penalty.base_days", p.Penalty.BaseDays, 1, 365)
+	in("penalty.duration_factor", p.Penalty.DurationFactor, 1, 16)
+	in("penalty.backer_factor", p.Penalty.BackerFactor, 1, 16)
+	in("penalty.escalation_days", p.Penalty.EscalationDays, 1, 3650)
+	in("penalty.backer_edge_days", p.Penalty.BackerEdgeDays, 1, 365)
+	in("penalty.max_level", p.Penalty.MaxLevel, 1, 10)
+	in("window_days", p.WindowDays, 1, 400)
+	in("n_max", p.NMax, 1, 100000)
+	in("max_work", p.MaxWork, 1, 1e11)
+	in("max_seconds", p.MaxSeconds, 1, 3600)
 	if len(errs) > 0 {
 		return fmt.Errorf("trust params: %s", strings.Join(errs, "; "))
 	}
 	return nil
 }
 
-// decayPPM is 1e6 × f^days with f = factor/1e6, applied one whole day at a
+// decayTable is 1e6 × f^days with f = factor/1e6, applied one whole day at a
 // time with floor: v₀ = 1e6, vₙ₊₁ = ⌊vₙ × factor / 1e6⌋. Ages past 3650
 // days use 3650. It is the only curve evaluation in a run.
 type decayTable struct {
@@ -422,6 +431,9 @@ func (c curves) decay(factor, days int64) int64 {
 func (c curves) ramp(factor, days int64) int64 { return 1e6 - c.decay(factor, days) }
 
 // NewDecay returns the run's decay curve, memoized: decay(factor, days) is
-// what a run applies at that age (internal/judge/sim reads it so an
-// observer's consensus weighs judgements as the run does).
+// what a run applies at that age.
 func NewDecay() func(factor, days int64) int64 { return curves{}.decay }
+
+// Fixed-point helpers. mulDiv is ⌊a × b / c⌋ for non-negative a, b and
+// positive c, exact in 128 bits (judge.MulDiv, the one copy).
+func mulDiv(a, b, c int64) int64 { return judge.MulDiv(a, b, c) }

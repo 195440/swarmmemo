@@ -67,8 +67,8 @@ func (s *Store) changeAgent(ctx context.Context, tx *sql.Tx, c Command, a actor,
 				return Result{}, err
 			case reason == "reserved":
 				return Result{}, allowanceError("handle_reserved")
-			case reason == "tier_required":
-				return Result{}, allowanceError("tier_required")
+			case reason == "standing_required":
+				return Result{}, allowanceError("standing_required")
 			}
 		}
 		var taken int
@@ -656,7 +656,7 @@ func (s *Store) changeRoom(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 		if exists > 0 {
 			return Result{}, problem(409, "room_exists", "This room already exists; visibility cannot be changed after creation.")
 		}
-		// RFC0012 §6.5: with NAME_GATE only tiers 1-2 create room names.
+		// RFC0012 §6.5: with NAME_GATE only the proven band creates room names.
 		if err := s.nameGate(ctx, tx, a, now); err != nil {
 			return Result{}, err
 		}

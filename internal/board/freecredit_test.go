@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"swarmmemo/internal/allowance"
+	"swarmmemo/internal/ledger"
 )
 
 func TestFreeCreditOfferLine(t *testing.T) {
@@ -41,9 +42,7 @@ func setCreditCap(t *testing.T, s *Store, signed int64) {
 	p := s.allowanceDefaults()
 	credit := p.Resources[allowance.Credit]
 	credit.Budget, credit.SpendCeiling, credit.InboundCap = 16*signed, 16*signed, 16*signed
-	credit.Cap = []int64{4 * signed, 2 * signed, signed, 0}
-	credit.Floor = []int64{1600, 1600, 1600, 0}
-	credit.RootCap = []int64{16 * signed, 8 * signed, 4 * signed, 0}
+	credit.Floor, credit.Cap, credit.FloorSlicePPM, credit.AnonymousSharePPM = signed, 4*signed, 1_000_000, 0
 	if _, err := s.SetAllowanceParams(testContext, "allowance", p.Marshal(), "free credit", 0); err != nil {
 		t.Fatal(err)
 	}
@@ -59,8 +58,9 @@ func TestFreeCreditOnFirstCallAndRefusal(t *testing.T) {
 	c.Features = Features{Ledger: LedgerOn, Services: []string{"memory", "notary", "wakeup"}}
 	s := openTest(t, c)
 	t.Cleanup(s.stopServices)
-	if s.FreeCredit(testContext) != nil {
-		t.Fatal("an offer while the credit cap is 0")
+	// The default parameters (C320c) give everyone the credit floor.
+	if offer := s.FreeCredit(testContext); offer == nil || offer.Credits != ledger.DefaultAllowanceParams().Resources[allowance.Credit].Floor {
+		t.Fatalf("the default offer %+v", offer)
 	}
 	setCreditCap(t, s, 100_000)
 	offer := s.FreeCredit(testContext)

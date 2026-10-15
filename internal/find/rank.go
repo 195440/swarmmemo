@@ -15,12 +15,7 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"swarmmemo/internal/allowance"
 )
-
-// standingValue is an agent's tier, as quality.
-var standingValue = map[string]float64{allowance.TierTrusted.Name(): 1, allowance.TierProven.Name(): 0.6, allowance.TierSigned.Name(): 0.2}
 
 // quality is d's q with its parts. Under a door filter (door), the door's
 // provenance adds a bounded term (doorTerm): measured +1, outside +0.5,
@@ -57,9 +52,10 @@ func quality(d *Doc, door bool, now time.Time) (float64, map[string]any) {
 			add("community", (qd.ReviewMean-0.5)*2)
 		}
 	}
-	if v, ok := standingValue[qd.Standing]; ok {
-		parts["standing_tier"] = qd.Standing
-		add("standing", v)
+	if qd.Standing != "" {
+		// v(standing), the one weight (RFC 0021 §12).
+		parts["standing_band"] = qd.Standing
+		add("standing", qd.StandingV)
 	}
 	if qd.AcceptedTasks > 0 {
 		parts["accepted_tasks"] = qd.AcceptedTasks // shown, never weighed

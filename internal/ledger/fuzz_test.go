@@ -43,12 +43,12 @@ func runSequence(t *testing.T, data []byte) {
 		p := smallParams()
 		rp := p.Resources[allowance.PostBytes]
 		rp.GrantSharePPM = 200_000
-		rp.Floor = []int64{20, 20, 10, 5}
+		rp.Floor = 20
 		rp.ClientSharePPM = 600_000
 		p.SpikeFloor = 3
 		h := newHarness(t, p)
 		subjects := []allowance.Subject{
-			signedSubject("t1-a"), signedSubject("t2-b"), signedSubject("s3"), signedSubject("root-x-s4"), signedSubject("root-x-s5"),
+			signedSubject("c1500-a"), signedSubject("c200-b"), signedSubject("s3"), signedSubject("root-x-c40-s4"), signedSubject("root-x-c40-new-s5"),
 			anonSubject("n6"), {ID: "anon:n7", Client: "c1"}, {ID: "anon:n7", Client: "c2"},
 		}
 		var holds, transfers []string
@@ -120,10 +120,10 @@ func runSequence(t *testing.T, data []byte) {
 						lv.BudgetCutPPM = nil
 					}
 				case 4:
-					if lv.Tier4SharePPM < 0 {
-						lv.Tier4SharePPM = amt * 3900
+					if lv.AnonymousSharePPM < 0 {
+						lv.AnonymousSharePPM = amt * 3900
 					} else {
-						lv.Tier4SharePPM = -1
+						lv.AnonymousSharePPM = -1
 					}
 				case 5:
 					lv.PauseNewKeys = !lv.PauseNewKeys
@@ -168,21 +168,24 @@ func runSequence(t *testing.T, data []byte) {
 }
 
 // FuzzParams feeds the strict parser arbitrary bodies: anything accepted
-// validates, round-trips byte-identically and runs the waterfall without a
-// negative pool or a broken budget identity.
+// validates, round-trips byte-identically and runs the share rule without a
+// negative slice or a broken budget identity.
 func FuzzParams(f *testing.F) {
 	base := DefaultAllowanceParams().Marshal()
 	f.Add(base)
 	f.Add([]byte(`{}`))
 	f.Add([]byte(`{"schema":1}`))
+	f.Add([]byte(`{"schema":2}`))
 	f.Add([]byte(strings.Replace(string(base), `"dust":64`, `"dust":64,"dust":65`, 1)))
 	f.Add([]byte(strings.Replace(string(base), `"budget":67108864`, `"budget":-1`, 1)))
-	f.Add([]byte(strings.Replace(string(base), `"cap":[16777216,8388608,4194304,4194304]`, `"cap":[1,2,3]`, 1)))
+	f.Add([]byte(strings.Replace(string(base), `"cap":16777216`, `"cap":[1,2,3]`, 1)))
+	f.Add([]byte(strings.Replace(string(base), `"floor":65536`, `"floor":16777217`, 1)))
 	f.Add([]byte(strings.Replace(string(base), `"spill_interval":3600`, `"spill_interval":0`, 1)))
 	f.Add(append(append([]byte{}, base...), ' ', '{', '}'))
 	small := smallParams()
 	small.Resources[allowance.PostBytes].GrantSharePPM = 999_999
 	f.Add(small.Marshal())
+	f.Add(schema1Body(f, []int64{1, 2, 3, 4}))
 	f.Fuzz(func(t *testing.T, body []byte) {
 		p, err := ParseAllowanceParams(body)
 		if err != nil {
@@ -196,25 +199,28 @@ func FuzzParams(f *testing.F) {
 			t.Fatalf("no round trip: %v", err)
 		}
 		for r, rp := range p.Resources {
-			for _, lv := range []allowance.Levers{noLevers(), {Tier4SharePPM: 1, SignedOnly: true, BudgetCutPPM: map[allowance.Resource]int64{r: 999_999}}} {
+			for _, lv := range []allowance.Levers{noLevers(), {AnonymousSharePPM: 1, SignedOnly: true, BudgetCutPPM: map[allowance.Resource]int64{r: 999_999}}} {
 				prev := &dayState{}
-				for tier := range prev.Pools {
-					prev.Pools[tier].Claimed, prev.Pools[tier].ExpectedUnits = rp.Budget, rp.Budget
-					prev.Pools[tier].ClaimedWeight = 1_000_000
-				}
+				prev.Slices[sliceFloor].Claimants, prev.Slices[sliceFloor].Expected = 1000, 1000
+				prev.Slices[sliceStanding].Weight, prev.Slices[sliceStanding].Expected = 1_000_000, 1_000_000
 				d := computeOpen(r, day0, rp, lv, prev, 1, day0*86400)
-				for tier := 1; tier <= 4; tier++ {
-					st := allowance.Standing{Tier: allowance.Tier(tier), WeightPPM: ppm, Root: "x"}
-					draw(&d, rp, tier, entitlement(&d, rp, lv, st, 0))
+				for i, st := range []allowance.Standing{{Band: allowance.BandAnonymous, Root: "a"}, {Band: allowance.BandSigned, Root: "s"}, {Band: allowance.BandProven, ShareCents: 5000, Root: "p"}, {Band: allowance.BandTrusted, ShareCents: maxUnits, Root: "t"}} {
+					f, s := entitlement(&d, rp, lv, st, rootDay{})
+					if f < 0 || s < 0 || f+s > rp.Cap {
+						t.Fatalf("%s: entitlement %d + %d past the cap %d", r, f, s, rp.Cap)
+					}
+					origin := []int64{originAnonymous, originFloor, originStanding, originStanding}[i]
+					for _, at := range []int64{day0 * 86400, day0*86400 + 43200, day0*86400 + 86399} {
+						draw(&d, rp, origin, f+s, at)
+					}
 				}
-				spill(&d, rp, day0*86400+86399)
 				adjust(&d, rp, noLevers())
 				if d.allocated()+d.Unallocated != d.Budget {
 					t.Fatalf("%s: budget identity broken %+v", r, d)
 				}
-				for tier, pl := range d.Pools {
+				for s, pl := range d.Slices {
 					if pl.avail() < 0 || pl.Size < 0 {
-						t.Fatalf("%s tier %d negative: %+v", r, tier, pl)
+						t.Fatalf("%s slice %d negative: %+v", r, s, pl)
 					}
 				}
 			}

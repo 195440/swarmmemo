@@ -227,6 +227,19 @@ func migrateSchema(tx *sql.Tx, version int) error {
 	if _, err := tx.Exec(nudgeSchema); err != nil {
 		return err
 	}
+	// Schema 38: the public penalty log and each trust run's flow graph
+	// (trust.PenaltyLogSchema, RFC 0021, C320a).
+	if _, err := tx.Exec(trust.PenaltyLogSchema); err != nil {
+		return err
+	}
+	// Schema 39: standing bonds (proofbond.go, C326).
+	if _, err := tx.Exec(proofBondSchema); err != nil {
+		return err
+	}
+	// Schema 40: allowance refusals per day (funnel_store.go, C320c).
+	if _, err := tx.Exec(allowanceRefusalSchema); err != nil {
+		return err
+	}
 	_, err := tx.Exec(fmt.Sprintf("PRAGMA user_version=%d;", SchemaVersion))
 	return err
 }

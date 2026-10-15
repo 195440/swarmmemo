@@ -52,9 +52,12 @@ type lineChart struct {
 	Max, Half            string
 	AltMax, AltHalf      string
 	// Xs are the x labels joined by "|", for the readout.
-	Xs   string
-	SVG  template.HTML
-	Axis []axisLabel
+	Xs string
+	// Partial marks a last x still filling (today, this hour, this week):
+	// the readout names it "so far". A chart of whole runs or bins has none.
+	Partial bool
+	SVG     template.HTML
+	Axis    []axisLabel
 }
 
 // chartKey is a legend entry: a drawn series with its total over the range.
@@ -327,6 +330,7 @@ func buildLineChart(title, note string, xs []string, axis []axisLabel, partial s
 	c.Legend = append(c.Legend, split...)
 	c.Summary = strings.TrimSpace(title+". "+note) + " Totals over the range: " + strings.Join(legend, ", ") + "."
 	if dashed {
+		c.Partial = true
 		c.Legend = append(c.Legend, chartKey{Class: "partial", Label: partial, Key: keySVG("partial", false)})
 		c.Summary += " The last point, " + strings.ToLower(partial) + ", is dashed."
 	}
@@ -472,6 +476,7 @@ func buildBarChart(title, note string, xs, labels []string, partial []bool, part
 	c.SVG = template.HTML(b.String())
 	c.Summary = title + ". " + note + " Over the range: " + strings.Join(legend, ", ") + "."
 	if anyPartial {
+		c.Partial = len(partial) > 0 && partial[len(partial)-1]
 		c.Legend = append(c.Legend, chartKey{Class: "partial", Label: partialLabel, Key: template.HTML(`<svg class="key" width="16" height="10" viewBox="0 0 16 10" aria-hidden="true" focusable="false"><rect x="0" y="0" width="16" height="10" fill="currentColor" fill-opacity=".35"/></svg>`)})
 		c.Summary += " Faint bars are " + strings.ToLower(partialLabel) + "."
 	}

@@ -88,5 +88,17 @@ drawn with the /stats templates (stat-tiles, line-chart). Never public. */}}
 <tbody>{{range .Lapsing}}<tr><th scope="row"><code>{{.Name}}</code></th><td>{{.Last}}</td><td>{{.Role}}</td><td>{{.Client}}</td></tr>{{end}}</tbody>
 </table></div>{{with .LapsingMore}}<p class="dash-empty">And {{.}} more.</p>{{end}}{{else}}<p class="dash-empty">No data yet: no agent is lapsing.</p>{{end}}
 </section>
+{{with .Trust}}<section class="stats-section" aria-labelledby="trust"><h2 id="trust">Trust</h2>
+<p class="dash-caption">From trust run {{.Run}}{{if .Stale}} (stale: the newest attempt did not finish){{end}}: how much of the standing passed on still comes from our own accounts, how concentrated the sources are, the penalties in force and the accounts whose votes carry weight. Private: public pages never split operator from community.</p>
+{{template "stat-tiles" .Tiles}}
+{{with .Shares}}{{template "line-chart" .}}{{else}}<p class="dash-empty">One run so far: the lines need a second.</p>{{end}}
+</section>
+{{end}}<section class="stats-section" aria-labelledby="refusals"><h2 id="refusals">Allowance refusals</h2>
+<p class="dash-caption">Requests the free allowance refused, per day and resource: the caller's own share used up, the day's shared slices dry, or no share for its band. Any row here means someone hit a limit.</p>
+{{if .Refusals}}<div class="table-scroll"><table class="via-table">
+<thead><tr><th scope="col">Day</th><th scope="col">Resource</th><th scope="col">Own share used up</th><th scope="col">Shared slices dry</th><th scope="col">No share</th></tr></thead>
+<tbody>{{range .Refusals}}<tr><th scope="row">{{.Day}}</th><td><code>{{.Resource}}</code></td><td>{{.Own}}</td><td>{{.Dry}}</td><td>{{.NoShare}}</td></tr>{{end}}</tbody>
+</table></div>{{else}}<p class="dash-empty">No request was refused for allowance in this range.</p>{{end}}
+</section>
 <p class="stats-source">Definitions: /capabilities funnel (taxonomy {{.Taxonomy}}). Every rate shows k of n. The same numbers as JSON: /admin/funnel or swarmmemo funnel --json.</p>
 </main></body></html>{{end}}

@@ -79,8 +79,8 @@ func (s *Store) openLedger() error {
 	// One parameter store for every namespace (§2.7), so "params set"
 	// validates each and /api/params publishes each: allowance version 0 from
 	// this service's byte budgets, services version 0 (prices), trust
-	// version 1 (the defaults with seed set A and the service accounts) and
-	// moderation version 0 (the compiled-in policy).
+	// version 8 (RFC 0021's compiled-in defaults) and moderation version 0
+	// (the compiled-in policy).
 	s.ledger.params = ledger.ParamsStore{Overrides: map[string]ledger.Namespace{
 		ledger.AllowanceNamespace: {
 			Version:  0,
@@ -95,7 +95,7 @@ func (s *Store) openLedger() error {
 		trust.ParamsNamespace: {
 			Version:  trust.DefaultVersion,
 			Body:     func() []byte { return trust.DefaultParams().Body() },
-			Validate: func(b []byte) error { _, err := trust.ParseParams(0, b); return err },
+			Validate: func(b []byte) error { _, err := trust.ParseParams(trust.DefaultVersion, b); return err },
 		},
 		moderation.ParamsNamespace: {
 			Version:  0,
@@ -145,7 +145,7 @@ type legacyLevers struct{ allowance.LeverSource }
 
 func (l legacyLevers) Levers(ctx context.Context, q allowance.Querier, now int64) (allowance.Levers, error) {
 	lv, err := l.LeverSource.Levers(ctx, q, now)
-	return allowance.Levers{Tier4SharePPM: -1, Version: lv.Version}, err
+	return allowance.Levers{AnonymousSharePPM: -1, Version: lv.Version}, err
 }
 
 // allowanceDefaults is allowance version 0: the RFC0012 defaults with the
@@ -154,40 +154,19 @@ func (l legacyLevers) Levers(ctx context.Context, q allowance.Querier, now int64
 func (s *Store) allowanceDefaults() ledger.AllowanceParams {
 	p := ledger.DefaultAllowanceParams()
 	post := p.Resources[allowance.PostBytes]
-	budget := s.config.GlobalDailyBytes
+	// Twice the configured global budget: generous until constrained
+	// (ledger.DefaultAllowanceParams).
+	budget := 2 * s.config.GlobalDailyBytes
 	post.Budget, post.SpendCeiling, post.InboundCap = budget, 2*budget, budget
-	post.Cap[2], post.Cap[3] = s.config.DailyBytes, s.config.AnonymousDailyBytes
+	// The share rule's per-claimant cap is four days' signed allowance (the
+	// most standing buys); the floor is the anonymous allowance (today's
+	// anonymous share), within the cap.
+	post.Cap = 4 * s.config.DailyBytes
+	post.Floor = min(s.config.AnonymousDailyBytes, post.Cap)
 	if s.ledger.legacyParams {
-		// One flat per-key cap, first come first served on one global budget:
-		// no reserves, every tier drawing from tier 4's pool, floor = cap.
-		for i := range post.Cap {
-			post.Cap[i] = s.config.DailyBytes
-		}
-		post.Cap[3] = s.config.AnonymousDailyBytes
-		post.ReserveMinPPM = []int64{0, 0, 0}
-		post.ShareMaxPPM = []int64{0, 0, 0, 1_000_000}
-		post.Borrow = []bool{true, true, true}
-		if s.config.Features.AllowanceTiers {
-			// Design 0 (§6.1): the tier caps d_t, and pools that nest like
-			// f_t: tier t's own water is (f_t − f_{t+1}) × G and it borrows
-			// downward, so tiers t..4 together never pass f_t × G. No spill
-			// before the day's last second, as the legacy rows have none.
-			for t := allowance.TierTrusted; t <= allowance.TierAnonymous; t++ {
-				post.Cap[t-1] = s.tierDailyBytes(t)
-			}
-			post.ReserveMinPPM = []int64{tierGlobalPPM[1] - tierGlobalPPM[2], tierGlobalPPM[2] - tierGlobalPPM[3], tierGlobalPPM[3] - tierGlobalPPM[4]}
-			post.ShareMaxPPM = []int64{post.ReserveMinPPM[0], post.ReserveMinPPM[1], post.ReserveMinPPM[2], tierGlobalPPM[4]}
-			post.SpillStart, post.SpillInterval = 86399, 86400
-		}
-	}
-	// A cap may exceed the budget: the subject then gets what the pools hold,
-	// and a shortfall reads as the shared budget running out.
-	for i := range post.Cap {
-		if s.ledger.legacyParams {
-			post.Floor[i] = post.Cap[i]
-		}
-		post.Floor[i] = min(post.Floor[i], post.Cap[i])
-		post.RootCap[i] = max(post.RootCap[i], 4*post.Cap[i])
+		// One flat per-key cap, first come first served on one global
+		// budget: the whole budget is the floor slice, floor = cap.
+		post.Cap, post.Floor, post.FloorSlicePPM = s.config.DailyBytes, s.config.DailyBytes, 1_000_000
 	}
 	return p
 }
@@ -196,23 +175,12 @@ func (s *Store) allowanceDefaults() ledger.AllowanceParams {
 // through it too, so both use the same classifier, levers and parameters.
 func (s *Store) allowanceLedger() *ledger.Ledger { return s.ledger.led }
 
-// ledgerClassifier is the classifier the ledger uses: builder A's Design 0
-// classifier (later trust), or, while that is not built, the minimal rule
-// (signed tier 3, anonymous tier 4).
+// ledgerClassifier is the classifier the ledger uses: the one standing
+// classifier (standing.go).
 type ledgerClassifier struct{ s *Store }
 
 func (c ledgerClassifier) Classify(ctx context.Context, q allowance.Querier, subject allowance.Subject, now int64) (allowance.Standing, error) {
-	// A hosted identity shares the anonymous tier, whichever classifier
-	// runs (RFC0013 §2.4).
-	if st, hosted := hostedStanding(subject); hosted {
-		return st, nil
-	}
-	st, err := c.s.classifier().Classify(ctx, q, subject, now)
-	var e *allowance.Err
-	if errors.As(err, &e) && e.Code == "service_unavailable" {
-		return ledger.DefaultClassifier{}.Classify(ctx, q, subject, now)
-	}
-	return st, err
+	return c.s.classifier().Classify(ctx, q, subject, now)
 }
 
 // startLedger runs the sweeper every minute while the ledger is shadow or
@@ -284,7 +252,13 @@ func (s *Store) SweepAllowance(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if err = tx.Commit(); err != nil {
+	// And the allowance refusals counted since the last sweep (C320c).
+	putBack, err := s.flushAllowanceRefusals(ctx, tx)
+	if err == nil {
+		err = tx.Commit()
+	}
+	if err != nil {
+		putBack()
 		return 0, err
 	}
 	// Then review rewards whose hold is over, in a transaction of their
@@ -333,19 +307,11 @@ func allowanceName(r allowance.Resource) string {
 }
 
 // mirrorQuota writes the legacy per-actor and global rows for a spend the
-// ledger decided, and with ALLOWANCE_TIERS the caller's tier row, so the
-// legacy path finds today's usage if the ledger is switched off mid-day.
+// ledger decided, so the legacy path finds today's usage if the ledger is
+// switched off mid-day.
 func (s *Store) mirrorQuota(ctx context.Context, tx *sql.Tx, a actor, cost, now int64) error {
 	day := now / 86400
-	actors := []string{a.account, "global"}
-	if s.config.Features.AllowanceTiers {
-		st, err := s.standing(ctx, tx, a, now)
-		if err != nil {
-			return err
-		}
-		actors = append(actors, tierActors[st.Tier])
-	}
-	for _, actor := range actors {
+	for _, actor := range []string{a.account, "global"} {
 		if _, err := tx.ExecContext(ctx, "INSERT INTO quota(actor,day,used) VALUES(?,?,?) ON CONFLICT(actor,day) DO UPDATE SET used=used+excluded.used", actor, day, cost); err != nil {
 			return err
 		}
@@ -406,26 +372,21 @@ func (s *Store) shadow(ctx context.Context, tx *sql.Tx, a actor, op string, amou
 		return nil
 	}
 	detail := fmt.Sprintf("legacy %s, ledger %s", legacyDecision, ledgerDecision)
-	// Explained: the waterfall keeps reserves for higher tiers, which the
-	// legacy rows hand to anyone first come, first served (RFC0012 §2.3).
-	// Shares are entitlements and only spend draws water (overbooking), so
-	// the two paths otherwise count the same bytes.
+	// Explained: the share rule keeps the standing slice for standing (RFC
+	// 0021 §12), which the legacy rows hand to anyone first come, first
+	// served. Shares are entitlements and only spend draws water
+	// (overbooking), so the two paths otherwise count the same bytes.
 	explained := false
-	quota := map[string]bool{"quota_exhausted": true, "global_quota_exhausted": true, "tier_has_no_share": true}
-	if quota[legacyDecision] && quota[ledgerDecision] {
+	quota := map[string]bool{"quota_exhausted": true, "global_quota_exhausted": true, "no_share": true}
+	switch {
+	case quota[legacyDecision] && quota[ledgerDecision]:
 		// Both refuse, one on the subject's own share and one on the shared
-		// budget: the reserves above moved the two paths apart earlier.
+		// budget: the slices moved the two paths apart earlier.
 		explained = true
 		detail += "; explained: both refuse"
-	} else if legacyDecision == "ok" && ledgerDecision == "global_quota_exhausted" {
-		reserved, err := s.ledger.led.ReservedAbove(ctx, tx, subject(a), allowance.PostBytes, now)
-		if err != nil {
-			return err
-		}
-		if reserved > 0 {
-			explained = true
-			detail += fmt.Sprintf("; explained: %d units reserved for higher tiers", reserved)
-		}
+	case legacyDecision == "ok" && ledgerDecision == "global_quota_exhausted":
+		explained = true
+		detail += "; explained: the share rule keeps the standing slice for standing"
 	}
 	if explained {
 		// Expected on every spend once a day's pools run dry: counted and
@@ -563,8 +524,8 @@ func (s *Store) shadowTransfer(ctx context.Context, tx *sql.Tx, c Command, a act
 }
 
 // quotaBalance is quota.get under ALLOWANCE_LEDGER=on: every legacy field
-// (daily_bytes is today's entitlement, actual or prospective) plus tier,
-// resources and params_version.
+// (daily_bytes is today's entitlement, actual or prospective) plus the
+// band, the floor and standing parts, resources and params_version.
 func (s *Store) quotaBalance(ctx context.Context, tx *sql.Tx, a actor, now int64) (Result, error) {
 	b, err := s.ledger.led.Balance(ctx, tx, subject(a), allowance.PostBytes, now)
 	if err != nil {
@@ -575,7 +536,8 @@ func (s *Store) quotaBalance(ctx context.Context, tx *sql.Tx, a actor, now int64
 		return Result{}, err
 	}
 	return Result{Data: map[string]any{"daily_bytes": b.Entitlement, "used_bytes": b.Used + b.Outgoing, "incoming_bytes": b.Incoming, "remaining_bytes": b.Remaining,
-		"resets_at": b.ResetsAt, "unit": "byte", "post_overhead_bytes": 512, "tier": int(b.Standing.Tier), "resources": resources, "params_version": b.ParamsVersion}}, nil
+		"resets_at": b.ResetsAt, "unit": "byte", "post_overhead_bytes": 512, "band": b.Standing.Band.Name(), "standing_cents": b.Standing.Cents,
+		"floor_bytes": b.FloorPart, "standing_bytes": b.StandingPart, "resources": resources, "params_version": b.ParamsVersion}}, nil
 }
 
 var resourceOrder = []allowance.Resource{allowance.PostBytes, allowance.MemoryBytes, allowance.Credit}
@@ -600,25 +562,17 @@ func (s *Store) balances(ctx context.Context, tx *sql.Tx, subj, credit allowance
 				buckets[string(k)] = v
 			}
 		}
-		out = append(out, map[string]any{"resource": string(r), "unit": ledger.KnownResources[r], "entitlement": b.Entitlement, "used": b.Used,
-			"incoming": b.Incoming, "outgoing": b.Outgoing, "remaining": b.Remaining, "by_bucket": buckets, "resets_at": b.ResetsAt, "prospective": b.Prospective})
+		out = append(out, map[string]any{"resource": string(r), "unit": ledger.KnownResources[r], "entitlement": b.Entitlement, "floor_part": b.FloorPart,
+			"standing_part": b.StandingPart, "used": b.Used, "incoming": b.Incoming, "outgoing": b.Outgoing, "remaining": b.Remaining, "by_bucket": buckets,
+			"resets_at": b.ResetsAt, "prospective": b.Prospective})
 	}
 	return out, nil
 }
 
-// byTier keys a per-tier parameter (index 0 is tier 1) by tier name, tiers
-// 1-4.
-func byTier(v []int64) map[string]int64 {
-	out := map[string]int64{}
-	for i := 0; i < len(v) && i < int(allowance.TierAnonymous); i++ {
-		out[allowance.Tier(i+1).Name()] = v[i]
-	}
-	return out
-}
-
-// WaterfallSentence explains the allowance in one sentence (§2.3); it is
-// the same text as web.WaterfallSentence, which every surface uses.
-const WaterfallSentence = "Each UTC day a fixed free allowance is shared tier by tier (trusted, proven, signed, anonymous); unused shares flow down; yours appears at your first call of the day and, with claim_expiry_days=0 (default), ends at 00:00 UTC."
+// ShareRuleSentence explains the allowance's share rule in one sentence
+// (RFC 0021 §12): the one text every surface uses (web, DNS TXT ≤ 255
+// bytes, the line transport, MCP, /capabilities).
+const ShareRuleSentence = "Each UTC day a fixed free allowance is shared: everyone, anonymous included, gets an equal floor from a quarter of it, the rest goes by standing, one share per root; yours appears at your first call and ends at 00:00 UTC."
 
 // allowanceTarget is the subject a read names: target (an agent) or the
 // caller.
@@ -652,8 +606,8 @@ func creditSubject(a actor, subj allowance.Subject) allowance.Subject {
 	return subj
 }
 
-// readAllowance is allowance.get: tier, today's share per resource, what is
-// left and when it resets. A read writes nothing: before the day's first
+// readAllowance is allowance.get: the band and standing, today's share per
+// resource (its floor and standing parts), what is left and when it resets. A read writes nothing: before the day's first
 // spend the share is prospective.
 func (s *Store) readAllowance(ctx context.Context, tx *sql.Tx, c Command, a actor, now int64) (Result, error) {
 	if s.config.Features.Ledger == LedgerOff {
@@ -682,12 +636,12 @@ func (s *Store) readAllowance(ctx context.Context, tx *sql.Tx, c Command, a acto
 		return Result{}, err
 	}
 	st := b.Standing
-	data := map[string]any{"schema": 1, "agent": agent, "ledger": s.config.Features.Ledger.String(), "model": "waterfall",
+	data := map[string]any{"schema": 2, "agent": agent, "ledger": s.config.Features.Ledger.String(), "model": "share_rule",
+		"rule":      ShareRuleSentence,
 		"claim":     "implicit, on the first spend of each UTC day",
-		"tier":      int(st.Tier),
-		"tier_name": reputationTierName(int64(st.Tier)),
+		"band":      st.Band.Name(),
 		"reason":    st.Reason,
-		"standing":  map[string]any{"tier": int(st.Tier), "name": reputationTierName(int64(st.Tier)), "weight_ppm": st.WeightPPM, "source": st.Source, "reason": st.Reason},
+		"standing":  map[string]any{"band": st.Band.Name(), "cents": st.Cents, "share_cents": st.ShareCents, "root": st.Root, "source": st.Source, "reason": st.Reason},
 		"resources": resources, "resets_at": b.ResetsAt, "params_version": b.ParamsVersion}
 	// Review rewards on their way (pending) and settled this week.
 	if subj.Signed {
@@ -860,10 +814,11 @@ func (s *Store) allowanceNote(ctx context.Context, tx *sql.Tx, a actor, res *Res
 	if err != nil {
 		return fromAllowance(err)
 	}
-	name := reputationTierName(int64(b.Standing.Tier))
 	res.Allowance = &AllowanceNote{
-		Line:     fmt.Sprintf("Free today: %s of posting (%s tier), %s left; resets 00:00 UTC. Linked domains and endorsements raise it.", humanBytes(b.Entitlement+b.Incoming), name, humanBytes(b.Remaining)),
-		Resource: string(allowance.PostBytes), Tier: int(b.Standing.Tier), Entitlement: b.Entitlement, Remaining: b.Remaining, ResetsAt: b.ResetsAt,
+		Line: fmt.Sprintf("Free today: %s of posting (%s floor + %s by standing, %s band), %s left; resets 00:00 UTC. Standing raises it: standing.ways.",
+			humanBytes(b.Entitlement+b.Incoming), humanBytes(b.FloorPart), humanBytes(b.StandingPart), b.Standing.Band.Name(), humanBytes(b.Remaining)),
+		Resource: string(allowance.PostBytes), Band: b.Standing.Band.Name(), StandingCents: b.Standing.Cents, Entitlement: b.Entitlement,
+		FloorPart: b.FloorPart, StandingPart: b.StandingPart, Remaining: b.Remaining, ResetsAt: b.ResetsAt,
 		More: "/capabilities#allowance",
 	}
 	// The two allowance reads also name the free credit a signed key gets
@@ -910,8 +865,9 @@ func trimUnit(v float64, unit string) string {
 	return strings.TrimSuffix(s, ".0") + " " + unit
 }
 
-// AllowanceStats is the waterfall, services, transfers and levers summary for
-// /stats and /api/stats/allowance (§11), for the last days UTC days.
+// AllowanceStats is the share rule's slices, services, transfers and levers
+// summary for /stats and /api/stats/allowance (§11), for the last days UTC
+// days.
 func (s *Store) AllowanceStats(ctx context.Context, days int) (map[string]any, error) {
 	if s.config.Features.Ledger == LedgerOff {
 		return nil, allowanceError("service_unavailable")
@@ -930,24 +886,27 @@ func (s *Store) AllowanceStats(ctx context.Context, days int) (map[string]any, e
 	if err != nil {
 		return nil, err
 	}
-	// Today's waterfall per resource, and the earlier days as history.
+	// Today's slices per resource, and the earlier days as history.
 	today := now / 86400
 	resources, history := []map[string]any{}, []map[string]any{}
 	for _, d := range st.Days {
 		var issued, claimants int64
-		tiers := make([]map[string]any, 0, len(d.Tiers))
-		for _, p := range d.Tiers {
-			issued += p.Claimed + p.Lent
-			claimants += p.Claimants
-			tiers = append(tiers, map[string]any{"tier": p.Tier, "size": p.Size, "want": p.Want, "spill_in": p.SpillIn, "spill_out": p.SpillOut,
-				"claimed": p.Claimed, "lent": p.Lent, "borrowed": p.Borrowed, "claimants": p.Claimants})
+		slices := make([]map[string]any, 0, len(d.Slices))
+		for _, p := range d.Slices {
+			issued += p.Drawn + p.Lent
+			if p.Slice == "floor" {
+				claimants = p.Claimants
+			}
+			slices = append(slices, map[string]any{"slice": p.Slice, "size": p.Size, "drawn": p.Drawn, "lent": p.Lent, "borrowed": p.Borrowed,
+				"claimants": p.Claimants, "expected": p.Expected, "share_cents": p.ShareCents})
 		}
 		if d.Day != today {
 			history = append(history, map[string]any{"day": d.Day, "resource": string(d.Resource), "budget": d.Budget, "issued": issued, "spent": d.Spent, "claimants": claimants})
 			continue
 		}
 		resources = append(resources, map[string]any{"resource": string(d.Resource), "day": d.Day, "budget": d.Budget, "budget_effective": d.BudgetEffective,
-			"issued": issued, "spent": d.Spent, "spent_paid": d.SpentPaid, "unallocated": d.Unallocated, "params_version": d.ParamsVersion, "tiers": tiers})
+			"issued": issued, "spent": d.Spent, "spent_paid": d.SpentPaid, "unallocated": d.Unallocated, "params_version": d.ParamsVersion, "slices": slices,
+			"anonymous": map[string]any{"drawn": d.AnonymousDrawn, "claimants": d.AnonymousClaimants}})
 	}
 	services := []map[string]any{}
 	for _, sv := range st.Services {
@@ -1064,17 +1023,17 @@ func (s *Store) AllowanceCapabilities(ctx context.Context) map[string]any {
 	resources := map[string]any{}
 	for _, r := range resourceOrder {
 		rp := p.Resources[r]
-		resources[string(r)] = map[string]any{"unit": rp.Unit, "budget": rp.Budget, "caps": byTier(rp.Cap),
-			"floors": byTier(rp.Floor), "transfer_fee": rp.TransferFee, "inbound_cap": rp.InboundCap}
+		resources[string(r)] = map[string]any{"unit": rp.Unit, "budget": rp.Budget, "floor": rp.Floor, "cap": rp.Cap, "floor_slice_ppm": rp.FloorSlicePPM,
+			"anonymous_share_ppm": rp.AnonymousSharePPM, "transfer_fee": rp.TransferFee, "inbound_cap": rp.InboundCap}
 	}
 	return map[string]any{
-		"model":       "waterfall",
-		"explanation": WaterfallSentence,
+		"model":       "share_rule",
+		"explanation": ShareRuleSentence,
 		"ledger":      s.config.Features.Ledger.String(),
 		"claim":       "implicit, on the first spend of each UTC day",
 		"resources":   resources,
 		"buckets": map[string]any{
-			"free":    map[string]any{"decay": "tiers 3–4 expire at the end of the UTC day; tiers 1–2 after claim_expiry_days additional days (default 0: also 00:00 UTC; see /api/params/allowance)", "transferable": true},
+			"free":    map[string]any{"decay": "expires at the end of the UTC day plus claim_expiry_days (default 0: 00:00 UTC; see /api/params/allowance)", "transferable": p.TransferableFree},
 			"granted": map[string]any{"decay": fmt.Sprintf("demurrage, half-life %d days", p.GrantedHalfLifeDays), "transferable": true},
 			"earned":  map[string]any{"decay": fmt.Sprintf("demurrage, half-life %d days", p.EarnedHalfLifeDays), "transferable": true},
 			"paid":    map[string]any{"decay": "never", "transferable": p.PaidTransferable},

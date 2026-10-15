@@ -50,7 +50,7 @@ func TestLedgerRoutes(t *testing.T) {
 	}
 	// An anonymous caller reads its own prospective share; a read claims nothing.
 	a := get("/api/allowance", 200)["data"].(map[string]any)
-	if a["tier_name"] != "anonymous" || a["resources"].([]any)[0].(map[string]any)["prospective"] != true {
+	if a["band"] != "anonymous" || a["resources"].([]any)[0].(map[string]any)["prospective"] != true {
 		t.Fatalf("allowance %v", a)
 	}
 	makeRequest(s, "GET", "/w/lobby/main?text=hello&request_id=r1&format=json", "", "")
@@ -67,7 +67,7 @@ func TestLedgerRoutes(t *testing.T) {
 	if params["current"].(map[string]any)["version"] != float64(0) || len(params["versions"].([]any)) != 1 {
 		t.Fatalf("params %v", params)
 	}
-	if body := get("/api/params/allowance/0", 200)["data"].(map[string]any); body["body"].(map[string]any)["schema"] != float64(1) {
+	if body := get("/api/params/allowance/0", 200)["data"].(map[string]any); body["body"].(map[string]any)["schema"] != float64(2) {
 		t.Fatalf("version 0 %v", body)
 	}
 	get("/api/params/allowance/9", 404)
@@ -77,7 +77,7 @@ func TestLedgerRoutes(t *testing.T) {
 		t.Fatalf("POST /api/allowance: %d", w.Code)
 	}
 	caps, ok := s.capabilities()["allowance"].(map[string]any)
-	if !ok || caps["model"] != "waterfall" || caps["ledger"] != "on" || caps["explanation"] != board.WaterfallSentence {
+	if !ok || caps["model"] != "share_rule" || caps["ledger"] != "on" || caps["explanation"] != board.ShareRuleSentence {
 		t.Fatalf("capabilities %v", caps)
 	}
 }

@@ -21,8 +21,8 @@ import (
 	"sync"
 	"time"
 
+	"swarmmemo/internal/proofs"
 	"swarmmemo/internal/safenet"
-	"swarmmemo/internal/trust"
 )
 
 const (
@@ -267,11 +267,14 @@ func (s *Store) checkGitHubLink(ctx context.Context, fingerprint, login, proof s
 		return linkFailed
 	}
 	now := s.now().Unix()
-	age := int64(0)
+	age, created := int64(0), int64(0)
 	if t, err := time.Parse(time.RFC3339, user.CreatedAt); err == nil && t.Unix() < now {
-		age = (now - t.Unix()) / 86400
+		age, created = (now-t.Unix())/86400, t.Unix()
 	}
-	cents := trust.GitHubCents(age, user.PublicRepos, user.Followers)
+	// The github provider's assessment (internal/proofs): trust.GitHubCents
+	// of the age and public counts, as before.
+	gh, _ := s.proofRegistry().Get("github")
+	cents := gh.Assess(proofs.Proof{Inputs: proofs.Inputs{"created_at": created, "public_repos": user.PublicRepos, "followers": user.Followers}}, time.Unix(now, 0))
 	_ = s.saveAssessment(ctx, fingerprint, "github", login, "github:"+strconv.FormatInt(user.ID, 10), cents, map[string]any{
 		"source": "api.github.com", "github_id": user.ID, "created_at": user.CreatedAt, "age_days": age,
 		"public_repos": user.PublicRepos, "followers": user.Followers, "gist": gist}, now)

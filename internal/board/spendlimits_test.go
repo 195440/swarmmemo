@@ -27,9 +27,7 @@ func spendLimitStore(t *testing.T) *Store {
 	p := s.allowanceDefaults()
 	rp := p.Resources[allowance.Credit]
 	rp.Budget, rp.SpendCeiling, rp.InboundCap = 10_000, 10_000, 10_000
-	rp.Cap = []int64{1000, 1000, 1000, 10}
-	rp.Floor = []int64{500, 500, 500, 10}
-	rp.RootCap = []int64{5000, 5000, 5000, 10}
+	rp.Floor, rp.Cap, rp.FloorSlicePPM, rp.AnonymousSharePPM = 1000, 1000, 1_000_000, 1000
 	if _, err := s.SetAllowanceParams(testContext, ledger.AllowanceNamespace, p.Marshal(), "spend limit test", 0); err != nil {
 		t.Fatal(err)
 	}

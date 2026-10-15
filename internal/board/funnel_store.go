@@ -17,6 +17,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"swarmmemo/internal/allowance"
 )
 
 // The funnel's records (schema 36; definitions in funnel.go). Operator-only:
@@ -85,6 +87,32 @@ CREATE INDEX IF NOT EXISTS feedback_subject ON feedback(subject,created_at);
 CREATE INDEX IF NOT EXISTS feedback_created ON feedback(created_at);
 CREATE INDEX IF NOT EXISTS audit_actor ON audit(actor,operation,created_at);
 `
+
+// allowanceRefusalSchema is schema 40 (C320c): allowance refusals per UTC
+// day, resource and code (ledger.RefusalCodes), counted by the ledger in
+// memory and written by the allowance sweeper (flushAllowanceRefusals), so
+// the operator dashboard shows when anyone hits a limit. Operator-only, like
+// the funnel's tables.
+const allowanceRefusalSchema = `
+CREATE TABLE IF NOT EXISTS allowance_refusals (
+ day INTEGER NOT NULL, resource TEXT NOT NULL, code TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 0,
+ PRIMARY KEY(day,resource,code)) WITHOUT ROWID;
+`
+
+// flushAllowanceRefusals adds the ledger's refusal counts since the last
+// flush to allowance_refusals, in tx; put back must run if tx does not
+// commit.
+func (s *Store) flushAllowanceRefusals(ctx context.Context, tx *sql.Tx) (putBack func(), err error) {
+	list := s.ledger.led.TakeRefusals()
+	putBack = func() { s.ledger.led.PutBackRefusals(list) }
+	for _, x := range list {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO allowance_refusals(day,resource,code,n) VALUES(?,?,?,?)
+ ON CONFLICT(day,resource,code) DO UPDATE SET n=n+excluded.n`, x.Day, string(x.Resource), x.Code, x.N); err != nil {
+			return putBack, err
+		}
+	}
+	return putBack, nil
+}
 
 const (
 	funnelFlushInterval = 30 * time.Second
@@ -739,8 +767,16 @@ func funnelSortedKeys(m map[string]bool) []string {
 
 // funnelExcluded is the operator's exclude list (meta funnel.exclude).
 func (s *Store) funnelExcluded(ctx context.Context) (map[string]bool, error) {
+	return operatorAccountSet(ctx, s.db)
+}
+
+// operatorAccountSet is the exclude list through q: SwarmMemo's own accounts
+// (the operator's personas), the one list of them. The funnel leaves them
+// out, the operator dashboard measures their share of the trust flow, and
+// SwarmMemo's tools are theirs.
+func operatorAccountSet(ctx context.Context, q allowance.Querier) (map[string]bool, error) {
 	var raw string
-	err := s.db.QueryRowContext(ctx, "SELECT value FROM meta WHERE key=?", metaFunnelExclude).Scan(&raw)
+	err := q.QueryRowContext(ctx, "SELECT value FROM meta WHERE key=?", metaFunnelExclude).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return map[string]bool{}, nil
 	}

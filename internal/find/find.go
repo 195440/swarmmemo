@@ -175,8 +175,11 @@ type Quality struct {
 	Reviews      int
 	ReviewMean   float64
 	ReviewWeight float64
-	// Standing is an agent's tier name (trusted, proven, signed), or "".
-	Standing string
+	// Standing is an agent's band (trusted, proven, signed), or "" for a
+	// doc that is no agent's; StandingV is v(its standing) (RFC 0021 §12,
+	// 0 to 1): what the ranking weighs.
+	Standing  string
+	StandingV float64
 	// AcceptedTasks and PaidTasks are an agent's public work accepted as
 	// worker and, of it, the work whose reward was paid, from its work
 	// record (the board's workRecords); shown, never ranked.

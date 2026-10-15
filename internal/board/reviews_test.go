@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"swarmmemo/internal/reviews"
+	"swarmmemo/internal/trust"
 )
 
 // Subjects and reviews (RFC 0015 phase 1B, RFC 0019) on the real engine:
@@ -237,11 +238,14 @@ func TestReviewEvidenceAndOrder(t *testing.T) {
 	for _, k := range []ed25519.PrivateKey{alice, bob, carol, lab} {
 		register(t, s, k)
 	}
-	// alice is seasoned: a public post more than a day old.
+	// alice and bob are established: a public post more than a day old and
+	// standing of C_ref (v = 1); carol has none.
 	s.now = func() time.Time { return time.Unix(testTime-3*86400, 0) }
 	run(t, s, signed(alice, Command{Operation: "post", Text: "hello from alice", RequestID: randomID(), Timestamp: testTime - 3*86400}))
 	run(t, s, signed(bob, Command{Operation: "post", Text: "hello from bob", RequestID: randomID(), Timestamp: testTime - 3*86400}))
 	s.now = func() time.Time { return time.Unix(testTime, 0) }
+	cRef := trust.DefaultParams().CRefCents
+	setStanding(t, s, map[string]int64{keyID(alice): cRef, keyID(bob): cRef})
 
 	// alice paid for a call to the resource (paid bucket); a call to another
 	// resource, someone else's call and an old call all fail.
@@ -315,7 +319,7 @@ func TestReviewEvidenceAndOrder(t *testing.T) {
 		t.Fatalf("bob's order %+v class %s", b.Order, b.EvidenceClass)
 	}
 	if c := list[2]; c.Order.V != 0 || c.Order.Weight != 0 {
-		t.Fatalf("an unseasoned account weighs 0: %+v", c.Order)
+		t.Fatalf("an account without standing weighs 0: %+v", c.Order)
 	}
 	agg := data["aggregate"].(ReviewAggregate)
 	want0 := (1*1 + 0.4*0.5 + 2*0.5) / (1 + 0.4 + 2)

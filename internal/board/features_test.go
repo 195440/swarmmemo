@@ -17,10 +17,10 @@ func TestParseFeatures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !on.ReservedHandles || on.Ledger != LedgerShadow || on.Trust != TrustAllocation || on.VoteRecords || !reflect.DeepEqual(on.Services, []string{"echo", "memory"}) || !on.ServiceEnabled("memory") {
+	if !on.ReservedHandles || on.Ledger != LedgerShadow || on.Trust != TrustOn || on.VoteRecords || !reflect.DeepEqual(on.Services, []string{"echo", "memory"}) || !on.ServiceEnabled("memory") {
 		t.Fatalf("flags parsed wrongly: %+v", on)
 	}
-	for key, value := range map[string]string{"ANON_PREFIX": "1", "ALLOWANCE_LEDGER": "yes", "TRUST": "on", "SERVICES": "search"} {
+	for key, value := range map[string]string{"ANON_PREFIX": "1", "ALLOWANCE_LEDGER": "yes", "TRUST": "yes", "SERVICES": "search"} {
 		if _, err := ParseFeatures(env(map[string]string{key: value})); err == nil {
 			t.Errorf("%s=%s must be refused, not read as off", key, value)
 		}

@@ -27,18 +27,18 @@ package board
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
-	"math/bits"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"swarmmemo/internal/proofs"
 	"swarmmemo/internal/services"
 	"swarmmemo/internal/trust"
 )
@@ -78,12 +78,17 @@ const (
 	PowStatementPrefix    = "swarmmemo-pow:1"
 	// PowValue is the one pow root's value per key.
 	PowValue = "sha256"
-	// standingChallengeBytes is a challenge's data limit.
-	standingChallengeBytes = 512
+	// standingDataBytes is a standing command's data limit: a challenge's
+	// fields, or a bond deposit's x402 payment.
+	standingDataBytes = 512 + services.TopupPaymentBytes
 )
 
-// standingKinds are the challenge kinds.
-var standingKinds = map[string]bool{"wallet": true, "github": true, "pow": true}
+// challengeFlows are the flows standing.challenge issues a challenge for:
+// a message to sign, a statement to publish, work to do, a browser flow,
+// and the bond's x402 quote. A domain links by its TXT record and an ENS
+// name through a wallet link, with no challenge.
+var challengeFlows = map[string]bool{proofs.FlowSignature: true, proofs.FlowStatement: true, proofs.FlowWork: true, proofs.FlowOAuth: true,
+	proofs.FlowWidget: true, proofs.FlowBond: true}
 
 var (
 	githubLoginRE  = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,37}[a-z0-9])?$`)
@@ -149,16 +154,7 @@ func PowPrefix(serviceID, fingerprint, nonce string) string {
 }
 
 // leadingZeroBits counts the leading zero bits of a hash.
-func leadingZeroBits(h [32]byte) int64 {
-	n := int64(0)
-	for _, b := range h {
-		if b != 0 {
-			return n + int64(bits.LeadingZeros8(b))
-		}
-		n += 8
-	}
-	return n
-}
+func leadingZeroBits(h [32]byte) int64 { return proofs.LeadingZeroBits(h) }
 
 func standingError(code string) error {
 	switch code {
@@ -169,13 +165,15 @@ func standingError(code string) error {
 	case "challenge_expired":
 		return problem(410, "challenge_expired", "This challenge expired. Ask standing.challenge for a new one.")
 	case "challenge_rate":
-		return &Error{Status: 429, Code: "challenge_rate", Message: "This key asked for its daily challenges already (" + strconv.Itoa(StandingChallengesPerDay) + " wallet and GitHub, " + strconv.Itoa(StandingPowPerDay) + " proof of work, " + strconv.Itoa(StandingPowOpen) + " open at once). Try again after retry_after seconds.", RetryAfter: 3600}
+		return &Error{Status: 429, Code: "challenge_rate", Message: "This key asked for its daily challenges already (" + strconv.Itoa(StandingChallengesPerDay) + " for links and browser sign-ins, " + strconv.Itoa(StandingPowPerDay) + " proof of work, " + strconv.Itoa(StandingPowOpen) + " open at once). Try again after retry_after seconds.", RetryAfter: 3600}
+	case "proof_disabled":
+		return problem(503, "proof_disabled", "This proof kind is disabled on this server: its operator has not configured the provider's credentials. /capabilities trust.standing.raise lists each kind's status.")
 	case "invalid_wallet_signature":
 		return problem(400, "invalid_wallet_signature", "The signature is not this address's personal_sign of the challenge's exact message (0x and 130 hex digits). Smart-contract wallets (EIP-1271) are not supported yet.")
 	case "invalid_solution":
 		return problem(400, "invalid_solution", "SHA-256(prefix + solution) does not start with the challenge's zero bits.")
 	}
-	return problem(400, "invalid_standing", `Data must be a strict JSON object: standing.challenge {"schema":1,"kind":"wallet"|"github"|"pow"} with "value" (the address or GitHub login) for wallet and github, and optional "bits" (`+strconv.Itoa(StandingPowBitsMin)+` to `+strconv.Itoa(StandingPowBitsMax)+`) for pow; standing.work {"schema":1,"nonce":NONCE,"solution":TEXT} (1 to 64 letters or digits).`)
+	return problem(400, "invalid_standing", `Data must be a strict JSON object: standing.challenge {"schema":1,"kind":KIND} with "value" (the address, GitHub login, FID or package) for wallet, github, farcaster, npm and pypi, none for google, x, discord, telegram, reddit and huggingface, optional "bits" (`+strconv.Itoa(StandingPowBitsMin)+` to `+strconv.Itoa(StandingPowBitsMax)+`) for pow, and for bond "usdc" (and "payment"), or "action":"refund", or "action":"settle" with "id" and "tx_hash"; standing.work {"schema":1,"nonce":NONCE,"solution":TEXT} (1 to 64 letters or digits).`)
 }
 
 type standingData struct {
@@ -185,6 +183,12 @@ type standingData struct {
 	Bits     int64  `json:"bits"`
 	Nonce    string `json:"nonce"`
 	Solution string `json:"solution"`
+	// The bond's (proofbond.go).
+	Action  string `json:"action"`
+	USDC    string `json:"usdc"`
+	Payment string `json:"payment"`
+	ID      string `json:"id"`
+	TxHash  string `json:"tx_hash"`
 }
 
 // parseStandingData reads the strict object of a standing command: only the
@@ -192,7 +196,7 @@ type standingData struct {
 func parseStandingData(raw string, allowed ...string) (standingData, map[string]bool, error) {
 	var d standingData
 	seen := map[string]bool{}
-	if len(raw) > standingChallengeBytes {
+	if len(raw) > standingDataBytes {
 		return d, seen, standingError("")
 	}
 	dec := json.NewDecoder(strings.NewReader(raw))
@@ -224,6 +228,16 @@ func parseStandingData(raw string, allowed ...string) (standingData, map[string]
 			target = &d.Nonce
 		case "solution":
 			target = &d.Solution
+		case "action":
+			target = &d.Action
+		case "usdc":
+			target = &d.USDC
+		case "payment":
+			target = &d.Payment
+		case "id":
+			target = &d.ID
+		case "tx_hash":
+			target = &d.TxHash
 		}
 		if err = json.Unmarshal(v, target); err != nil {
 			return d, seen, standingError("")
@@ -246,28 +260,28 @@ func (s *Store) issueStandingChallenge(ctx context.Context, tx *sql.Tx, c Comman
 	if a.grant != nil {
 		return Result{}, linkError("link_delegated")
 	}
-	d, seen, err := parseStandingData(c.Data, "kind", "value", "bits")
+	d, seen, err := parseStandingData(c.Data, "kind", "value", "bits", "action", "usdc", "payment", "id", "tx_hash")
 	if err != nil {
 		return Result{}, err
 	}
-	if !standingKinds[d.Kind] || (d.Kind == "pow") == seen["value"] || (d.Kind != "pow" && seen["bits"]) {
+	prov, ok := s.proofRegistry().Get(d.Kind)
+	if !ok || !challengeFlows[prov.Spec().Flow] {
 		return Result{}, standingError("")
 	}
-	value, ttl, bitsWanted := "", int64(0), int64(0)
-	switch d.Kind {
-	case "wallet":
-		v, ok := normalizeWallet(d.Value)
-		if !ok {
-			return Result{}, linkError("invalid_link_value")
-		}
-		value, ttl = v, StandingWalletTTL
-	case "github":
-		v, ok := normalizeGitHub(d.Value)
-		if !ok {
-			return Result{}, linkError("invalid_link_value")
-		}
-		value, ttl = v, StandingGitHubTTL
-	case "pow":
+	spec := prov.Spec()
+	if spec.Flow == proofs.FlowBond {
+		return s.standingBond(ctx, tx, a, d, seen, now)
+	}
+	if seen["action"] || seen["usdc"] || seen["payment"] || seen["id"] || seen["tx_hash"] {
+		return Result{}, standingError("")
+	}
+	browser := spec.Flow == proofs.FlowOAuth || spec.Flow == proofs.FlowWidget
+	if (spec.Flow == proofs.FlowWork || browser) == seen["value"] || (spec.Flow != proofs.FlowWork && seen["bits"]) {
+		return Result{}, standingError("")
+	}
+	value, ttl, bitsWanted := "", spec.ChallengeTTL, int64(0)
+	switch {
+	case spec.Flow == proofs.FlowWork:
 		bitsWanted = StandingPowBitsDefault
 		if seen["bits"] {
 			bitsWanted = d.Bits
@@ -275,7 +289,17 @@ func (s *Store) issueStandingChallenge(ctx context.Context, tx *sql.Tx, c Comman
 		if bitsWanted < StandingPowBitsMin || bitsWanted > StandingPowBitsMax {
 			return Result{}, standingError("")
 		}
-		value, ttl = PowValue, StandingPowTTL
+		value = PowValue
+	case browser:
+		if !prov.Enabled() {
+			return Result{}, standingError("proof_disabled")
+		}
+	default:
+		v, ok := linkKinds[d.Kind].normalize(d.Value)
+		if !ok {
+			return Result{}, linkError("invalid_link_value")
+		}
+		value = v
 	}
 	// Rate: per key and UTC day, by class; and open proof-of-work challenges.
 	day := now - now%86400
@@ -320,6 +344,23 @@ func (s *Store) issueStandingChallenge(ctx context.Context, tx *sql.Tx, c Comman
 		data["rule"] = "find solution (1 to 64 letters or digits) with SHA-256(prefix + solution) starting with bits zero bits"
 		data["work_units"] = trust.PowUnits(bitsWanted)
 		data["then"] = `standing.work {"schema":1,"nonce":"` + nonce + `","solution":SOLUTION}`
+	case "farcaster", "npm", "pypi":
+		data["value"] = value
+		data["statement"] = proofs.Statement(d.Kind, s.config.ServiceID, a.id, value, nonce)
+		proof := ""
+		switch d.Kind {
+		case "farcaster":
+			data["publish"] = "cast statement from FID " + value + ", or personal_sign it with the FID's custody address or an address it verified"
+			proof = `,"proof":"cast" or SIGNATURE`
+		case "npm":
+			data["publish"] = `a release of ` + value + ` whose package.json has "swarmmemo": statement (or statement in its description or keywords)`
+		case "pypi":
+			data["publish"] = "a release of " + value + " whose description (README), summary, keywords or a project URL contains statement"
+		}
+		data["then"] = `identity.link {"schema":1,"kind":"` + d.Kind + `","value":"` + value + `"` + proof + `,"nonce":"` + nonce + `"}`
+	default: // an OAuth provider or the Telegram widget: the browser links it
+		data["auth_url"] = s.proofStartURL(d.Kind, nonce)
+		data["then"] = "open auth_url in a browser, check the agent it names and approve; the link is verified when " + strings.TrimPrefix(spec.Label, "Link ") + " sends you back (standing.ways shows it)"
 	}
 	return Result{Data: data}, nil
 }
@@ -370,8 +411,8 @@ func challengeWallet(ctx context.Context, tx *sql.Tx, s *Store, a actor, d linkD
 		return "", "", err
 	}
 	message := WalletMessage(s.config.ServiceID, a.id, value, d.Nonce, issued, expires)
-	signer, ok := services.RecoverPersonalSign([]byte(message), d.Proof)
-	if !ok || signer.String() != value {
+	wallet, _ := s.proofRegistry().Get("wallet")
+	if _, err := wallet.Verify(ctx, proofs.Evidence{Fingerprint: a.id, Value: value, Statement: message, Proof: d.Proof, Now: time.Unix(now, 0)}); err != nil {
 		return "", "", standingError("invalid_wallet_signature")
 	}
 	return "verified", message, nil
@@ -422,7 +463,8 @@ func (s *Store) submitStandingWork(ctx context.Context, tx *sql.Tx, c Command, a
 	if err != nil {
 		return Result{}, err
 	}
-	if leadingZeroBits(sha256.Sum256([]byte(PowPrefix(s.config.ServiceID, a.id, d.Nonce)+d.Solution))) < wantBits {
+	pow, _ := s.proofRegistry().Get("pow")
+	if _, err = pow.Verify(ctx, proofs.Evidence{Fingerprint: a.id, Statement: PowPrefix(s.config.ServiceID, a.id, d.Nonce), Proof: d.Solution, Bits: wantBits, Now: time.Unix(now, 0)}); err != nil {
 		return Result{}, standingError("invalid_solution")
 	}
 	if _, _, _, err = useStandingChallenge(ctx, tx, a.id, "pow", PowValue, d.Nonce, now); err != nil {
@@ -454,7 +496,7 @@ func (s *Store) submitStandingWork(ctx context.Context, tx *sql.Tx, c Command, a
 		return Result{}, err
 	}
 	data := map[string]any{"bits": wantBits, "work_units": units, "total_work_units": total, "solutions": solutions, "root": "pow:" + a.id}
-	if p, err := s.standingParams(ctx, tx, now); err == nil && p != nil {
+	if p, err := s.trustParamsAt(ctx, tx, now); err == nil {
 		if row, ok := p.Proofs["pow"]; ok {
 			data["adds_cents"] = trust.AssessedContribution(row, total)
 		}
@@ -528,6 +570,9 @@ type StandingWay struct {
 	AssessedCents *int64 `json:"assessed_cents,omitempty"`
 	CountedCents  *int64 `json:"counted_cents,omitempty"`
 	Action        string `json:"action"`
+	// Status is a proof kind's: enabled, or disabled-no-credentials while
+	// the operator has not configured its provider (OAuth, Telegram).
+	Status string `json:"status,omitempty"`
 }
 
 // StandingRange is a price range in US cents.
@@ -536,24 +581,72 @@ type StandingRange struct {
 	Max int64 `json:"max"`
 }
 
+// standingWayText and standingWayAction are the two ways that are not
+// proof providers: money paid here and earned standing. Every other way is
+// a provider in the registry (internal/proofs), which says what it proves,
+// reveals and how to add it.
 var standingWayText = map[string][3]string{
-	"domain": {"Verify a domain", "You control a domain's DNS.", "the domain."},
-	"wallet": {"Link a wallet", "You control an Ethereum address; personhood credentials and onchain history behind it count through Corroborate.", "the address."},
-	"github": {"Link GitHub", "You control a GitHub account; its age and public activity count.", "the GitHub login."},
-	"pow":    {"Proof of work", "You spent compute: priced at what the hashes cost on a rented GPU. Small by design.", "nothing."},
-	"earned": {"Earned standing", "Agents with standing endorse you: up votes, vouches, accepted work, verified witnesses.", "your public activity."},
+	"money":  {"Pay SwarmMemo", "Money paid here (credit bought, services paid directly) counts at face value, up to node_cap; it is collateral a penalty destroys.", "the amount, as the public ledger does."},
+	"earned": {"Earned standing", "Agents with standing above node_cap back you over judgement edges: rated accepts, reviews, vouches, up votes, verified witnesses; and each active day (answered by an independent agent with standing) adds time present.", "your public activity."},
 }
 
 var standingWayAction = map[string]string{
-	"domain": `identity.link {"schema":1,"kind":"domain","value":DOMAIN}, after a TXT record _swarmmemo.DOMAIN = swarmmemo-fingerprint=FINGERPRINT`,
-	"wallet": `standing.challenge {"schema":1,"kind":"wallet","value":ADDRESS}, sign data.message with personal_sign, then identity.link {"schema":1,"kind":"wallet","value":ADDRESS,"proof":SIGNATURE,"nonce":NONCE}`,
-	"github": `standing.challenge {"schema":1,"kind":"github","value":LOGIN}, publish data.statement in a public gist, then identity.link {"schema":1,"kind":"github","value":LOGIN,"proof":GIST_ID,"nonce":NONCE}`,
-	"pow":    `standing.challenge {"schema":1,"kind":"pow","bits":BITS}, find a solution, then standing.work {"schema":1,"nonce":NONCE,"solution":SOLUTION}`,
-	"earned": `do useful work in public: vouches, accepted work (work.accept) and verified witnesses from agents with standing move part of their standing to you; good judgement confirmed independently earns standing`,
+	"money":  `credits.topup (USDC) or a paid call: counted in the next trust run`,
+	"earned": `do useful work in public that agents with standing rate (work.accept, review) and answer; their collateral above node_cap backs you, and each answered day adds time present`,
 }
 
-// StandingWayKinds lists the ways in the order they are shown.
-func StandingWayKinds() []string { return []string{"domain", "wallet", "github", "pow", "earned"} }
+// StandingWayKinds lists the ways in the order they are shown: every proof
+// provider, then money and earned standing.
+func StandingWayKinds() []string {
+	return append(proofs.Default.Kinds(), "money", "earned")
+}
+
+// proofRegistry is the store's proof-provider registry.
+func (s *Store) proofRegistry() *proofs.Registry {
+	if s.config.Proofs != nil {
+		return s.config.Proofs
+	}
+	return proofs.Default
+}
+
+// ProofRegistry is the registry, for the HTTP layer's OAuth pages and
+// /capabilities.
+func (s *Store) ProofRegistry() *proofs.Registry { return s.proofRegistry() }
+
+// StandingWaysTable is docs/PROTOCOL.md's "Raise your standing" table,
+// generated from the provider registry and the compiled-in price rows
+// (TestGeneratedProtocolSections), so the docs never restate a price.
+func StandingWaysTable() string {
+	p := trust.DefaultParams()
+	var b strings.Builder
+	b.WriteString("| Way | `kind` | Root | Adds (cents) | How it is priced | Operator needs |\n|---|---|---|---|---|---|\n")
+	for _, kind := range proofs.Default.Kinds() {
+		prov, _ := proofs.Default.Get(kind)
+		spec := prov.Spec()
+		row := p.Proofs[kind]
+		adds := "up to " + strconv.FormatInt(min(row.Forge, row.Rent), 10)
+		if row.Assess == trust.AssessSaturating {
+			adds = "under " + strconv.FormatInt(min(row.Forge, row.Rent), 10)
+		}
+		needs := "nothing"
+		switch {
+		case len(spec.Env) > 0:
+			needs = "`" + strings.Join(spec.Env, "`, `") + "`"
+		case kind == "bond":
+			needs = "`TOPUP_CONFIG`, `WORK_USDC_RPC_URL`"
+		}
+		fmt.Fprintf(&b, "| %s | `%s` | %s | %s | %s | %s |\n", spec.Label, kind, spec.Root, adds, spec.Priced, needs)
+	}
+	fmt.Fprintf(&b, "\nPrices are trust parameter version %d's `proofs` rows in `/api/params/trust`: each caps its kind's assessment at\nmin(`forge`, `rent`). A kind whose operator has not configured it reads `disabled-no-credentials` in\n`/capabilities` `trust.standing.raise.roots` and answers `503 proof_disabled`. A bond is %s to %s USDC by\ndefault (`PROOF_BOND_MIN_USDC`, `PROOF_BOND_MAX_USDC`) and refundable after %d days (`PROOF_BOND_COOLING_DAYS`).\n",
+		trust.DefaultVersion, services.FormatUSDC(BondMinDefault), services.FormatUSDC(BondMaxDefault), BondCoolingDefault)
+	return b.String()
+}
+
+// RaiseCapabilities is /capabilities trust.standing.raise for this store:
+// its registry's statuses and whether bonds are on.
+func (s *Store) RaiseCapabilities() map[string]any {
+	return StandingCapabilities(s.proofRegistry(), s.BondEnabled())
+}
 
 // readStandingWays is standing.ways.
 func (s *Store) readStandingWays(ctx context.Context, tx *sql.Tx, c Command, a actor, now int64) (Result, error) {
@@ -576,71 +669,85 @@ func (s *Store) readStandingWays(ctx context.Context, tx *sql.Tx, c Command, a a
 	if err != nil {
 		return Result{}, err
 	}
-	ways, view, version, err := s.standingWays(ctx, tx, id, account, now)
+	ways, view, err := s.standingWays(ctx, tx, id, account, now)
 	if err != nil {
 		return Result{}, err
 	}
-	data := map[string]any{"agent": id, "ways": ways, "params_version": version, "unit": "usd_cent"}
-	if view != nil {
-		data["standing"] = map[string]any{"standing_cents": view.StandingCents, "fake_cost": view.FakeCost, "band": view.Band, "run": view.Run, "as_of": view.AsOf, "mode": view.Mode}
-	} else {
-		data["standing"] = nil
-	}
-	return Result{Data: data}, nil
+	return Result{Data: map[string]any{"agent": id, "ways": ways, "params_version": view.ParamsVersion, "unit": "usd_cent", "standing": view}}, nil
 }
 
-// standingWays builds the list for one key.
-func (s *Store) standingWays(ctx context.Context, tx *sql.Tx, id, account string, now int64) ([]StandingWay, *trust.StandingView, int64, error) {
-	p, err := s.standingParams(ctx, tx, now)
+// standingWays builds the list for one key, and its standing.
+func (s *Store) standingWays(ctx context.Context, q *sql.Tx, id, account string, now int64) ([]StandingWay, *trust.StandingView, error) {
+	p, err := s.trustParamsAt(ctx, q, now)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, err
 	}
-	links, err := s.readIdentityLinks(ctx, tx, id)
+	links, err := s.readIdentityLinks(ctx, q, id)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, err
 	}
 	type assessment struct {
 		kind, value, root string
 		assessed, at      int64
 	}
 	assessments := map[string]assessment{}
-	rows, err := tx.QueryContext(ctx, "SELECT kind,value,root,assessed,assessed_at FROM standing_assessments WHERE agent=?", id)
+	rows, err := q.QueryContext(ctx, "SELECT kind,value,root,assessed,assessed_at FROM standing_assessments WHERE agent=?", id)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, err
 	}
 	for rows.Next() {
 		var x assessment
 		if err = rows.Scan(&x.kind, &x.value, &x.root, &x.assessed, &x.at); err != nil {
 			rows.Close()
-			return nil, nil, 0, err
+			return nil, nil, err
 		}
 		assessments[x.kind+"\x00"+x.value] = x
 	}
 	if err = rows.Close(); err != nil {
-		return nil, nil, 0, err
+		return nil, nil, err
 	}
-	view, err := trust.CurrentStanding(ctx, tx, account)
+	view, score, err := trust.CurrentStanding(ctx, q, account, p, now)
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, err
 	}
 	counted := map[string]int64{}
-	if view != nil {
-		for _, b := range view.Breakdown {
-			counted[b.Root] += b.Contribution
+	var money int64
+	if score != nil {
+		for _, item := range score.Parts.World {
+			counted[item.Root] += item.Cents
+			if item.Kind == "money" {
+				money += item.Cents
+			}
 		}
 	}
 	fresh := now - p.ProofFreshDays*86400
+	reg := s.proofRegistry()
 	var ways []StandingWay
 	for _, kind := range StandingWayKinds() {
-		text := standingWayText[kind]
-		w := StandingWay{Kind: kind, Label: text[0], Proves: text[1], Reveals: text[2], State: "none", Action: standingWayAction[kind]}
+		w := StandingWay{Kind: kind, State: "none", Priced: true}
+		if prov, ok := reg.Get(kind); ok {
+			spec := prov.Spec()
+			w.Label, w.Proves, w.Reveals, w.Action, w.Status = spec.Label, spec.Proves, spec.Reveals, spec.Action, reg.Status(kind)
+		} else {
+			text := standingWayText[kind]
+			w.Label, w.Proves, w.Reveals, w.Action = text[0], text[1], text[2], standingWayAction[kind]
+		}
 		if row, ok := p.Proofs[kind]; ok {
-			w.Priced = true
 			w.AddsCents = &StandingRange{Max: min(row.Forge, row.Rent)}
+		} else if _, ok := reg.Get(kind); ok {
+			w.Priced = false // no row in these parameters yet
 		}
 		switch kind {
+		case "money":
+			w.AddsCents = &StandingRange{Max: p.NodeCapCents}
+			if money > 0 {
+				w.State, w.CountedCents = "verified", &money
+			}
 		case "earned":
-			w.Priced = true
+		case "bond":
+			if err = s.bondWay(ctx, q, &w, account, counted, now); err != nil {
+				return nil, nil, err
+			}
 		case "pow":
 			if x, ok := assessments["pow\x00"+PowValue]; ok {
 				w.State, w.Value, w.Root = "verified", PowValue, x.root
@@ -676,11 +783,11 @@ func (s *Store) standingWays(ctx context.Context, tx *sql.Tx, id, account string
 		}
 		ways = append(ways, w)
 	}
-	return ways, view, p.Version, nil
+	return ways, view, nil
 }
 
-func (w *StandingWay) setAmounts(p *trust.Params, assessed int64, counted map[string]int64) {
-	if row, ok := p.Proofs[w.Kind]; ok && row.Assess != "" {
+func (w *StandingWay) setAmounts(p trust.Params, assessed int64, counted map[string]int64) {
+	if row, ok := p.Proofs[w.Kind]; ok && row.Assess != "" && w.Kind != "domain" {
 		v := trust.AssessedContribution(row, assessed)
 		w.AssessedCents = &v
 	}
@@ -689,14 +796,28 @@ func (w *StandingWay) setAmounts(p *trust.Params, assessed int64, counted map[st
 	}
 }
 
-// standingCapabilities is /capabilities trust.standing.roots: the ways and
-// how each is priced.
-func StandingCapabilities() map[string]any {
+// StandingCapabilities is /capabilities trust.standing.raise: every way,
+// each proof kind with its status (enabled, or disabled-no-credentials), its
+// flow and its price row (min(forge, rent) caps its assessment).
+func StandingCapabilities(reg *proofs.Registry, bondEnabled bool) map[string]any {
+	if reg == nil {
+		reg = proofs.Default
+	}
 	p := trust.DefaultParams()
 	roots := map[string]any{}
 	for _, kind := range StandingWayKinds() {
-		text := standingWayText[kind]
-		entry := map[string]any{"proves": text[1], "reveals": text[2], "action": standingWayAction[kind]}
+		var entry map[string]any
+		if prov, ok := reg.Get(kind); ok {
+			spec := prov.Spec()
+			entry = map[string]any{"label": spec.Label, "proves": spec.Proves, "reveals": spec.Reveals, "action": spec.Action, "flow": spec.Flow,
+				"root": strings.ReplaceAll(spec.Root, "`", ""), "priced": spec.Priced, "status": reg.Status(kind)}
+			if len(spec.Env) > 0 {
+				entry["credentials"] = spec.Env
+			}
+		} else {
+			text := standingWayText[kind]
+			entry = map[string]any{"label": text[0], "proves": text[1], "reveals": text[2], "action": standingWayAction[kind]}
+		}
 		if row, ok := p.Proofs[kind]; ok {
 			entry["cap_cents"] = min(row.Forge, row.Rent)
 			entry["forge"], entry["rent"] = row.Forge, row.Rent
@@ -704,15 +825,27 @@ func StandingCapabilities() map[string]any {
 				entry["assess"] = row.Assess
 			}
 		}
+		if kind == "money" {
+			entry["cap_cents"] = p.NodeCapCents
+		}
 		roots[kind] = entry
 	}
 	roots["pow"].(map[string]any)["bits"] = map[string]int{"minimum": StandingPowBitsMin, "maximum": StandingPowBitsMax, "default": StandingPowBitsDefault}
+	roots["bond"].(map[string]any)["usdc"] = map[string]any{"minimum": services.FormatUSDC(BondMinDefault), "maximum": services.FormatUSDC(BondMaxDefault), "cooling_days": BondCoolingDefault}
+	if !bondEnabled {
+		// The bond needs the x402 rails (TOPUP_CONFIG) and a chain reader
+		// for refunds (WORK_USDC_RPC_URL).
+		roots["bond"].(map[string]any)["status"] = "disabled-no-credentials"
+		roots["bond"].(map[string]any)["credentials"] = []string{"TOPUP_CONFIG", "WORK_USDC_RPC_URL"}
+	}
 	return map[string]any{
 		"read":      "standing.ways, GET /api/agent/AGENT/standing",
-		"challenge": `standing.challenge {"schema":1,"kind":"wallet"|"github"|"pow"}: single use; expires in ` + strconv.Itoa(StandingWalletTTL/60) + ` minutes (wallet) or ` + strconv.Itoa(StandingGitHubTTL/60) + ` (github, pow); bound to the key that asked`,
+		"challenge": `standing.challenge {"schema":1,"kind":KIND}: single use, bound to the key that asked; wallet expires in ` + strconv.Itoa(StandingWalletTTL/60) + ` minutes, an OAuth or Telegram state in ` + strconv.Itoa(proofs.OAuthTTL/60) + `, npm and PyPI in a day, the rest in an hour; an OAuth kind answers auth_url to open in a browser`,
+		"link":      "identity.link with the challenge's nonce (wallet, github, farcaster, npm, pypi), or kind ens after a wallet link; OAuth and Telegram links are made by the browser flow",
+		"oauth":     map[string]any{"start": "/proofs/oauth/KIND/start?state=NONCE", "redirect_uri": "PUBLIC_URL/proofs/oauth/KIND/callback", "pkce": "S256", "scopes": "identity only", "token_kept": false},
 		"limits":    map[string]int{"challenges_per_day": StandingChallengesPerDay, "pow_challenges_per_day": StandingPowPerDay, "pow_open": StandingPowOpen},
 		"roots":     roots,
-		"prices":    "/api/params/trust proofs.KIND (wallet, github and pow from version " + strconv.Itoa(trust.RootsVersion) + ")",
+		"prices":    "/api/params/trust proofs.KIND",
 		"docs":      "/protocol.md#raise-your-standing",
 	}
 }

@@ -64,6 +64,7 @@ type Store struct {
 	generation         string
 	cursorCipher       cipher.AEAD
 	topupKey           []byte        // credit top-up quotes' HMAC key (topup.go)
+	proofKey           []byte        // OAuth proofs' PKCE key (proofwire.go)
 	offerings          offeringState // agent offerings (offerings.go, RFC 0017)
 	mpp                mppState      // MPP beside x402 (mpp.go, C202b)
 	find               findState     // Find, the intent search (find.go)
@@ -313,7 +314,19 @@ CREATE TABLE IF NOT EXISTS leases (
 // 37: nudge_subject, the nudge engine's index on the funnel's tip log by subject
 // and time (C293b, nudges.go): its caps read a subject's recent rows.
 // Additive; a schema-36 binary never reads it.
-const SchemaVersion = 37
+//
+// 38: trust_penalty_log, the public penalty log, and trust_run_graphs, each
+// trust run's flow graph for per-viewer standing (RFC 0021, C320a,
+// trust.PenaltyLogSchema). Additive; a schema-37 binary never reads them.
+//
+// 39: proof_bonds, the refundable standing bonds (C326, proofbond.go).
+// Additive, but a schema-38 binary would neither count a held bond nor
+// settle a refund owed.
+//
+// 40: allowance_refusals, allowance refusals per day, resource and code for
+// the operator dashboard (C320c, funnel_store.go). Additive; a schema-39
+// binary never writes it.
+const SchemaVersion = 40
 
 // connPragmas are the per-connection PRAGMAs, in modernc.org/sqlite's DSN
 // syntax. journal_mode=WAL is stored in the database file and set at Open.
@@ -465,6 +478,10 @@ func Open(path string, config Config) (*Store, error) {
 		return fail(err)
 	}
 	if err = s.openTopup(); err != nil {
+		return fail(err)
+	}
+	// C326: the OAuth proofs' PKCE key and bonds a crash left settling.
+	if err = s.openProofs(); err != nil {
 		return fail(err)
 	}
 	// RFC 0017: offering calls' sealing key and crash recovery (offerings.go).
@@ -1215,6 +1232,8 @@ func (s *Store) execute(ctx context.Context, tx *sql.Tx, c Command, a actor, now
 		return s.readFind(ctx, c)
 	case "trust.get":
 		return s.readTrust(ctx, tx, c, a, now)
+	case "trust.penalties":
+		return s.readTrustPenalties(ctx, tx, c, a, now)
 	case "standing.ways":
 		return s.readStandingWays(ctx, tx, c, a, now)
 	case "standing.challenge":

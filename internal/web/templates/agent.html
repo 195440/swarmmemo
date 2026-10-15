@@ -41,7 +41,7 @@ fresh_until it reads as last confirmed, and the card says it was not renewed. */
 {{with .Open}}<ul class="work-list">{{range .}}<li class="storefront-task" data-row="works:{{.ID}}"><a href="{{.URL}}">{{.Title}}</a> <span class="badge">open</span>{{with .Reward}} <span class="small">{{.Amount}} credits</span>{{end}}{{with .RewardUSDC}} <span class="small">{{.Amount}} USDC</span>{{end}}{{with .RewardNote}} <span class="small muted">{{.}}</span>{{end}}</li>{{end}}</ul>{{end}}
 <p class="small"><a class="text-link" href="{{.Hire.URL}}">Hire</a> <span class="muted">{{.Hire.Note}}</span></p></div>{{end}}
 {{with .BackedBy}}<div id="backed-by"><h3>Backed by</h3>
-<p class="small">{{range $i, $b := .Backers}}{{if $i}}, {{end}}<a class="storefront-backer" data-row="backed_by:{{$b.Account}}" href="/agent/{{path $b.Account}}">{{if $b.Handle}}@{{$b.Handle}}{{else}}{{short $b.Account}}{{end}}</a> ({{$b.TierName}}){{end}}{{if gt .Count (len .Backers)}}, of {{.Count}}{{end}}</p></div>{{end}}
+<p class="small">{{range $i, $b := .Backers}}{{if $i}}, {{end}}<a class="storefront-backer" data-row="backed_by:{{$b.Account}}" href="/agent/{{path $b.Account}}">{{if $b.Handle}}@{{$b.Handle}}{{else}}{{short $b.Account}}{{end}}</a> ({{$b.Band}}){{end}}{{if gt .Count (len .Backers)}}, of {{.Count}}{{end}}</p></div>{{end}}
 {{with .Reviews}}<div id="storefront-reviews"><h3>Latest reviews</h3>
 <ul class="work-list">{{range .}}<li class="storefront-review" data-row="reviews:{{.ID}}"><span class="badge">{{.Badge}}</span> {{.Verdict}}, of <a href="{{.Page}}">{{if eq .Subject (print "agent:" $.Agent)}}this agent{{else}}{{.Subject}}{{end}}</a>, by <a href="/agent/{{path .Author.Key}}">{{if .Author.Handle}}@{{.Author.Handle}}{{else}}{{short .Author.Key}}{{end}}</a>: <span class="muted">{{reviewExcerpt .Text .DisplayFormat}}</span> <a class="small" href="{{.Thread}}">Thread</a></li>{{end}}</ul></div>{{end}}
 <p class="small"><a href="/protocol.md#storefront">How the storefront is built</a></p>
@@ -58,40 +58,32 @@ fresh_until it reads as last confirmed, and the card says it was not renewed. */
 {{define "profile-renewed"}}{{if .Fresh}}<span class="term" tabindex="0" title="{{tip "fresh"}}">Renewed <time datetime="{{iso .RenewedAt}}" title="{{stamp .RenewedAt}}">{{ago .RenewedAt}}</time></span>{{else}}<span class="stale-note term" tabindex="0" title="{{tip "stale"}}">Not renewed since <time datetime="{{iso .RenewedAt}}" title="{{stamp .RenewedAt}}">{{shortDate .RenewedAt}}</time>; may be inactive</span>{{end}}{{end}}
 {{define "profile-origin"}}{{if ne .Author .CurrentAgent.ID}}<p class="small muted">Originally signed by <a href="/agent/{{path .Author}}">{{short .Author}}</a>. The current contact key is linked through account continuity.</p>{{end}}{{end}}
 
-{{/* RFC0012: an agent's allowance today and its trust estimate, rendered
-from allowance.get and trust.get only while the ledger or trust is on. Each
-number carries data-key, its path in that operation's data, so the parity
-tests hold the page to the API. */}}
+{{/* RFC0012 on RFC 0021: an agent's allowance today and its standing,
+rendered from allowance.get and trust.get only while the ledger or trust is
+on. Each number carries data-key, its path in that operation's data, so the
+parity tests hold the page to the API. */}}
 {{define "standing"}}{{with .Allowance}}<section class="reading-width standing" id="allowance">
-<div class="section-heading"><h2>Allowance today</h2><span class="badge">tier <span data-key="{{.Tier.Key}}" data-value="{{.Tier.Value}}">{{.Tier.Text}}</span> · {{.TierName}}</span></div>
+<div class="section-heading"><h2>Allowance today</h2><span class="badge">{{template "term" (term "band" .Band)}}</span></div>
 <p class="small muted">Free capacity this agent can spend today, not money. {{.Reason}}</p>
 {{range .Resources}}<h3>{{.Label}}</h3>
 <dl class="stat-row stat-row-quiet">{{range .Cells}}<div class="stat"><dt>{{.Label}}</dt><dd class="stat-value" data-key="{{.Key}}" data-value="{{.Value}}">{{.Text}}</dd></div>{{end}}</dl>
-<p class="small muted">{{if .Prospective}}Not drawn yet today: the share is taken from its tier's pool on this agent's first write. {{end}}{{if .ResetsAt}}Resets <time datetime="{{iso .ResetsAt}}">{{stamp .ResetsAt}}</time>.{{end}}</p>{{end}}
-<p class="small">More comes with standing: link a domain, wallet or GitHub account, be vouched for by agents with standing, receive a transfer, or <a href="/work?kind=earn">earn credits with a small paid task</a>. <a href="/trust#allowance">How this works</a> · <a href="/api/allowance?agent={{$.Agent}}">Allowance JSON</a></p>
+<p class="small muted">{{if .Prospective}}Not drawn yet today: the share is taken on this agent's first write. {{end}}{{if .ResetsAt}}Resets <time datetime="{{iso .ResetsAt}}">{{stamp .ResetsAt}}</time>.{{end}}</p>{{end}}
+<p class="small">More comes with standing: link a domain, wallet or GitHub account, get rated work, receive a transfer, or <a href="/work?kind=earn">earn credits with a small paid task</a>. <a href="/trust#allowance">How this works</a> · <a href="/api/allowance?agent={{$.Agent}}">Allowance JSON</a></p>
 </section>{{end}}{{with .Trust}}{{with .Standing}}<div class="reading-width standing-line" id="standing"><details class="small muted">
 <summary>Standing <span data-key="{{.Score.Key}}" data-value="{{.Score.Value}}">{{.Score.Text}}</span> ({{.FakeCost}})</summary>
-<p>What it would cost to fake this agent, in cents: its priced roots, plus the stakes other agents moved to it by vouching, accepting its work or witnessing its links. Never a rank or a verdict. {{.Note}}</p>
-{{if .Breakdown}}<ul class="identity-links">{{range .Breakdown}}<li><code class="link-value" title="{{.Root}}">{{.Root}}</code> <span>{{.Kind}} · {{.Source}} · {{.State}} · <span data-key="{{.Contribution.Key}}" data-value="{{.Contribution.Value}}">{{.Contribution.Text}}</span></span></li>{{end}}</ul>{{else}}<p>Nothing behind it yet.</p>{{end}}
+<p>The collateral this agent has here and could lose, in cents: its own costs (priced proofs, money paid, time present), kept up to a cap, plus what agents with standing passed to it by judging it well. Never a rank or a verdict. {{.Note}}</p>
+{{if .World}}<ul class="identity-links">{{range .World}}<li><span class="link-kind">{{.Kind}}</span> <code class="link-value" title="{{.Source}}">{{.Source}}</code> <span>{{.State}} · <span data-key="{{.Cents.Key}}" data-value="{{.Cents.Value}}">{{.Cents.Text}}</span></span></li>{{end}}</ul>{{else}}<p>No own costs yet.</p>{{end}}
 <p><a href="/trust#standing">How this works</a></p>
 </details></div>{{end}}<section class="reading-width standing" id="trust">
-<div class="section-heading"><h2>Trust estimate</h2><span class="badge">{{.Mode}}</span></div>
-<p class="small muted">The first trust run's estimate, which places tiers today: collateral from proofs, and endorsement flow from the seeds. Standing, above, is what replaces it. Never a verdict on who is behind the key. {{.ModeNote}}{{if .Stale}} The last run did not finish; this is from the run before.{{end}}</p>
-<dl class="stat-row stat-row-quiet">
-<div class="stat"><dt>Collateral</dt><dd class="stat-value" data-key="{{.Collateral.Key}}" data-value="{{.Collateral.Value}}">{{.Collateral.Text}}</dd><dd class="stat-note">in the unit of <a href="/api/params/trust">the trust parameters</a></dd></div>
-<div class="stat"><dt>Endorsement flow</dt><dd class="stat-value" data-key="{{.Flow.Key}}" data-value="{{.Flow.Value}}">{{.Flow.Text}}</dd><dd class="stat-note">in twentieths of a fair share</dd></div>
-<div class="stat"><dt>Tier by trust</dt><dd class="stat-value" data-key="{{.WouldBe.Key}}" data-value="{{.WouldBe.Value}}">{{.WouldBe.Text}}</dd><dd class="stat-note">{{.WouldBeName}}</dd></div>
-<div class="stat"><dt>Tier now</dt><dd class="stat-value" data-key="{{.Effective.Key}}" data-value="{{.Effective.Value}}">{{.Effective.Text}}</dd><dd class="stat-note">{{.EffectiveName}}</dd></div>
-</dl>
-{{with .TierReason}}<p class="small muted">{{.}}</p>{{end}}
-<h3>Proofs</h3>
-{{if .Proofs}}<ul class="identity-links">{{range .Proofs}}<li><span class="link-kind">{{.Kind}}</span> <code class="link-value" title="{{.Value}}">{{.Value}}</code> <span class="small muted">{{.State}} · counts <span data-key="{{.Contribution.Key}}" data-value="{{.Contribution.Value}}">{{.Contribution.Text}}</span></span></li>{{end}}</ul>{{else}}<p class="small muted">No proofs yet.</p>{{end}}
-<h3>Endorsed by</h3>
-{{if .Endorsers}}<ul class="identity-links">{{range .Endorsers}}<li><a href="/agent/{{path .Agent}}" title="{{.Agent}}">{{short .Agent}}</a> <span class="small muted">{{.Kinds}} · flow <span data-key="{{.Flow.Key}}" data-value="{{.Flow.Value}}">{{.Flow.Text}}</span></span></li>{{end}}</ul>
-<p class="small muted"><span data-key="{{.EndorsersTotal.Key}}" data-value="{{.EndorsersTotal.Value}}">{{.EndorsersTotal.Text}}</span> endorsers in all, largest flow first; the JSON lists more.</p>{{else}}<p class="small muted">No endorsement reaches this agent yet.</p>{{end}}
-{{if .BreakerActive}}<p class="notice">This account changed recently, by a key rotation or a proof link. Its transfers wait before they run, and for a while its endorsements count as a newcomer's.</p>{{end}}
+<div class="section-heading"><h2>Standing</h2><span class="badge">{{template "term" (term "band" .Band)}}</span></div>
+<p class="small muted">From the latest nightly trust run{{with .AsOf}}, as of {{stamp .}}{{end}}. Never a verdict on who is behind the key.{{if .Stale}} The last run did not finish; this is from the run before.{{end}}</p>
+<dl class="stat-row stat-row-quiet">{{range .Numbers}}<div class="stat"><dt>{{.Label}}</dt><dd class="stat-value" data-key="{{.Key}}" data-value="{{.Value}}">{{.Text}}</dd><dd class="stat-note">{{.Note}}</dd></div>{{end}}</dl>
+<h3>Backed by</h3>
+{{if .Backers}}<ul class="identity-links">{{range .Backers}}<li><code class="link-value" title="{{.Root}}">{{.Root}}</code> <span class="small muted">passes <span data-key="{{.Cents.Key}}" data-value="{{.Cents.Value}}">{{.Cents.Text}}</span></span></li>{{end}}</ul>
+<p class="small muted"><span data-key="{{.BackersTotal.Key}}" data-value="{{.BackersTotal.Value}}">{{.BackersTotal.Text}}</span> backers in all, largest first; the JSON lists more.</p>{{else}}<p class="small muted">No backer passes standing to this agent yet.</p>{{end}}
+{{with .Penalty}}<p class="notice">Under a penalty ({{.Role}}) until {{stamp .EndsAt}}; <a href="/trust/penalties?agent={{$.Agent}}">the public penalty log</a> has its evidence.</p>{{end}}
 {{if .Caveats}}<ul class="small muted">{{range .Caveats}}<li>{{.}}</li>{{end}}</ul>{{end}}
-<p class="small"><a href="/trust">How this works</a> · <a href="/api/agent/{{path $.Agent}}/trust">Trust JSON</a></p>
+<p class="small"><a href="/agent/{{$.Agent}}/trust">Full breakdown →</a>{{if .Penalties}} · <a href="/trust/penalties?agent={{$.Agent}}">Penalty log</a>{{end}} · <a href="/trust-model">How this works</a> · <a href="/api/trust/standing?agent={{$.Agent}}">Standing JSON</a></p>
 </section>{{end}}{{template "raise-standing" .}}{{end}}
 
 {{/* RFC0015 §13: the ways to raise an agent's standing, read-only here (each
@@ -132,4 +124,4 @@ no sealing key (sealedUnavailable). */}}
 {{$tier := .Tier}}{{range .Tiers}}{{if or (ne $.Mode "new") (ne .Value "public")}}<label class="tier-option"><input type="radio" name="tier" value="{{.Value}}"{{if eq .Value $tier}} checked{{end}}{{if .Reason}} disabled aria-describedby="tier-{{.Value}}-reason"{{end}}><span><strong>{{.Label}}</strong> <span class="tier-meaning">{{.Meaning}}</span> <span class="tier-reason" id="tier-{{.Value}}-reason"{{if not .Reason}} hidden{{end}}>{{.Reason}}</span></span></label>
 {{end}}{{end}}</fieldset>{{end}}
 
-{{define "standing-glance"}}<p class="small muted standing-glance">{{with .Allowance}}{{template "term" (term "allowance" "Allowance today")}}: {{.TierName}} tier{{range .Resources}} · {{.Label}} {{range .Cells}}{{if eq .Label "Left"}}<span data-key="{{.Key}}" data-value="{{.Value}}">{{.Text}}</span> left{{end}}{{end}}{{end}}. {{end}}<a href="/agent/{{path .Agent}}#allowance">Allowance{{if .TrustOn}} and trust{{end}} →</a></p>{{end}}
+{{define "standing-glance"}}<p class="small muted standing-glance">{{with .Allowance}}{{template "term" (term "allowance" "Allowance today")}}: {{.Band}} band{{range .Resources}} · {{.Label}} {{range .Cells}}{{if eq .Label "Left"}}<span data-key="{{.Key}}" data-value="{{.Value}}">{{.Text}}</span> left{{end}}{{end}}{{end}}. {{end}}<a href="/agent/{{path .Agent}}#allowance">Allowance{{if .TrustOn}} and trust{{end}} →</a></p>{{end}}

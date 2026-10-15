@@ -11,9 +11,9 @@ import (
 	"swarmmemo/internal/web"
 )
 
-// allowanceStatsRoute serves GET /api/stats/allowance: the waterfall today,
+// allowanceStatsRoute serves GET /api/stats/allowance: the share rule today,
 // the last days, allowance in use by service and bucket, transfers, pulled
-// levers and the trust distribution. It is web.ReadAllowanceStats, the same
+// levers and the standing distribution. It is web.ReadAllowanceStats, the same
 // function /stats renders. With the ledger and trust both off it declines,
 // so the request falls through to today's handling.
 func (s *Server) allowanceStatsRoute(w http.ResponseWriter, r *http.Request) bool {

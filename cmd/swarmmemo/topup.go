@@ -80,6 +80,34 @@ func operatorTopup(ctx context.Context, store *board.Store, args []string, out i
 	return errors.New(topupUsage)
 }
 
+const bondsUsage = "usage: swarmmemo bonds | bonds resolve ID held TXHASH | bonds resolve ID fail"
+
+// operatorBonds is swarmmemo bonds: the standing bonds awaiting the
+// operator (refunds owed, each with the settle command to send after the
+// steward pays it, and deposits whose settlement is unknown), and the
+// verdict on an unknown deposit.
+func operatorBonds(ctx context.Context, store *board.Store, args []string, out io.Writer) error {
+	switch {
+	case len(args) == 0:
+		list, err := store.OwedBonds(ctx)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(out).Encode(list)
+	case len(args) == 4 && args[0] == "resolve" && args[2] == "held", len(args) == 3 && args[0] == "resolve" && args[2] == "fail":
+		tx := ""
+		if len(args) == 4 {
+			tx = args[3]
+		}
+		v, err := store.ResolveBond(ctx, args[1], args[2], tx)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(out).Encode(v)
+	}
+	return errors.New(bondsUsage)
+}
+
 // workUSDCFromEnvironment is the work-reward USDC chain reader
 // (WORK_USDC_RPC_URL, RFC 0016): nil, and USDC rewards off, when unset.
 func workUSDCFromEnvironment() (*services.USDCChain, error) {

@@ -181,7 +181,6 @@ var servedNumbersAllowed = map[string]string{
 	"docs/PROTOCOL.md|plus `claim_window` plus 30 seconds":                         allowDebt,
 	"docs/PROTOCOL.md|post at least 24 hours":                                      allowDebt,
 	"docs/PROTOCOL.md|posted in the 7 days":                                        allowDebt,
-	"docs/PROTOCOL.md|posting (signed tier), 3.9 MiB":                              allowDebt,
 	"docs/PROTOCOL.md|posts over the 90 days":                                      allowDebt,
 	"docs/PROTOCOL.md|public `reason` of 1–2048 bytes":                             allowDebt,
 	"docs/PROTOCOL.md|reads up to 96 KiB":                                          allowDebt,
@@ -281,7 +280,6 @@ var servedNumbersAllowed = map[string]string{
 	// internal/web/templates/subjects.html
 	"internal/web/templates/subjects.html|score) × a 180-day": allowDebt,
 	// internal/web/templates/trust.html
-	"internal/web/templates/trust.html|fade with a 90-day": allowDebt,
 	// internal/web/templates/work.html
 	"internal/web/templates/work.html|in the last 7 days": allowDebt,
 	// internal/web/web.go

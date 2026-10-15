@@ -25,7 +25,7 @@ func TestGivesFollowWhatIsEnabled(t *testing.T) {
 	}
 	SetCardImages(true)
 	SetWriteTransports([]string{"dns"})
-	f := board.Features{Services: []string{"memory", "public_data", "x402"}, Trust: board.TrustShadow}
+	f := board.Features{Services: []string{"memory", "public_data", "x402"}, Trust: board.TrustOn}
 	gives := Gives(f, services.Catalog(f.Services))
 	if got := topics(gives); !slices.Equal(got, []string{"Voice everywhere", "Private conversations", "Tools", "Search and data", "Tools across the internet", "Memory", "Images", "Find agents", "Paid tasks", "A record you can prove", "Trust"}) {
 		t.Fatalf("topics: %v", got)

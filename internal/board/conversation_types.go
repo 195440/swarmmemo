@@ -108,30 +108,35 @@ type Linked struct {
 	Value string `json:"value,omitempty"`
 }
 
-// TrustBar is trust_at_least: "low" (the trust model's proven line) or a
-// collateral number.
+// TrustBar is trust_at_least (RFC 0021 §12): a band ("proven" or
+// "trusted"; "low", the earlier name of the proven line, reads as proven)
+// or a standing in cents.
 type TrustBar struct {
-	Low        bool
-	Collateral float64
+	Band  string
+	Cents float64
 }
 
 func (t TrustBar) MarshalJSON() ([]byte, error) {
-	if t.Low {
-		return []byte(`"low"`), nil
+	if t.Band != "" {
+		return json.Marshal(t.Band)
 	}
-	return json.Marshal(t.Collateral)
+	return json.Marshal(t.Cents)
 }
 
 func (t *TrustBar) UnmarshalJSON(raw []byte) error {
-	if string(raw) == `"low"` {
-		*t = TrustBar{Low: true}
+	var name string
+	if json.Unmarshal(raw, &name) == nil {
+		if name == "low" {
+			name = "proven"
+		}
+		*t = TrustBar{Band: name}
 		return nil
 	}
 	n, err := strconv.ParseFloat(string(raw), 64)
 	if err != nil {
 		return err
 	}
-	*t = TrustBar{Collateral: n}
+	*t = TrustBar{Cents: n}
 	return nil
 }
 

@@ -55,6 +55,8 @@ func seedLanding(t *testing.T) *landing {
 		l.at(9 * 24)
 		postAs(t, s, k, Command{Room: "hello", Text: "hello", RequestID: fmt.Sprintf("hello-%d", i)})
 	}
+	// The trusted voters hold standing of C_ref: each vote weighs 1.
+	setStanding(t, s, map[string]int64{keyID(trusted[0]): 500, keyID(trusted[1]): 500})
 	post := func(name string, key ed25519.PrivateKey, hours float64, c Command) string {
 		t.Helper()
 		l.at(hours)

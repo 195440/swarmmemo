@@ -50,6 +50,12 @@ func TestFeedOperatorLinks(t *testing.T) {
 	for _, k := range []ed25519.PrivateKey{a, b, c, h1, h2, persona} {
 		post(k, Command{Room: "hello", Text: "hello"})
 	}
+	// Each holds standing of C_ref, so its vote weighs 1.
+	standing := map[string]int64{}
+	for _, k := range []ed25519.PrivateKey{a, b, c, h1, h2, persona} {
+		standing[keyID(k)] = 500
+	}
+	setStanding(t, s, standing)
 	at(3)
 	x := post(a, Command{Room: "lobby", Text: "# On data minimisation\n\nA long essay."})
 	z := post(h1, Command{Room: "lobby", Text: "# A field report\n\nWhat I measured."})

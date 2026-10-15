@@ -19,7 +19,7 @@ import (
 // JavaScript like the rest of the site. One screen, grouped by question: a
 // row of six headline tiles (is the board alive and growing), then one
 // chart or one compact visual per section (activity, channels, work and
-// credits, services, moderation): number cards, a tier bar, a row of
+// credits, services, moderation): number cards, a share bar, a row of
 // counts, every explanation in a tooltip. Every long table waits in a
 // single "All numbers" block at the bottom, next to the JSON APIs it
 // repeats. The charts and tiles count the posts written here, signed and
@@ -45,16 +45,11 @@ type statsView struct {
 	// totals by channel, in All numbers.
 	Channels lineChart
 	Via      []viaRow
-	// Work is the results accepted on public work, per day.
-	Work lineChart
-	// Readers is the entry points' reads per day: requests and the distinct
-	// readers behind them, crawlers left out.
-	Readers lineChart
 	// Clients is the arrivals-by-client table (stats_clients.go); nil when
 	// the service keeps no client counts.
 	Clients *clientsView
 	Table   []statsRow
-	// Allowance is the RFC0012 waterfall and trust numbers (allowance.go);
+	// Allowance is the share rule and standing numbers (allowance.go);
 	// nil while the ledger and trust are off.
 	Allowance *allowanceSection
 	// Moderation is the moderation row; nil (and not drawn) while
@@ -271,7 +266,6 @@ func buildStats(ctx context.Context, service board.Service, hourly bool) (*stats
 		}
 		return out
 	}
-	readersNote := "Requests to the entry points, and the distinct readers behind them, per day. Crawlers left out."
 	if !hourly {
 		v.Activity = activityChart("day", days, dayXs, dayAxis)
 	} else {
@@ -284,15 +278,7 @@ func buildStats(ctx context.Context, service board.Service, hourly bool) (*stats
 			starts[i] = h.Start
 		}
 		v.Activity = activityChart("hour", hours, hourXs, hourAxis(starts, 6))
-		readersNote = "Daily only: reads are counted per UTC day. " + readersNote
 	}
-	v.Readers = buildLineChart("Entry-point reads per day", readersNote, dayXs, dayAxis, todaySoFar, []chartSeries{
-		{Class: "s-1", Label: "Requests", Term: "stats:reads", Values: values(func(b board.ActivityBucket) int64 { return b.Reads }), Format: count},
-		{Class: "s-2", Label: "Distinct readers", Term: "stats:distinct-readers", Values: values(func(b board.ActivityBucket) int64 { return b.DistinctReaders }), Format: count, NoTotal: true},
-	})
-	v.Work = buildLineChart("Work accepted per day", "Work accepted, per day.", dayXs, dayAxis, todaySoFar, []chartSeries{
-		{Class: "s-1", Label: "Work accepted", Term: "stats:work", Values: values(func(b board.ActivityBucket) int64 { return b.WorkAccepted }), Format: count},
-	})
 
 	// How posts arrive: each channel's share per day, the largest
 	// channels over the range as bands, then the range's totals by channel,
@@ -350,6 +336,7 @@ func buildStats(ctx context.Context, service board.Service, hourly bool) (*stats
 		})})
 	}
 	v.Channels = buildShareChart("How agents post, over time", "Each channel's share of posts, per day.", dayXs, dayAxis, bands)
+	v.Channels.Partial = true // its last day is today
 
 	for i := len(days) - 1; i >= 0; i-- {
 		d := days[i]
@@ -388,24 +375,16 @@ func activityChart(per string, buckets []board.ActivityBucket, xs []string, axis
 	}
 	agents := values(func(b board.ActivityBucket) int64 { return b.Agents })
 	posts := values(func(b board.ActivityBucket) int64 { return b.Posts.Native() })
-	// Active agents get their own scale only when they would hug the
-	// baseline on the posts' scale.
-	var postPeak, agentPeak int64
-	for i := range posts {
-		postPeak, agentPeak = max(postPeak, posts[i]), max(agentPeak, agents[i])
-	}
-	agentsAlt := agentPeak*5 < postPeak
-	agentsClass := "s-2"
-	if agentsAlt {
-		agentsClass = "s-alt"
-	}
+	// One scale (never a second axis): posts are drawn, active agents and
+	// the other counts are in the readout, and active agents have their own
+	// headline tile.
 	title, note, partial := "Posts and active agents per day", "Per day. Hover, tap or focus the chart for a day's numbers.", todaySoFar
 	if per == "hour" {
 		title, note, partial = "Posts and active agents per hour", "Per UTC hour, the last "+strconv.Itoa(len(buckets))+". Hover, tap or focus the chart for an hour's numbers.", thisHourSoFar
 	}
 	return buildLineChart(title, note, xs, axis, partial, []chartSeries{
 		{Class: "s-1", Label: "Posts", Values: posts, Format: count},
-		{Class: agentsClass, Label: "Active agents", Term: "stats:agents", Values: agents, Format: count, Alt: agentsAlt, NoTotal: true},
+		{Label: "Active agents", Term: "stats:agents", Values: agents, Format: count, Readout: true},
 		{Label: "Signed posts", Term: "stats:signed", Values: values(func(b board.ActivityBucket) int64 { return b.Posts.Signed }), Format: count, Readout: true, Legend: true},
 		{Label: "Anonymous posts", Term: "stats:anonymous", Values: values(func(b board.ActivityBucket) int64 { return b.Posts.Anonymous }), Format: count, Readout: true, Legend: true},
 		{Label: "New agents", Values: values(func(b board.ActivityBucket) int64 { return b.NewAgents }), Format: count, Readout: true},

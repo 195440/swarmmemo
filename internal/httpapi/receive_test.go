@@ -220,10 +220,7 @@ func TestFetchCallRoute(t *testing.T) {
 	p := ledger.DefaultAllowanceParams()
 	rp := p.Resources[allowance.Credit]
 	rp.Budget, rp.SpendCeiling, rp.InboundCap = 1_600_000, 1_600_000, 1_600_000
-	rp.Cap = []int64{400_000, 200_000, 100_000, 2000}
-	rp.Floor = []int64{1600, 1600, 1600, 2000}
-	rp.RootCap = []int64{1_600_000, 800_000, 400_000, 2000}
-	rp.ShareMaxPPM = []int64{1_000_000, 1_000_000, 1_000_000, 100_000}
+	rp.Cap, rp.Floor, rp.AnonymousSharePPM = 400_000, 2000, 1_000_000
 	if _, err = store.SetAllowanceParams(t.Context(), ledger.AllowanceNamespace, p.Marshal(), "test", 0); err != nil {
 		t.Fatal(err)
 	}

@@ -23,7 +23,7 @@ func TestFirstSpendMaterialisesTheShare(t *testing.T) {
 		t.Fatal(err)
 	}
 	after := h.balance(alice)
-	if after.Prospective || after.Entitlement != 200 || after.Remaining != 150 || after.Used != 50 || after.Standing.Tier != allowance.TierSigned {
+	if after.Prospective || after.Entitlement != 200 || after.Remaining != 150 || after.Used != 50 || after.Standing.Band != allowance.BandSigned || after.FloorPart != 200 || after.StandingPart != 0 {
 		t.Fatalf("balance after first spend %+v", after)
 	}
 	if err := h.spend(alice, 150); err != nil {
@@ -78,8 +78,8 @@ func TestDayTotalNeverExceedsTheBudget(t *testing.T) {
 			t.Fatalf("subject %d: %v", i, err)
 		}
 	}
-	// Overbooking: 40 entitlements add up to far more than the budget, and
-	// only the 40 bytes spent were drawn from the pools.
+	// Overbooking: 40 entitlements add up to more than the budget, and only
+	// the 40 bytes spent were drawn from the slices.
 	var entitled int64
 	if err := h.db.QueryRow("SELECT sum(granted) FROM allowance_claims").Scan(&entitled); err != nil {
 		t.Fatal(err)
@@ -88,8 +88,8 @@ func TestDayTotalNeverExceedsTheBudget(t *testing.T) {
 	if entitled <= 1000 || d.SpentNonpaid != 40 {
 		t.Fatalf("entitled %d, spent %d", entitled, d.SpentNonpaid)
 	}
-	// Now everyone spends what they can: the day's spend stops at the water
-	// below tiers 1–2, whose reserves (100 + 100) stay untouched.
+	// Now everyone spends what they can: at midnight the day's spend stops
+	// at the floor slice; the standing slice (500) stays for its claimants.
 	for i := 0; i < 40; i++ {
 		s := signedSubject(fmt.Sprintf("s%d", i))
 		if i%3 == 0 {
@@ -101,15 +101,15 @@ func TestDayTotalNeverExceedsTheBudget(t *testing.T) {
 		}
 	}
 	d, _, _ = loadDay(ctx, h.db, allowance.PostBytes, day0)
-	if d.SpentNonpaid != 800 || d.Pools[1].avail() != 100 || d.Pools[2].avail() != 100 {
-		t.Fatalf("spent %d of a 1000 budget with 200 reserved above: %+v", d.SpentNonpaid, d.Pools)
+	if d.SpentNonpaid != 500 || d.Slices[sliceStanding].avail() != 500 {
+		t.Fatalf("spent %d of a 1000 budget with the standing slice kept: %+v", d.SpentNonpaid, d.Slices)
 	}
 	checkInvariants(t, h.db, h.p)
 }
 
-func TestFloodAtMidnightLeavesHigherTiersTheirReserves(t *testing.T) {
+func TestFloodAtMidnightLeavesStandingItsSlice(t *testing.T) {
 	p := smallParams()
-	p.Resources[allowance.PostBytes].Floor = []int64{0, 0, 10, 10}
+	p.Resources[allowance.PostBytes].Floor = 10
 	h := newHarness(t, p)
 	for i := 0; i < 300; i++ {
 		s := signedSubject(fmt.Sprintf("fresh%d", i))
@@ -118,59 +118,16 @@ func TestFloodAtMidnightLeavesHigherTiersTheirReserves(t *testing.T) {
 		}
 		_ = h.spend(s, 10)
 	}
-	// Tiers 3–4 are exhausted: a late tier-3 subject is still entitled to
+	// The floor slice is exhausted: a late fresh key is still entitled to
 	// its floor, but its spend finds no water.
 	if got := code(h.spend(signedSubject("late"), 1)); got != "global_quota_exhausted" {
-		t.Fatalf("a late tier-3 subject: %s", got)
+		t.Fatalf("a late fresh key: %s", got)
 	}
-	// A trusted and a proven subject draw their reserves in full.
-	for _, s := range []allowance.Subject{signedSubject("t1-trusted"), signedSubject("t2-proven")} {
-		if err := h.spend(s, 100); err != nil {
+	// Standing holders draw the standing slice.
+	for _, s := range []allowance.Subject{signedSubject("c1000-trusted"), signedSubject("c200-proven")} {
+		if err := h.spend(s, 50); err != nil {
 			t.Fatalf("%s: %v", s.ID, err)
 		}
-	}
-	checkInvariants(t, h.db, h.p)
-}
-
-func TestTrustedBorrowsFromLowerTiersNeverTheReverse(t *testing.T) {
-	p := smallParams()
-	p.Resources[allowance.PostBytes].Floor = []int64{80, 0, 0, 0}
-	h := newHarness(t, p)
-	// The first trusted subject's share is tier 1's whole pool (100).
-	if err := h.spend(signedSubject("t1-a"), 100); err != nil {
-		t.Fatal(err)
-	}
-	// The second's share is half the pool, raised to the floor (80); tier 1
-	// has no water left, so all 80 are borrowed from tier 4, the lowest.
-	if err := h.spend(signedSubject("t1-b"), 80); err != nil {
-		t.Fatal(err)
-	}
-	d, _, _ := loadDay(ctx, h.db, allowance.PostBytes, day0)
-	if d.Pools[1].Claimed != 100 || d.Pools[1].Borrowed != 80 || d.Pools[4].Lent != 80 {
-		t.Fatalf("pools %+v", d.Pools)
-	}
-	// An anonymous subject cannot reach tiers 1–3's water.
-	anon := anonSubject("x")
-	if b := h.balance(anon); b.Entitlement != 100 {
-		t.Fatalf("anon share %d", b.Entitlement)
-	}
-	checkInvariants(t, h.db, h.p)
-}
-
-func TestSpillHandsReservesDown(t *testing.T) {
-	h := newHarness(t, smallParams())
-	late := signedSubject("t3-late")
-	h.now = day0*86400 + 12*3600
-	// At noon tiers 1–2 kept half their reserve; tier 3 holds 200 + 100.
-	if err := h.spend(late, 1); err != nil {
-		t.Fatal(err)
-	}
-	d, _, _ := loadDay(ctx, h.db, allowance.PostBytes, day0)
-	if d.Pools[1].SpillOut != 50 || d.Pools[2].SpillOut != 100 || d.Pools[3].SpillIn != 100 {
-		t.Fatalf("spill %+v", d.Pools)
-	}
-	if n := h.count("SELECT count(*) FROM ledger_entries WHERE kind='spill'"); n != 3 {
-		t.Fatalf("%d spill lines", n)
 	}
 	checkInvariants(t, h.db, h.p)
 }
@@ -186,7 +143,7 @@ func TestPaidNeverDecaysGrantedDoes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Grants come from the tier-0 pool: 500 of it, 400 used.
+	// Grants come from the grant slice: 500 of it, 400 used.
 	if err := h.do(func(q *sql.Tx) error {
 		return h.l.Mint(ctx, q, "carol", allowance.PostBytes, allowance.Granted, 200, "over the pool", h.now)
 	}); code(err) != "global_quota_exhausted" {
@@ -250,8 +207,8 @@ func TestTransferKeepsExpiryNoBanking(t *testing.T) {
 	var hops, origin int64
 	var originAccount string
 	h.db.QueryRow("SELECT hops,origin_tier,origin_account FROM ledger_lots WHERE account='bob'").Scan(&hops, &origin, &originAccount)
-	if hops != 1 || origin != 3 || originAccount != "alice" {
-		t.Fatalf("taint lost: hops %d origin tier %d account %s", hops, origin, originAccount)
+	if hops != 1 || origin != originFloor || originAccount != "alice" {
+		t.Fatalf("taint lost: hops %d origin %d account %s", hops, origin, originAccount)
 	}
 	if b := h.balance(bob); b.Incoming != 100 || b.Remaining != b.Entitlement+100 || !b.Prospective {
 		t.Fatalf("recipient %+v", b)
@@ -310,8 +267,8 @@ func TestTransferRefusals(t *testing.T) {
 		t.Fatalf("frozen: %v", err)
 	}
 	h.levers.lv.FreezeTransfers = false
-	// A narrowed parameter version: free units of tier 3 no longer move.
-	h.p.TransferableFreeTiers = []int64{1, 2}
+	// A narrowed parameter version: free units no longer move.
+	h.p.TransferableFree = false
 	if _, err := h.transfer(alice, "dan", 10, "narrow"); code(err) != "not_transferable" {
 		t.Fatalf("narrowed: %v", err)
 	}
@@ -518,7 +475,6 @@ func TestHoldsReserveCommitRefund(t *testing.T) {
 
 func TestHoldRefundToAnExpiredLotExpires(t *testing.T) {
 	p := smallParams()
-	p.Resources[allowance.PostBytes].SpillStart = 86399 // keep tier 3's water until the end
 	h := newHarness(t, p)
 	alice := signedSubject("alice")
 	var hold Hold
@@ -550,33 +506,38 @@ func TestLeversSignedOnlyAndCutBudget(t *testing.T) {
 	if got := code(h.spend(anon, 1)); got != "quota_exhausted" {
 		t.Fatalf("anon under signed-only: %s", got)
 	}
-	if err := h.spend(signedSubject("s0"), 1); err != nil {
+	s0 := signedSubject("s0")
+	if err := h.spend(s0, 1); err != nil {
 		t.Fatal(err)
 	}
 	d, _, _ := loadDay(ctx, h.db, allowance.PostBytes, day0)
-	if d.Pools[4].Size != 0 || d.Unallocated != 600 {
-		t.Fatalf("tier 4 under signed-only %+v", d)
+	if sizes(d) != ([3]int64{0, 500, 500}) || d.Unallocated != 0 {
+		t.Fatalf("slices under signed-only %+v", d)
 	}
 	h.levers.lv.SignedOnly = false
 	h.levers.lv.BudgetCutPPM = map[allowance.Resource]int64{allowance.PostBytes: 900_000}
-	// A newcomer finds no water left under the cut, and so does s0: its
-	// entitlement stands, but tier 3's unspent water is gone.
-	if got := code(h.spend(signedSubject("s"), 1)); got != "global_quota_exhausted" {
-		t.Fatalf("newcomer under the cut: %s", got)
-	}
-	if got := code(h.spend(signedSubject("s0"), 1)); got != "global_quota_exhausted" {
-		t.Fatalf("s0 under the cut: %s", got)
-	}
-	// A trusted subject still draws what the cut left its tier (refusals roll
+	// A newcomer still draws what the cut left the floor slice (refusals roll
 	// back, so this spend is what stores the adjusted day).
-	if err := h.spend(signedSubject("t1-x"), 1); err != nil {
-		t.Fatal(err)
+	if err := h.spend(signedSubject("s"), 1); err != nil {
+		t.Fatalf("newcomer under the cut: %v", err)
 	}
 	d, _, _ = loadDay(ctx, h.db, allowance.PostBytes, day0)
-	// Spent water is untouched (s0's 1 stays); the pools shrink bottom-up to
-	// the cut budget.
-	if d.BudgetEffective != 100 || d.allocated() != 100 || d.Pools[3].Size != 1 || d.Pools[3].avail() != 0 || d.Pools[4].Size != 0 {
+	// Spent water is untouched (s0's 1 stays); the slices shrink to the cut
+	// budget.
+	if d.BudgetEffective != 100 || d.allocated() != 100 || sizes(d) != ([3]int64{0, 50, 50}) {
 		t.Fatalf("cut budget %+v", d)
+	}
+	// s0's entitlement stands, but the floor slice's water is what is left.
+	for h.spend(s0, 10) == nil {
+	}
+	for h.spend(s0, 1) == nil {
+	}
+	if got := code(h.spend(s0, 1)); got != "global_quota_exhausted" {
+		t.Fatalf("s0 under the cut: %s", got)
+	}
+	d, _, _ = loadDay(ctx, h.db, allowance.PostBytes, day0)
+	if d.Slices[sliceFloor].avail() != 0 || d.Slices[sliceStanding].avail() != 50 {
+		t.Fatalf("after s0 under the cut %+v", d.Slices)
 	}
 	h.levers.lv.BudgetCutPPM = nil
 	if err := h.spend(signedSubject("s"), 1); err != nil {
@@ -598,13 +559,14 @@ func TestClientSignatureOnlyNarrows(t *testing.T) {
 	h := newHarness(t, p)
 	curl := allowance.Subject{ID: "anon:net", Client: "c1"}
 	wget := allowance.Subject{ID: "anon:net", Client: "c2"}
-	if err := h.spend(curl, 50); err != nil {
+	// The prefix's floor is 200: each client spends at most half.
+	if err := h.spend(curl, 100); err != nil {
 		t.Fatal(err)
 	}
 	if got := code(h.spend(curl, 1)); got != "quota_exhausted" {
 		t.Fatalf("one client past its share: %s", got)
 	}
-	if err := h.spend(wget, 50); err != nil {
+	if err := h.spend(wget, 100); err != nil {
 		t.Fatal(err)
 	}
 	// Both clients together never exceed the prefix's one entitlement.
@@ -680,36 +642,36 @@ func TestParamsVersions(t *testing.T) {
 // the whole day before anything is used.
 func TestOverbookingEntitlementsDoNotReserveTheDay(t *testing.T) {
 	p := smallParams()
-	p.Resources[allowance.PostBytes].Floor = []int64{0, 0, 200, 100} // floor = cap, as the legacy rows
+	p.Resources[allowance.PostBytes].FloorSlicePPM = ppm // all 1,000 is the floor slice
 	h := newHarness(t, p)
+	var want int64
 	for i := 0; i < 16; i++ {
 		if err := h.spend(signedSubject(fmt.Sprintf("k%d", i)), 1); err != nil {
 			t.Fatalf("key %d: %v", i, err)
 		}
+		want += 200 // the floor slice still holds water: each gets the whole floor (C320c)
 	}
 	var entitled int64
 	if err := h.db.QueryRow("SELECT sum(entitlement) FROM allowance_claims").Scan(&entitled); err != nil {
 		t.Fatal(err)
 	}
-	if entitled != 16*200 {
-		t.Fatalf("entitled %d", entitled)
+	if entitled != want || entitled <= 1000 {
+		t.Fatalf("entitled %d, want %d", entitled, want)
 	}
-	// A seventeenth key still finds water: 16 bytes were drawn, not 3,200.
-	if err := h.spend(signedSubject("late"), 150); err != nil {
+	// A seventeenth key still finds water: 16 bytes were drawn, not 2,000.
+	if err := h.spend(signedSubject("late"), 50); err != nil {
 		t.Fatal(err)
 	}
-	// Spend stops at the water tier 3 can reach (its own 200 and tier 4's
-	// 600); tiers 1–2 keep their reserves.
+	// Spend stops at the slice's water, exactly the budget.
 	for i := 0; i < 16; i++ {
-		for h.spend(signedSubject(fmt.Sprintf("k%d", i)), 50) == nil {
+		for _, n := range []int64{10, 1} {
+			for h.spend(signedSubject(fmt.Sprintf("k%d", i)), n) == nil {
+			}
 		}
 	}
 	d, _, _ := loadDay(ctx, h.db, allowance.PostBytes, day0)
-	if d.SpentNonpaid > 800 || d.SpentNonpaid < 750 || d.Pools[1].avail() != 100 || d.Pools[2].avail() != 100 {
-		t.Fatalf("spent %d: %+v", d.SpentNonpaid, d.Pools)
-	}
-	if got := code(h.spend(signedSubject("t2-p"), 100)); got != "" {
-		t.Fatalf("proven reserve: %s", got)
+	if d.SpentNonpaid != 1000 || d.Slices[sliceFloor].avail() != 0 {
+		t.Fatalf("spent %d: %+v", d.SpentNonpaid, d.Slices)
 	}
 	checkInvariants(t, h.db, h.p)
 }
@@ -725,15 +687,15 @@ func TestHoldDrawsAndRefundReturnsWater(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if d, _, _ := loadDay(ctx, h.db, allowance.PostBytes, day0); d.Pools[3].Claimed != 100 {
-		t.Fatalf("a hold drew %+v", d.Pools[3])
+	if d, _, _ := loadDay(ctx, h.db, allowance.PostBytes, day0); d.Slices[sliceFloor].Claimed != 100 {
+		t.Fatalf("a hold drew %+v", d.Slices[sliceFloor])
 	}
 	checkInvariants(t, h.db, h.p)
 	if err := h.do(func(q *sql.Tx) error { _, err := h.l.Commit(ctx, q, hold.ID, 40, h.now); return err }); err != nil {
 		t.Fatal(err)
 	}
-	if d, _, _ := loadDay(ctx, h.db, allowance.PostBytes, day0); d.Pools[3].Claimed != 40 || d.SpentNonpaid != 40 {
-		t.Fatalf("after commit %d: %+v", d.SpentNonpaid, d.Pools[3])
+	if d, _, _ := loadDay(ctx, h.db, allowance.PostBytes, day0); d.Slices[sliceFloor].Claimed != 40 || d.SpentNonpaid != 40 {
+		t.Fatalf("after commit %d: %+v", d.SpentNonpaid, d.Slices[sliceFloor])
 	}
 	checkInvariants(t, h.db, h.p)
 }
@@ -744,7 +706,7 @@ func TestLoweredCapAppliesToUnspentEntitlement(t *testing.T) {
 	if err := h.spend(alice, 50); err != nil {
 		t.Fatal(err)
 	}
-	h.p.Resources[allowance.PostBytes].Cap[2] = 60
+	h.p.Resources[allowance.PostBytes].Cap, h.p.Resources[allowance.PostBytes].Floor = 60, 60
 	if got := code(h.spend(alice, 11)); got != "quota_exhausted" {
 		t.Fatalf("over the lowered cap: %s", got)
 	}

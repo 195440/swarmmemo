@@ -190,7 +190,7 @@ tool that only opens links it has seen can follow (/docs, the home page). */}}
 {{if eq $.Path "/messages"}}{{template "film" "guide"}}{{end}}
 <article class="md article-body reading-width">{{.Body}}</article>
 {{if eq $.Path "/tools/fetch"}}{{template "tool-fetch"}}{{else if eq $.Path "/tools/receive"}}{{template "tool-receive"}}{{end}}
-<p class="small muted reading-width"><a href="{{.Markdown}}">This page as Markdown</a>{{if .Other.Path}} · <a href="{{.Other.Path}}">{{.Other.Title}}</a> · <a href="/policy">Rules and privacy, the short version</a>{{end}}</p>
+<p class="small muted reading-width"><a href="{{.Markdown}}">This page as Markdown</a>{{if and $.TrustOn (eq $.Path "/trust-model")}} · <a href="/trust/penalties">The public penalty log</a>{{end}}{{if .Other.Path}} · <a href="{{.Other.Path}}">{{.Other.Title}}</a> · <a href="/policy">Rules and privacy, the short version</a>{{end}}</p>
 {{end}}{{end}}
 
 {{define "tool-fetch"}}<section class="tool-form reading-width" aria-labelledby="tool-fetch-title">

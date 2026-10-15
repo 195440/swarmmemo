@@ -7,41 +7,84 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"swarmmemo/internal/allowance"
 )
+
+// Rule 5 (RFC 0021, parameter version 8): one trust graph.
+//
+// Nodes are roots (accounts merged by attached keys, verified domains and
+// shared wallet or payout addresses) plus the world node, the only source.
+// The world's edge to an account is what it has paid here (§2, §7, §9):
+//
+//   - priced proofs, at their price rows, saturating within a proof root
+//     and split between the roots that claim it; a burned proof root (§8)
+//     prices 0 on any key, for good;
+//   - money paid to SwarmMemo (credits bought, services paid directly), at
+//     face value, once, when it comes in;
+//   - payments to other accounts, only when payer and payee are independent
+//     (other roots, no transfer or payment path from the payee back to the
+//     payer within funded_days = H), each up to the payee's direct costs at
+//     the previous run, from one budget per payee shared by every payer and
+//     responder;
+//   - time present: day_price for each active day (a day on which an
+//     independent account with standing ≥ v_floor replied to, voted on or
+//     judged the account), at most time_cap, each day backed by a responder
+//     like a payment.
+//
+// Money and time present accumulate in the carry from run to run; a world
+// edge holds while the account is active and, after grace_days without an
+// active day, halves every dormant_half_life_days (§9). Returning stops the
+// decay and restores nothing.
+//
+// Judgement edges (§2) run from a judgement's author's root to its
+// subject's owners' roots, one current judgement per root and subject, with
+// capacity U × (x − 50)/50 × evidence × relationship × decay(age, H) ×
+// accuracy, split equally between the owners; coarse acts count as
+// coarse_x; x ≤ 50 makes no edge. Accuracy (§6) is clamp(1 + 2 Σ gain /
+// (n + m), 0.5, 2) from a first pass at accuracy 1.
+//
+// Standing is a capacity-bounded max-flow from the world (flow.go's Dinic):
+// each root keeps min(world, node_cap) of its own costs, and only what it
+// holds above node_cap flows on over its judgement edges into the other
+// roots' sinks, raised in levels up to node_cap (max-min fair).
+//
+// Penalties (§8) come from the detectors in every run (ring, funnel,
+// shared_wallet) and from the public log's moderation and override entries:
+// a member root holds 0 with no edges in or out for the duration, its money
+// and time present are destroyed and its priced proof roots burn for good;
+// each backer (an edge into the set within backer_edge_days) loses
+// f = c / (c + U) of its standing (world edge, node_cap and out-capacity
+// scaled by 1 − f); the k-th penalty on a root within escalation_days lasts
+// base_days × duration_factor^(k−1) days, a backer's k-th liability costs
+// min(1, backer_factor^(k−1) × f). A lift (an operator override) reverses
+// an entry.
+//
+// The run is a pure function of its snapshot: the carry and the penalty
+// log are inputs; the new carry and the new log entries are outputs, part
+// of the canonical output (scripts/trust/recompute.py reproduces its
+// sha256).
 
 // Output is one run's published result. Its canonical JSON (Canonical) is
 // what a verifier must reproduce byte for byte from the same Snapshot.
 type Output struct {
-	Schema        int64            `json:"schema"`
-	AsOf          int64            `json:"as_of"`
-	ParamsVersion int64            `json:"params_version"`
-	ParamsSHA256  string           `json:"params_sha256"`
-	Inputs        InputsSummary    `json:"inputs"`
-	Nodes         int64            `json:"nodes"`
-	Edges         int64            `json:"edges"`
-	PoolUnits     int64            `json:"pool_units"`
-	Active        int64            `json:"active_accounts"`
-	SeedsA        []string         `json:"seeds_a"`
-	SeedsB        []string         `json:"seeds_b"`
-	SeedsBUsed    bool             `json:"seeds_b_used"`
-	CaptureBound  CaptureBound     `json:"capture_bound"`
-	Scores        []ScoreOut       `json:"scores"`
-	Evidence      []EvidenceOut    `json:"evidence"`
-	Penalties     []PenaltyOut     `json:"penalties"`
-	Sponsorships  []SponsorshipOut `json:"sponsorships"`
-	Dividends     []DividendOut    `json:"dividends"`
-	// Standing is RFC0015's standing summary: present from parameter
-	// version 2 (standing.go), absent before, so earlier runs recompute
-	// byte for byte.
-	Standing *StandingSummary `json:"standing,omitempty"`
-	// JudgementsShadow is RFC 0020's judgements_shadow section (rule 3
-	// runs, judgements.go). It is not part of the canonical output, so rule
-	// 3's outputs recompute unchanged; the run records it with its inputs.
-	JudgementsShadow *JudgementsShadow `json:"-"`
-	// Judgements is RFC 0020's section when it is the rule (rule 4,
-	// parameter version 7, judgements_rule.go): part of the canonical
-	// output, with the carry the next run reads. Absent before.
-	Judgements *JudgementsShadow `json:"judgements,omitempty"`
+	Schema        int64         `json:"schema"`
+	Rule          string        `json:"rule"`
+	AsOf          int64         `json:"as_of"`
+	ParamsVersion int64         `json:"params_version"`
+	ParamsSHA256  string        `json:"params_sha256"`
+	CarryIn       string        `json:"carry_in_sha256"`
+	Inputs        InputsSummary `json:"inputs"`
+	Nodes         int64         `json:"nodes"`
+	Edges         int64         `json:"edges"`
+	Summary       Summary       `json:"summary"`
+	Scores        []ScoreOut    `json:"scores"`
+	Evidence      []EvidenceOut `json:"evidence"`
+	Penalties     []PenaltyOut  `json:"penalties"`
+	Carry         Carry         `json:"carry"`
+	// Graph is the final flow graph, kept so per-viewer standing can be
+	// computed on read (Graph.ViewerFlow); not part of the canonical output.
+	Graph *Graph `json:"-"`
 	// Work is the number of edge examinations; a run statistic, not output.
 	Work int64 `json:"-"`
 }
@@ -51,75 +94,125 @@ type InputsSummary struct {
 	EventsSeq       int64 `json:"events_seq"`
 	EndorsementsSeq int64 `json:"endorsements_seq"`
 	LedgerSeq       int64 `json:"ledger_seq"`
-	PriorRuns       int64 `json:"prior_runs"`
 	Accounts        int64 `json:"accounts"`
 	Posts           int64 `json:"posts"`
 	Endorsements    int64 `json:"endorsements"`
 	Proofs          int64 `json:"proofs"`
 	Transfers       int64 `json:"transfers"`
+	Payments        int64 `json:"payments"`
+	Acts            int64 `json:"acts"`
+	Reviews         int64 `json:"reviews"`
+	PenaltyEntries  int64 `json:"penalty_entries"`
 }
 
-// CaptureBound is the published sybil bound of the run (§4.3 step 4).
-type CaptureBound struct {
-	UnitPerShare    int64  `json:"unit_per_share"`
-	EdgeCapUnits    int64  `json:"edge_cap_units"`
-	LambdaPPM       int64  `json:"lambda_ppm"`
-	MaxTransitUnits int64  `json:"max_transit_units"`
-	PoolUnits       int64  `json:"pool_units"`
-	Statement       string `json:"statement"`
+// Summary is the run's totals: what the operator dashboard and /stats read.
+type Summary struct {
+	WorldCents     int64            `json:"world_cents"`
+	StandingCents  int64            `json:"standing_cents"`
+	OwnCents       int64            `json:"own_cents"`
+	PassedCents    int64            `json:"passed_cents"`
+	Top5PassedPPM  int64            `json:"top5_passed_ppm"`
+	Sources        int64            `json:"sources"` // roots passing flow on
+	Bands          map[string]int64 `json:"bands"`
+	AboveVoteFloor int64            `json:"above_vote_floor"`
+	Judgements     int64            `json:"judgements"`
+	Marked         int64            `json:"marked"`
+	Truncated      bool             `json:"truncated"`
+	ActiveAccounts int64            `json:"active_accounts"` // with an active day in this run's days
+	Penalised      int64            `json:"penalised"`       // accounts under an active member penalty
+	Liable         int64            `json:"liable"`          // accounts under an active backer liability
+	PenaltiesOpen  int64            `json:"penalties_open"`  // log entries active at as_of
 }
 
-// ScoreOut is one trust_scores row.
+// ScoreOut is one account's standing.
 type ScoreOut struct {
-	Account         string `json:"account"`
-	Root            string `json:"root"`
-	ProofCollateral int64  `json:"proof_collateral"`
-	FlowA           int64  `json:"flow_a"`
-	FlowB           *int64 `json:"flow_b"`
-	Flow            int64  `json:"flow"`
-	Collateral      int64  `json:"collateral"`
-	Tier            int64  `json:"tier"`
-	WeightPPM       int64  `json:"weight_ppm"`
-	Parts           Parts  `json:"parts"`
+	Account       string `json:"account"`
+	Root          string `json:"root"`
+	Cents         int64  `json:"cents"`
+	Band          string `json:"band"`
+	VoteWeightPPM int64  `json:"vote_weight_ppm"`
+	Parts         Parts  `json:"parts"`
 }
 
-// Parts explain a score: never a bare number.
+// Parts explain a standing: never a bare number. Cents are rounded down.
 type Parts struct {
-	Proofs         []ProofPart    `json:"proofs"`
-	Endorsers      []EndorserPart `json:"endorsers"`
-	EndorsersTotal int64          `json:"endorsers_total"`
-	DownVotes      int64          `json:"down_votes"`
-	PenaltyPPM     int64          `json:"penalty_ppm"`
-	OwnAvg         int64          `json:"own_avg"`
-	Transit        int64          `json:"transit"`
-	Seed           string         `json:"seed"` // "", "a", "b" or "ab"
-	Reset          bool           `json:"reset"`
-	// Standing is the account's RFC0015 standing (parameter version 2).
-	Standing *StandingPart `json:"standing,omitempty"`
+	// World is the account's own costs, each priced: its proofs, money
+	// paid here, time present and independent payments.
+	World       []WorldItem `json:"world"`
+	WorldCents  int64       `json:"world_cents"`
+	DirectCents int64       `json:"direct_cents"` // proofs and money: what backs others' payments and time present
+	// The root's flow: its world edge (all its accounts), what it keeps of
+	// it, what it received over judgement edges and passed on.
+	RootWorldCents int64 `json:"root_world_cents"`
+	OwnCents       int64 `json:"own_cents"`
+	ReceivedCents  int64 `json:"received_cents"`
+	PassedCents    int64 `json:"passed_cents"`
+	NodeCapCents   int64 `json:"node_cap_cents"`
+	// Backers are the roots whose judgement edges carried flow into this
+	// root, Backs the roots this root's edges carried flow to (at most 20
+	// each, largest first; *_total counts them all).
+	Backers      []FlowPart `json:"backers"`
+	BackersTotal int64      `json:"backers_total"`
+	Backs        []FlowPart `json:"backs"`
+	BacksTotal   int64      `json:"backs_total"`
+	// Accuracy is the multiplier on this account's judgement edges, from
+	// Judged marked judgements.
+	AccuracyPPM int64 `json:"accuracy_ppm"`
+	Judged      int64 `json:"judged"`
+	// GraceFromDay is the day its grace counts from: its last active day,
+	// or the day it first appeared; GraceDays how many days of grace are
+	// left before its world edges start to halve (0: they are fading);
+	// FadePPM what inactivity has left of its proofs.
+	GraceFromDay int64 `json:"grace_from_day"`
+	ActiveDays   int64 `json:"active_days"` // active days in this run's days
+	GraceDays    int64 `json:"grace_days"`
+	FadePPM      int64 `json:"fade_ppm"`
+	// Penalty is the account's active penalty or liability, if any.
+	Penalty *PenaltyState `json:"penalty"`
+	// Burn is what a penalty on this root would burn now.
+	Burn BurnPreview `json:"burn"`
 }
 
-// ProofPart is one priced proof.
-type ProofPart struct {
-	Kind         string `json:"kind"`
-	Value        string `json:"value"`
-	Root         string `json:"root"`
-	State        string `json:"state"`
-	Forge        int64  `json:"forge"`
-	Rent         int64  `json:"rent"`
-	AgeDays      int64  `json:"age_days"`
-	Curve        string `json:"curve"`
-	WeightPPM    int64  `json:"weight_ppm"`
-	Contribution int64  `json:"contribution"`
-	SaturatedBy  string `json:"saturated_by"`
-	Note         string `json:"note"`
+// WorldItem is one priced own cost.
+type WorldItem struct {
+	Kind       string `json:"kind"` // proof, money, time_present, payments
+	Source     string `json:"source"`
+	Root       string `json:"root"`
+	State      string `json:"state"`
+	PriceCents int64  `json:"price_cents"`
+	Cents      int64  `json:"cents"`
+	Note       string `json:"note"`
 }
 
-// EndorserPart is one inbound edge.
-type EndorserPart struct {
-	Agent     string   `json:"agent"`
-	Kinds     []string `json:"kinds"`
-	WeightPPM int64    `json:"weight_ppm"`
-	Flow      int64    `json:"flow"`
+// FlowPart is one judgement edge's flow, by the other root.
+type FlowPart struct {
+	Root     string `json:"root"`
+	CapCents int64  `json:"cap_cents"`
+	Cents    int64  `json:"cents"`
+}
+
+// PenaltyState is an account's active penalty: as a member (its root holds
+// 0) or as a backer (it loses FractionPPM of its standing).
+type PenaltyState struct {
+	Entry       string `json:"entry"`
+	Role        string `json:"role"` // member or backer
+	FractionPPM int64  `json:"fraction_ppm"`
+	Level       int64  `json:"level"`
+	EndsAt      int64  `json:"ends_at"`
+}
+
+// BurnPreview is what a penalty on the account's root would burn.
+type BurnPreview struct {
+	OwnCents   int64          `json:"own_cents"`   // its world edge, destroyed
+	ProofRoots []string       `json:"proof_roots"` // burned for good
+	Backers    []BackerAtRisk `json:"backers"`     // what its backers would lose (at most 20)
+}
+
+// BackerAtRisk is one backer's liability if the root were penalised now.
+type BackerAtRisk struct {
+	Root        string `json:"root"`
+	FractionPPM int64  `json:"fraction_ppm"`
+	Cents       int64  `json:"cents"`
 }
 
 // EvidenceOut is one detector finding.
@@ -131,36 +224,40 @@ type EvidenceOut struct {
 	DetectorVersion int64    `json:"detector_version"`
 }
 
-// PenaltyOut is one liability penalty.
+// PenaltyOut is one penalty log entry this run opened (a detector finding)
+// or applied (a pending moderation or override entry): its members, level,
+// duration, burned proof roots and backers' liabilities.
 type PenaltyOut struct {
+	ID       string      `json:"id"`
+	Trigger  string      `json:"trigger"` // ring, funnel, shared_wallet, moderation, override
+	Opened   bool        `json:"opened"`  // opened by this run's detectors (else a pending entry applied)
+	Members  []string    `json:"members"`
+	Level    int64       `json:"level"`
+	StartsAt int64       `json:"starts_at"`
+	EndsAt   int64       `json:"ends_at"`
+	Burned   []string    `json:"burned"`
+	Backers  []BackerOut `json:"backers"`
+	Evidence string      `json:"evidence"`
+	// BurnedCents is the members' world edge the entry destroyed in this run.
+	BurnedCents int64 `json:"burned_cents"`
+}
+
+// BackerOut is one backer's liability under an entry.
+type BackerOut struct {
 	Account     string `json:"account"`
-	Evidence    string `json:"evidence"`
+	CapCents    int64  `json:"cap_cents"`
+	Level       int64  `json:"level"`
 	FractionPPM int64  `json:"fraction_ppm"`
-	StartsAt    int64  `json:"starts_at"`
-	EndsAt      int64  `json:"ends_at"`
-}
-
-// SponsorshipOut is one sponsorship and its independent inflow high.
-type SponsorshipOut struct {
-	Invitee   string `json:"invitee"`
-	Sponsor   string `json:"sponsor"`
-	RecordSeq int64  `json:"record_seq"`
-	CreatedAt int64  `json:"created_at"`
-	EndsAt    int64  `json:"ends_at"`
-	HighWater int64  `json:"high_water"`
-}
-
-// DividendOut is one sponsor dividend of this run.
-type DividendOut struct {
-	Sponsor string `json:"sponsor"`
-	Invitee string `json:"invitee"`
-	Units   int64  `json:"units"`
+	LostCents   int64  `json:"lost_cents"`
 }
 
 // Canonical is the output's canonical JSON.
 func (o Output) Canonical() []byte { return Canonical(o) }
 
 const day = 86400
+
+// mc is the run's unit: a thousandth of a cent.
+const mc = 1000
 
 func dayOf(t int64) int64 {
 	if t < 0 {
@@ -197,9 +294,7 @@ func (u uf) union(a, b string) {
 	u[rb] = ra
 }
 
-// DomainRoot is domainRoot over a suffix list (Params.DomainSuffixes): the
-// root Design 0 gives a proven account, so its tier-2 root folds to the
-// registrable domain exactly as trust does.
+// DomainRoot is domainRoot over a suffix list (Params.DomainSuffixes).
 func DomainRoot(domain string, suffixes []string) string {
 	set := make(map[string]bool, len(suffixes))
 	for _, s := range suffixes {
@@ -225,756 +320,6 @@ func domainRoot(domain string, suffixes map[string]bool) string {
 	return "domain:" + strings.Join(labels[len(labels)-keep:], ".")
 }
 
-type pairKey struct{ src, dst string }
-
-// Compute runs the trust module on one snapshot. It is a pure function of
-// the snapshot: record order does not matter, and nothing reads the clock
-// except to stop at max_seconds.
-func Compute(ctx context.Context, snap Snapshot) (Output, error) {
-	p := snap.Params
-	if err := p.Validate(); err != nil {
-		return Output{}, err
-	}
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(p.MaxSeconds)*time.Second)
-	defer cancel()
-	asOf := snap.Meta.AsOf
-	D := dayOf(asOf)
-	ws := asOf - p.WindowDays*day
-	U := p.UnitPerShare
-	cv := curves{}
-	// Rule 4 reads the previous run's carry; no other rule reads one.
-	carry, err := carryFromRecords(snap.Carry)
-	if err != nil {
-		return Output{}, err
-	}
-	if carry != nil && (p.Standing == nil || p.Standing.Rule < 4) {
-		return Output{}, fmt.Errorf("trust input: carry records need standing.rule 4 (parameter version %d)", JudgementsVersion)
-	}
-	if carry != nil && carry.AsOf > asOf {
-		return Output{}, fmt.Errorf("trust input: the carry is as of %d, after this run's %d", carry.AsOf, asOf)
-	}
-
-	service := map[string]bool{}
-	for _, a := range p.ServiceAccounts {
-		service[a] = true
-	}
-	firstSeen := map[string]int64{}
-	for _, r := range snap.Accounts {
-		if r.FirstSeen > 0 && (firstSeen[r.Account] == 0 || r.FirstSeen < firstSeen[r.Account]) {
-			firstSeen[r.Account] = r.FirstSeen
-		}
-	}
-
-	// Posts in the window, and activity.
-	posts := make([]Record, 0, len(snap.Posts))
-	for _, r := range snap.Posts {
-		if r.CreatedAt < asOf && r.CreatedAt >= ws && r.Account != "" && !service[r.Account] {
-			posts = append(posts, r)
-		}
-	}
-	sort.Slice(posts, func(i, j int) bool {
-		x, y := &posts[i], &posts[j]
-		if x.CreatedAt != y.CreatedAt {
-			return x.CreatedAt < y.CreatedAt
-		}
-		if x.ID != y.ID {
-			return x.ID < y.ID
-		}
-		if x.Account != y.Account {
-			return x.Account < y.Account
-		}
-		if x.ReplyTo != y.ReplyTo {
-			return x.ReplyTo < y.ReplyTo
-		}
-		return x.ReplyToAccount < y.ReplyToAccount
-	})
-	postByID := map[string]Record{}
-	activity := map[string]map[int64]bool{}
-	lastSeen := map[string]int64{}
-	active := func(a string, t int64) {
-		if activity[a] == nil {
-			activity[a] = map[int64]bool{}
-		}
-		activity[a][dayOf(t)] = true
-	}
-	seen := func(a string, t int64) {
-		if t > lastSeen[a] {
-			lastSeen[a] = t
-		}
-	}
-	for _, r := range posts {
-		postByID[r.ID] = r
-		active(r.Account, r.CreatedAt)
-		seen(r.Account, r.CreatedAt)
-	}
-
-	// Endorsements: the latest record per vote (voter, message) and per vouch
-	// (voter, target) decides.
-	ends := make([]*Record, 0, len(snap.Endorsements))
-	for i := range snap.Endorsements {
-		if r := &snap.Endorsements[i]; r.CreatedAt < asOf && r.Voter != "" && !service[r.Voter] {
-			ends = append(ends, r)
-		}
-	}
-	sort.Slice(ends, func(i, j int) bool { return endorsementLess(ends[i], ends[j]) })
-	latestVote := map[pairKey]*Record{}
-	latestVouch := map[pairKey]*Record{}
-	for _, r := range ends {
-		switch r.Kind {
-		case "vote", "legacy_vote", "unsigned":
-			latestVote[pairKey{r.Voter, r.MessageID}] = r
-		case "vouch":
-			latestVouch[pairKey{r.Voter, r.Target}] = r
-		}
-		if r.CreatedAt >= ws {
-			active(r.Voter, r.CreatedAt)
-			seen(r.Voter, r.CreatedAt)
-			if r.Target != "" && !service[r.Target] {
-				seen(r.Target, r.CreatedAt)
-			}
-		}
-	}
-	current := make([]*Record, 0, len(latestVote)+len(latestVouch))
-	for _, r := range latestVote {
-		current = append(current, r)
-	}
-	for _, r := range latestVouch {
-		current = append(current, r)
-	}
-	sort.Slice(current, func(i, j int) bool { return endorsementLess(current[i], current[j]) })
-	downVotes := map[string]int64{}
-	for _, r := range current {
-		if r.Kind == "vote" && r.Value == -1 && r.CreatedAt >= ws && r.Target != "" {
-			downVotes[r.Target]++
-		}
-	}
-
-	// Nodes: seeds first, then the most recently active, up to n_max.
-	candidates := make([]string, 0, len(lastSeen))
-	for a := range lastSeen {
-		if !service[a] {
-			candidates = append(candidates, a)
-		}
-	}
-	sort.Slice(candidates, func(i, j int) bool {
-		if lastSeen[candidates[i]] != lastSeen[candidates[j]] {
-			return lastSeen[candidates[i]] > lastSeen[candidates[j]]
-		}
-		return candidates[i] < candidates[j]
-	})
-	isNode := map[string]bool{}
-	for _, s := range p.Seeds {
-		if !service[s] {
-			isNode[s] = true
-		}
-	}
-	for _, a := range candidates {
-		if int64(len(isNode)) >= p.NMax {
-			break
-		}
-		isNode[a] = true
-	}
-	nodes := make([]string, 0, len(isNode))
-	for a := range isNode {
-		nodes = append(nodes, a)
-	}
-	sort.Strings(nodes)
-	index := make(map[string]int32, len(nodes))
-	for i, a := range nodes {
-		index[a] = int32(i)
-	}
-
-	// Roots: verified fresh domains and attached ed25519 keys join accounts.
-	suffixes := map[string]bool{}
-	for _, s := range p.DomainSuffixes {
-		suffixes[s] = true
-	}
-	proofs := sortRecords(snap.Proofs)
-	fresh := asOf - p.ProofFreshDays*day
-	counts := func(r Record) bool {
-		if p.Proofs[r.Kind].Assess != "" {
-			return r.State == "verified" && r.CheckedAt >= fresh && r.CheckedAt <= asOf && r.CreatedAt <= asOf
-		}
-		switch r.Kind {
-		case "domain":
-			return r.State == "verified" && r.CheckedAt >= fresh && r.CheckedAt <= asOf && r.CreatedAt <= asOf
-		case "ed25519":
-			return (r.State == "proof_attached" || r.State == "verified") && r.CreatedAt <= asOf
-		}
-		return r.State == "verified" && r.CreatedAt <= asOf
-	}
-	roots := uf{}
-	for _, r := range proofs {
-		if service[r.Account] || !counts(r) {
-			continue
-		}
-		switch r.Kind {
-		case "domain":
-			roots.union(r.Account, domainRoot(r.LinkValue, suffixes))
-		case "ed25519":
-			if r.LinkAccount != "" && !service[r.LinkAccount] {
-				roots.union(r.Account, r.LinkAccount)
-			}
-		}
-	}
-	// A root's label is its smallest domain root, else its smallest account.
-	label := map[string]string{}
-	for x := range roots {
-		rep := roots.find(x)
-		cur, ok := label[rep]
-		isDomain := strings.HasPrefix(x, "domain:")
-		curDomain := strings.HasPrefix(cur, "domain:")
-		if !ok || (isDomain && !curDomain) || (isDomain == curDomain && x < cur) {
-			label[rep] = x
-		}
-	}
-	rootOf := func(a string) string {
-		if _, ok := roots[a]; !ok {
-			return a
-		}
-		return label[roots.find(a)]
-	}
-
-	// Priors and standing.
-	flowSum := map[string]int64{}
-	standing := map[string]bool{}
-	for _, r := range snap.Priors {
-		flowSum[r.Account] += r.FlowSum
-		if r.Standing {
-			standing[r.Account] = true
-		}
-	}
-
-	// Breakers, pause-new-keys and active penalties.
-	reset := map[string]bool{}
-	for _, r := range snap.Breakers {
-		if r.StartedAt <= asOf && r.TrustUntil > asOf {
-			reset[r.Account] = true
-		}
-	}
-	if since := snap.Meta.PauseNewKeysSince; since > 0 {
-		for a, t := range firstSeen {
-			if t > since {
-				reset[a] = true
-			}
-		}
-	}
-	penalty := map[string]int64{}
-	for _, r := range snap.Penalties {
-		if r.EndsAt > asOf && r.FractionPPM > penalty[r.Account] {
-			penalty[r.Account] = min(r.FractionPPM, 1e6)
-		}
-	}
-
-	// Edge contributions.
-	type contrib struct {
-		src, dst, kind string
-		at, base       int64
-	}
-	var contribs []contrib
-	for _, r := range current {
-		if r.CreatedAt < ws || r.Target == "" || r.Value != 1 {
-			continue
-		}
-		switch r.Kind {
-		case "vote", "legacy_vote", "vouch":
-			contribs = append(contribs, contrib{r.Voter, r.Target, r.Kind, r.CreatedAt, p.Edges[r.Kind].BasePPM})
-		}
-	}
-	replied := map[string]bool{}
-	for _, r := range posts {
-		if r.ReplyToAccount == "" || r.ReplyToAccount == r.Account {
-			continue
-		}
-		key := r.Account + "\n" + r.ReplyToAccount + "\n" + strconv.FormatInt(dayOf(r.CreatedAt), 10)
-		if replied[key] {
-			continue
-		}
-		replied[key] = true
-		contribs = append(contribs, contrib{r.Account, r.ReplyToAccount, "reply", r.CreatedAt, p.Edges["reply"].BasePPM})
-	}
-	pairSum := map[pairKey]int64{}
-	pairRecent := map[pairKey]int64{}
-	pairKinds := map[pairKey]map[string]bool{}
-	recent := asOf - p.Liability.EdgeDays*day
-	for _, c := range contribs {
-		if c.src == c.dst || service[c.src] || service[c.dst] || !isNode[c.src] || !isNode[c.dst] {
-			continue
-		}
-		if rootOf(c.src) == rootOf(c.dst) || reset[c.src] || penalty[c.src] >= 1e6 {
-			continue
-		}
-		e := p.Edges[c.kind]
-		kind := c.kind
-		if kind == "legacy_vote" {
-			kind = "vote"
-		}
-		v := c.base * cv.decay(e.DayFactorPPM, D-dayOf(c.at)) / 1e6
-		if v <= 0 {
-			continue
-		}
-		k := pairKey{c.src, c.dst}
-		pairSum[k] += v
-		if c.at >= recent {
-			pairRecent[k] += v
-		}
-		if pairKinds[k] == nil {
-			pairKinds[k] = map[string]bool{}
-		}
-		pairKinds[k][kind] = true
-	}
-	saturate := func(s int64) int64 { return 1e6 * s / (1e6 + s) }
-	bySrc := map[int32][]gEdge{}
-	for k, s := range pairSum {
-		if w := saturate(s); w > 0 {
-			si := index[k.src]
-			bySrc[si] = append(bySrc[si], gEdge{si, index[k.dst], w})
-		}
-	}
-	var edges []gEdge
-	for _, list := range bySrc {
-		sort.Slice(list, func(i, j int) bool {
-			if list[i].w != list[j].w {
-				return list[i].w > list[j].w
-			}
-			return list[i].dst < list[j].dst
-		})
-		if int64(len(list)) > p.KOut {
-			list = list[:p.KOut]
-		}
-		edges = append(edges, list...)
-	}
-	sort.Slice(edges, func(i, j int) bool {
-		if edges[i].src != edges[j].src {
-			return edges[i].src < edges[j].src
-		}
-		return edges[i].dst < edges[j].dst
-	})
-
-	// Own average and transit.
-	activeDays := func(a string, from, to int64) int64 {
-		var n int64
-		for d := range activity[a] {
-			if d >= from && d < to {
-				n++
-			}
-		}
-		return n
-	}
-	ownAvg := make([]int64, len(nodes))
-	transit := make([]int64, len(nodes))
-	for i, a := range nodes {
-		if snap.Meta.PriorRuns <= 0 {
-			continue
-		}
-		span := p.ActivityDays
-		if fs := firstSeen[a]; fs > 0 {
-			span = max(1, min(p.ActivityDays, D-dayOf(fs)))
-		}
-		share := min(1e6, activeDays(a, D-p.ActivityDays, D)*1e6/span)
-		avg := min(U, flowSum[a]/snap.Meta.PriorRuns)
-		ownAvg[i] = avg * share / 1e6
-		if !reset[a] {
-			transit[i] = p.LambdaPPM * ownAvg[i] / 1e6 * (1e6 - penalty[a]) / 1e6
-		}
-	}
-
-	// Proof collateral (history needs roots and standing).
-	type proofSet struct {
-		parts []ProofPart
-		total int64
-	}
-	accountProofs := map[string]*proofSet{}
-	addPart := func(a string, part ProofPart) {
-		ps := accountProofs[a]
-		if ps == nil {
-			ps = &proofSet{}
-			accountProofs[a] = ps
-		}
-		ps.parts = append(ps.parts, part)
-	}
-	for _, r := range proofs {
-		if service[r.Account] || r.CreatedAt > asOf {
-			continue
-		}
-		price := p.Proofs[r.Kind]
-		part := ProofPart{Kind: r.Kind, Value: r.LinkValue, State: r.State, Forge: price.Forge, Rent: price.Rent, Curve: price.Curve, AgeDays: max(0, D-dayOf(r.CreatedAt))}
-		switch r.Kind {
-		case "domain":
-			part.Root = domainRoot(r.LinkValue, suffixes)
-		case "ed25519":
-			part.Root = "key:" + r.LinkAccount
-		default:
-			part.Root = r.Kind + ":" + r.LinkValue
-			if price.Assess != "" && r.Root != "" {
-				part.Root = r.Root
-			}
-		}
-		switch {
-		case !counts(r):
-			part.Note = "not counted in this state"
-		case price.Assess != "":
-			// An assessed root (version 5): its record carries the value.
-			part.WeightPPM = 1e6
-			part.Note = "assessed " + strconv.FormatInt(r.Assessed, 10) + " (" + price.Assess + ")"
-			part.Contribution = AssessedContribution(price, r.Assessed)
-			addPart(r.Account, part)
-			continue
-		case price.Curve == "ramp":
-			// The verified age is unknown: the link's age bounds it, and an
-			// unknown age earns at most half the ramp (never full).
-			part.WeightPPM = min(500000, cv.ramp(price.DayFactorPPM, part.AgeDays))
-			part.Note = "verified age unknown: at most half weight, bounded by the link's age"
-		default:
-			part.WeightPPM = 1e6
-		}
-		part.Contribution = min(price.Forge, price.Rent) * part.WeightPPM / 1e6
-		addPart(r.Account, part)
-	}
-	// History: days with a post that drew a reply or up vote from another
-	// root with standing in the previous run.
-	qualified := map[string]map[int64]bool{}
-	qualify := func(post Record, by string) {
-		if by == "" || by == post.Account || service[by] || !standing[by] || rootOf(by) == rootOf(post.Account) {
-			return
-		}
-		if qualified[post.Account] == nil {
-			qualified[post.Account] = map[int64]bool{}
-		}
-		qualified[post.Account][dayOf(post.CreatedAt)] = true
-	}
-	for _, r := range posts {
-		if parent, ok := postByID[r.ReplyTo]; ok && r.ReplyTo != "" {
-			qualify(parent, r.Account)
-		}
-	}
-	for _, r := range current {
-		if r.Kind == "vote" && r.Value == 1 {
-			if post, ok := postByID[r.MessageID]; ok {
-				qualify(post, r.Voter)
-			}
-		}
-	}
-	for a, days := range qualified {
-		first := int64(-1)
-		for d := range days {
-			if first < 0 || d < first {
-				first = d
-			}
-		}
-		h := p.History
-		n := min(int64(len(days)), h.DaysCap)
-		part := ProofPart{Kind: "history", Value: strconv.FormatInt(int64(len(days)), 10) + " days", Root: "history:" + a, State: "computed",
-			Forge: n * h.DayPrice, Rent: n * h.DayPrice, Curve: "ramp", AgeDays: D - first}
-		part.WeightPPM = cv.ramp(h.DayFactorPPM, part.AgeDays)
-		part.Contribution = part.Forge * part.WeightPPM / 1e6
-		part.Note = "lagged one run"
-		addPart(a, part)
-	}
-	// Saturate within a root, sum across roots.
-	distinctRoots := map[string]int64{}
-	nonDomainMax := map[string]int64{}
-	for a, ps := range accountProofs {
-		sort.Slice(ps.parts, func(i, j int) bool {
-			x, y := ps.parts[i], ps.parts[j]
-			if x.Root != y.Root {
-				return x.Root < y.Root
-			}
-			if x.Contribution != y.Contribution {
-				return x.Contribution > y.Contribution
-			}
-			if x.Kind != y.Kind {
-				return x.Kind < y.Kind
-			}
-			return x.Value < y.Value
-		})
-		for i := range ps.parts {
-			part := &ps.parts[i]
-			if i > 0 && ps.parts[i-1].Root == part.Root {
-				best := ps.parts[i-1]
-				if best.SaturatedBy != "" {
-					part.SaturatedBy = best.SaturatedBy
-				} else {
-					part.SaturatedBy = best.Kind + ":" + best.Value
-				}
-				continue
-			}
-			ps.total += part.Contribution
-			if part.Contribution > 0 {
-				distinctRoots[a]++
-				if !strings.HasPrefix(part.Root, "domain:") {
-					nonDomainMax[a] = max(nonDomainMax[a], part.Contribution)
-				}
-			}
-		}
-	}
-
-	// Seed sets.
-	var seedsA []int32
-	var seedsAList []string
-	for _, s := range p.Seeds {
-		if i, ok := index[s]; ok {
-			seedsA = append(seedsA, i)
-			seedsAList = append(seedsAList, s)
-		}
-	}
-	sort.Slice(seedsA, func(i, j int) bool { return seedsA[i] < seedsA[j] })
-	sort.Strings(seedsAList)
-	var seedsB []int32
-	seedsBList := []string{}
-	for i, a := range nodes {
-		fs := firstSeen[a]
-		anchored := distinctRoots[a] >= p.SeedsB.MinRoots || nonDomainMax[a] >= max(1, p.SeedsB.ThetaAnchor)
-		if anchored && fs > 0 && fs <= asOf-p.SeedsB.MinAgeDays*day && activeDays(a, D-p.SeedsB.OfDays, D) >= p.SeedsB.ActiveDays && penalty[a] == 0 {
-			seedsB = append(seedsB, int32(i))
-			seedsBList = append(seedsBList, a)
-		}
-	}
-	useB := int64(len(seedsB)) >= p.SeedsB.MinMembers
-
-	var H int64
-	for _, a := range nodes {
-		if activeDays(a, D-p.ActiveDays, D) > 0 {
-			H++
-		}
-	}
-	pool := U * max(H, 1)
-
-	// Flow graph.
-	g := &flowGraph{n: len(nodes), transit: transit, hub: make([]int32, len(nodes)), hubCap: p.RootCapShares * U, nodeCap: U, steps: p.FillSteps}
-	groups := map[string][]int32{}
-	for i, a := range nodes {
-		groups[rootOf(a)] = append(groups[rootOf(a)], int32(i))
-		g.hub[i] = -1
-	}
-	var hubLabels []string
-	for l, members := range groups {
-		if len(members) >= 2 {
-			hubLabels = append(hubLabels, l)
-		}
-	}
-	sort.Strings(hubLabels)
-	for j, l := range hubLabels {
-		for _, i := range groups[l] {
-			g.hub[i] = int32(j)
-		}
-	}
-	g.hubs = len(hubLabels)
-	for _, e := range edges {
-		g.src = append(g.src, e.src)
-		g.dst = append(g.dst, e.dst)
-		g.cap = append(g.cap, p.EdgeCapPPM*U*e.w/1e12)
-	}
-	fa, work, err := runFlow(ctx, g, seedsA, pool, p.MaxWork, 0)
-	if err != nil {
-		return Output{Work: work}, err
-	}
-	fb := fa
-	if useB {
-		if fb, work, err = runFlow(ctx, g, seedsB, pool, p.MaxWork, work); err != nil {
-			return Output{Work: work}, err
-		}
-	}
-	flowOf := func(i int32) int64 {
-		if useB {
-			return min(fa.node[i], fb.node[i])
-		}
-		return fa.node[i]
-	}
-	edgeFlow := func(k int) int64 {
-		if useB {
-			return min(fa.edge[k], fb.edge[k])
-		}
-		return fa.edge[k]
-	}
-	inEdges := map[int32][]int{}
-	for k, e := range edges {
-		inEdges[e.dst] = append(inEdges[e.dst], k)
-	}
-
-	// Detectors, liability.
-	evidence := detect(p, snap, asOf, D, service, nodes, edges)
-	penaltiesOut := []PenaltyOut{}
-	for _, ev := range evidence {
-		members := map[string]bool{}
-		for _, m := range ev.Members {
-			members[m] = true
-			penaltiesOut = append(penaltiesOut, PenaltyOut{Account: m, Evidence: ev.ID, FractionPPM: 1e6, StartsAt: asOf, EndsAt: asOf + p.Liability.PenaltyDays*day})
-		}
-		into := map[string]int64{}
-		for k, s := range pairRecent {
-			if members[k.dst] && !members[k.src] && !service[k.src] {
-				into[k.src] += s
-			}
-		}
-		for u, s := range into {
-			pen := min(p.Liability.PhiMaxPPM, p.Liability.PhiPPM*saturate(s)/1e6)
-			if pen > 0 {
-				penaltiesOut = append(penaltiesOut, PenaltyOut{Account: u, Evidence: ev.ID, FractionPPM: pen, StartsAt: asOf, EndsAt: asOf + p.Liability.PenaltyDays*day})
-			}
-		}
-	}
-	sort.Slice(penaltiesOut, func(i, j int) bool {
-		if penaltiesOut[i].Account != penaltiesOut[j].Account {
-			return penaltiesOut[i].Account < penaltiesOut[j].Account
-		}
-		return penaltiesOut[i].Evidence < penaltiesOut[j].Evidence
-	})
-	effectivePenalty := map[string]int64{}
-	for a, v := range penalty {
-		effectivePenalty[a] = v
-	}
-	for _, pen := range penaltiesOut {
-		effectivePenalty[pen.Account] = max(effectivePenalty[pen.Account], pen.FractionPPM)
-	}
-
-	// Scores: every node, and every account with a proof.
-	scored := map[string]bool{}
-	for _, a := range nodes {
-		scored[a] = true
-	}
-	for a := range accountProofs {
-		scored[a] = true
-	}
-	accounts := make([]string, 0, len(scored))
-	for a := range scored {
-		accounts = append(accounts, a)
-	}
-	sort.Strings(accounts)
-	seedA := map[string]bool{}
-	for _, s := range seedsAList {
-		seedA[s] = true
-	}
-	seedB := map[string]bool{}
-	if useB {
-		for _, s := range seedsBList {
-			seedB[s] = true
-		}
-	}
-	flowTotal := map[string]int64{}
-	scores := make([]ScoreOut, 0, len(accounts))
-	for _, a := range accounts {
-		sc := ScoreOut{Account: a, Root: rootOf(a), Parts: Parts{Proofs: []ProofPart{}, Endorsers: []EndorserPart{}, DownVotes: downVotes[a], PenaltyPPM: effectivePenalty[a], Reset: reset[a]}}
-		if ps := accountProofs[a]; ps != nil {
-			sc.ProofCollateral = ps.total
-			sc.Parts.Proofs = ps.parts
-		}
-		if i, ok := index[a]; ok {
-			sc.FlowA = fa.node[i]
-			if useB {
-				b := fb.node[i]
-				sc.FlowB = &b
-			}
-			sc.Flow = flowOf(i)
-			sc.Parts.OwnAvg, sc.Parts.Transit = ownAvg[i], transit[i]
-			for _, k := range inEdges[i] {
-				e := edges[k]
-				src := nodes[e.src]
-				var kinds []string
-				for kind := range pairKinds[pairKey{src, a}] {
-					kinds = append(kinds, kind)
-				}
-				sort.Strings(kinds)
-				sc.Parts.Endorsers = append(sc.Parts.Endorsers, EndorserPart{Agent: src, Kinds: kinds, WeightPPM: e.w, Flow: edgeFlow(k)})
-			}
-			sort.Slice(sc.Parts.Endorsers, func(x, y int) bool {
-				ex, ey := sc.Parts.Endorsers[x], sc.Parts.Endorsers[y]
-				if ex.Flow != ey.Flow {
-					return ex.Flow > ey.Flow
-				}
-				if ex.WeightPPM != ey.WeightPPM {
-					return ex.WeightPPM > ey.WeightPPM
-				}
-				return ex.Agent < ey.Agent
-			})
-			sc.Parts.EndorsersTotal = int64(len(sc.Parts.Endorsers))
-			if len(sc.Parts.Endorsers) > 20 {
-				sc.Parts.Endorsers = sc.Parts.Endorsers[:20]
-			}
-		}
-		switch {
-		case seedA[a] && seedB[a]:
-			sc.Parts.Seed = "ab"
-		case seedA[a]:
-			sc.Parts.Seed = "a"
-		case seedB[a]:
-			sc.Parts.Seed = "b"
-		}
-		flowTotal[a] = sc.Flow
-		sc.Collateral = sc.ProofCollateral + sc.Flow*p.UnitPrice
-		switch {
-		case sc.Flow > 0 && sc.Flow >= p.ThetaTrusted:
-			sc.Tier = 1
-		case sc.ProofCollateral > 0 && sc.ProofCollateral >= p.ThetaProven:
-			sc.Tier = 2
-		default:
-			sc.Tier = 3
-		}
-		sc.WeightPPM = (1e6 + min(p.WeightCapPPM, sc.Collateral*p.WeightPerUnit)) * (1e6 - effectivePenalty[a]) / 1e6
-		scores = append(scores, sc)
-	}
-
-	var standingSummary *StandingSummary
-	var shadow, judgements *JudgementsShadow
-	if p.Standing != nil {
-		proofParts := make(map[string][]ProofPart, len(accountProofs))
-		for a, ps := range accountProofs {
-			proofParts[a] = ps.parts
-		}
-		tiers := make(map[string]int64, len(scores))
-		collateral := make(map[string]int64, len(scores))
-		for _, sc := range scores {
-			tiers[sc.Account], collateral[sc.Account] = sc.Tier, sc.Collateral
-		}
-		res := computeStanding(standingInput{p: p, snap: snap, asOf: asOf, D: D, service: service, rootOf: rootOf, reset: reset, penalty: effectivePenalty,
-			posts: posts, current: current, proofs: proofParts, scored: accounts, tier: tiers, collateral: collateral, carry: carry})
-		for i := range scores {
-			scores[i].Parts.Standing = res.parts[scores[i].Account]
-		}
-		// An account whose only evidence is a standing input (credit spent or
-		// held) is scored too, at tier 3 and one share.
-		for _, a := range res.extra {
-			scores = append(scores, ScoreOut{Account: a, Root: rootOf(a), Tier: 3, WeightPPM: 1e6 * (1e6 - effectivePenalty[a]) / 1e6,
-				Parts: Parts{Proofs: []ProofPart{}, Endorsers: []EndorserPart{}, DownVotes: downVotes[a], PenaltyPPM: effectivePenalty[a], Reset: reset[a], Standing: res.parts[a]}})
-		}
-		sort.Slice(scores, func(i, j int) bool { return scores[i].Account < scores[j].Account })
-		standingSummary = res.summary
-		shadow, judgements = res.shadow, res.judgements
-	}
-
-	sponsorships, dividends := sponsor(p, snap, asOf, service, firstSeen, reset, index, ownAvg, rootOf, pairSum, flowTotal, func(invitee string) []endorserFlow {
-		i, ok := index[invitee]
-		if !ok {
-			return nil
-		}
-		var out []endorserFlow
-		for _, k := range inEdges[i] {
-			out = append(out, endorserFlow{nodes[edges[k].src], edgeFlow(k)})
-		}
-		return out
-	})
-
-	var maxTransit int64
-	for i := range nodes {
-		if !seedA[nodes[i]] && !seedB[nodes[i]] {
-			maxTransit = max(maxTransit, transit[i])
-		}
-	}
-	summary := InputsSummary{EventsSeq: snap.Meta.EventsSeq, EndorsementsSeq: snap.Meta.EndorsementsSeq, LedgerSeq: snap.Meta.LedgerSeq, PriorRuns: snap.Meta.PriorRuns,
-		Accounts: int64(len(snap.Accounts)), Posts: int64(len(posts)), Endorsements: int64(len(ends)), Proofs: int64(len(snap.Proofs)), Transfers: int64(len(snap.Transfers))}
-	if seedsAList == nil {
-		seedsAList = []string{}
-	}
-	return Output{
-		Schema: 1, AsOf: asOf, ParamsVersion: p.Version, ParamsSHA256: sha256Hex(p.Body()), Inputs: summary,
-		Nodes: int64(len(nodes)), Edges: int64(len(edges)), PoolUnits: pool, Active: H,
-		SeedsA: seedsAList, SeedsB: seedsBList, SeedsBUsed: useB,
-		CaptureBound: CaptureBound{UnitPerShare: U, EdgeCapUnits: p.EdgeCapPPM * U / 1e6, LambdaPPM: p.LambdaPPM, MaxTransitUnits: maxTransit, PoolUnits: pool,
-			Statement: "Whatever the number of sybils, a region behind k attack edges receives at most k x edge_cap_units flow units, and at most max_transit_units through any one non-seed endorser."},
-		Scores: scores, Evidence: evidence, Penalties: penaltiesOut, Sponsorships: sponsorships, Dividends: dividends, Standing: standingSummary, JudgementsShadow: shadow, Judgements: judgements, Work: work,
-	}, nil
-}
-
 // endorsementLess orders endorsement records by seq, then by content, so
 // that even duplicate sequence numbers sort the same way everywhere.
 func endorsementLess(a, b *Record) bool {
@@ -996,8 +341,1112 @@ func endorsementLess(a, b *Record) bool {
 	if a.MessageID != b.MessageID {
 		return a.MessageID < b.MessageID
 	}
-	if a.Value != b.Value {
-		return a.Value < b.Value
+	return a.Value < b.Value
+}
+
+// logEntry is one penalty log entry the run read.
+type logEntry struct {
+	id, trigger, evidence string
+	members               []string
+	start, end, level     int64
+	pending, lifted       bool
+	burned                []string
+	liabilities           []Record
+}
+
+func (e *logEntry) activeAt(t int64) bool {
+	return !e.lifted && !e.pending && e.start <= t && t < e.end
+}
+
+// readLog assembles the penalty log's entries from their records.
+func readLog(snap Snapshot) (map[string]*logEntry, []string, error) {
+	log := map[string]*logEntry{}
+	for _, r := range sortRecords(snap.Penalties) {
+		if r.ID == "" || r.Account == "" {
+			return nil, nil, fmt.Errorf("trust input: a penalty record needs an id and an account")
+		}
+		e := log[r.ID]
+		if e == nil {
+			e = &logEntry{id: r.ID, trigger: r.Kind, evidence: r.Evidence, start: r.CreatedAt, end: r.EndsAt, level: r.Value, pending: r.State == "pending"}
+			log[r.ID] = e
+		} else if e.trigger != r.Kind || e.start != r.CreatedAt || e.end != r.EndsAt || e.level != r.Value || e.pending != (r.State == "pending") || e.evidence != r.Evidence {
+			return nil, nil, fmt.Errorf("trust input: penalty entry %q has members that disagree", r.ID)
+		}
+		switch r.Kind {
+		case "ring", "funnel", "shared_wallet", "moderation", "override":
+		default:
+			return nil, nil, fmt.Errorf("trust input: penalty entry %q has an unknown trigger %q", r.ID, r.Kind)
+		}
+		e.members = append(e.members, r.Account)
 	}
-	return !a.Sponsor && b.Sponsor
+	for _, r := range sortRecords(snap.Burns) {
+		if e := log[r.ID]; e != nil && r.Root != "" {
+			e.burned = append(e.burned, r.Root)
+		}
+	}
+	for _, r := range sortRecords(snap.Liabilities) {
+		if e := log[r.ID]; e != nil && r.Account != "" {
+			e.liabilities = append(e.liabilities, r)
+		}
+	}
+	for _, r := range sortRecords(snap.Lifts) {
+		if e := log[r.ID]; e != nil && r.CreatedAt <= snap.Meta.AsOf {
+			e.lifted = true
+		}
+	}
+	ids := make([]string, 0, len(log))
+	for id := range log {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return log, ids, nil
+}
+
+// carryIn is the previous run's carry, by account.
+type carryIn struct {
+	asOf     int64
+	accounts map[string]CarryAccount
+}
+
+func carryFromRecords(list []Record) (*carryIn, error) {
+	if len(list) == 0 {
+		return nil, nil
+	}
+	c := &carryIn{accounts: map[string]CarryAccount{}}
+	runs := 0
+	for _, r := range sortRecords(list) {
+		switch r.Kind {
+		case "run":
+			runs++
+			c.asOf = r.AsOf
+		case "world":
+			if r.Account == "" || r.Amount < 0 || r.Time < 0 || r.Backed < 0 || r.Direct < 0 || r.Standing < 0 || r.FractionPPM < 0 || r.FractionPPM > 1e6 {
+				return nil, fmt.Errorf("trust input: carry world record for %q is out of range", r.Account)
+			}
+			if _, dup := c.accounts[r.Account]; dup {
+				return nil, fmt.Errorf("trust input: carry world record for %q is repeated", r.Account)
+			}
+			if r.Amount > 1<<50 || r.Time > 1<<50 || r.Backed > 1<<50 || r.Direct > 1<<40 || r.Standing > 1<<40 {
+				return nil, fmt.Errorf("trust input: carry world record for %q is out of range", r.Account)
+			}
+			c.accounts[r.Account] = CarryAccount{Account: r.Account, Money: r.Amount, Time: r.Time, FadePPM: r.FractionPPM, LastActive: r.LastActive,
+				Direct: r.Direct, Standing: r.Standing, Backed: r.Backed}
+		default:
+			return nil, fmt.Errorf("trust input: unknown carry kind %q", r.Kind)
+		}
+	}
+	if runs != 1 {
+		return nil, fmt.Errorf("trust input: the carry needs one run record, not %d", runs)
+	}
+	return c, nil
+}
+
+// Compute runs the trust module on one snapshot. It is a pure function of
+// the snapshot: record order does not matter, and nothing reads the clock
+// except to stop at max_seconds.
+func Compute(ctx context.Context, snap Snapshot) (Output, error) {
+	p := snap.Params
+	if p.Version < UnifiedVersion {
+		return Output{}, ErrRetiredVersion{p.Version}
+	}
+	if err := p.Validate(); err != nil {
+		return Output{}, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(p.MaxSeconds)*time.Second)
+	defer cancel()
+	r := &run{p: p, snap: snap, asOf: snap.Meta.AsOf, cv: curves{}}
+	return r.compute(ctx)
+}
+
+// run is one computation's state.
+type run struct {
+	p    Params
+	snap Snapshot
+	asOf int64
+	D    int64
+	cv   curves
+
+	accounts []string
+	known    map[string]bool
+	base     uf // keys and verified domains
+	full     uf // and live wallet or payout addresses
+	label    map[string]string
+	rootOf   func(string) string
+
+	log    map[string]*logEntry
+	logIDs []string
+
+	work int64
+}
+
+func (r *run) compute(ctx context.Context) (Output, error) {
+	p, snap, asOf := r.p, r.snap, r.asOf
+	D := dayOf(asOf)
+	r.D = D
+	H := p.HalfLifeDays
+	ws := asOf - p.WindowDays*day
+	U := p.UnitCents * mc
+	nodeCap := p.NodeCapCents * mc
+
+	carry, err := carryFromRecords(snap.Carry)
+	if err != nil {
+		return Output{}, err
+	}
+	if carry != nil && carry.asOf > asOf {
+		return Output{}, fmt.Errorf("trust input: the carry is as of %d, after this run's %d", carry.asOf, asOf)
+	}
+	carryIn := ""
+	if len(snap.Carry) > 0 {
+		carryIn = sha256Hex(Canonical(sortRecords(snap.Carry)))
+	}
+	prevAsOf := ws
+	if carry != nil {
+		prevAsOf = max(carry.asOf, asOf-3650*day)
+	}
+	prevD := dayOf(prevAsOf)
+
+	r.log, r.logIDs, err = readLog(snap)
+	if err != nil {
+		return Output{}, err
+	}
+
+	// Accounts seen anywhere.
+	r.known = map[string]bool{}
+	see := func(a string) {
+		if a != "" {
+			r.known[a] = true
+		}
+	}
+	firstSeen := map[string]int64{}
+	for _, x := range snap.Accounts {
+		see(x.Account)
+		if x.FirstSeen > 0 && (firstSeen[x.Account] == 0 || x.FirstSeen < firstSeen[x.Account]) {
+			firstSeen[x.Account] = x.FirstSeen
+		}
+	}
+	for _, x := range snap.Posts {
+		see(x.Account)
+		see(x.ReplyToAccount)
+	}
+	for _, x := range snap.Endorsements {
+		see(x.Voter)
+		see(x.Target)
+	}
+	for _, x := range snap.Proofs {
+		see(x.Account)
+	}
+	for _, x := range snap.Payments {
+		see(x.Account)
+		see(x.To)
+	}
+	for _, x := range snap.Acts {
+		see(x.From)
+		see(x.To)
+	}
+	for _, x := range snap.Transfers {
+		see(x.From)
+		see(x.To)
+	}
+	for _, x := range snap.Claims {
+		see(x.Account)
+	}
+	for _, x := range snap.Reviews {
+		see(x.Account)
+		if strings.HasPrefix(x.Target, "agent:") {
+			see(x.Target[len("agent:"):])
+		}
+	}
+	for _, x := range snap.Owners {
+		see(x.Account)
+	}
+	if carry != nil {
+		for a := range carry.accounts {
+			see(a)
+		}
+	}
+	for _, id := range r.logIDs {
+		for _, m := range r.log[id].members {
+			see(m)
+		}
+	}
+
+	// Breakers and pause-new-keys: such an account's judgements make no
+	// edge and it is no responder.
+	reset := map[string]bool{}
+	for _, x := range snap.Breakers {
+		if x.StartedAt <= asOf && x.TrustUntil > asOf {
+			reset[x.Account] = true
+		}
+	}
+	if since := snap.Meta.PauseNewKeysSince; since > 0 {
+		for a, t := range firstSeen {
+			if t > since {
+				reset[a] = true
+			}
+		}
+	}
+
+	// Burned proof roots: every entry not lifted burns its roots for good.
+	burned := map[string]bool{}
+	for _, id := range r.logIDs {
+		if e := r.log[id]; !e.lifted {
+			for _, b := range e.burned {
+				burned[b] = true
+			}
+		}
+	}
+
+	// Roots.
+	suffixes := map[string]bool{}
+	for _, s := range p.DomainSuffixes {
+		suffixes[s] = true
+	}
+	fresh := asOf - p.ProofFreshDays*day
+	counts := func(x Record) bool {
+		if x.CreatedAt > asOf {
+			return false
+		}
+		switch {
+		case x.Kind == "domain" || p.Proofs[x.Kind].Assess != "":
+			return x.State == "verified" && x.CheckedAt >= fresh && x.CheckedAt <= asOf
+		case x.Kind == "ed25519":
+			return x.State == "proof_attached" || x.State == "verified"
+		}
+		return x.State == "verified"
+	}
+	proofs := sortRecords(snap.Proofs)
+	r.base, r.full = uf{}, uf{}
+	for _, x := range proofs {
+		if !counts(x) {
+			continue
+		}
+		switch x.Kind {
+		case "domain":
+			d := domainRoot(x.LinkValue, suffixes)
+			r.base.union(x.Account, d)
+			r.full.union(x.Account, d)
+		case "ed25519":
+			if x.LinkAccount != "" {
+				r.base.union(x.Account, x.LinkAccount)
+				r.full.union(x.Account, x.LinkAccount)
+			}
+		case "wallet":
+			if x.Root != "" && !burned[x.Root] {
+				r.full.union(x.Account, x.Root)
+			}
+		}
+	}
+	payments := sortRecords(snap.Payments)
+	for _, x := range payments {
+		if x.To != "" && x.LinkValue != "" && !burned[x.LinkValue] && x.CreatedAt < asOf {
+			r.full.union(x.To, x.LinkValue)
+		}
+	}
+	r.label = labels(r.full)
+	r.rootOf = func(a string) string {
+		if _, ok := r.full[a]; !ok {
+			return a
+		}
+		return r.label[r.full.find(a)]
+	}
+	baseLabel := labels(r.base)
+	baseRoot := func(a string) string {
+		if _, ok := r.base[a]; !ok {
+			return a
+		}
+		return baseLabel[r.base.find(a)]
+	}
+
+	// Funded pairs (a transfer or payment either way within funded_days = H)
+	// and the directed money graph for transfer paths.
+	fundedFrom := asOf - H*day
+	funded := map[[2]string]bool{}
+	moneyOut := map[string][]string{}
+	link := func(from, to string, at int64) {
+		if from == "" || to == "" || from == to || at < fundedFrom || at >= asOf {
+			return
+		}
+		funded[[2]string{from, to}], funded[[2]string{to, from}] = true, true
+		moneyOut[from] = append(moneyOut[from], to)
+	}
+	for _, x := range snap.Transfers {
+		if x.Amount > 0 {
+			link(x.From, x.To, x.CreatedAt)
+		}
+	}
+	for _, x := range payments {
+		if x.Amount > 0 {
+			link(x.Account, x.To, x.CreatedAt)
+		}
+	}
+	for a := range moneyOut {
+		sort.Strings(moneyOut[a])
+	}
+	indep := func(a, b string) bool { return PublicIndependent(a, b, r.rootOf, funded) }
+
+	// Active penalties at as-of (from the log; this run's findings are
+	// added below).
+	member := map[string]*logEntry{} // full root → entry
+	liable := map[string]PenaltyState{}
+	applyLog := func(e *logEntry) {
+		for _, m := range e.members {
+			if root := r.rootOf(m); member[root] == nil || e.id < member[root].id {
+				member[root] = e
+			}
+		}
+		for _, l := range e.liabilities {
+			if l.CreatedAt <= asOf && asOf < l.EndsAt {
+				root := r.rootOf(l.Account)
+				if cur, ok := liable[root]; !ok || l.FractionPPM > cur.FractionPPM {
+					liable[root] = PenaltyState{Entry: e.id, Role: "backer", FractionPPM: min(1e6, l.FractionPPM), Level: l.Value, EndsAt: l.EndsAt}
+				}
+			}
+		}
+	}
+	for _, id := range r.logIDs {
+		if e := r.log[id]; e.activeAt(asOf) {
+			applyLog(e)
+		}
+	}
+	penalised := func(a string) bool { return member[r.rootOf(a)] != nil }
+
+	// Proofs: each priced proof root counts once, split between the roots
+	// that claim it; within a root, its best claim counts.
+	type claim struct {
+		account string
+		item    WorldItem
+		price   int64 // cents
+	}
+	var claims []claim
+	for _, x := range proofs {
+		price := p.Proofs[x.Kind]
+		if x.Kind != "domain" && price.Assess == "" {
+			continue // control, not cost (ed25519, board, url, nostr)
+		}
+		it := WorldItem{Kind: "proof", Source: x.Kind, State: x.State}
+		switch {
+		case x.Kind == "domain":
+			it.Root = domainRoot(x.LinkValue, suffixes)
+		case x.Root != "":
+			it.Root = x.Root
+		default:
+			it.Root = x.Kind + ":" + x.LinkValue
+		}
+		var cents int64
+		switch {
+		case !counts(x):
+			it.Note = "not counted: not verified within proof_fresh_days"
+		case burned[it.Root]:
+			it.State, it.Note = "burned", "burned by a penalty: prices 0 on any key"
+		case x.Kind == "domain":
+			cents = DomainContribution(price, D-dayOf(x.RegisteredAt), x.RegisteredAt, x.Rank)
+			if x.RegisteredAt <= 0 && x.Rank <= 0 {
+				it.Note = "registration age and rank not yet fetched: priced at the domain row's fallback"
+			}
+		default:
+			cents = AssessedContribution(price, x.Assessed)
+		}
+		it.PriceCents = cents
+		claims = append(claims, claim{x.Account, it, cents})
+	}
+	// Per proof root: the claiming roots and each root's best claim.
+	bestOf := map[[2]string]int{} // (proof root, node root) → claim index
+	claimants := map[string]map[string]bool{}
+	for i, c := range claims {
+		if c.price <= 0 {
+			continue
+		}
+		k := [2]string{c.item.Root, r.rootOf(c.account)}
+		if j, ok := bestOf[k]; !ok || c.price > claims[j].price || c.price == claims[j].price && c.account < claims[j].account {
+			bestOf[k] = i
+		}
+		if claimants[c.item.Root] == nil {
+			claimants[c.item.Root] = map[string]bool{}
+		}
+		claimants[c.item.Root][r.rootOf(c.account)] = true
+	}
+	proofMC := map[string]int64{} // account → counted proofs (mc), before fade
+	items := map[string][]WorldItem{}
+	proofRootsOf := map[string][]string{} // account → its counted proof roots
+	for i, c := range claims {
+		it := c.item
+		if c.price > 0 {
+			proofRootsOf[c.account] = append(proofRootsOf[c.account], it.Root)
+			k := [2]string{it.Root, r.rootOf(c.account)}
+			if bestOf[k] == i {
+				n := int64(len(claimants[it.Root]))
+				share := c.price * mc / n
+				proofMC[c.account] += share
+				it.Cents = share / mc
+				if n > 1 {
+					it.Note = "shared with " + strconv.FormatInt(n-1, 10) + " other root(s): split"
+				}
+			} else {
+				it.Note = "saturated by " + claims[bestOf[k]].item.Source + " on " + claims[bestOf[k]].account
+			}
+		}
+		items[c.account] = append(items[c.account], it)
+	}
+
+	// Prior standing and direct costs: the previous run's, and at least
+	// this run's own costs (proofs held now, faded as the carry left them,
+	// and money paid to SwarmMemo since the carry; a first run counts all
+	// of it). Own costs never depend on standing, so the bootstrap is not
+	// circular: a carry from a run that priced everything at 0 (C320c's
+	// dry run) does not hold the next run at 0 for another run (§9).
+	moneyAll := map[string]int64{}
+	for _, x := range payments {
+		if x.To == "" && x.Amount > 0 && x.CreatedAt < asOf && (carry == nil || x.CreatedAt >= prevAsOf) {
+			moneyAll[x.Account] += min(x.Amount, 1<<40) * mc
+		}
+	}
+	ownDirect := func(a string) int64 { // mc
+		if carry != nil {
+			if c, ok := carry.accounts[a]; ok {
+				return mulDiv(proofMC[a], c.FadePPM, 1e6) + moneyAll[a]
+			}
+		}
+		return proofMC[a] + moneyAll[a]
+	}
+	priorDirect := func(a string) int64 { // mc
+		if carry != nil {
+			return max(carry.accounts[a].Direct*mc, ownDirect(a))
+		}
+		return ownDirect(a)
+	}
+
+	// Budgets: a payee's or responder's direct costs back at most that much
+	// outstanding credit (payments recomputed each run over funded_days;
+	// time present carried, its backing decaying with H).
+	span := max(0, D-prevD)
+	backed := map[string]int64{}
+	if carry != nil {
+		for a, c := range carry.accounts {
+			if c.Backed > 0 {
+				backed[a] = mulDiv(c.Backed, r.cv.decay(p.DayFactorPPM, span), 1e6)
+			}
+		}
+	}
+	used := map[string]int64{} // this run's payment credits backed, by payee
+	budget := func(b string) int64 { return max(0, priorDirect(b)-backed[b]-used[b]) }
+	// A settled USDC payment (paid on chain to the payee's payout address,
+	// the transaction verified) is backed by at least the wallet row's
+	// fallback: the payee named, signed and was paid at that address.
+	settledFloor := p.Proofs["wallet"].FallbackCents * mc
+	settledBudget := func(b string) int64 { return max(0, max(priorDirect(b), settledFloor)-backed[b]-used[b]) }
+
+	// Payments to other accounts, within funded_days, when payer and payee
+	// are independent (§7). Settled USDC (work rewards, paid offering
+	// calls) is money that left the payer: it counts as the payer's own
+	// cost (paidOut, like money paid here, and it backs the time present of
+	// those it answers), up to the payee's settled budget. Credit paid to an
+	// account (x402 calls to an address it topped up from) counts as a
+	// payment credit (paid), up to the payee's direct costs.
+	reaches := map[string]map[string]bool{}
+	reach := func(from string) map[string]bool {
+		if m, ok := reaches[from]; ok {
+			return m
+		}
+		m := map[string]bool{from: true}
+		queue := []string{from}
+		for len(queue) > 0 {
+			x := queue[0]
+			queue = queue[1:]
+			for _, y := range moneyOut[x] {
+				if !m[y] {
+					m[y] = true
+					queue = append(queue, y)
+				}
+			}
+		}
+		reaches[from] = m
+		return m
+	}
+	paid := map[string]int64{} // payer → credited (mc)
+	paidN := map[string]int64{}
+	paidOut := map[string]int64{} // payer → settled USDC credited (mc)
+	paidOutN := map[string]int64{}
+	for _, x := range payments {
+		if x.To == "" || x.Amount <= 0 || x.CreatedAt < fundedFrom || x.CreatedAt >= asOf {
+			continue
+		}
+		a, b := x.Account, x.To
+		if a == b || r.rootOf(a) == r.rootOf(b) || penalised(a) || penalised(b) || reach(b)[a] {
+			continue
+		}
+		settled := SettledPaymentKind(x.Kind)
+		room := budget(b)
+		if settled {
+			room = settledBudget(b)
+		}
+		credit := min(min(x.Amount, 1<<40)*mc, room)
+		if credit <= 0 {
+			continue
+		}
+		used[b] += credit
+		if settled {
+			paidOut[a] += credit
+			paidOutN[a]++
+		} else {
+			paid[a] += credit
+			paidN[a]++
+		}
+	}
+
+	priorStanding := func(a string) int64 { // cents
+		own := min(ownDirect(a)+paidOut[a], nodeCap) / mc
+		if carry != nil {
+			return max(carry.accounts[a].Standing, own)
+		}
+		return own
+	}
+
+	// Activity: responses in [prevAsOf, asOf) by independent accounts with
+	// standing ≥ v_floor.
+	type response struct {
+		day       int64
+		responder string
+	}
+	responses := map[string][]response{}
+	respond := func(by, to string, at int64) {
+		if by == "" || to == "" || at < prevAsOf || at >= asOf || reset[by] || penalised(by) || !indep(by, to) || priorStanding(by) < p.VFloorCents {
+			return
+		}
+		responses[to] = append(responses[to], response{dayOf(at), by})
+	}
+	for _, x := range snap.Posts {
+		if x.ReplyToAccount != "" {
+			respond(x.Account, x.ReplyToAccount, x.CreatedAt)
+		}
+	}
+	for _, x := range snap.Endorsements {
+		if (x.Kind == "vote" && x.Value != 0) || (x.Kind == "vouch" && x.Value == 1) {
+			respond(x.Voter, x.Target, x.CreatedAt)
+		}
+	}
+	for _, x := range snap.Acts {
+		respond(x.From, x.To, x.CreatedAt)
+	}
+	reviewOwners := map[string][]string{}
+	for _, x := range sortRecords(snap.Owners) {
+		reviewOwners[x.Target] = append(reviewOwners[x.Target], x.Account)
+	}
+	for _, x := range snap.Reviews {
+		owners := reviewOwners[x.Target]
+		if strings.HasPrefix(x.Target, "agent:") {
+			owners = append(owners, x.Target[len("agent:"):])
+		}
+		for _, o := range owners {
+			respond(x.Account, o, x.CreatedAt)
+		}
+	}
+	activeOn := map[int64][]string{} // day → accounts active that day
+	respondersOf := map[[2]string][]string{}
+	for a, list := range responses {
+		days := map[int64]map[string]bool{}
+		for _, x := range list {
+			if days[x.day] == nil {
+				days[x.day] = map[string]bool{}
+			}
+			days[x.day][x.responder] = true
+		}
+		for d, set := range days {
+			activeOn[d] = append(activeOn[d], a)
+			var rs []string
+			for x := range set {
+				rs = append(rs, x)
+			}
+			sort.Strings(rs)
+			respondersOf[[2]string{a, strconv.FormatInt(d, 10)}] = rs
+		}
+	}
+	for d := range activeOn {
+		sort.Strings(activeOn[d])
+	}
+
+	// World accumulators, day by day over this run's days.
+	type world struct {
+		money, time, fade, last, active int64
+	}
+	ws2 := map[string]*world{}
+	moneyIn := map[string]map[int64]int64{}
+	for _, x := range payments {
+		if x.To != "" || x.Amount <= 0 || x.CreatedAt >= asOf || (carry != nil && x.CreatedAt < prevAsOf) {
+			continue
+		}
+		d := max(prevD, dayOf(x.CreatedAt))
+		if moneyIn[x.Account] == nil {
+			moneyIn[x.Account] = map[int64]int64{}
+		}
+		moneyIn[x.Account][d] += min(x.Amount, 1<<40) * mc
+	}
+	firstCost := map[string]int64{}
+	cost := func(a string, at int64) {
+		if d := dayOf(at); at < asOf && (firstCost[a] == 0 || d < firstCost[a]) {
+			firstCost[a] = d
+		}
+	}
+	for _, x := range payments {
+		if x.To == "" && x.Amount > 0 {
+			cost(x.Account, x.CreatedAt)
+		}
+	}
+	for _, x := range proofs {
+		if p.Proofs[x.Kind].Assess != "" && counts(x) {
+			cost(x.Account, x.CreatedAt)
+		}
+	}
+	r.accounts = make([]string, 0, len(r.known))
+	for a := range r.known {
+		r.accounts = append(r.accounts, a)
+	}
+	sort.Strings(r.accounts)
+	for _, a := range r.accounts {
+		// Without a carry, an account's grace counts from its first
+		// appearance in the run's days: first seen, or its first cost.
+		w := &world{fade: 1e6, last: max(prevD, firstCost[a])}
+		if fs := firstSeen[a]; fs > 0 {
+			w.last = max(w.last, dayOf(fs))
+		}
+		if carry != nil {
+			if c, ok := carry.accounts[a]; ok {
+				w.money, w.time, w.fade, w.last = c.Money, c.Time, c.FadePPM, c.LastActive
+			}
+		}
+		ws2[a] = w
+	}
+	f := p.DormantDayFactorPPM
+	dayPrice, timeCap := p.DayPriceCents*mc, p.TimeCapCents*mc
+	newBacked := map[string]int64{}
+	for d := prevD; d < D; d++ {
+		for _, a := range r.accounts {
+			w := ws2[a]
+			if d-w.last > p.GraceDays {
+				w.money, w.time, w.fade = mulDiv(w.money, f, 1e6), mulDiv(w.time, f, 1e6), mulDiv(w.fade, f, 1e6)
+			}
+			w.money += moneyIn[a][d]
+		}
+		for _, a := range activeOn[d] {
+			w := ws2[a]
+			w.last, w.active = d, w.active+1
+			if w.time+dayPrice > timeCap || dayPrice <= 0 {
+				continue
+			}
+			for _, by := range respondersOf[[2]string{a, strconv.FormatInt(d, 10)}] {
+				if budget(by)+paidOut[by]-newBacked[by] >= dayPrice {
+					newBacked[by] += dayPrice
+					w.time += dayPrice
+					break
+				}
+			}
+		}
+	}
+
+	// Each account's world edge (mc); a member's is 0, and its money and
+	// time present are destroyed.
+	worldMC := map[string]int64{}
+	directMC := map[string]int64{}
+	for _, a := range r.accounts {
+		w := ws2[a]
+		if penalised(a) {
+			w.money, w.time = 0, 0
+			continue
+		}
+		pr := mulDiv(proofMC[a], w.fade, 1e6)
+		directMC[a] = pr + w.money
+		worldMC[a] = pr + w.money + w.time + paid[a] + paidOut[a]
+	}
+
+	// Judgements and the graph.
+	set := collectJudgements(p, snap, asOf, ws, reset, r.rootOf)
+	g := r.newGraph(worldMC, member, liable)
+	acc1 := func(string) int64 { return 1e6 }
+	g.setEdges(r, set, acc1, member, liable)
+	res1, err := g.flow(ctx, nil, p.MaxWork, r.work)
+	r.work = res1.work
+	if err != nil {
+		return Output{Work: r.work}, err
+	}
+	s1 := func(a string) int64 {
+		if i, ok := g.Index[r.rootOf(a)]; ok {
+			return res1.Standing[i] / mc
+		}
+		return 0
+	}
+
+	// Accuracy (§6), from the first pass.
+	v1 := map[string]int64{}
+	am := markAccuracy(accuracyInput{p: p, set: set, asOf: asOf, maxWork: p.MaxWork,
+		vOf: func(a string) int64 {
+			v, ok := v1[a]
+			if !ok {
+				v = p.VoteWeight(s1(a))
+				v1[a] = v
+			}
+			return v
+		},
+		penalty:  penalised,
+		indep:    indep,
+		decayDay: func(days int64) int64 { return r.cv.decay(p.DayFactorPPM, days) }})
+	r.work += am.work
+	accuracy := func(a string) int64 { return AccuracyPPM(am.gain[a], am.marked[a], p.MinJudges) }
+	g.setEdges(r, set, accuracy, member, liable)
+
+	// Detectors on the final graph, before this run's findings apply.
+	evidence := r.detect(g, set, payments, funded, baseRoot)
+	var penalties []PenaltyOut
+	opened := map[string]bool{}
+	escalation := func(roots map[string]bool, isBacker bool) int64 {
+		var k int64
+		since := asOf - p.Penalty.EscalationDays*day
+		for _, id := range r.logIDs {
+			e := r.log[id]
+			if e.lifted || e.pending || e.start <= since || e.start > asOf {
+				continue
+			}
+			if isBacker {
+				for _, l := range e.liabilities {
+					if roots[r.rootOf(l.Account)] {
+						k++
+						break
+					}
+				}
+				continue
+			}
+			for _, m := range e.members {
+				if roots[r.rootOf(m)] {
+					k++
+					break
+				}
+			}
+		}
+		return min(p.Penalty.MaxLevel, k+1)
+	}
+	duration := func(k int64) int64 {
+		d := p.Penalty.BaseDays
+		for i := int64(1); i < k && d < 3650; i++ {
+			d *= p.Penalty.DurationFactor
+		}
+		return min(d, 3650) * day
+	}
+	// open applies an entry found or pending in this run: its members, burns
+	// and backers.
+	open := func(id, trigger, evidenceRef string, members []string, level, start, end int64, isNew bool) PenaltyOut {
+		roots := map[string]bool{}
+		for _, m := range members {
+			roots[r.rootOf(m)] = true
+		}
+		if level <= 0 {
+			level = escalation(roots, false)
+		}
+		if end <= 0 {
+			end = start + duration(level)
+		}
+		out := PenaltyOut{ID: id, Trigger: trigger, Opened: isNew, Members: members, Level: level, StartsAt: start, EndsAt: end, Evidence: evidenceRef,
+			Burned: []string{}, Backers: []BackerOut{}}
+		burnSet := map[string]bool{}
+		for _, a := range r.accounts {
+			if roots[r.rootOf(a)] {
+				out.BurnedCents += worldMC[a] / mc
+				for _, pr := range proofRootsOf[a] {
+					burnSet[pr] = true
+				}
+			}
+		}
+		for pr := range burnSet {
+			out.Burned = append(out.Burned, pr)
+		}
+		sort.Strings(out.Burned)
+		// Backers: authors outside the set of judgement edges into it made
+		// within backer_edge_days, c their edges' capacity.
+		from := asOf - p.Penalty.BackerEdgeDays*day
+		c := g.recentCapInto(roots, from)
+		backers := make([]string, 0, len(c))
+		for a := range c {
+			backers = append(backers, a)
+		}
+		sort.Strings(backers)
+		for _, a := range backers {
+			fPPM := mulDiv(c[a], 1e6, c[a]+U)
+			k := escalation(map[string]bool{r.rootOf(a): true}, true)
+			frac := fPPM
+			for i := int64(1); i < k && frac < 1e6; i++ {
+				frac *= p.Penalty.BackerFactor
+			}
+			frac = min(1e6, frac)
+			if frac <= 0 {
+				continue
+			}
+			out.Backers = append(out.Backers, BackerOut{Account: a, CapCents: c[a] / mc, Level: k, FractionPPM: frac})
+		}
+		return out
+	}
+	// Pending entries (moderation, override) apply first; a detector's
+	// finding opens an entry only for members not already penalised.
+	applying := map[string]bool{}
+	for _, id := range r.logIDs {
+		e := r.log[id]
+		if !e.pending || e.lifted || e.start > asOf {
+			continue
+		}
+		penalties = append(penalties, open(e.id, e.trigger, e.evidence, e.members, e.level, e.start, e.end, false))
+		for _, m := range e.members {
+			applying[r.rootOf(m)] = true
+		}
+	}
+	for _, ev := range evidence {
+		var members []string
+		for _, m := range ev.Members {
+			if !penalised(m) && !applying[r.rootOf(m)] {
+				members = append(members, m)
+			}
+		}
+		if len(members) == 0 || opened[ev.ID] || r.log[ev.ID] != nil {
+			continue
+		}
+		opened[ev.ID] = true
+		penalties = append(penalties, open(ev.ID, ev.Kind, ev.Detail, members, 0, asOf, 0, true))
+	}
+	sort.Slice(penalties, func(i, j int) bool { return penalties[i].ID < penalties[j].ID })
+	// Apply them: members to 0 (and burned, destroyed), backers scaled. The
+	// flow before them says what each backer lost.
+	var pre flowResult
+	if len(penalties) > 0 {
+		if pre, err = g.flow(ctx, nil, p.MaxWork, r.work); err != nil {
+			return Output{Work: pre.work}, err
+		}
+		r.work = pre.work
+		for _, pen := range penalties {
+			if pen.StartsAt > asOf || asOf >= pen.EndsAt {
+				continue
+			}
+			e := &logEntry{id: pen.ID, members: pen.Members}
+			for _, b := range pen.Backers {
+				e.liabilities = append(e.liabilities, Record{Account: b.Account, FractionPPM: b.FractionPPM, CreatedAt: pen.StartsAt, EndsAt: pen.EndsAt, Value: b.Level})
+			}
+			applyLog(e)
+		}
+		for _, a := range r.accounts {
+			if penalised(a) {
+				ws2[a].money, ws2[a].time = 0, 0
+				worldMC[a], directMC[a] = 0, 0
+			}
+		}
+		g = r.newGraph(worldMC, member, liable)
+		g.setEdges(r, set, accuracy, member, liable)
+	}
+	res, err := g.flow(ctx, nil, p.MaxWork, r.work)
+	r.work = res.work
+	if err != nil {
+		return Output{Work: r.work}, err
+	}
+	// What each backer lost (the node sets of both flows are the accounts'
+	// roots, so their indices agree).
+	for i := range penalties {
+		for j := range penalties[i].Backers {
+			b := &penalties[i].Backers[j]
+			if k, ok := g.Index[r.rootOf(b.Account)]; ok {
+				b.LostCents = max(0, pre.Standing[k]-res.Standing[k]) / mc
+			}
+		}
+	}
+
+	// Scores.
+	sum := Summary{Bands: map[string]int64{}, Judgements: am.judged, Marked: sumValues(am.marked), Truncated: am.truncated}
+	for b := allowance.BandSigned; b <= allowance.BandTrusted; b++ {
+		sum.Bands[b.Name()] = 0
+	}
+	for _, id := range r.logIDs {
+		if r.log[id].activeAt(asOf) {
+			sum.PenaltiesOpen++
+		}
+	}
+	for _, pen := range penalties {
+		if pen.StartsAt <= asOf && asOf < pen.EndsAt {
+			sum.PenaltiesOpen++
+		}
+	}
+	var passed []int64
+	for i := range g.Labels {
+		sum.WorldCents += g.World[i] / mc
+		sum.StandingCents += res.Standing[i] / mc
+		sum.OwnCents += res.Own[i] / mc
+		sum.PassedCents += res.Passed[i] / mc
+		if res.Passed[i] > 0 {
+			sum.Sources++
+			passed = append(passed, res.Passed[i])
+		}
+	}
+	sort.Slice(passed, func(i, j int) bool { return passed[i] > passed[j] })
+	var top, total int64
+	for i, x := range passed {
+		total += x
+		if i < 5 {
+			top += x
+		}
+	}
+	if total > 0 {
+		sum.Top5PassedPPM = mulDiv(top, 1e6, total)
+	}
+	inFlows, outFlows := g.edgeFlows(res)
+	scores := make([]ScoreOut, 0, len(r.accounts))
+	carryOut := Carry{AsOf: asOf, Accounts: []CarryAccount{}}
+	for _, a := range r.accounts {
+		root := r.rootOf(a)
+		i, ok := g.Index[root]
+		w := ws2[a]
+		sc := ScoreOut{Account: a, Root: root}
+		parts := Parts{World: []WorldItem{}, Backers: []FlowPart{}, Backs: []FlowPart{}, NodeCapCents: p.NodeCapCents, FadePPM: w.fade,
+			GraceFromDay: w.last, ActiveDays: w.active, AccuracyPPM: accuracy(a), Judged: am.marked[a],
+			Burn: BurnPreview{ProofRoots: []string{}, Backers: []BackerAtRisk{}}}
+		parts.GraceDays = max(0, p.GraceDays-(D-1-w.last))
+		for _, it := range items[a] {
+			if it.Cents > 0 {
+				it.Cents = mulDiv(it.Cents*mc, w.fade, 1e6) / mc
+			}
+			parts.World = append(parts.World, it)
+		}
+		if w.money > 0 {
+			parts.World = append(parts.World, WorldItem{Kind: "money", Source: "paid_to_swarmmemo", Root: "money:" + a, State: "counted", PriceCents: w.money / mc, Cents: w.money / mc})
+		}
+		if w.time > 0 {
+			parts.World = append(parts.World, WorldItem{Kind: "time_present", Source: "active_days", Root: "time:" + a, State: "counted", PriceCents: w.time / mc, Cents: w.time / mc,
+				Note: strconv.FormatInt(p.DayPriceCents, 10) + "¢ per active day, at most " + strconv.FormatInt(p.TimeCapCents, 10) + "¢"})
+		}
+		if paidOut[a] > 0 {
+			parts.World = append(parts.World, WorldItem{Kind: "money", Source: "usdc_paid", Root: "usdc:" + a, State: "counted", PriceCents: paidOut[a] / mc, Cents: paidOut[a] / mc,
+				Note: strconv.FormatInt(paidOutN[a], 10) + " settled USDC payment(s) to independent accounts within funded_days, each up to the payee's direct costs or the wallet row's fallback"})
+		}
+		if paid[a] > 0 {
+			parts.World = append(parts.World, WorldItem{Kind: "payments", Source: "independent_payments", Root: "payments:" + a, State: "counted", PriceCents: paid[a] / mc, Cents: paid[a] / mc,
+				Note: strconv.FormatInt(paidN[a], 10) + " payment(s) within funded_days, each up to the payee's direct costs"})
+		}
+		parts.WorldCents, parts.DirectCents = worldMC[a]/mc, directMC[a]/mc
+		if e := member[root]; e != nil {
+			parts.Penalty = &PenaltyState{Entry: e.id, Role: "member", FractionPPM: 1e6, Level: e.level, EndsAt: e.end}
+			for _, pen := range penalties {
+				if pen.ID == e.id {
+					parts.Penalty.Level, parts.Penalty.EndsAt = pen.Level, pen.EndsAt
+				}
+			}
+			sum.Penalised++
+		} else if l, ok := liable[root]; ok {
+			cp := l
+			parts.Penalty = &cp
+			sum.Liable++
+		}
+		if ok {
+			sc.Cents = res.Standing[i] / mc
+			parts.RootWorldCents, parts.OwnCents, parts.PassedCents = g.World[i]/mc, res.Own[i]/mc, res.Passed[i]/mc
+			parts.ReceivedCents = (res.Standing[i] - res.Own[i]) / mc
+			parts.Backers, parts.BackersTotal = topFlows(inFlows[i], g)
+			parts.Backs, parts.BacksTotal = topFlows(outFlows[i], g)
+			parts.Burn = g.burnPreview(i, res, r, proofRootsOf, U)
+		}
+		sc.Band = p.Band(sc.Cents).Name()
+		sc.VoteWeightPPM = p.VoteWeight(sc.Cents)
+		sc.Parts = parts
+		if w.active > 0 {
+			sum.ActiveAccounts++
+		}
+		sum.Bands[sc.Band]++
+		if sc.Cents >= p.VFloorCents {
+			sum.AboveVoteFloor++
+		}
+		scores = append(scores, sc)
+		ca := CarryAccount{Account: a, Money: w.money, Time: w.time, FadePPM: w.fade, LastActive: w.last, Direct: directMC[a] / mc, Standing: sc.Cents,
+			Backed: backed[a] + newBacked[a]}
+		if penalised(a) {
+			ca.Money, ca.Time = 0, 0
+		}
+		carryOut.Accounts = append(carryOut.Accounts, ca)
+	}
+	summary := InputsSummary{EventsSeq: snap.Meta.EventsSeq, EndorsementsSeq: snap.Meta.EndorsementsSeq, LedgerSeq: snap.Meta.LedgerSeq,
+		Accounts: int64(len(snap.Accounts)), Posts: int64(len(snap.Posts)), Endorsements: int64(len(snap.Endorsements)), Proofs: int64(len(snap.Proofs)),
+		Transfers: int64(len(snap.Transfers)), Payments: int64(len(snap.Payments)), Acts: int64(len(snap.Acts)), Reviews: int64(len(snap.Reviews)),
+		PenaltyEntries: int64(len(r.logIDs))}
+	if penalties == nil {
+		penalties = []PenaltyOut{}
+	}
+	return Output{Schema: SnapshotSchema, Rule: "RFC 0021", AsOf: asOf, ParamsVersion: p.Version, ParamsSHA256: sha256Hex(p.Body()), CarryIn: carryIn,
+		Inputs: summary, Nodes: int64(len(g.Labels)), Edges: int64(len(g.Src)), Summary: sum, Scores: scores, Evidence: evidence, Penalties: penalties,
+		Carry: carryOut, Graph: g, Work: r.work}, nil
+}
+
+// SettledPaymentKind reports whether a payment record of this kind is USDC
+// settled on chain from the payer to the payee's payout address, its
+// transaction verified (work_usdc: a work reward settled by work.settle;
+// offering: a paid offering call), as against credit committed inside
+// SwarmMemo (x402).
+func SettledPaymentKind(kind string) bool { return kind == "work_usdc" || kind == "offering" }
+
+func sumValues(m map[string]int64) int64 {
+	var s int64
+	for _, v := range m {
+		s += v
+	}
+	return s
+}
+
+// labels names each root of u: its smallest domain root, else its smallest
+// account (an address key never names a root).
+func labels(u uf) map[string]string {
+	label := map[string]string{}
+	keys := make([]string, 0, len(u))
+	for x := range u {
+		keys = append(keys, x)
+	}
+	sort.Strings(keys)
+	rank := func(x string) int {
+		switch {
+		case strings.HasPrefix(x, "domain:"):
+			return 0
+		case strings.Contains(x, ":"):
+			return 2
+		}
+		return 1
+	}
+	for _, x := range keys {
+		rep := u.find(x)
+		cur, ok := label[rep]
+		if !ok || rank(x) < rank(cur) || rank(x) == rank(cur) && x < cur {
+			label[rep] = x
+		}
+	}
+	return label
+}
+
+// Carry is what a run hands the next: each account's world accumulators.
+type Carry struct {
+	AsOf     int64          `json:"as_of"`
+	Accounts []CarryAccount `json:"accounts"`
+}
+
+// CarryAccount is one account's carried world edge: money paid here and
+// time present (millicents, faded), what inactivity left of its proofs
+// (FadePPM), its last active day, its direct costs and standing (cents:
+// next run's budgets and responder floor) and the time present it backs
+// (millicents, decaying with H).
+type CarryAccount struct {
+	Account    string `json:"account"`
+	Money      int64  `json:"money"`
+	Time       int64  `json:"time"`
+	FadePPM    int64  `json:"fade_ppm"`
+	LastActive int64  `json:"last_active"`
+	Direct     int64  `json:"direct"`
+	Standing   int64  `json:"standing"`
+	Backed     int64  `json:"backed"`
+}
+
+// Records is the carry as snapshot records, what the next run reads.
+func (c Carry) Records() []Record {
+	out := []Record{{Type: "carry", Kind: "run", AsOf: c.AsOf}}
+	for _, a := range c.Accounts {
+		if a.Money == 0 && a.Time == 0 && a.FadePPM == 1e6 && a.Direct == 0 && a.Standing == 0 && a.Backed == 0 {
+			continue
+		}
+		out = append(out, Record{Type: "carry", Kind: "world", Account: a.Account, Amount: a.Money, Time: a.Time, FractionPPM: a.FadePPM,
+			LastActive: a.LastActive, Direct: a.Direct, Standing: a.Standing, Backed: a.Backed})
+	}
+	return out
 }

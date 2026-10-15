@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"swarmmemo/internal/trust"
 )
 
 func postAs(t *testing.T, s *Store, key ed25519.PrivateKey, c Command) string {
@@ -27,10 +29,16 @@ func seasoned(t *testing.T, s *Store, keys ...ed25519.PrivateKey) {
 	t.Helper()
 	saved := s.now
 	s.now = func() time.Time { return saved().Add(-VoterMinAge - time.Hour) }
-	defer func() { s.now = saved }()
 	for _, k := range keys {
 		postAs(t, s, k, Command{Room: "hello", Text: "hello", RequestID: "hello-" + keyID(k)[:12]})
 	}
+	s.now = saved
+	// An established account holds standing (RFC 0021): C_ref, so v(s) is 1.
+	cents := map[string]int64{}
+	for _, k := range keys {
+		cents[keyID(k)] = trust.DefaultParams().CRefCents
+	}
+	setStanding(t, s, cents)
 }
 
 func errCode(err error) string {

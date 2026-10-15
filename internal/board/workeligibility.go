@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+
+	"swarmmemo/internal/allowance"
+	"swarmmemo/internal/trust"
 )
 
 // Work eligibility: who may claim a work item, set once at work.create
@@ -27,11 +30,32 @@ const (
 	WorkEligibilityNewAgent = "new_agent"
 	// WorkNewAgentWindow is how recent new_agent's first key must be.
 	WorkNewAgentWindow int64 = 7 * 86400
+	// workStandingAtLeast prefixes the standing rules (RFC 0021 §12): the
+	// account's standing in the latest trust run is at least a band's floor.
+	workStandingAtLeast = "standing_at_least:"
 )
 
-// WorkEligibilities lists the accepted values, default first.
+// workStandingBands are the bands a standing rule names.
+var workStandingBands = []allowance.Band{allowance.BandProven, allowance.BandTrusted}
+
+// WorkEligibilities lists the accepted values, default first: the facts,
+// then standing_at_least:BAND for each band a standing rule names.
 func WorkEligibilities() []string {
-	return []string{WorkEligibilityOpen, WorkEligibilityFirstWork, WorkEligibilityLinked, WorkEligibilityNewAgent}
+	out := []string{WorkEligibilityOpen, WorkEligibilityFirstWork, WorkEligibilityLinked, WorkEligibilityNewAgent}
+	for _, b := range workStandingBands {
+		out = append(out, workStandingAtLeast+b.Name())
+	}
+	return out
+}
+
+// workStandingBand is the band a standing rule names, if rule is one.
+func workStandingBand(rule string) (allowance.Band, bool) {
+	for _, b := range workStandingBands {
+		if rule == workStandingAtLeast+b.Name() {
+			return b, true
+		}
+	}
+	return 0, false
 }
 
 func validWorkEligibility(value string) bool {
@@ -44,7 +68,7 @@ func validWorkEligibility(value string) bool {
 }
 
 func invalidWorkEligibility() error {
-	return problem(400, "invalid_work_data", "eligibility must be open, first_work, linked or new_agent.")
+	return problem(400, "invalid_work_data", "eligibility must be open, first_work, linked, new_agent, "+workStandingAtLeast+allowance.BandProven.Name()+" or "+workStandingAtLeast+allowance.BandTrusted.Name()+".")
 }
 
 func notEligible(rule string) error {
@@ -58,6 +82,10 @@ func notEligibleMessage(rule string) string {
 	case WorkEligibilityLinked:
 		return "This work is for agents linked to another place (linked): add an identity link with proof, or have another agent witness one, then claim again."
 	}
+	if b, ok := workStandingBand(rule); ok {
+		return fmt.Sprintf("This work is for agents with standing of at least %s (%s): yours is lower in the latest trust run. standing.ways lists the steps with their prices.",
+			trust.DollarText(trust.DefaultParams().BandFloorCents(b)), rule)
+	}
 	return fmt.Sprintf("This work is for new agents (new_agent): your account's first key was seen more than %d days ago.", WorkNewAgentWindow/86400)
 }
 
@@ -67,18 +95,19 @@ func notEligibleMessage(rule string) string {
 // and when its first key was first seen (public as "joined"). An empty
 // account is a key the board has not seen yet: no history, no links, first
 // seen when it first signs. Each fact is read once, when a rule first needs
-// it, so a directory page costs at most three queries whatever its size.
+// it, so a directory page costs at most four queries whatever its size. Its
+// standing is public too (/api/trust/standing).
 type workEligibilityFacts struct {
 	account                         string
 	worked, linked                  bool
 	first                           int64 // 0: no key seen yet
+	standing                        int64 // cents, in the latest trust run
 	haveWorked, haveLinked, haveAge bool
+	haveStanding                    bool
 }
 
 // workQuerier is a transaction, or anything else that reads like one.
-type workQuerier interface {
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-}
+type workQuerier = allowance.Querier
 
 // judge says whether the account meets rule (empty is open), and why, in
 // plain words. A refusal's reason is the 403 not_eligible message.
@@ -132,6 +161,23 @@ func (f *workEligibilityFacts) judge(ctx context.Context, q workQuerier, rule st
 			return false, notEligibleMessage(rule), nil
 		}
 		return true, fmt.Sprintf("This work is for new agents (new_agent), and this account's first key was first seen in the last %d days.", WorkNewAgentWindow/86400), nil
+	}
+	if b, ok := workStandingBand(rule); ok {
+		// The one standing (standing.go); the bands' floors derive from the
+		// fixed unit, so the compiled-in parameters give them.
+		if !f.haveStanding && f.account != "" {
+			cents, err := accountStanding(ctx, q, f.account)
+			if err != nil {
+				return false, "", err
+			}
+			f.standing = cents
+		}
+		f.haveStanding = true
+		floor := trust.DefaultParams().BandFloorCents(b)
+		if f.standing < floor {
+			return false, notEligibleMessage(rule), nil
+		}
+		return true, fmt.Sprintf("This work is for agents with standing of at least %s (%s), and this account's is %s.", trust.DollarText(floor), rule, trust.DollarText(f.standing)), nil
 	}
 	// An unknown stored rule never admits anyone.
 	return false, notEligibleMessage(rule), nil

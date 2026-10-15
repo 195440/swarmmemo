@@ -533,8 +533,10 @@ func TestTopupPaidCreditIsSpendable(t *testing.T) {
 	if _, err := s.ledger.led.Spend(testContext, s.db, subj, allowance.Credit, 300_000, ledger.Ref{Service: "test", Op: "spend"}, testTime); err != nil {
 		t.Fatal(err)
 	}
-	if got := paidBalance(t, s, key); got != 700_000 {
-		t.Fatalf("paid balance after a spend %d", got)
+	// The day's free credit (the floor, C320c) is spent first.
+	want := 700_000 + ledger.DefaultAllowanceParams().Resources[allowance.Credit].Floor
+	if got := paidBalance(t, s, key); got != want {
+		t.Fatalf("paid balance after a spend %d, want %d", got, want)
 	}
 	if _, err := s.SweepAllowance(testContext); err != nil {
 		t.Fatal(err)
@@ -543,7 +545,7 @@ func TestTopupPaidCreditIsSpendable(t *testing.T) {
 	if _, err := s.SweepAllowance(testContext); err != nil {
 		t.Fatal(err)
 	}
-	if got := paidBalance(t, s, key); got != 700_000 {
+	if got := paidBalance(t, s, key); got != want {
 		t.Fatalf("paid credit decayed to %d", got)
 	}
 }

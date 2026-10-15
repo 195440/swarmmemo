@@ -12,39 +12,24 @@ import (
 	"testing"
 	"time"
 
-	"swarmmemo/internal/allowance"
 	"swarmmemo/internal/services/servicestest"
 	"swarmmemo/internal/trust"
 )
 
-// M10: Design 0 roots a proven account at its registrable domain, as trust
-// does, so subdomains of one domain (or one wildcard TXT) share one tier-2
-// root and its cap; different registrable domains stay apart, and listed
+// M10: the standing roots a proven account at its registrable domain, so
+// subdomains of one domain (or one wildcard TXT) share one root and its
+// node cap; different registrable domains stay apart, and listed
 // multi-label suffixes (co.uk) are honoured.
 func TestSec120_SubdomainsShareOneProvenRoot(t *testing.T) {
-	s := openTest(t, Config{Features: Features{AllowanceTiers: true, NameGate: true}})
-	now := testTime
-	root := func(n byte, domain string) string {
-		t.Helper()
-		key := keyFor(n)
-		id := d0Identity(t, s, key)
-		if _, err := s.db.Exec("INSERT INTO identity_links(agent,kind,value,state,created_at,checked_at) VALUES(?,?,?,?,?,?)", id, "domain", domain, "verified", now-86400, now-3600); err != nil {
-			t.Fatal(err)
-		}
-		st, err := design0Classifier{s}.Classify(testContext, s.db, allowance.Subject{ID: id, KeyID: id, Signed: true}, now)
-		if err != nil || st.Tier != allowance.TierProven {
-			t.Fatalf("%s: %+v %v", domain, st, err)
-		}
-		return st.Root
-	}
+	suffixes := trust.DefaultParams().DomainSuffixes
 	roots := map[string]bool{}
-	for i, sub := range []string{"a1.attacker.example", "a2.attacker.example", "deep.a3.attacker.example", "attacker.example"} {
-		roots[root(byte(200+i), sub)] = true
+	for _, sub := range []string{"a1.attacker.example", "a2.attacker.example", "deep.a3.attacker.example", "attacker.example"} {
+		roots[trust.DomainRoot(sub, suffixes)] = true
 	}
 	if len(roots) != 1 || !roots["domain:attacker.example"] {
 		t.Fatalf("subdomains of one domain: roots %v", roots)
 	}
-	if a, b := root(210, "x.shop.co.uk"), root(211, "y.other.co.uk"); a != "domain:shop.co.uk" || b != "domain:other.co.uk" {
+	if a, b := trust.DomainRoot("x.shop.co.uk", suffixes), trust.DomainRoot("y.other.co.uk", suffixes); a != "domain:shop.co.uk" || b != "domain:other.co.uk" {
 		t.Fatalf("co.uk roots %s %s", a, b)
 	}
 }
@@ -53,7 +38,7 @@ func TestSec120_SubdomainsShareOneProvenRoot(t *testing.T) {
 // only in private rooms (agent.get and trust.get treat it as not found),
 // while a public agent's proofs are still there.
 func TestSec120_TrustSnapshotOmitsPrivateOnlyAgent(t *testing.T) {
-	s := openTest(t, Config{Features: Features{Trust: TrustShadow}})
+	s := openTest(t, Config{Features: Features{Trust: TrustOn}})
 	hidden, shown := keyFor(210), keyFor(211)
 	run(t, s, signed(hidden, Command{Operation: "room.create", Room: "secret-club", Visibility: "private"}))
 	postAs(t, s, hidden, Command{Room: "secret-club", Text: "members only", RequestID: "poc-private"})
@@ -106,54 +91,4 @@ func TestSec120_ZeroCostServiceCallsAreMetered(t *testing.T) {
 		t.Fatalf("a duplicate stamp is not free: %+v", r.Data)
 	}
 	fails(t, s, svcCall(fresh, "notary", "stamp", map[string]any{"hash": hash}, 1, "f2"), "quota_exhausted")
-}
-
-// H3 (dividend path): a sponsor whose mint is refused for its own reasons
-// (here: its lot slots are full) no longer stops every later sponsor's
-// dividend; it alone stays unpaid.
-func TestSec120_RefusedSponsorDoesNotStopLaterDividends(t *testing.T) {
-	if _, _, ok := ledgerTestOverride(); ok {
-		t.Skip("the ledger mode is overridden for the whole suite")
-	}
-	s := openTest(t, Config{Features: Features{Ledger: LedgerOn, Trust: TrustAllocation, TrustDividends: true}})
-	ap := s.allowanceDefaults()
-	ap.Resources["post_bytes"].GrantSharePPM = 100_000 // a tier-0 pool to pay from
-	if _, err := s.SetAllowanceParams(testContext, "allowance", ap.Marshal(), "open the grant pool", 0); err != nil {
-		t.Fatal(err)
-	}
-	s.now = func() time.Time { return time.Unix(testTime+86400, 0) } // pools are sized when a day opens
-	now := s.now().Unix()
-	p := trust.DefaultParams()
-	p.Sponsor.Resource = "post_bytes"
-	for i := 0; i < 64; i++ { // "aaa" sorts first; its 64 live lots never merge
-		if _, err := s.db.Exec("INSERT INTO ledger_lots(account,resource,bucket,origin_tier,origin_account,hops,issued_day,expires_at,half_life_days,decayed_day,initial,remaining,held,state,created_at) VALUES('aaa',?,'paid',0,'aaa',0,?,0,0,?,1,1,0,'live',?)",
-			p.Sponsor.Resource, now/86400-int64(i+1), now/86400, now); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, sponsor := range []string{"aaa", "bbb"} {
-		if _, err := s.db.Exec("INSERT INTO trust_dividends(run_id,sponsor,invitee,units) VALUES(1,?,'invitee',5)", sponsor); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := s.payTrustDividends(testContext, 1, p, now); err != nil {
-		t.Fatal(err)
-	}
-	paid := map[string]int64{}
-	rows, err := s.db.Query("SELECT sponsor,paid FROM trust_dividends")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var sp string
-		var n int64
-		if err = rows.Scan(&sp, &n); err != nil {
-			t.Fatal(err)
-		}
-		paid[sp] = n
-	}
-	if paid["aaa"] != 0 || paid["bbb"] != 5 {
-		t.Fatalf("dividends paid %v: the refused first sponsor stopped the rest", paid)
-	}
 }

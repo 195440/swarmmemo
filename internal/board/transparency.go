@@ -10,7 +10,8 @@ package board
 // outbox: events in public rooms (messages, edits as superseding versions),
 // room_moderation_log in public rooms (hides, restores, room governance),
 // audit rows of the identity operations of public accounts and of operator
-// allowance grants, tier_grant_log, and doc_versions (shared docs' versions,
+// allowance grants, tier_grant_log (retired: its rows stay logged),
+// trust_penalty_log (every penalty, override and lift), and doc_versions (shared docs' versions,
 // private docs too: a leaf holds only ids, the version number and the
 // SHA-256, so a member can prove a doc's history; never a paste's),
 // notary_public_keys (the notary's public key) and notary_receipts (every
@@ -292,6 +293,20 @@ var logSources = []logSource{
 			}
 			l.Seq = p.seq
 			p.leaf, p.ref = l, notaryStampRef+l.Hash
+			return p, nil
+		}},
+	{"penalty", "trust_penalty_log", 8, `SELECT seq,id,trigger,members,evidence,reason,lifts,created_at FROM trust_penalty_log WHERE seq>? ORDER BY seq LIMIT ?`,
+		func(rows *sql.Rows) (pendingLeaf, error) {
+			// A penalty log entry as entered (RFC 0021 §8): its id, trigger,
+			// members (a JSON array of accounts), evidence, reason and the
+			// entry a lift reverses; what a run applies (level, burns) is in
+			// that run's canonical output. Every entry is public.
+			var p pendingLeaf
+			l := logLeaf{Kind: "penalty"}
+			if err := rows.Scan(&p.seq, &l.ID, &l.Op, &l.Target, &l.Detail, &l.Reason, &l.Supersedes, &p.at); err != nil {
+				return p, err
+			}
+			p.leaf, p.ref = l, l.ID
 			return p, nil
 		}},
 }
@@ -1679,7 +1694,12 @@ func (s *Store) ReadLogRecord(ctx context.Context, who string) (SignedRecord, er
 		r.Proofs = append(r.Proofs, p)
 	}
 	if s.config.Features.Trust != TrustOff {
-		if r.Standing, err = trust.CurrentStanding(ctx, s.db, account); err != nil {
+		now := s.now().Unix()
+		p, err := s.trustParamsAt(ctx, s.db, now)
+		if err != nil {
+			return SignedRecord{}, err
+		}
+		if r.Standing, _, err = trust.CurrentStanding(ctx, s.db, account, p, now); err != nil {
 			return SignedRecord{}, err
 		}
 	}

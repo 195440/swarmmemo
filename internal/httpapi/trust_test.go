@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -20,7 +22,7 @@ import (
 // /capabilities has no trust key.
 func TestTrustRoutesOffAreUnchanged(t *testing.T) {
 	s := New(&fakeService{}, nil, Config{})
-	for path, code := range map[string]int{"/api/trust/runs": 404, "/api/trust/runs/1": 404, "/api/trust/evidence": 404, "/api/agent/abc/trust": 400} {
+	for path, code := range map[string]int{"/api/trust/runs": 404, "/api/trust/runs/1": 404, "/api/trust/evidence": 404, "/api/trust/penalties": 404, "/api/trust/standing?agent=abc": 404, "/api/agent/abc/trust": 400} {
 		if w := makeRequest(s, "GET", path, "", ""); w.Code != code {
 			t.Errorf("%s: %d, want %d", path, w.Code, code)
 		}
@@ -30,8 +32,8 @@ func TestTrustRoutesOffAreUnchanged(t *testing.T) {
 	}
 }
 
-func TestTrustRoutesShadow(t *testing.T) {
-	features := board.Features{Trust: board.TrustShadow}
+func TestTrustRoutesOn(t *testing.T) {
+	features := board.Features{Trust: board.TrustOn}
 	store, err := board.Open(filepath.Join(t.TempDir(), "trust.db"), board.Config{ServiceID: "swarmmemo.com", Features: features})
 	if err != nil {
 		t.Fatal(err)
@@ -58,21 +60,50 @@ func TestTrustRoutesShadow(t *testing.T) {
 	if err = json.Unmarshal(w.Body.Bytes(), &answer); err != nil || w.Code != 200 || !answer.OK {
 		t.Fatalf("trust answer: %d %s", w.Code, w.Body.String())
 	}
-	for _, key := range []string{"collateral", "proofs", "endorsements", "liability", "sponsor", "breaker", "tier", "caveats", "params_version", "as_of", "run", "mode"} {
+	// The standing breakdown (RFC 0021 §13), schema 2.
+	for _, key := range []string{"standing", "world", "world_cents", "own_cents", "received_cents", "passed_cents", "node_cap_cents", "backers", "backers_total",
+		"backs", "accuracy", "inactivity", "penalty", "penalties", "burn", "next_steps", "bands", "viewer", "recompute", "caveats"} {
 		if _, ok := answer.Data[key]; !ok {
 			t.Errorf("answer lacks %s", key)
 		}
 	}
-	if answer.Data["boolean"] != false || answer.Data["mode"] != "shadow" || answer.Data["agent"] != fingerprint {
+	for _, gone := range []string{"collateral", "proofs", "endorsements", "liability", "sponsor", "breaker", "tier", "mode"} {
+		if _, ok := answer.Data[gone]; ok {
+			t.Errorf("answer still has %s", gone)
+		}
+	}
+	if answer.Data["boolean"] != false || answer.Data["schema"] != 2.0 || answer.Data["agent"] != fingerprint || answer.Data["viewer"] != nil {
 		t.Fatalf("answer: %+v", answer.Data)
 	}
-	// The same answer through the command endpoint (parity).
+	// The same answer through the command endpoint and /api/trust/standing
+	// (parity: one breakdown).
 	cmd := makeRequest(s, "POST", "/v1/command", `{"operation":"trust.get","target":"`+fingerprint+`"}`, "application/json")
-	var viaCommand struct {
+	var viaCommand, viaStanding struct {
 		Data map[string]any `json:"data"`
 	}
-	if err = json.Unmarshal(cmd.Body.Bytes(), &viaCommand); err != nil || viaCommand.Data["run"] != answer.Data["run"] {
+	if err = json.Unmarshal(cmd.Body.Bytes(), &viaCommand); err != nil || !reflect.DeepEqual(viaCommand.Data, answer.Data) {
 		t.Fatalf("trust.get via /v1/command: %d %s", cmd.Code, cmd.Body.String())
+	}
+	w = makeRequest(s, "GET", "/api/trust/standing?agent="+fingerprint, "", "")
+	if err = json.Unmarshal(w.Body.Bytes(), &viaStanding); err != nil || w.Code != 200 || !reflect.DeepEqual(viaStanding.Data, answer.Data) {
+		t.Fatalf("/api/trust/standing: %d %s", w.Code, w.Body.String())
+	}
+	// A viewer adds its own view; without a graph or outside it, it says so.
+	w = makeRequest(s, "GET", "/api/trust/standing?agent="+fingerprint+"&viewer="+fingerprint, "", "")
+	if err = json.Unmarshal(w.Body.Bytes(), &viaStanding); err != nil || w.Code != 200 {
+		t.Fatalf("/api/trust/standing with a viewer: %d %s", w.Code, w.Body.String())
+	}
+	if viewer, _ := viaStanding.Data["viewer"].(map[string]any); viewer == nil || viewer["account"] == nil || viewer["computed"] == nil {
+		t.Fatalf("viewer: %+v", viaStanding.Data["viewer"])
+	}
+	for path, code := range map[string]int{
+		"/api/trust/standing": 400, "/api/trust/standing?agent=": 400, "/api/trust/standing?agent=" + fingerprint + "&agent=" + fingerprint: 400,
+		"/api/trust/standing?agent=" + fingerprint + "&x=1": 400, "/api/trust/standing?agent=" + strings.Repeat("0", 64): 404,
+		"/api/trust/standing?agent=" + fingerprint + "&viewer=" + strings.Repeat("0", 64): 404,
+	} {
+		if w = makeRequest(s, "GET", path, "", ""); w.Code != code {
+			t.Errorf("%s: %d, want %d: %s", path, w.Code, code, w.Body.String())
+		}
 	}
 
 	w = makeRequest(s, "GET", "/api/trust/runs", "", "")
@@ -80,7 +111,7 @@ func TestTrustRoutesShadow(t *testing.T) {
 		t.Fatalf("runs: %d %s", w.Code, w.Body.String())
 	}
 	w = makeRequest(s, "GET", "/api/trust/runs/1", "", "")
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `"capture_bound":{`) || !strings.Contains(w.Body.String(), `"seeds_a":[`) {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"inputs":{`) || !strings.Contains(w.Body.String(), `"output_sha256":"`) {
 		t.Fatalf("run 1: %d %s", w.Code, w.Body.String())
 	}
 	if w = makeRequest(s, "GET", "/api/trust/runs/2", "", ""); w.Code != 404 {
@@ -134,8 +165,50 @@ func TestTrustRoutesShadow(t *testing.T) {
 			t.Errorf("%s: %d, want %d", path, w.Code, code)
 		}
 	}
-	if w = makeRequest(s, "GET", "/api/trust/evidence", "", ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"evidence":[]`) {
-		t.Fatalf("evidence: %d %s", w.Code, w.Body.String())
+	// The public penalty log: /api/trust/penalties and /api/trust/evidence
+	// serve one log (trust.penalties), newest first, paged, by agent.
+	if w = makeRequest(s, "GET", "/api/trust/penalties", "", ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"entries":[]`) {
+		t.Fatalf("penalties: %d %s", w.Code, w.Body.String())
+	}
+	var ids []string
+	for i := range 3 {
+		id, err := store.PenalizeTrust(t.Context(), "override", []string{fingerprint}, "test evidence "+strconv.Itoa(i), "a test penalty", "operator")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	var page struct {
+		Data struct {
+			Entries []struct {
+				Seq     int64    `json:"seq"`
+				ID      string   `json:"id"`
+				Trigger string   `json:"trigger"`
+				Members []string `json:"members"`
+				Reason  string   `json:"reason"`
+			} `json:"entries"`
+			NextBefore int64 `json:"next_before"`
+		} `json:"data"`
+	}
+	w = makeRequest(s, "GET", "/api/trust/penalties?limit=2", "", "")
+	if err = json.Unmarshal(w.Body.Bytes(), &page); err != nil || w.Code != 200 || len(page.Data.Entries) != 2 || page.Data.Entries[0].ID != ids[2] ||
+		page.Data.Entries[0].Trigger != "override" || page.Data.Entries[0].Reason != "a test penalty" || page.Data.NextBefore == 0 {
+		t.Fatalf("penalties page 1: %d %s", w.Code, w.Body.String())
+	}
+	if evidence := makeRequest(s, "GET", "/api/trust/evidence?limit=2", "", ""); evidence.Code != 200 || evidence.Body.String() != w.Body.String() {
+		t.Fatalf("/api/trust/evidence is not the penalty log: %d %s", evidence.Code, evidence.Body.String())
+	}
+	w = makeRequest(s, "GET", "/api/trust/penalties?limit=2&before="+strconv.FormatInt(page.Data.NextBefore, 10)+"&agent="+fingerprint, "", "")
+	if err = json.Unmarshal(w.Body.Bytes(), &page); err != nil || w.Code != 200 || len(page.Data.Entries) != 1 || page.Data.Entries[0].ID != ids[0] || page.Data.NextBefore != 0 {
+		t.Fatalf("penalties page 2: %d %s", w.Code, w.Body.String())
+	}
+	for path, code := range map[string]int{
+		"/api/trust/penalties?limit=0": 400, "/api/trust/penalties?limit=101": 400, "/api/trust/penalties?before=x": 400, "/api/trust/penalties?x=1": 400,
+		"/api/trust/penalties?agent=": 400, "/api/trust/penalties?agent=" + strings.Repeat("0", 64): 404, "/api/trust/penalties?limit=100": 200,
+	} {
+		if w = makeRequest(s, "GET", path, "", ""); w.Code != code {
+			t.Errorf("%s: %d, want %d: %s", path, w.Code, code, w.Body.String())
+		}
 	}
 	for _, path := range []string{"/api/trust/runs?limit=0", "/api/trust/runs?limit=51", "/api/trust/runs?before=x", "/api/trust/runs?cursor=1", "/api/trust/runs/abc", "/api/agent/a/b/trust"} {
 		if w = makeRequest(s, "GET", path, "", ""); w.Code != 400 {
@@ -149,26 +222,27 @@ func TestTrustRoutesShadow(t *testing.T) {
 	var caps struct {
 		Trust map[string]any `json:"trust"`
 	}
-	if err = json.Unmarshal(w.Body.Bytes(), &caps); err != nil || caps.Trust["mode"] != "shadow" || caps.Trust["boolean"] != false || caps.Trust["ledger_effects"] != false {
+	if err = json.Unmarshal(w.Body.Bytes(), &caps); err != nil || caps.Trust["mode"] != "on" || caps.Trust["boolean"] != false || caps.Trust["penalties"] != "/api/trust/penalties" ||
+		caps.Trust["standing_url"] != "/api/trust/standing?agent=AGENT&viewer=AGENT" {
 		t.Fatalf("capabilities trust: %+v", caps.Trust)
 	}
 }
 
 func TestTrustOpenAPIDiscovery(t *testing.T) {
-	for _, mode := range []board.TrustMode{board.TrustOff, board.TrustShadow} {
+	for _, mode := range []board.TrustMode{board.TrustOff, board.TrustOn} {
 		s := New(&fakeService{}, nil, Config{Features: board.Features{Trust: mode}})
 		var spec map[string]any
 		if err := json.Unmarshal(makeRequest(s, "GET", "/openapi.json", "", "").Body.Bytes(), &spec); err != nil {
 			t.Fatal(err)
 		}
-		for _, path := range []string{"/api/trust/runs", "/api/trust/runs/{id}", "/api/trust/runs/{id}/snapshot", "/api/trust/evidence", "/api/agent/{agent}/trust"} {
+		for _, path := range []string{"/api/trust/runs", "/api/trust/runs/{id}", "/api/trust/runs/{id}/snapshot", "/api/trust/evidence", "/api/trust/penalties", "/api/trust/standing", "/api/agent/{agent}/trust"} {
 			if got := dig(spec, "paths", path, "get"); (got != nil) != (mode != board.TrustOff) {
 				t.Errorf("mode %v path %s: %v", mode, path, got)
 			}
 		}
 		if mode != board.TrustOff {
 			summary := dig(spec, "paths", "/api/trust/runs/{id}", "get", "summary").(string)
-			for _, field := range []string{"inputs", "capture_bound", "snapshot"} {
+			for _, field := range []string{"inputs", "snapshot", "output_sha256"} {
 				if !strings.Contains(summary, field) {
 					t.Errorf("run detail omits %s", field)
 				}

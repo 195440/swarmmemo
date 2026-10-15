@@ -6,52 +6,59 @@ import (
 	"strings"
 )
 
-// gEdge is one final endorsement edge between node indices, saturated weight w.
-type gEdge struct {
-	src, dst int32
-	w        int64
-}
-
 func evidenceID(kind string, D int64, members []string) string {
 	return kind + "-" + sha256Hex([]byte(kind + "\n" + strconv.FormatInt(D, 10) + "\n" + strings.Join(members, ",")))[:24]
 }
 
-// detect runs the versioned detectors (§4.5). Evidence is mechanical and
-// public only: ledger transfers, claims and the endorsement graph. Reports,
-// hides and human judgement are never inputs.
+// detect runs the versioned detectors (RFC 0021 §8, RFC 0012 §4.5).
+// Evidence is mechanical and public only: ledger transfers, claims, payments,
+// proofs and the judgement graph. Reports, hides and model verdicts are
+// never inputs.
 //
 // funnel: one account receives transfers from ≥ funnel_k distinct accounts in
 // the last funnel_days, each of which spent ≤ funnel_spend_ppm of what it
 // claimed on those days. Members: the recipient and those senders.
 //
-// ring: a strongly connected set of ≥ ring_min nodes in which every member
-// takes ≥ ring_inside_ppm of its inbound edge weight from inside the set, and
-// which shares a member with a funnel. Members: the set.
-func detect(p Params, snap Snapshot, asOf, D int64, service map[string]bool, nodes []string, edges []gEdge) []EvidenceOut {
+// ring: a strongly connected set of ≥ ring_min roots in which every member
+// takes ≥ ring_inside_ppm of its inbound edge capacity from inside the set,
+// and which shares an account with a funnel. Members: the roots' accounts.
+//
+// shared_wallet: two roots (keys and verified domains) that share one live
+// wallet or payout address and judged or paid each other within
+// funded_days. Members: those roots' accounts.
+func (r *run) detect(g *Graph, set judgementSet, payments []Record, funded map[[2]string]bool, baseRoot func(string) string) []EvidenceOut {
+	p, snap, asOf, D := r.p, r.snap, r.asOf, r.D
 	d := p.Detectors
 	out := []EvidenceOut{}
+	accountsOf := map[string][]string{}
+	for _, a := range r.accounts {
+		root := r.rootOf(a)
+		accountsOf[root] = append(accountsOf[root], a)
+	}
+
+	// funnel
 	from := asOf - d.FunnelDays*day
 	claimed := map[string]int64{}
 	spent := map[string]int64{}
-	for _, r := range snap.Claims {
-		if r.Day >= D-d.FunnelDays && r.Day < D {
-			claimed[r.Account] += r.Claimed
-			spent[r.Account] += r.Spent
+	for _, x := range snap.Claims {
+		if x.Day >= D-d.FunnelDays && x.Day < D {
+			claimed[x.Account] += x.Claimed
+			spent[x.Account] += x.Spent
 		}
 	}
 	senders := map[string]map[string]bool{}
-	for _, r := range snap.Transfers {
-		if r.CreatedAt < from || r.CreatedAt >= asOf || r.From == r.To || r.From == "" || r.To == "" || service[r.From] || service[r.To] || r.Amount <= 0 {
+	for _, x := range snap.Transfers {
+		if x.CreatedAt < from || x.CreatedAt >= asOf || x.From == x.To || x.From == "" || x.To == "" || x.Amount <= 0 {
 			continue
 		}
-		if senders[r.To] == nil {
-			senders[r.To] = map[string]bool{}
+		if senders[x.To] == nil {
+			senders[x.To] = map[string]bool{}
 		}
-		senders[r.To][r.From] = true
+		senders[x.To][x.From] = true
 	}
 	recipients := make([]string, 0, len(senders))
-	for r := range senders {
-		recipients = append(recipients, r)
+	for x := range senders {
+		recipients = append(recipients, x)
 	}
 	sort.Strings(recipients)
 	inFunnel := map[string]string{}
@@ -76,45 +83,134 @@ func detect(p Params, snap Snapshot, asOf, D int64, service map[string]bool, nod
 		}
 		out = append(out, ev)
 	}
-	if len(inFunnel) == 0 {
-		return out
+
+	// ring
+	if len(inFunnel) > 0 {
+		edges := make([]gEdge, len(g.Src))
+		for k := range g.Src {
+			edges[k] = gEdge{g.Src[k], g.Dst[k], g.EdgeCap[k]}
+		}
+		for _, scc := range stronglyConnected(len(g.Labels), edges) {
+			if int64(len(scc)) < d.RingMin {
+				continue
+			}
+			inside := map[int32]bool{}
+			for _, v := range scc {
+				inside[v] = true
+			}
+			in, total := map[int32]int64{}, map[int32]int64{}
+			for _, e := range edges {
+				if inside[e.dst] {
+					total[e.dst] += e.w
+					if inside[e.src] {
+						in[e.dst] += e.w
+					}
+				}
+			}
+			ok, funnel := true, ""
+			var members []string
+			for _, v := range scc {
+				if total[v] == 0 || in[v]*1e6 < d.RingInsidePPM*total[v] {
+					ok = false
+				}
+				members = append(members, accountsOf[g.Labels[v]]...)
+			}
+			sort.Strings(members)
+			for _, m := range members {
+				if id := inFunnel[m]; id != "" && (funnel == "" || id < funnel) {
+					funnel = id
+				}
+			}
+			if !ok || funnel == "" {
+				continue
+			}
+			out = append(out, EvidenceOut{ID: evidenceID("ring", D, members), Kind: "ring", Members: members, DetectorVersion: d.Version,
+				Detail: string(Canonical(map[string]any{"roots": len(scc), "funnel": funnel}))})
+		}
 	}
-	for _, scc := range stronglyConnected(len(nodes), edges) {
-		if int64(len(scc)) < d.RingMin {
-			continue
+
+	// shared_wallet: base roots grouped by a live address they share.
+	byAddress := map[string]map[string]bool{}
+	note := func(address, account string) {
+		if address == "" || account == "" {
+			return
 		}
-		inside := map[int32]bool{}
-		for _, v := range scc {
-			inside[v] = true
+		if byAddress[address] == nil {
+			byAddress[address] = map[string]bool{}
 		}
-		in, total := map[int32]int64{}, map[int32]int64{}
-		for _, e := range edges {
-			if inside[e.dst] {
-				total[e.dst] += e.w
-				if inside[e.src] {
-					in[e.dst] += e.w
+		byAddress[address][baseRoot(account)] = true
+	}
+	fresh := asOf - p.ProofFreshDays*day
+	for _, x := range snap.Proofs {
+		if x.Kind == "wallet" && x.State == "verified" && x.CheckedAt >= fresh && x.CheckedAt <= asOf && x.CreatedAt <= asOf && x.Root != "" {
+			note(x.Root, x.Account)
+		}
+	}
+	for _, x := range payments {
+		if x.To != "" && x.LinkValue != "" && x.CreatedAt < asOf {
+			note(x.LinkValue, x.To)
+		}
+	}
+	addresses := make([]string, 0, len(byAddress))
+	for a, roots := range byAddress {
+		if len(roots) >= 2 {
+			addresses = append(addresses, a)
+		}
+	}
+	sort.Strings(addresses)
+	if len(addresses) > 0 {
+		// Interactions between base roots within funded_days: a judgement of
+		// a subject the other owns, a payment or a transfer.
+		since := asOf - p.HalfLifeDays*day
+		touched := map[[2]string]bool{}
+		touch := func(a, b string) {
+			ra, rb := baseRoot(a), baseRoot(b)
+			if ra != rb {
+				touched[[2]string{ra, rb}], touched[[2]string{rb, ra}] = true, true
+			}
+		}
+		for _, s := range set.subjects {
+			for _, e := range set.bySubject[s] {
+				if e.j.At < since {
+					continue
+				}
+				for o := range set.owners[s] {
+					touch(e.j.Author, o)
 				}
 			}
 		}
-		ok, funnel := true, ""
-		members := make([]string, 0, len(scc))
-		for _, v := range scc {
-			if total[v] == 0 || in[v]*1e6 < d.RingInsidePPM*total[v] {
-				ok = false
+		for k := range funded {
+			touch(k[0], k[1])
+		}
+		for _, addr := range addresses {
+			var roots []string
+			for root := range byAddress[addr] {
+				roots = append(roots, root)
 			}
-			members = append(members, nodes[v])
-		}
-		sort.Strings(members)
-		for _, m := range members {
-			if id := inFunnel[m]; id != "" && (funnel == "" || id < funnel) {
-				funnel = id
+			sort.Strings(roots)
+			hit := map[string]bool{}
+			for i, a := range roots {
+				for _, b := range roots[i+1:] {
+					if touched[[2]string{a, b}] {
+						hit[a], hit[b] = true, true
+					}
+				}
 			}
+			if len(hit) < 2 {
+				continue
+			}
+			var members []string
+			for _, a := range r.accounts {
+				if hit[baseRoot(a)] {
+					members = append(members, a)
+				}
+			}
+			if len(members) == 0 {
+				continue
+			}
+			out = append(out, EvidenceOut{ID: evidenceID("shared_wallet", D, members), Kind: "shared_wallet", Members: members, DetectorVersion: d.Version,
+				Detail: string(Canonical(map[string]any{"address": addr, "roots": len(hit)}))})
 		}
-		if !ok || funnel == "" {
-			continue
-		}
-		out = append(out, EvidenceOut{ID: evidenceID("ring", D, members), Kind: "ring", Members: members, DetectorVersion: d.Version,
-			Detail: string(Canonical(map[string]any{"size": len(members), "funnel": funnel}))})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
@@ -169,91 +265,4 @@ func stronglyConnected(n int, edges []gEdge) [][]int32 {
 		}
 	}
 	return out
-}
-
-type endorserFlow struct {
-	agent string
-	flow  int64
-}
-
-// sponsor derives sponsorships and this run's dividends (§4.5). A vouch with
-// sponsor:true within the invitee's first window_days records a sponsorship
-// (the earliest wins), within the sponsor's daily slots: round(slots_per_share
-// × min(1, own_avg/U)), zero while its breaker is active. The invitee's
-// independent inflow is the flow over edges from endorsers outside both roots
-// with no edge from the sponsor. A new high within dividend_days earns
-// dividend_ppm × (new high − previous high), at most daily_cap per sponsor.
-func sponsor(p Params, snap Snapshot, asOf int64, service map[string]bool, firstSeen map[string]int64, reset map[string]bool,
-	index map[string]int32, ownAvg []int64, rootOf func(string) string, pairSum map[pairKey]int64, flowTotal map[string]int64,
-	inflow func(string) []endorserFlow) ([]SponsorshipOut, []DividendOut) {
-	U := p.UnitPerShare
-	sp := p.Sponsor
-	prev := map[pairKey]int64{} // (invitee, sponsor) → the highest recorded high water
-	for _, r := range snap.Sponsorships {
-		k := pairKey{r.Invitee, r.SponsorOf}
-		prev[k] = max(prev[k], r.HighWater)
-	}
-	vouches := []*Record{}
-	for i := range snap.Endorsements {
-		if r := &snap.Endorsements[i]; r.Kind == "vouch" && r.Sponsor && r.Value == 1 && r.CreatedAt < asOf && r.Voter != r.Target && r.Voter != "" && r.Target != "" && !service[r.Voter] && !service[r.Target] {
-			vouches = append(vouches, r)
-		}
-	}
-	sort.Slice(vouches, func(i, j int) bool { return endorsementLess(vouches[i], vouches[j]) })
-	used := map[string]int64{}
-	chosen := map[string]*Record{}
-	for _, r := range vouches {
-		fs := firstSeen[r.Target]
-		if fs == 0 || r.CreatedAt > fs+sp.WindowDays*day || rootOf(r.Voter) == rootOf(r.Target) {
-			continue
-		}
-		if _, ok := chosen[r.Target]; ok {
-			continue
-		}
-		var own int64
-		if i, ok := index[r.Voter]; ok {
-			own = ownAvg[i]
-		}
-		slots := (2*sp.SlotsPerShare*min(U, own) + U) / (2 * U)
-		if reset[r.Voter] {
-			slots = 0
-		}
-		key := r.Voter + "\n" + strconv.FormatInt(dayOf(r.CreatedAt), 10)
-		if used[key] >= slots {
-			continue
-		}
-		used[key]++
-		chosen[r.Target] = r
-	}
-	invitees := make([]string, 0, len(chosen))
-	for a := range chosen {
-		invitees = append(invitees, a)
-	}
-	sort.Strings(invitees)
-	ships := []SponsorshipOut{}
-	divs := []DividendOut{}
-	paid := map[string]int64{}
-	for _, x := range invitees {
-		r := chosen[x]
-		s := r.Voter
-		hw := prev[pairKey{x, s}]
-		var indep int64
-		for _, e := range inflow(x) {
-			if e.agent == s || rootOf(e.agent) == rootOf(s) || rootOf(e.agent) == rootOf(x) || pairSum[pairKey{s, e.agent}] > 0 {
-				continue
-			}
-			indep += e.flow
-		}
-		indep = min(indep, flowTotal[x])
-		ends := r.CreatedAt + sp.DividendDays*day
-		if asOf < ends && indep > hw {
-			units := min(sp.DividendPPM*(indep-hw)/1e6, sp.DailyCap-paid[s])
-			if units > 0 {
-				paid[s] += units
-				divs = append(divs, DividendOut{Sponsor: s, Invitee: x, Units: units})
-			}
-		}
-		ships = append(ships, SponsorshipOut{Invitee: x, Sponsor: s, RecordSeq: r.Seq, CreatedAt: r.CreatedAt, EndsAt: ends, HighWater: max(hw, indep)})
-	}
-	return ships, divs
 }

@@ -160,6 +160,9 @@ PROOF_KEYS = {"forge", "rent", "curve", "half_life_days", "day_factor_ppm"}
 # From parameter version 5: the optional assessed rows and the rule of each.
 ASSESSED_KINDS = {"wallet": "capped", "github": "capped", "pow": "saturating"}
 ASSESSED_MAX = 10 ** 15
+# Payment kinds that are USDC settled on chain to the payee's payout address
+# (trust.SettledPaymentKind).
+SETTLED_PAYMENT_KINDS = {"work_usdc", "offering"}
 STANDING_KEYS = {"mode", "half_life_days", "day_factor_ppm", "pass_ppm", "iterations", "arbiter_seed_cents", "anon_seed_cents",
                  "credits_per_cent", "theta1_cents", "theta2_cents", "v0_ppm", "c_ref_cents"}
 # From parameter version 3 (the simulation's fixes); each is omitted when zero.
@@ -183,8 +186,8 @@ def check_params(body: dict) -> None:
         exact(body, PARAM_KEYS | {"standing"}, "body")
         st = body["standing"]
         if isinstance(st, dict) and (st.get("rule", 0) >= 4 or "judgements" in st):
-            raise InputError("params standing: rule 4 (parameter version 7, RFC 0020 is the rule) is not verified by this script; "
-                             "recompute it with `swarmmemo trust replay --snapshot FILE --json` (output_sha256)")
+            raise InputError("params standing: rule 4 (parameter version 7, RFC 0020's marks) is retired (RFC 0021) and verified by no tool; "
+                             "its snapshot and output_sha256 stay published")
         extra = STANDING_KEYS_V3 | STANDING_KEYS_V4 | STANDING_KEYS_V6
         if not isinstance(st, dict) or not STANDING_KEYS <= set(st) <= STANDING_KEYS | extra:
             raise InputError(f"params standing: fields must be {sorted(STANDING_KEYS)}, plus any of {sorted(extra)}")
@@ -291,12 +294,15 @@ def assessed_contribution(price, assessed):
     """What an assessed root adds, in cents: min(cap, v) (capped) or
     cap * v / (v + cap) (saturating), v = assessed / units_per_cent, exact."""
     u = price.get("units_per_cent", 0)
-    if assessed <= 0 or u <= 0:
+    if u <= 0:
         return 0
-    assessed = min(assessed, ASSESSED_MAX)
     ceiling = min(price["forge"], price["rent"])
+    fallback = price.get("fallback_cents", 0)
+    if assessed <= 0:
+        return min(ceiling, max(0, fallback)) if price["assess"] == "capped" else 0
+    assessed = min(assessed, ASSESSED_MAX)
     if price["assess"] == "capped":
-        return min(ceiling, assessed // u)
+        return min(ceiling, max(assessed // u, fallback))
     if price["assess"] == "saturating":
         return ceiling * assessed // (assessed + ceiling * u) if ceiling > 0 else 0
     return 0
@@ -1576,6 +1582,1290 @@ def sponsor(p, snap, as_of, service, first_seen, reset, index, own_avg, root_of,
 
 
 # ---------------------------------------------------------------------------
+# RFC 0021 (parameter version 8, snapshot schema 2): the one trust graph.
+#
+# Restated from docs/rfcs/0021-trust-graph-simplified.md and the reference's
+# internal/trust (compute.go, graph.go, judgements.go, detect.go), step for
+# step, and checked against testdata/golden_unified_*. Amounts are
+# millicents (MC per cent); divisions of non-negative values floor, of
+# possibly negative ones truncate toward zero (gdiv), as Go's do.
+
+MC = 1000
+SNAPSHOT_SCHEMA_V2 = 2
+UNIFIED_VERSION = 8
+
+RECORD_FIELDS_V2 = [
+    ("type", ""), ("schema", 0), ("as_of", 0), ("pause_new_keys_since", 0), ("events_seq", 0), ("endorsements_seq", 0), ("ledger_seq", 0),
+    ("version", 0), ("body", None), ("id", ""), ("kind", ""), ("account", ""), ("created_at", 0), ("value", 0), ("state", ""), ("target", ""),
+    ("first_seen", 0), ("reply_to", ""), ("reply_to_account", ""), ("seq", 0), ("voter", ""), ("message_id", ""), ("link_value", ""),
+    ("checked_at", 0), ("link_account", ""), ("registered_at", 0), ("root", ""), ("assessed", 0), ("rank", 0), ("started_at", 0),
+    ("trust_until", 0), ("from", ""), ("to", ""), ("amount", 0), ("day", 0), ("claimed", 0), ("spent", 0), ("evidence", ""),
+    ("fraction_ppm", 0), ("ends_at", 0), ("time", 0), ("last_active", 0), ("direct", 0), ("standing", 0), ("backed", 0),
+]
+FIELD_ZERO_V2 = dict(RECORD_FIELDS_V2)
+RECORD_TYPES_V2 = {"meta", "params", "account", "post", "endorsement", "proof", "breaker", "transfer", "claim", "payment", "edge",
+                   "review", "owner", "penalty", "burn", "liability", "lift", "carry"}
+PARAM_KEYS_V2 = {
+    "schema", "collateral_unit", "grace_days", "dormant_half_life_days", "dormant_day_factor_ppm", "half_life_days", "day_factor_ppm",
+    "evidence_weight_ppm", "unit_cents", "min_judges", "theta2_cents", "v_floor_cents", "c_ref_cents", "node_cap_cents", "v0_ppm",
+    "proofs", "domain_suffixes", "proof_fresh_days", "day_price_cents", "time_cap_cents", "coarse_x", "act_evidence", "detectors",
+    "penalty", "window_days", "n_max", "max_work", "max_seconds",
+}
+PARAM_SECTIONS_V2 = {
+    "detectors": {"version", "funnel_k", "funnel_days", "funnel_spend_ppm", "ring_min", "ring_inside_ppm"},
+    "penalty": {"base_days", "duration_factor", "backer_factor", "escalation_days", "backer_edge_days", "max_level"},
+    "evidence_weight_ppm": {"free_use", "observed", "opinion", "paid_use", "work"},
+    "act_evidence": {"vote", "vouch", "witness", "work_accept"},
+}
+TRIGGERS = {"ring", "funnel", "shared_wallet", "moderation", "override"}
+LOG2_TEN = 3566893132
+INT64_MAX_V2 = 2**63 - 1
+
+
+class Rec2(dict):
+    """A schema 2 input record; absent fields read as their zero value."""
+
+    def __getattr__(self, name):
+        if name == "from_":
+            return self.get("from", "")
+        return self.get(name, FIELD_ZERO_V2.get(name))
+
+
+def record_key_v2(r: dict) -> str:
+    parts = []
+    for name, zero in RECORD_FIELDS_V2:
+        value = r.get(name, zero)
+        if name != "type" and (value == zero or value is None):
+            continue
+        if isinstance(value, int):
+            encoded = str(value)
+        elif isinstance(value, str):
+            encoded = _go_quote(value)
+        else:
+            encoded = json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+        parts.append(_go_quote(name) + ":" + encoded)
+    return "{" + ",".join(parts) + "}"
+
+
+def sort_v2(records):
+    return sorted(records, key=record_key_v2)
+
+
+def plain_v2(r: dict) -> dict:
+    """A record as Go marshals it: its non-zero fields."""
+    return {k: v for k, v in r.items() if k == "type" or (v != FIELD_ZERO_V2.get(k) and v is not None)}
+
+
+class SnapshotV2:
+    def __init__(self):
+        self.meta = Rec2()
+        self.params = None
+        self.params_version = 0
+        self.lists = {t: [] for t in RECORD_TYPES_V2 - {"meta", "params"}}
+
+    def of(self, kind):
+        return self.lists[kind]
+
+
+def check_params_v2(body: dict, version: int) -> None:
+    if version < UNIFIED_VERSION:
+        raise InputError(f"params: version {version} is not a schema 2 version")
+    if not isinstance(body, dict) or set(body) != PARAM_KEYS_V2:
+        raise InputError(f"params body: fields must be exactly {sorted(PARAM_KEYS_V2)}")
+    for section, keys in PARAM_SECTIONS_V2.items():
+        if not isinstance(body[section], dict) or set(body[section]) != keys:
+            raise InputError(f"params {section}: fields must be exactly {sorted(keys)}")
+    if body["schema"] != 2 or body["collateral_unit"] != "usd_cent":
+        raise InputError("params: schema 2 in usd_cent")
+    u = body["unit_cents"]
+    if (body["theta2_cents"], body["v_floor_cents"], body["c_ref_cents"], body["node_cap_cents"]) != (u, u // 4, u * 5 // 2, u * 15 // 4):
+        raise InputError("params: theta2, v_floor, c_ref and node_cap must be U, U/4, 2.5U and 3.75U")
+    for kind, row in body["proofs"].items():
+        allowed = {"forge", "rent", "curve", "half_life_days", "day_factor_ppm", "assess", "units_per_cent", "age_cents", "rank_cents", "fallback_cents"}
+        if not isinstance(row, dict) or not {"forge", "rent", "curve", "half_life_days", "day_factor_ppm"} <= set(row) <= allowed:
+            raise InputError(f"params proofs.{kind}: unexpected fields")
+
+    def ints(obj, where):
+        for k, v in obj.items():
+            if isinstance(v, dict):
+                ints(v, where + "." + k)
+            elif isinstance(v, (bool, float)):
+                raise InputError(f"params {where}.{k} must be an integer")
+    ints(body, "body")
+
+
+def read_snapshot_v2(raws) -> SnapshotV2:
+    snap = SnapshotV2()
+    for n, raw in raws:
+        if raw.get("type") not in RECORD_TYPES_V2:
+            raise InputError(f"line {n}: unknown record type {raw.get('type')!r}")
+        unknown = set(raw) - set(FIELD_ZERO_V2)
+        if unknown:
+            raise InputError(f"line {n}: unknown field(s) {sorted(unknown)}")
+        for k, v in raw.items():
+            if k == "body":
+                continue
+            zero = FIELD_ZERO_V2[k]
+            if isinstance(v, bool) or type(v) is not type(zero):
+                raise InputError(f"line {n}: field {k} has the wrong type")
+        rec = Rec2(raw)
+        if rec.type == "meta":
+            if rec.schema != SNAPSHOT_SCHEMA_V2:
+                raise InputError(f"line {n}: snapshot schema {rec.schema} is not 2")
+            snap.meta = rec
+        elif rec.type == "params":
+            check_params_v2(rec.body, rec.version)
+            snap.params = rec.body
+            snap.params_version = rec.version
+        else:
+            snap.lists[rec.type].append(rec)
+    if snap.params is None:
+        raise InputError("the snapshot has no params record")
+    return snap
+
+
+# --- RFC 0020 §1-§2: the judgement record and the score (internal/judge)
+
+J_NEUTRAL, J_MIN, J_MAX = 50, 0, 100
+RELATIONSHIP_PPM = {"owner": 0, "affiliate": 0, "paid": 0, "competitor": 500_000, "outside_source": 0, "lab": 0}
+
+
+def j_clamp(x):
+    return min(J_MAX, max(J_MIN, x))
+
+
+def j_side(x):
+    return J_MAX if x > J_NEUTRAL else (J_MIN if x < J_NEUTRAL else J_NEUTRAL)
+
+
+def sat_add(a, b):
+    return min(a + b, INT64_MAX_V2)
+
+
+def j_median(points, prior):
+    pts = [(j_clamp(x), w) for x, w in points if w > 0]
+    if prior > 0 or not pts:
+        pts.append((J_NEUTRAL, max(1, prior)))
+    pts.sort(key=lambda p: p[0])
+    merged = [list(pts[0])]
+    for x, w in pts[1:]:
+        if merged[-1][0] == x:
+            merged[-1][1] = sat_add(merged[-1][1], w)
+        else:
+            merged.append([x, w])
+    total = 0
+    for _, w in merged:
+        total = sat_add(total, w)
+    cum = 0
+    for i, (x, w) in enumerate(merged):
+        cum = sat_add(cum, w)
+        twice = sat_add(cum, cum)
+        if twice > total or (twice == total and i == len(merged) - 1):
+            return x
+        if twice == total:
+            return (x + merged[i + 1][0]) // 2
+    return J_NEUTRAL
+
+
+def j_consensus(points, prior_weight):
+    w, n = 0, 0
+    for _, pw in points:
+        if pw > 0:
+            w = sat_add(w, pw)
+            n += 1
+    prior = mul_div(w, max(0, prior_weight), n) if n > 0 else 0
+    return j_median(points, prior)
+
+
+def j_gain(x, c0, cT, coarse):
+    x, c0, cT = j_clamp(x), j_clamp(c0), j_clamp(cT)
+    if coarse:
+        x = j_side(x)
+        s = (x > c0) - (x < c0)
+        return gdiv(s * (cT - c0) * PPM, J_MAX - J_MIN)
+    return gdiv((abs(c0 - cT) - abs(x - cT)) * PPM, J_MAX - J_MIN)
+
+
+def j_weight(evidence, v, rel, decay):
+    w = mul_div(max(0, evidence), max(0, v), PPM)
+    w = mul_div(w, max(0, rel), PPM)
+    return mul_div(w, max(0, decay), PPM)
+
+
+# --- prices
+
+
+def log10_ppm(n: int) -> int:
+    """floor(1e6 × log10(n)) by the reference's integer steps: log2 with 30
+    fractional bits by repeated squaring in Q62, over log2(10) in Q30."""
+    if n <= 1:
+        return 0
+    k = n.bit_length() - 1
+    y = n << (62 - k)
+    frac = 0
+    for _ in range(30):
+        y = (y * y) >> 62
+        frac <<= 1
+        if y >= 1 << 63:
+            frac |= 1
+            y >>= 1
+    return mul_div((k << 30) | frac, PPM, LOG2_TEN)
+
+
+def domain_contribution(price, age_days, registered, rank, cv):
+    if registered <= 0 and rank <= 0:
+        return min(price.get("fallback_cents", 0), price["forge"], price["rent"])
+    c = 0
+    if registered > 0:
+        c += price["age_cents"] * cv.ramp(price["day_factor_ppm"], max(0, age_days)) // PPM
+    if rank > 0:
+        lg = log10_ppm(rank)
+        if lg < 6 * PPM:
+            c += mul_div(price["rank_cents"], 6 * PPM - lg, 6 * PPM)
+    return min(c, min(price["forge"], price["rent"]))
+
+
+def labels_of(u: UnionFind) -> dict:
+    def rank(x):
+        if x.startswith("domain:"):
+            return 0
+        return 2 if ":" in x else 1
+    label = {}
+    for x in sorted(u):
+        rep = u.find(x)
+        cur = label.get(rep)
+        if cur is None or rank(x) < rank(cur) or (rank(x) == rank(cur) and x < cur):
+            label[rep] = x
+    return label
+
+
+def flow_levels(U, node_cap):
+    out = []
+    for lv in (U // 8, U // 4, U // 2, U, 2 * U, node_cap):
+        lv = min(lv, node_cap)
+        if lv > 0 and (not out or lv > out[-1]):
+            out.append(lv)
+    return out
+
+
+def endorsement_key(r):
+    return (r.seq, r.created_at, r.kind, r.voter, r.target, r.message_id, r.value)
+
+
+class Graph:
+    def __init__(self):
+        self.labels, self.index, self.root_of = [], {}, {}
+        self.world, self.cap = [], []
+        self.src, self.dst, self.edge_cap = [], [], []
+        self.levels = []
+        self.recent = []
+
+
+def graph_flow(g: Graph, max_work: int, work: int):
+    n = len(g.labels)
+    standing, own, passed, edge = [0] * n, [0] * n, [0] * n, [0] * len(g.src)
+    if n == 0:
+        return standing, own, passed, edge, work
+    S, T = n, n + 1
+    net = Network(n + 2, max_work, work)
+    inn = [-1] * n
+    for i in range(n):
+        w = g.world[i]
+        own[i] = min(w, g.cap[i])
+        if w - own[i] > 0:
+            inn[i] = net.add(S, i, w - own[i])
+    ids = [net.add(g.src[k], g.dst[k], g.edge_cap[k]) for k in range(len(g.src))]
+    sink = [net.add(i, T, 0) for i in range(n)]
+    have = [0] * n
+    for L in g.levels:
+        for i in range(n):
+            want = max(0, min(L, g.cap[i]) - own[i])
+            net.cap[sink[i]] += want - have[i]
+            have[i] = want
+        net.maxflow(S, T)
+    for i in range(n):
+        standing[i] = own[i] + net.flow_on(sink[i])
+        if inn[i] >= 0:
+            passed[i] = net.flow_on(inn[i])
+    for k, e in enumerate(ids):
+        edge[k] = net.flow_on(e)
+    return standing, own, passed, edge, net.work
+
+
+def compute_unified(snap: SnapshotV2) -> dict:
+    p = snap.params
+    as_of = snap.meta.as_of
+    D = day_of(as_of)
+    H = p["half_life_days"]
+    ws = as_of - p["window_days"] * DAY
+    U = p["unit_cents"] * MC
+    node_cap = p["node_cap_cents"] * MC
+    cv = Curves()
+    max_work = p["max_work"]
+    work = 0
+
+    # The carry.
+    carry_recs = snap.of("carry")
+    carry = None
+    if carry_recs:
+        carry = {"as_of": 0, "accounts": {}}
+        runs = 0
+        for r in sort_v2(carry_recs):
+            if r.kind == "run":
+                runs += 1
+                carry["as_of"] = r.as_of
+            elif r.kind == "world":
+                if not r.account or r.account in carry["accounts"] or min(r.amount, r.time, r.backed, r.direct, r.standing, r.fraction_ppm) < 0 \
+                        or r.fraction_ppm > PPM:
+                    raise InputError(f"carry world record for {r.account!r} is out of range or repeated")
+                carry["accounts"][r.account] = r
+            else:
+                raise InputError(f"unknown carry kind {r.kind!r}")
+        if runs != 1:
+            raise InputError(f"the carry needs one run record, not {runs}")
+        if carry["as_of"] > as_of:
+            raise InputError("the carry is after the run")
+    carry_in = hashlib.sha256(canonical([plain_v2(r) for r in sort_v2(carry_recs)]).encode()).hexdigest() if carry_recs else ""
+    prev_as_of = max(carry["as_of"], as_of - 3650 * DAY) if carry else ws
+    prev_d = day_of(prev_as_of)
+
+    def carried(a):
+        return carry["accounts"].get(a, Rec2()) if carry else Rec2()
+
+    # The penalty log.
+    log = {}
+    for r in sort_v2(snap.of("penalty")):
+        if not r.id or not r.account:
+            raise InputError("a penalty record needs an id and an account")
+        e = log.get(r.id)
+        sig = (r.kind, r.created_at, r.ends_at, r.value, r.state == "pending", r.evidence)
+        if e is None:
+            e = log[r.id] = {"id": r.id, "trigger": r.kind, "evidence": r.evidence, "start": r.created_at, "end": r.ends_at, "level": r.value,
+                             "pending": r.state == "pending", "lifted": False, "members": [], "burned": [], "liabilities": [], "sig": sig}
+        elif e["sig"] != sig:
+            raise InputError(f"penalty entry {r.id!r} has members that disagree")
+        if r.kind not in TRIGGERS:
+            raise InputError(f"penalty entry {r.id!r} has an unknown trigger {r.kind!r}")
+        e["members"].append(r.account)
+    for r in sort_v2(snap.of("burn")):
+        if r.id in log and r.root:
+            log[r.id]["burned"].append(r.root)
+    for r in sort_v2(snap.of("liability")):
+        if r.id in log and r.account:
+            log[r.id]["liabilities"].append(r)
+    for r in sort_v2(snap.of("lift")):
+        if r.id in log and r.created_at <= as_of:
+            log[r.id]["lifted"] = True
+    log_ids = sorted(log)
+
+    def active_at(e, t):
+        return not e["lifted"] and not e["pending"] and e["start"] <= t < e["end"]
+
+    # Accounts seen anywhere.
+    known = set()
+    first_seen = {}
+    for x in snap.of("account"):
+        if x.account:
+            known.add(x.account)
+        if x.first_seen > 0 and (first_seen.get(x.account, 0) == 0 or x.first_seen < first_seen[x.account]):
+            first_seen[x.account] = x.first_seen
+    for x in snap.of("post"):
+        known.update(a for a in (x.account, x.reply_to_account) if a)
+    for x in snap.of("endorsement"):
+        known.update(a for a in (x.voter, x.target) if a)
+    for x in snap.of("proof"):
+        known.update(a for a in (x.account,) if a)
+    for x in snap.of("payment"):
+        known.update(a for a in (x.account, x.to) if a)
+    for x in snap.of("edge") + snap.of("transfer"):
+        known.update(a for a in (x.from_, x.to) if a)
+    for x in snap.of("claim"):
+        known.update(a for a in (x.account,) if a)
+    for x in snap.of("review"):
+        if x.account:
+            known.add(x.account)
+        if x.target.startswith("agent:") and len(x.target) > 6:
+            known.add(x.target[6:])
+    for x in snap.of("owner"):
+        if x.account:
+            known.add(x.account)
+    if carry:
+        known.update(carry["accounts"])
+    for e in log.values():
+        known.update(e["members"])
+    known.discard("")
+
+    reset = set()
+    for x in snap.of("breaker"):
+        if x.started_at <= as_of < x.trust_until:
+            reset.add(x.account)
+    since = snap.meta.pause_new_keys_since
+    if since > 0:
+        for a, t in first_seen.items():
+            if t > since:
+                reset.add(a)
+
+    burned = set()
+    for e in log.values():
+        if not e["lifted"]:
+            burned.update(e["burned"])
+
+    # Roots.
+    suffixes = set(p["domain_suffixes"])
+    fresh = as_of - p["proof_fresh_days"] * DAY
+    proofs_p = p["proofs"]
+
+    def counts(x):
+        if x.created_at > as_of:
+            return False
+        if x.kind == "domain" or proofs_p.get(x.kind, {}).get("assess", ""):
+            return x.state == "verified" and fresh <= x.checked_at <= as_of
+        if x.kind == "ed25519":
+            return x.state in ("proof_attached", "verified")
+        return x.state == "verified"
+    proofs = sort_v2(snap.of("proof"))
+    base, full = UnionFind(), UnionFind()
+    for x in proofs:
+        if not counts(x):
+            continue
+        if x.kind == "domain":
+            d = domain_root(x.link_value, suffixes)
+            base.union(x.account, d)
+            full.union(x.account, d)
+        elif x.kind == "ed25519":
+            if x.link_account:
+                base.union(x.account, x.link_account)
+                full.union(x.account, x.link_account)
+        elif x.kind == "wallet":
+            if x.root and x.root not in burned:
+                full.union(x.account, x.root)
+    payments = sort_v2(snap.of("payment"))
+    for x in payments:
+        if x.to and x.link_value and x.link_value not in burned and x.created_at < as_of:
+            full.union(x.to, x.link_value)
+    label = labels_of(full)
+    base_label = labels_of(base)
+
+    def root_of(a):
+        return label[full.find(a)] if a in full else a
+
+    def base_root(a):
+        return base_label[base.find(a)] if a in base else a
+
+    funded_from = as_of - H * DAY
+    funded = set()
+    money_out = {}
+
+    def link(frm, to, at):
+        if not frm or not to or frm == to or at < funded_from or at >= as_of:
+            return
+        funded.add((frm, to))
+        funded.add((to, frm))
+        money_out.setdefault(frm, []).append(to)
+    for x in snap.of("transfer"):
+        if x.amount > 0:
+            link(x.from_, x.to, x.created_at)
+    for x in payments:
+        if x.amount > 0:
+            link(x.account, x.to, x.created_at)
+    for a in money_out:
+        money_out[a].sort()
+
+    def indep(a, b):
+        return a != b and root_of(a) != root_of(b) and (a, b) not in funded
+
+    member, liable = {}, {}
+
+    def apply_log(e):
+        for m in e["members"]:
+            root = root_of(m)
+            if root not in member or e["id"] < member[root]["id"]:
+                member[root] = e
+        for l in e["liabilities"]:
+            if l.created_at <= as_of < l.ends_at:
+                root = root_of(l.account)
+                cur = liable.get(root)
+                if cur is None or l.fraction_ppm > cur["fraction_ppm"]:
+                    liable[root] = {"entry": e["id"], "role": "backer", "fraction_ppm": min(PPM, l.fraction_ppm), "level": l.value, "ends_at": l.ends_at}
+    for i in log_ids:
+        if active_at(log[i], as_of):
+            apply_log(log[i])
+
+    def penalised(a):
+        return root_of(a) in member
+
+    # Proofs.
+    claims = []
+    for x in proofs:
+        price = proofs_p.get(x.kind, {})
+        if x.kind != "domain" and not price.get("assess", ""):
+            continue
+        it = {"kind": "proof", "source": x.kind, "state": x.state, "root": "", "price_cents": 0, "cents": 0, "note": ""}
+        if x.kind == "domain":
+            it["root"] = domain_root(x.link_value, suffixes)
+        elif x.root:
+            it["root"] = x.root
+        else:
+            it["root"] = x.kind + ":" + x.link_value
+        cents = 0
+        if not counts(x):
+            it["note"] = "not counted: not verified within proof_fresh_days"
+        elif it["root"] in burned:
+            it["state"], it["note"] = "burned", "burned by a penalty: prices 0 on any key"
+        elif x.kind == "domain":
+            cents = domain_contribution(price, D - day_of(x.registered_at), x.registered_at, x.rank, cv)
+            if x.registered_at <= 0 and x.rank <= 0:
+                it["note"] = "registration age and rank not yet fetched: priced at the domain row's fallback"
+        else:
+            cents = assessed_contribution(price, x.assessed)
+        it["price_cents"] = cents
+        claims.append((x.account, it, cents))
+    best_of, claimants = {}, {}
+    for i, (a, it, price) in enumerate(claims):
+        if price <= 0:
+            continue
+        k = (it["root"], root_of(a))
+        j = best_of.get(k)
+        if j is None or price > claims[j][2] or (price == claims[j][2] and a < claims[j][0]):
+            best_of[k] = i
+        claimants.setdefault(it["root"], set()).add(root_of(a))
+    proof_mc, items, proof_roots_of = {}, {}, {}
+    for i, (a, it, price) in enumerate(claims):
+        it = dict(it)
+        if price > 0:
+            proof_roots_of.setdefault(a, []).append(it["root"])
+            k = (it["root"], root_of(a))
+            if best_of[k] == i:
+                n = len(claimants[it["root"]])
+                share = price * MC // n
+                proof_mc[a] = proof_mc.get(a, 0) + share
+                it["cents"] = share // MC
+                if n > 1:
+                    it["note"] = f"shared with {n - 1} other root(s): split"
+            else:
+                b = claims[best_of[k]]
+                it["note"] = "saturated by " + b[1]["source"] + " on " + b[0]
+        items.setdefault(a, []).append(it)
+
+    # Prior direct costs and standing: the carry's, and at least this run's
+    # own costs (proofs held now, faded as the carry left them, and money
+    # paid in since the carry; a first run counts all of it) (C320c).
+    money_all = {}
+    for x in payments:
+        if not x.to and x.amount > 0 and x.created_at < as_of and (not carry or x.created_at >= prev_as_of):
+            money_all[x.account] = money_all.get(x.account, 0) + min(x.amount, 1 << 40) * MC
+
+    def own_direct(a):
+        if carry and a in carry["accounts"]:
+            return mul_div(proof_mc.get(a, 0), carry["accounts"][a].fraction_ppm, PPM) + money_all.get(a, 0)
+        return proof_mc.get(a, 0) + money_all.get(a, 0)
+
+    def prior_direct(a):
+        if carry:
+            return max(carried(a).direct * MC, own_direct(a))
+        return own_direct(a)
+
+    span = max(0, D - prev_d)
+    backed = {}
+    if carry:
+        for a, c in carry["accounts"].items():
+            if c.backed > 0:
+                backed[a] = mul_div(c.backed, cv.decay(p["day_factor_ppm"], span), PPM)
+    used = {}
+
+    def budget(b):
+        return max(0, prior_direct(b) - backed.get(b, 0) - used.get(b, 0))
+    # Settled USDC is backed by at least the wallet row's fallback (C320c).
+    settled_floor = proofs_p.get("wallet", {}).get("fallback_cents", 0) * MC
+
+    def settled_budget(b):
+        return max(0, max(prior_direct(b), settled_floor) - backed.get(b, 0) - used.get(b, 0))
+
+    reaches = {}
+
+    def reach(frm):
+        if frm in reaches:
+            return reaches[frm]
+        m = {frm}
+        queue = [frm]
+        while queue:
+            x = queue.pop(0)
+            for y in money_out.get(x, []):
+                if y not in m:
+                    m.add(y)
+                    queue.append(y)
+        reaches[frm] = m
+        return m
+    paid, paid_n, paid_out, paid_out_n = {}, {}, {}, {}
+    for x in payments:
+        if not x.to or x.amount <= 0 or x.created_at < funded_from or x.created_at >= as_of:
+            continue
+        a, b = x.account, x.to
+        if a == b or root_of(a) == root_of(b) or penalised(a) or penalised(b) or a in reach(b):
+            continue
+        settled = x.kind in SETTLED_PAYMENT_KINDS
+        room = settled_budget(b) if settled else budget(b)
+        credit = min(min(x.amount, 1 << 40) * MC, room)
+        if credit <= 0:
+            continue
+        used[b] = used.get(b, 0) + credit
+        if settled:
+            paid_out[a] = paid_out.get(a, 0) + credit
+            paid_out_n[a] = paid_out_n.get(a, 0) + 1
+        else:
+            paid[a] = paid.get(a, 0) + credit
+            paid_n[a] = paid_n.get(a, 0) + 1
+
+    def prior_standing(a):
+        own = min(own_direct(a) + paid_out.get(a, 0), node_cap) // MC
+        if carry:
+            return max(carried(a).standing, own)
+        return own
+
+    # Activity.
+    responses = {}
+
+    def respond(by, to, at):
+        if not by or not to or at < prev_as_of or at >= as_of or by in reset or penalised(by) or not indep(by, to) \
+                or prior_standing(by) < p["v_floor_cents"]:
+            return
+        responses.setdefault(to, []).append((day_of(at), by))
+    for x in snap.of("post"):
+        if x.reply_to_account:
+            respond(x.account, x.reply_to_account, x.created_at)
+    for x in snap.of("endorsement"):
+        if (x.kind == "vote" and x.value != 0) or (x.kind == "vouch" and x.value == 1):
+            respond(x.voter, x.target, x.created_at)
+    for x in snap.of("edge"):
+        respond(x.from_, x.to, x.created_at)
+    review_owners = {}
+    for x in sort_v2(snap.of("owner")):
+        review_owners.setdefault(x.target, []).append(x.account)
+    for x in snap.of("review"):
+        owners = list(review_owners.get(x.target, []))
+        if x.target.startswith("agent:"):
+            owners.append(x.target[6:])
+        for o in owners:
+            respond(x.account, o, x.created_at)
+    active_on, responders_of = {}, {}
+    for a, lst in responses.items():
+        days = {}
+        for d, by in lst:
+            days.setdefault(d, set()).add(by)
+        for d, s in days.items():
+            active_on.setdefault(d, []).append(a)
+            responders_of[(a, d)] = sorted(s)
+    for d in active_on:
+        active_on[d].sort()
+
+    money_in = {}
+    for x in payments:
+        if x.to or x.amount <= 0 or x.created_at >= as_of or (carry and x.created_at < prev_as_of):
+            continue
+        d = max(prev_d, day_of(x.created_at))
+        mi = money_in.setdefault(x.account, {})
+        mi[d] = mi.get(d, 0) + min(x.amount, 1 << 40) * MC
+    first_cost = {}
+
+    def cost(a, at):
+        d = day_of(at)
+        if at < as_of and (first_cost.get(a, 0) == 0 or d < first_cost[a]):
+            first_cost[a] = d
+    for x in payments:
+        if not x.to and x.amount > 0:
+            cost(x.account, x.created_at)
+    for x in proofs:
+        if proofs_p.get(x.kind, {}).get("assess", "") and counts(x):
+            cost(x.account, x.created_at)
+    accounts = sorted(known)
+    world = {}
+    for a in accounts:
+        w = {"money": 0, "time": 0, "fade": PPM, "last": max(prev_d, first_cost.get(a, 0)), "active": 0}
+        if first_seen.get(a, 0) > 0:
+            w["last"] = max(w["last"], day_of(first_seen[a]))
+        if carry and a in carry["accounts"]:
+            c = carry["accounts"][a]
+            w["money"], w["time"], w["fade"], w["last"] = c.amount, c.time, c.fraction_ppm, c.last_active
+        world[a] = w
+    f = p["dormant_day_factor_ppm"]
+    day_price, time_cap = p["day_price_cents"] * MC, p["time_cap_cents"] * MC
+    new_backed = {}
+    for d in range(prev_d, D):
+        for a in accounts:
+            w = world[a]
+            if d - w["last"] > p["grace_days"]:
+                w["money"], w["time"], w["fade"] = mul_div(w["money"], f, PPM), mul_div(w["time"], f, PPM), mul_div(w["fade"], f, PPM)
+            w["money"] += money_in.get(a, {}).get(d, 0)
+        for a in active_on.get(d, []):
+            w = world[a]
+            w["last"], w["active"] = d, w["active"] + 1
+            if w["time"] + day_price > time_cap or day_price <= 0:
+                continue
+            for by in responders_of[(a, d)]:
+                if budget(by) + paid_out.get(by, 0) - new_backed.get(by, 0) >= day_price:
+                    new_backed[by] = new_backed.get(by, 0) + day_price
+                    w["time"] += day_price
+                    break
+
+    world_mc, direct_mc = {}, {}
+    for a in accounts:
+        w = world[a]
+        if penalised(a):
+            w["money"], w["time"] = 0, 0
+            continue
+        pr = mul_div(proof_mc.get(a, 0), w["fade"], PPM)
+        direct_mc[a] = pr + w["money"]
+        world_mc[a] = pr + w["money"] + w["time"] + paid.get(a, 0) + paid_out.get(a, 0)
+
+    # Judgements.
+    owners = {}
+
+    def own(subject, account):
+        if account:
+            owners.setdefault(subject, set()).add(account)
+    for x in sort_v2(snap.of("owner")):
+        own(x.target, x.account)
+    act_ev = p["act_evidence"]
+    entries = []
+
+    def add(j, withdraw, owner):
+        if not j["author"] or not j["subject"] or j["author"] in reset or j["at"] < ws or j["at"] >= as_of:
+            return
+        own(j["subject"], owner)
+        j["root"] = root_of(j["author"])
+        entries.append({"j": j, "withdraw": withdraw, "close": -1})
+
+    def judgement(id_, act, author, subject, x, coarse, evidence, at, relationship=""):
+        return {"id": id_, "act": act, "author": author, "subject": subject, "x": x, "coarse": coarse, "evidence": evidence,
+                "relationship": relationship, "at": at}
+    for r in sorted(snap.of("endorsement"), key=lambda r: (endorsement_key(r), record_key_v2(r))):
+        if not r.target:
+            continue
+        id_ = "e" + str(r.seq)
+        if r.kind == "vote":
+            if not r.message_id:
+                continue
+            ok = r.value in (1, -1)
+            x = J_MAX if r.value == 1 else J_MIN
+            add(judgement(id_, "vote", r.voter, "post:" + r.message_id, x if ok else 0, True, act_ev["vote"], r.created_at), not ok, r.target)
+        elif r.kind == "vouch":
+            ok = r.value == 1
+            add(judgement(id_, "vouch", r.voter, "agent:" + r.target, 80 if ok else 0, ok, act_ev["vouch"], r.created_at), not ok, r.target)
+    for r in sort_v2(snap.of("edge")):
+        if r.kind == "work_accept":
+            add(judgement("work:" + r.id, "work_accept", r.from_, "agent:" + r.to, 75, True, act_ev["work_accept"], r.created_at), False, r.to)
+        elif r.kind == "witness" and r.id and r.value != 0:
+            add(judgement("witness:" + r.from_ + ":" + r.id, "witness", r.from_, "claim:" + r.to + ":" + r.id, J_MAX if r.value > 0 else J_MIN, True,
+                          act_ev["witness"], r.created_at), False, r.to)
+    for r in sort_v2(snap.of("review")):
+        add(judgement("review:" + r.id, "review", r.account, r.target, min(J_MAX, max(J_MIN, r.value)), False, r.kind, r.created_at, r.link_value), False, "")
+    for e in entries:
+        s = e["j"]["subject"]
+        if s.startswith("agent:"):
+            own(s, s[6:])
+    by_subject = {}
+    for e in entries:
+        j = e["j"]
+        root = root_of(j["author"])
+        if any(o == j["author"] or root_of(o) == root for o in owners.get(j["subject"], ())):
+            continue
+        by_subject.setdefault(j["subject"], []).append(e)
+    for s, lst in by_subject.items():
+        lst.sort(key=lambda e: (e["j"]["at"], e["j"]["id"], e["j"]["author"]))
+        last = {}
+        for i, e in enumerate(lst):
+            if e["j"]["root"] in last:
+                lst[last[e["j"]["root"]]]["close"] = i
+            last[e["j"]["root"]] = i
+    subjects = sorted(by_subject)
+    ev_w = p["evidence_weight_ppm"]
+
+    def evidence_ppm(j):
+        return ev_w.get(j["evidence"], 0)
+
+    def decay_h(days):
+        return cv.decay(p["day_factor_ppm"], days)
+
+    # Graph.
+    def new_graph():
+        g = Graph()
+        wsum = {}
+        for a in accounts:
+            root = root_of(a)
+            g.root_of[a] = root
+            wsum[root] = wsum.get(root, 0) + world_mc.get(a, 0)
+        g.labels = sorted(wsum)
+        for i, root in enumerate(g.labels):
+            g.index[root] = i
+            w, c = wsum[root], node_cap
+            if root in member:
+                w, c = 0, 0
+            elif root in liable:
+                fr = liable[root]["fraction_ppm"]
+                w, c = mul_div(w, PPM - fr, PPM), mul_div(c, PPM - fr, PPM)
+            g.world.append(w)
+            g.cap.append(c)
+        g.levels = flow_levels(U, node_cap)
+        return g
+
+    def set_edges(g, acc):
+        sums = {}
+        g.recent = []
+        frm = as_of - p["penalty"]["backer_edge_days"] * DAY
+        for s in subjects:
+            dsts, seen = [], set()
+            for o in sorted(owners.get(s, ())):
+                root = root_of(o)
+                if root in g.index and g.index[root] not in seen and root not in member:
+                    seen.add(g.index[root])
+                    dsts.append(g.index[root])
+            dsts.sort()
+            for e in by_subject[s]:
+                if e["withdraw"] or e["close"] >= 0:
+                    continue
+                j = e["j"]
+                x = j["x"]
+                if j["coarse"]:
+                    if x <= 50:
+                        continue
+                    x = p["coarse_x"]
+                if x <= 50:
+                    continue
+                src_root = root_of(j["author"])
+                if src_root not in g.index or src_root in member:
+                    continue
+                src = g.index[src_root]
+                to = [d for d in dsts if d != src]
+                if not to:
+                    continue
+                c = mul_div(U, (x - 50) * PPM // 50, PPM)
+                c = mul_div(c, evidence_ppm(j), PPM)
+                c = mul_div(c, RELATIONSHIP_PPM.get(j["relationship"], PPM), PPM)
+                c = mul_div(c, decay_h(D - day_of(j["at"])), PPM)
+                c = mul_div(c, acc(j["author"]), PPM)
+                share = c // len(to)
+                if share <= 0:
+                    continue
+                for d in to:
+                    sums[(src, d)] = sums.get((src, d), 0) + share
+                    if j["at"] >= frm:
+                        g.recent.append((j["author"], d, share, j["at"]))
+        g.src, g.dst, g.edge_cap = [], [], []
+        for (s_, d_) in sorted(sums):
+            c = sums[(s_, d_)]
+            if g.labels[s_] in liable:
+                c = mul_div(c, PPM - liable[g.labels[s_]]["fraction_ppm"], PPM)
+            if c <= 0:
+                continue
+            g.src.append(s_)
+            g.dst.append(d_)
+            g.edge_cap.append(c)
+
+    g = new_graph()
+    set_edges(g, lambda a: PPM)
+    st1, _, _, _, work = graph_flow(g, max_work, work)
+
+    def s1(a):
+        i = g.index.get(root_of(a))
+        return st1[i] // MC if i is not None else 0
+
+    # Accuracy.
+    m = p["min_judges"]
+    v1 = {}
+
+    def v_of(a):
+        if a not in v1:
+            v1[a] = vote_weight_ppm(s1(a), p["v0_ppm"], p["c_ref_cents"], p["v_floor_cents"])
+        return v1[a]
+
+    def weight_at(j, t):
+        return j_weight(evidence_ppm(j), v_of(j["author"]), RELATIONSHIP_PPM.get(j["relationship"], PPM), decay_h(day_of(t) - day_of(j["at"])))
+
+    def median_x(j):
+        return j_side(j["x"]) if j["coarse"] else j["x"]
+
+    def latest(lst, frm, to, t, keep):
+        newest, roots = {}, []
+        for i in range(frm, to):
+            if not keep(lst[i]):
+                continue
+            r = lst[i]["j"]["root"]
+            if r not in newest:
+                roots.append(r)
+            newest[r] = i
+        pts, k = [], 0
+        for r in sorted(roots):
+            e = lst[newest[r]]
+            if e["withdraw"]:
+                continue
+            w = weight_at(e["j"], t)
+            pts.append((median_x(e["j"]), w))
+            if w > 0:
+                k += 1
+        return pts, k
+    gain, marked = {}, {}
+    judged = opened_n = 0
+    truncated = False
+    acc_work = 0
+    for s in subjects:
+        lst = by_subject[s]
+        pen = any(penalised(o) for o in owners.get(s, ()))
+        for i, e in enumerate(lst):
+            if e["withdraw"]:
+                continue
+            judged += 1
+            if truncated:
+                continue
+            acc_work += len(lst)
+            if acc_work > max_work:
+                truncated = True
+                continue
+            T, end = as_of, len(lst)
+            if e["close"] >= 0:
+                T, end = lst[e["close"]]["j"]["at"], e["close"]
+            j = e["j"]
+            before, _ = latest(lst, 0, i, j["at"], lambda o, j=j: o["j"]["root"] != j["root"])
+            c0 = j_consensus(before, m)
+            after, k = latest(lst, i + 1, end, T, lambda o, j=j: indep(j["author"], o["j"]["author"]))
+            cT = j_median(after, 0)
+            if pen:
+                cT = J_MIN
+            elif k < m:
+                continue
+            gain[j["author"]] = gain.get(j["author"], 0) + j_gain(j["x"], c0, cT, j["coarse"])
+            marked[j["author"]] = marked.get(j["author"], 0) + 1
+    work += acc_work
+
+    def accuracy(a):
+        n = marked.get(a, 0)
+        if n + m <= 0:
+            return PPM
+        return min(2 * PPM, max(PPM // 2, PPM + gdiv(2 * gain.get(a, 0), n + m)))
+    set_edges(g, accuracy)
+
+    # Detectors.
+    det = p["detectors"]
+    evidence = []
+    accounts_of = {}
+    for a in accounts:
+        accounts_of.setdefault(root_of(a), []).append(a)
+    frm = as_of - det["funnel_days"] * DAY
+    claimed, spent = {}, {}
+    for x in snap.of("claim"):
+        if D - det["funnel_days"] <= x.day < D:
+            claimed[x.account] = claimed.get(x.account, 0) + x.claimed
+            spent[x.account] = spent.get(x.account, 0) + x.spent
+    senders = {}
+    for x in snap.of("transfer"):
+        if x.created_at < frm or x.created_at >= as_of or x.from_ == x.to or not x.from_ or not x.to or x.amount <= 0:
+            continue
+        senders.setdefault(x.to, set()).add(x.from_)
+    in_funnel = {}
+    for to in sorted(senders):
+        farm = [s for s in senders[to] if claimed.get(s, 0) > 0 and spent.get(s, 0) * PPM <= det["funnel_spend_ppm"] * claimed[s]]
+        if len(farm) < det["funnel_k"]:
+            continue
+        members = sorted(farm + [to])
+        ev = {"id": evidence_id("funnel", D, members), "kind": "funnel", "members": members, "detector_version": det["version"],
+              "detail": canonical({"recipient": to, "senders": len(farm), "window_days": det["funnel_days"]})}
+        for mm in members:
+            in_funnel.setdefault(mm, ev["id"])
+        evidence.append(ev)
+    if in_funnel:
+        edges = [(g.src[k], g.dst[k], g.edge_cap[k]) for k in range(len(g.src))]
+        for scc in strongly_connected(len(g.labels), edges):
+            if len(scc) < det["ring_min"]:
+                continue
+            inside = set(scc)
+            inn, total = {}, {}
+            for s_, d_, w in edges:
+                if d_ in inside:
+                    total[d_] = total.get(d_, 0) + w
+                    if s_ in inside:
+                        inn[d_] = inn.get(d_, 0) + w
+            ok = True
+            members = []
+            for v in scc:
+                if total.get(v, 0) == 0 or inn.get(v, 0) * PPM < det["ring_inside_ppm"] * total[v]:
+                    ok = False
+                members += accounts_of.get(g.labels[v], [])
+            members.sort()
+            funnel = ""
+            for mm in members:
+                fid = in_funnel.get(mm, "")
+                if fid and (funnel == "" or fid < funnel):
+                    funnel = fid
+            if not ok or not funnel:
+                continue
+            evidence.append({"id": evidence_id("ring", D, members), "kind": "ring", "members": members, "detector_version": det["version"],
+                             "detail": canonical({"roots": len(scc), "funnel": funnel})})
+    by_address = {}
+    for x in snap.of("proof"):
+        if x.kind == "wallet" and x.state == "verified" and fresh <= x.checked_at <= as_of and x.created_at <= as_of and x.root:
+            by_address.setdefault(x.root, set()).add(base_root(x.account))
+    for x in payments:
+        if x.to and x.link_value and x.created_at < as_of:
+            by_address.setdefault(x.link_value, set()).add(base_root(x.to))
+    addresses = sorted(a for a, roots in by_address.items() if len(roots) >= 2)
+    if addresses:
+        since_h = as_of - H * DAY
+        touched = set()
+
+        def touch(a, b):
+            ra, rb = base_root(a), base_root(b)
+            if ra != rb:
+                touched.add((ra, rb))
+                touched.add((rb, ra))
+        for s in subjects:
+            for e in by_subject[s]:
+                if e["j"]["at"] < since_h:
+                    continue
+                for o in owners.get(s, ()):
+                    touch(e["j"]["author"], o)
+        for a, b in funded:
+            touch(a, b)
+        for addr in addresses:
+            roots = sorted(by_address[addr])
+            hit = set()
+            for i, a in enumerate(roots):
+                for b in roots[i + 1:]:
+                    if (a, b) in touched:
+                        hit.add(a)
+                        hit.add(b)
+            if len(hit) < 2:
+                continue
+            members = [a for a in accounts if base_root(a) in hit]
+            if not members:
+                continue
+            evidence.append({"id": evidence_id("shared_wallet", D, members), "kind": "shared_wallet", "members": members,
+                             "detector_version": det["version"], "detail": canonical({"address": addr, "roots": len(hit)})})
+    evidence.sort(key=lambda e: e["id"])
+
+    # Penalties.
+    pp = p["penalty"]
+
+    def escalation(roots, is_backer):
+        k = 0
+        since_e = as_of - pp["escalation_days"] * DAY
+        for i in log_ids:
+            e = log[i]
+            if e["lifted"] or e["pending"] or e["start"] <= since_e or e["start"] > as_of:
+                continue
+            if is_backer:
+                if any(root_of(l.account) in roots for l in e["liabilities"]):
+                    k += 1
+                continue
+            if any(root_of(mm) in roots for mm in e["members"]):
+                k += 1
+        return min(pp["max_level"], k + 1)
+
+    def duration(k):
+        d = pp["base_days"]
+        i = 1
+        while i < k and d < 3650:
+            d *= pp["duration_factor"]
+            i += 1
+        return min(d, 3650) * DAY
+
+    def recent_cap_into(roots, frm_):
+        out = {}
+        for author, dst, cap, at in g.recent:
+            if at >= frm_ and g.labels[dst] in roots and g.root_of[author] not in roots:
+                out[author] = out.get(author, 0) + cap
+        return out
+
+    def open_entry(id_, trigger, ev_ref, members, level, start, end, is_new):
+        roots = {root_of(mm) for mm in members}
+        if level <= 0:
+            level = escalation(roots, False)
+        if end <= 0:
+            end = start + duration(level)
+        out = {"id": id_, "trigger": trigger, "opened": is_new, "members": members, "level": level, "starts_at": start, "ends_at": end,
+               "evidence": ev_ref, "burned": [], "backers": [], "burned_cents": 0}
+        burn_set = set()
+        for a in accounts:
+            if root_of(a) in roots:
+                out["burned_cents"] += world_mc.get(a, 0) // MC
+                burn_set.update(proof_roots_of.get(a, []))
+        out["burned"] = sorted(burn_set)
+        c = recent_cap_into(roots, as_of - pp["backer_edge_days"] * DAY)
+        for a in sorted(c):
+            f_ppm = mul_div(c[a], PPM, c[a] + U)
+            k = escalation({root_of(a)}, True)
+            frac = f_ppm
+            i = 1
+            while i < k and frac < PPM:
+                frac *= pp["backer_factor"]
+                i += 1
+            frac = min(PPM, frac)
+            if frac <= 0:
+                continue
+            out["backers"].append({"account": a, "cap_cents": c[a] // MC, "level": k, "fraction_ppm": frac, "lost_cents": 0})
+        return out
+    penalties = []
+    applying = set()
+    for i in log_ids:
+        e = log[i]
+        if not e["pending"] or e["lifted"] or e["start"] > as_of:
+            continue
+        penalties.append(open_entry(e["id"], e["trigger"], e["evidence"], e["members"], e["level"], e["start"], e["end"], False))
+        applying.update(root_of(mm) for mm in e["members"])
+    opened = set()
+    for ev in evidence:
+        members = [mm for mm in ev["members"] if not penalised(mm) and root_of(mm) not in applying]
+        if not members or ev["id"] in opened or ev["id"] in log:
+            continue
+        opened.add(ev["id"])
+        penalties.append(open_entry(ev["id"], ev["kind"], ev["detail"], members, 0, as_of, 0, True))
+    penalties.sort(key=lambda x: x["id"])
+    pre = None
+    if penalties:
+        pre, _, _, _, work = graph_flow(g, max_work, work)
+        for pen in penalties:
+            if pen["starts_at"] > as_of or as_of >= pen["ends_at"]:
+                continue
+            e = {"id": pen["id"], "members": pen["members"], "liabilities": [
+                Rec2({"account": b["account"], "fraction_ppm": b["fraction_ppm"], "created_at": pen["starts_at"], "ends_at": pen["ends_at"], "value": b["level"]})
+                for b in pen["backers"]], "level": 0, "end": 0}
+            apply_log(e)
+        for a in accounts:
+            if penalised(a):
+                world[a]["money"], world[a]["time"] = 0, 0
+                world_mc[a], direct_mc[a] = 0, 0
+        g = new_graph()
+        set_edges(g, accuracy)
+    standing, own_f, passed, edge_flow, work = graph_flow(g, max_work, work)
+    for pen in penalties:
+        for b in pen["backers"]:
+            k = g.index.get(root_of(b["account"]))
+            if k is not None:
+                b["lost_cents"] = max(0, pre[k] - standing[k]) // MC
+
+    # Scores.
+    def band_name(c):
+        if c >= p["node_cap_cents"]:
+            return "trusted"
+        return "proven" if c >= p["theta2_cents"] else "signed"
+    summary = {"world_cents": 0, "standing_cents": 0, "own_cents": 0, "passed_cents": 0, "top5_passed_ppm": 0, "sources": 0,
+               "bands": {"signed": 0, "proven": 0, "trusted": 0}, "above_vote_floor": 0, "judgements": judged, "marked": sum(marked.values()),
+               "truncated": truncated, "active_accounts": 0, "penalised": 0, "liable": 0, "penalties_open": 0}
+    summary["penalties_open"] = sum(1 for i in log_ids if active_at(log[i], as_of)) + sum(1 for pen in penalties if pen["starts_at"] <= as_of < pen["ends_at"])
+    passed_list = []
+    for i in range(len(g.labels)):
+        summary["world_cents"] += g.world[i] // MC
+        summary["standing_cents"] += standing[i] // MC
+        summary["own_cents"] += own_f[i] // MC
+        summary["passed_cents"] += passed[i] // MC
+        if passed[i] > 0:
+            summary["sources"] += 1
+            passed_list.append(passed[i])
+    passed_list.sort(reverse=True)
+    if passed_list:
+        summary["top5_passed_ppm"] = mul_div(sum(passed_list[:5]), PPM, sum(passed_list))
+    in_flows = [[] for _ in g.labels]
+    out_flows = [[] for _ in g.labels]
+    for k in range(len(g.src)):
+        in_flows[g.dst[k]].append((g.src[k], g.edge_cap[k], edge_flow[k]))
+        out_flows[g.src[k]].append((g.dst[k], g.edge_cap[k], edge_flow[k]))
+
+    def top_flows(lst):
+        s = sorted(lst, key=lambda x: (-x[2], -x[1], g.labels[x[0]]))
+        return [{"root": g.labels[o], "cap_cents": c // MC, "cents": fl // MC} for o, c, fl in s[:20]], len(lst)
+
+    def burn_preview(i):
+        b = {"own_cents": g.world[i] // MC, "proof_roots": [], "backers": []}
+        roots = set()
+        for a in accounts:
+            if g.root_of[a] == g.labels[i]:
+                roots.update(proof_roots_of.get(a, []))
+        b["proof_roots"] = sorted(roots)
+        c = {}
+        frm_ = as_of - pp["backer_edge_days"] * DAY
+        for author, dst, cap, at in g.recent:
+            if dst == i and at >= frm_:
+                j = g.index.get(g.root_of[author])
+                if j is not None and j != i:
+                    c[j] = c.get(j, 0) + cap
+        for j, cap in c.items():
+            fr = mul_div(cap, PPM, cap + U)
+            b["backers"].append({"root": g.labels[j], "fraction_ppm": fr, "cents": mul_div(standing[j], fr, PPM) // MC})
+        b["backers"].sort(key=lambda x: (-x["cents"], x["root"]))
+        b["backers"] = b["backers"][:20]
+        return b
+    scores, carry_out = [], []
+    for a in accounts:
+        root = root_of(a)
+        i = g.index.get(root)
+        w = world[a]
+        sc = {"account": a, "root": root, "cents": 0}
+        parts = {"world": [], "world_cents": 0, "direct_cents": 0, "root_world_cents": 0, "own_cents": 0, "received_cents": 0, "passed_cents": 0,
+                 "node_cap_cents": p["node_cap_cents"], "backers": [], "backers_total": 0, "backs": [], "backs_total": 0,
+                 "accuracy_ppm": accuracy(a), "judged": marked.get(a, 0), "grace_from_day": w["last"], "active_days": w["active"],
+                 "grace_days": max(0, p["grace_days"] - (D - 1 - w["last"])), "fade_ppm": w["fade"], "penalty": None,
+                 "burn": {"own_cents": 0, "proof_roots": [], "backers": []}}
+        for it in items.get(a, []):
+            it = dict(it)
+            if it["cents"] > 0:
+                it["cents"] = mul_div(it["cents"] * MC, w["fade"], PPM) // MC
+            parts["world"].append(it)
+        if w["money"] > 0:
+            parts["world"].append({"kind": "money", "source": "paid_to_swarmmemo", "root": "money:" + a, "state": "counted",
+                                   "price_cents": w["money"] // MC, "cents": w["money"] // MC, "note": ""})
+        if w["time"] > 0:
+            parts["world"].append({"kind": "time_present", "source": "active_days", "root": "time:" + a, "state": "counted",
+                                   "price_cents": w["time"] // MC, "cents": w["time"] // MC,
+                                   "note": f"{p['day_price_cents']}¢ per active day, at most {p['time_cap_cents']}¢"})
+        if paid_out.get(a, 0) > 0:
+            parts["world"].append({"kind": "money", "source": "usdc_paid", "root": "usdc:" + a, "state": "counted",
+                                   "price_cents": paid_out[a] // MC, "cents": paid_out[a] // MC,
+                                   "note": f"{paid_out_n[a]} settled USDC payment(s) to independent accounts within funded_days, each up to the payee's direct costs or the wallet row's fallback"})
+        if paid.get(a, 0) > 0:
+            parts["world"].append({"kind": "payments", "source": "independent_payments", "root": "payments:" + a, "state": "counted",
+                                   "price_cents": paid[a] // MC, "cents": paid[a] // MC,
+                                   "note": f"{paid_n[a]} payment(s) within funded_days, each up to the payee's direct costs"})
+        parts["world_cents"], parts["direct_cents"] = world_mc.get(a, 0) // MC, direct_mc.get(a, 0) // MC
+        if root in member:
+            e = member[root]
+            parts["penalty"] = {"entry": e["id"], "role": "member", "fraction_ppm": PPM, "level": e["level"], "ends_at": e["end"]}
+            for pen in penalties:
+                if pen["id"] == e["id"]:
+                    parts["penalty"]["level"], parts["penalty"]["ends_at"] = pen["level"], pen["ends_at"]
+            summary["penalised"] += 1
+        elif root in liable:
+            parts["penalty"] = dict(liable[root])
+            summary["liable"] += 1
+        if i is not None:
+            sc["cents"] = standing[i] // MC
+            parts["root_world_cents"], parts["own_cents"], parts["passed_cents"] = g.world[i] // MC, own_f[i] // MC, passed[i] // MC
+            parts["received_cents"] = (standing[i] - own_f[i]) // MC
+            parts["backers"], parts["backers_total"] = top_flows(in_flows[i])
+            parts["backs"], parts["backs_total"] = top_flows(out_flows[i])
+            parts["burn"] = burn_preview(i)
+        sc["band"] = band_name(sc["cents"])
+        sc["vote_weight_ppm"] = vote_weight_ppm(sc["cents"], p["v0_ppm"], p["c_ref_cents"], p["v_floor_cents"])
+        sc["parts"] = parts
+        if w["active"] > 0:
+            summary["active_accounts"] += 1
+        summary["bands"][sc["band"]] += 1
+        if sc["cents"] >= p["v_floor_cents"]:
+            summary["above_vote_floor"] += 1
+        scores.append(sc)
+        ca = {"account": a, "money": w["money"], "time": w["time"], "fade_ppm": w["fade"], "last_active": w["last"],
+              "direct": direct_mc.get(a, 0) // MC, "standing": sc["cents"], "backed": backed.get(a, 0) + new_backed.get(a, 0)}
+        if penalised(a):
+            ca["money"], ca["time"] = 0, 0
+        carry_out.append(ca)
+    inputs = {"events_seq": snap.meta.events_seq, "endorsements_seq": snap.meta.endorsements_seq, "ledger_seq": snap.meta.ledger_seq,
+              "accounts": len(snap.of("account")), "posts": len(snap.of("post")), "endorsements": len(snap.of("endorsement")),
+              "proofs": len(snap.of("proof")), "transfers": len(snap.of("transfer")), "payments": len(snap.of("payment")),
+              "acts": len(snap.of("edge")), "reviews": len(snap.of("review")), "penalty_entries": len(log_ids)}
+    return {"schema": SNAPSHOT_SCHEMA_V2, "rule": "RFC 0021", "as_of": as_of, "params_version": snap.params_version,
+            "params_sha256": hashlib.sha256(canonical(p).encode()).hexdigest(), "carry_in_sha256": carry_in, "inputs": inputs,
+            "nodes": len(g.labels), "edges": len(g.src), "summary": summary, "scores": scores, "evidence": evidence, "penalties": penalties,
+            "carry": {"as_of": as_of, "accounts": carry_out}}
+
+
+# ---------------------------------------------------------------------------
 # Ed25519 verification (RFC 8032 §5.1.7), cofactorless like Go's
 
 
@@ -1744,6 +3034,39 @@ def trust_input(record: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
+
+def snapshot_schema(lines) -> int:
+    """The snapshot's schema (its meta record's): 1 for the retired versions
+    1 to 7, 2 for RFC 0021's (parameter version 8 on)."""
+    for line in lines:
+        line = line.strip()
+        if line.startswith("{") and '"type":"meta"' in line.replace(" ", ""):
+            try:
+                return json.loads(line).get("schema", 1)
+            except json.JSONDecodeError:
+                break
+    return 1
+
+
+def compute_any(lines) -> dict:
+    """Recomputes a snapshot of either schema."""
+    if snapshot_schema(lines) == SNAPSHOT_SCHEMA_V2:
+        raws = []
+        for n, line in enumerate(lines, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                raw = json.loads(line)
+            except json.JSONDecodeError as e:
+                raise InputError(f"line {n}: {e}") from e
+            if not isinstance(raw, dict):
+                raise InputError(f"line {n}: not a record")
+            raws.append((n, raw))
+        return compute_unified(read_snapshot_v2(raws))
+    return compute(read_snapshot(lines))
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1756,8 +3079,8 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     if args.command == "run":
         with open(args.snapshot, encoding="utf-8") as f:
-            snap = read_snapshot(f)
-        sys.stdout.write(canonical(compute(snap)))
+            lines = f.readlines()
+        sys.stdout.write(canonical(compute_any(lines)))
         return 0
     counts = {"verified": 0, "unsigned": 0, "failed": 0}
     out = []

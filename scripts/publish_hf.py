@@ -203,12 +203,16 @@ def validate(record, before, service="swarmmemo.com"):
     return record
 
 
-def fetch(origin, cursor, before, max_bytes=256 * 1024 * 1024, service="swarmmemo.com"):
+def check_origin(origin):
     parsed = urllib.parse.urlsplit(origin)
     if parsed.scheme not in ("https", "http") or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise ValueError("invalid export origin")
     if parsed.scheme != "https" and parsed.hostname not in ("localhost", "127.0.0.1", "::1"):
         raise ValueError("exports require HTTPS except localhost development")
+
+
+def fetch(origin, cursor, before, max_bytes=256 * 1024 * 1024, service="swarmmemo.com"):
+    check_origin(origin)
     opener = urllib.request.build_opener(NoRedirect())
     records, total, seen = [], 0, {cursor}
     last_sequence = 0  # Cursors are opaque; only compare the records returned in this run.
@@ -245,27 +249,134 @@ def fetch(origin, cursor, before, max_bytes=256 * 1024 * 1024, service="swarmmem
     raise ValueError("export page limit exceeded")
 
 
+# C323: endorsements (votes and vouches), GET /v1/export?stream=endorsements (RFC0012 §5.3,
+# internal/httpapi/exportstreams.go, internal/board/endorsements.go EndorsementRecord). A
+# separate, closed record shape from messages: no text, no archive delay, and (unlike
+# messages) legacy rows may repeat seq 0, so sequencing is not asserted strictly increasing
+# here; only the allowlist below, cursor-cycle and byte-bound checks are. Not part of
+# clients/contract.json (that covers message.* only), so ENDORSEMENT_ALLOWED is reviewed
+# directly against the Go struct (test_every_endorsement_field_is_reviewed pins it there).
+ENDORSEMENT_TYPES = {"vote", "vouch", "legacy_vote"}
+ENDORSEMENT_ALLOWED = set("type seq message_id target voter public_key value sponsor weight created_at signed_payload signature".split())
+FINGERPRINT_RE = re.compile(r"[0-9a-f]{64}")
+
+
+def validate_endorsement(record):
+    if not isinstance(record, dict) or set(record) - ENDORSEMENT_ALLOWED:
+        raise ValueError("unknown endorsement export fields; refusing possible private data")
+    if record.get("type") not in ENDORSEMENT_TYPES:
+        raise ValueError("unsupported endorsement type")
+    if type(record.get("seq")) is not int or record["seq"] < 0:
+        raise ValueError("invalid endorsement seq")
+    if not isinstance(record.get("voter"), str) or not FINGERPRINT_RE.fullmatch(record["voter"]):
+        raise ValueError("invalid voter fingerprint")
+    if not isinstance(record.get("public_key"), str) or not record["public_key"]:
+        raise ValueError("invalid endorsement public key")
+    if type(record.get("value")) is not int:
+        raise ValueError("invalid endorsement value")
+    if type(record.get("created_at")) is not int or record["created_at"] < 0:
+        raise ValueError("invalid endorsement creation timestamp")
+    if record["type"] == "vouch":
+        if "message_id" in record:
+            raise ValueError("a vouch must not carry message_id")
+        if not isinstance(record.get("target"), str) or not FINGERPRINT_RE.fullmatch(record["target"]):
+            raise ValueError("invalid vouch target fingerprint")
+    else:
+        if "target" in record:
+            raise ValueError("a vote must not carry target")
+        if not isinstance(record.get("message_id"), str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", record["message_id"]):
+            raise ValueError("invalid vote message_id")
+    if "sponsor" in record and not isinstance(record["sponsor"], bool):
+        raise ValueError("invalid sponsor flag")
+    if "weight" in record and type(record["weight"]) is not int:
+        raise ValueError("invalid endorsement weight")
+    for field in ("signed_payload", "signature"):
+        if field in record and record[field] is not None and not isinstance(record[field], str):
+            raise ValueError("invalid endorsement provenance field")
+    return record
+
+
+def endorsement_key(record):
+    """One row per (type, voter, message or target): the service's endorsement_records
+    table keeps current state per that triple (a vouch's value/weight can change in
+    place), so this is the dedup/overwrite key build() materializes against, parallel to
+    a message's id. legacy_vote is kept distinct from vote: nothing here confirms they
+    share a row once a legacy vote is migrated."""
+    scope = record["target"] if record["type"] == "vouch" else record["message_id"]
+    return record["type"] + ":" + scope + ":" + record["voter"]
+
+
+def fetch_endorsements(origin, cursor, max_bytes=256 * 1024 * 1024, limit=2000):
+    check_origin(origin)
+    opener = urllib.request.build_opener(NoRedirect())
+    records, total, seen = [], 0, {cursor}
+    for _ in range(10000):
+        url = origin.rstrip("/") + "/v1/export?" + urllib.parse.urlencode(
+            {"stream": "endorsements", "cursor": cursor, "limit": limit})
+        with opener.open(urllib.request.Request(url, headers={"Accept": "application/x-ndjson"}), timeout=60) as response:
+            content_type = response.headers.get("Content-Type", "").split(";", 1)[0]
+            if content_type not in ("application/x-ndjson", "application/jsonl"):
+                raise ValueError("unexpected export content type")
+            count = 0
+            while True:
+                line = response.readline(MAX_LINE + 1)
+                if not line: break
+                total += len(line)
+                if len(line) > MAX_LINE or total > max_bytes:
+                    raise ValueError("export exceeds configured byte bounds")
+                if not line.strip(): continue
+                records.append(validate_endorsement(strict_json(line))); count += 1
+            next_cursor = response.headers.get("X-Next-Cursor", "")
+        if not next_cursor or next_cursor == cursor:
+            if count and not next_cursor:
+                raise ValueError("nonempty export is missing a durable cursor")
+            return records, next_cursor or cursor
+        if next_cursor in seen:
+            raise ValueError("export cursor cycle")
+        seen.add(next_cursor)
+        cursor = next_cursor
+        if not count:
+            return records, cursor
+    raise ValueError("export page limit exceeded")
+
+
 def load_json(path, default):
     return json.loads(path.read_bytes()) if path.exists() else default
 
 
-def partition(record):
+# A config names: the field it keys/sorts rows by (key), the fail-closed field allowlist
+# (allowed) used both to validate incoming records and to normalize stored rows, the JSONL
+# filename under each data/date=*/ partition, and the manifest's own path in the repo (kept
+# distinct per config so two configs publishing to the same repo never collide or delete
+# each other's files). "messages" is unchanged from before C323 (filename/manifest_name are
+# the historical bare names); "endorsements" is new.
+MESSAGES_CONFIG = {"name": "messages", "key": lambda row: row["id"], "allowed": ALLOWED,
+                   "filename": "messages.jsonl", "manifest_name": "manifest.json"}
+ENDORSEMENTS_CONFIG = {"name": "endorsements", "key": endorsement_key, "allowed": ENDORSEMENT_ALLOWED,
+                       "filename": "endorsements.jsonl", "manifest_name": "manifest-endorsements.json"}
+CONFIGS = {"messages": MESSAGES_CONFIG, "endorsements": ENDORSEMENTS_CONFIG}
+
+
+def partition(record, filename="messages.jsonl"):
     date = datetime.fromtimestamp(record["created_at"], timezone.utc).date().isoformat()
-    return "data/date=" + date + "/messages.jsonl"
+    return "data/date=" + date + "/" + filename
 
 
-def build(work, records, cursor, before, origin, service, card):
-    """Materialize current rows; tombstones overwrite previously exported payloads.
+def build(work, records, cursor, before, origin, service, card, config=MESSAGES_CONFIG):
+    """Materialize current rows; tombstones overwrite previously exported payloads (messages
+    only; nothing in endorsements removes a prior row the same way, so it simply has none).
 
     No accepted cursor advances here. Retrying from the last published cursor reapplies
     all modifications. Files use atomic replacements and deterministic ordering.
     """
     dataset = work / "dataset"
     index = load_json(work / "index.json", {})
+    key_fn, filename, allowed = config["key"], config["filename"], config["allowed"]
     affected = {}
     for record in records:
-        destination = index.get(record["id"], partition(record))
-        if destination != partition(record):
+        key = key_fn(record)
+        destination = index.get(key, partition(record, filename))
+        if destination != partition(record, filename):
             raise ValueError("event creation date changed")
         if destination not in affected:
             existing = dataset / destination
@@ -273,22 +384,22 @@ def build(work, records, cursor, before, origin, service, card):
             # separates JSONL records; str.splitlines() would split those strings.
             if existing.exists():
                 with existing.open("rb") as stream:
-                    affected[destination] = {row["id"]: row for row in map(strict_json, stream)}
+                    affected[destination] = {key_fn(row): row for row in map(strict_json, stream)}
             else:
                 affected[destination] = {}
-        affected[destination][record["id"]] = record
-        index[record["id"]] = destination
+        affected[destination][key] = record
+        index[key] = destination
     for name, rows in affected.items():
-        atomic(dataset / name, b"".join(encode(row) for row in sorted(rows.values(), key=lambda row: row["id"])))
+        atomic(dataset / name, b"".join(encode(row) for row in sorted(rows.values(), key=key_fn)))
     atomic(work / "index.json", encode(index))
     atomic(dataset / "README.md", card.read_bytes())
     files = {}
-    for path in sorted(dataset.glob("data/date=*/messages.jsonl")):
+    for path in sorted(dataset.glob("data/date=*/" + filename)):
         original = path.read_bytes()
         # Normalize every partition, including ones untouched by this fetch, so
         # an incremental publication also upgrades previously sparse rows.
         with path.open("rb") as stream:
-            body = b"".join(encode({key: row.get(key) for key in sorted(ALLOWED)})
+            body = b"".join(encode({key: row.get(key) for key in sorted(allowed)})
                             for row in map(strict_json, stream))
         if body != original:
             atomic(path, body)
@@ -298,19 +409,20 @@ def build(work, records, cursor, before, origin, service, card):
     manifest = {"schema_version": 1, "service": service, "source": origin.rstrip("/"),
                 "before": before, "cursor": cursor, "files": files,
                 "rows": len(index), "semantics": "current-state; apply tombstones by id; sequence is archive change order"}
-    atomic(dataset / "manifest.json", encode(manifest))
+    atomic(dataset / config["manifest_name"], encode(manifest))
     return manifest
 
 
-def publish(dataset, manifest, repo, token, api=None):
+def publish(dataset, manifest, repo, token, api=None, config=MESSAGES_CONFIG):
     from huggingface_hub import HfApi, CommitOperationAdd, CommitOperationDelete, hf_hub_download
     from huggingface_hub.errors import EntryNotFoundError
     api = api or HfApi(endpoint="https://huggingface.co", token=token)
+    manifest_name = config["manifest_name"]
     # Existing repo only. Parent SHA prevents silently overwriting another publisher.
     info = api.repo_info(repo_id=repo, repo_type="dataset")
     parent = info.sha
     try:
-        old_path = hf_hub_download(repo, "manifest.json", repo_type="dataset", revision=parent, token=token, endpoint="https://huggingface.co")
+        old_path = hf_hub_download(repo, manifest_name, repo_type="dataset", revision=parent, token=token, endpoint="https://huggingface.co")
         old = json.loads(Path(old_path).read_bytes())
     except EntryNotFoundError:
         old = {"files": {}}
@@ -328,18 +440,20 @@ def publish(dataset, manifest, repo, token, api=None):
     for name, metadata in manifest["files"].items():
         if metadata != old.get("files", {}).get(name):
             operations.append(CommitOperationAdd(path_in_repo=name, path_or_fileobj=str(dataset / name)))
+    delete_pattern = re.compile(r"data/date=\d{4}-\d{2}-\d{2}/" + re.escape(config["filename"]))
     for name in set(old.get("files", {})) - set(manifest["files"]):
-        # Only names in our bounded publisher namespace may be deleted.
-        if re.fullmatch(r"data/date=\d{4}-\d{2}-\d{2}/messages\.jsonl", name):
+        # Only names in our bounded publisher namespace, for this config's own filename,
+        # may be deleted; never another config's files sharing the same repo.
+        if delete_pattern.fullmatch(name):
             operations.append(CommitOperationDelete(path_in_repo=name))
         else:
             raise ValueError("refusing unexpected previous manifest path")
-    operations.append(CommitOperationAdd(path_in_repo="manifest.json", path_or_fileobj=desired_manifest))
+    operations.append(CommitOperationAdd(path_in_repo=manifest_name, path_or_fileobj=desired_manifest))
     result = api.create_commit(repo_id=repo, repo_type="dataset", operations=operations,
                                commit_message="Publish verified SwarmMemo archive " + sha(desired_manifest)[:16], parent_commit=parent)
     revision = result.oid
     # Verify the manifest and every changed artifact at this immutable revision.
-    for name, expected in [("manifest.json", sha(desired_manifest))] + [
+    for name, expected in [(manifest_name, sha(desired_manifest))] + [
             (name, metadata["sha256"]) for name, metadata in manifest["files"].items()
             if metadata != old.get("files", {}).get(name)]:
         remote = hf_hub_download(repo, name, repo_type="dataset", revision=revision, token=token, endpoint="https://huggingface.co", force_download=True)
@@ -350,6 +464,7 @@ def publish(dataset, manifest, repo, token, api=None):
 
 def run(args):
     work = Path(args.work)
+    config = CONFIGS[getattr(args, "config", None) or "messages"]
     with lock(work):
         state = load_json(work / "published.json", {})
         materialized = load_json(work / "materialized.json", {})
@@ -359,13 +474,22 @@ def run(args):
                 raise ValueError("publisher identity differs from accepted state")
             if materialized and materialized.get(key) != current:
                 raise ValueError("publisher identity differs from materialized state")
+        # "config" is absent from state written before C323; an absent field reads as the
+        # default "messages" config so an existing --work directory upgrades in place.
+        if state and state.get("config", "messages") != config["name"]:
+            raise ValueError("publisher identity differs from accepted state")
+        if materialized and materialized.get("config", "messages") != config["name"]:
+            raise ValueError("publisher identity differs from materialized state")
         before = args.before if args.before is not None else int(time.time())
         if before < max(state.get("before", 0), materialized.get("before", 0)):
             raise ValueError("export cutoff cannot move backwards")
-        records, cursor = fetch(origin, state.get("cursor", ""), before, args.max_bytes, args.service)
+        if config is MESSAGES_CONFIG:
+            records, cursor = fetch(origin, state.get("cursor", ""), before, args.max_bytes, args.service)
+        else:
+            records, cursor = fetch_endorsements(origin, state.get("cursor", ""), args.max_bytes)
         atomic(work / "materialized.json", encode({"source": origin, "service": args.service,
-                                                   "repo": args.repo, "before": before}))
-        manifest = build(work, records, cursor, before, origin, args.service, Path(args.card))
+                                                   "repo": args.repo, "before": before, "config": config["name"]}))
+        manifest = build(work, records, cursor, before, origin, args.service, Path(args.card), config=config)
         if not args.publish:
             return {"mode": "dry-run", "fetched_changes": len(records), "rows": manifest["rows"],
                     "manifest_sha256": sha(encode(manifest)), "cursor_advanced": False}
@@ -377,10 +501,48 @@ def run(args):
         if "PUBLICATION_TERMS_PENDING" in card_text or args.terms_url not in card_text:
             raise ValueError("dataset card must contain approved content terms, without the pending marker")
         token = read_secret(args.token_file)
-        revision = publish(work / "dataset", manifest, args.repo, token)
+        revision = publish(work / "dataset", manifest, args.repo, token, config=config)
         atomic(work / "published.json", encode({"source": origin, "service": args.service, "repo": args.repo,
-               "cursor": cursor, "before": before, "commit": revision, "manifest_sha256": sha(encode(manifest))}))
+               "cursor": cursor, "before": before, "commit": revision, "manifest_sha256": sha(encode(manifest)),
+               "config": config["name"]}))
         return {"mode": "published", "fetched_changes": len(records), "rows": manifest["rows"], "commit": revision, "cursor_advanced": True}
+
+
+def status_path(args):
+    """Where the run's status JSON is written: --status-file, else
+    SWARMMEMO_PUBLISHER_STATUS_FILE, else <work>/status.json. Readable by whatever the
+    operator dashboard runs as (root's monitor.sh, typically); an env override lets a host
+    point it somewhere world- or group-readable without widening --work itself."""
+    return Path(args.status_file or os.environ.get("SWARMMEMO_PUBLISHER_STATUS_FILE")
+                or str(Path(args.work) / "status.json"))
+
+
+def write_status(args, result, error):
+    """Best-effort status JSON: last_run_at always advances; last_success_at only on a
+    run that did not raise (dry-run counts: it proves the fetch/validate/build path is
+    healthy). last_error_category is the exception class name, or null after a success.
+    rows carries forward from the last run that produced a manifest. Never raises: a
+    status-file problem (e.g. an unwritable path) must not mask the real result/error."""
+    path = status_path(args)
+    prev = {}
+    try:
+        prev = load_json(path, {})
+    except (OSError, ValueError):
+        pass
+    now_ts = int(time.time())
+    status = {
+        "schema_version": 1,
+        "config": getattr(args, "config", None) or "messages",
+        "last_run_at": now_ts,
+        "last_mode": (result or {}).get("mode", "error"),
+        "last_error_category": None if error is None else type(error).__name__,
+        "rows": (result or {}).get("rows", prev.get("rows")),
+        "last_success_at": now_ts if error is None else prev.get("last_success_at"),
+    }
+    try:
+        atomic(path, encode(status))
+    except OSError as e:
+        print(json.dumps({"warning": "status_write_failed", "category": type(e).__name__}), file=sys.stderr)
 
 
 def main(argv=None):
@@ -394,15 +556,21 @@ def main(argv=None):
     parser.add_argument("--repo")
     parser.add_argument("--terms-url")
     parser.add_argument("--token-file")
+    parser.add_argument("--status-file", help="default: SWARMMEMO_PUBLISHER_STATUS_FILE, else <work>/status.json")
+    parser.add_argument("--config", choices=sorted(CONFIGS), default="messages",
+                        help="which archive config this --work directory publishes (C323); each needs its own --work")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--publish", action="store_true")
     mode.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     try:
-        print(json.dumps(run(args), sort_keys=True))
+        result = run(args)
+        write_status(args, result, None)
+        print(json.dumps(result, sort_keys=True))
         return 0
     except Exception as exc:
         # Exception URLs/headers and SDK tracebacks may contain credentials or message text.
+        write_status(args, None, exc)
         print(json.dumps({"error": "publication_failed", "category": type(exc).__name__, "cursor_advanced": False}), file=sys.stderr)
         return 1
 

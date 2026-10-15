@@ -1,6 +1,6 @@
-// Package ledger is the allowance ledger and the daily waterfall (RFC0012 §2):
-// params, pools, claims, lots, holds, transfers, the breaker, the sweeper and
-// the public journal.
+// Package ledger is the allowance ledger and the daily share rule (RFC0012
+// §2, RFC 0021 §12): params, slices, claims, lots, holds, transfers, the
+// breaker, the sweeper and the public journal.
 //
 // Every method runs inside the caller's transaction (q is the command's
 // *sql.Tx) and never holds it across I/O. The store has one SQLite
@@ -50,10 +50,13 @@ type Receipt struct {
 
 // Balance is a subject's allowance for one resource on one day. Prospective
 // is true when the day's claim has not happened yet (a read writes nothing).
+// Entitlement = FloorPart + StandingPart (RFC 0021 §12's share rule).
 type Balance struct {
 	Resource      allowance.Resource
 	Standing      allowance.Standing
-	Entitlement   int64 // what today's claim issued (or would issue)
+	Entitlement   int64 // what today's claim issued (or would issue), within today's cap
+	FloorPart     int64 // the part from the floor slice: min(floor, floor slice / claimants)
+	StandingPart  int64 // the part from the standing slice: the root's share by standing
 	Used          int64 // spent today, fees and open holds included
 	Incoming      int64 // received by transfer today
 	Outgoing      int64 // given by transfer today
@@ -106,7 +109,7 @@ type JournalQuery struct {
 	Limit   int
 }
 
-// Stats is the waterfall and transfer state for /stats and /api/stats/allowance.
+// Stats is the share-rule and transfer state for /stats and /api/stats/allowance.
 type Stats struct {
 	Days      []DayStats // newest first
 	Services  []ServiceStats
@@ -120,8 +123,8 @@ type ServiceStats struct {
 	Bucket   allowance.Bucket
 	Units    int64
 	Calls    int64 // journal lines: one per lot a spend or commit touched
-	// Anonymous is true for the part spent by anonymous subjects (tier 4,
-	// one per network prefix), false for signed accounts.
+	// Anonymous is true for the part spent by anonymous subjects (one per
+	// network prefix), false for signed accounts.
 	Anonymous bool
 }
 
@@ -135,21 +138,31 @@ type DayStats struct {
 	Spent           int64 // non-paid and paid
 	SpentPaid       int64
 	ParamsVersion   int64
-	Tiers           []PoolStats // tiers 0–4
-	Buckets         map[allowance.Bucket]int64
+	// Slices are the grant, floor and standing slices, in that order (nil
+	// for a day opened before the share rule and never written since).
+	Slices []SliceStats
+	// AnonymousDrawn is what anonymous subjects' free lots drew of the
+	// slices; AnonymousClaimants how many anonymous subjects claimed.
+	AnonymousDrawn     int64
+	AnonymousClaimants int64
+	Buckets            map[allowance.Bucket]int64
 }
 
-// PoolStats is one tier's pool on one day.
-type PoolStats struct {
-	Tier      int
-	Size      int64
-	Want      int64
-	SpillIn   int64
-	SpillOut  int64
-	Claimed   int64
-	Lent      int64
-	Borrowed  int64
+// SliceStats is one slice of a day's budget (RFC 0021 §12).
+type SliceStats struct {
+	Slice    string // "grant", "floor" or "standing" (SliceNames)
+	Size     int64  // its water
+	Drawn    int64  // drawn by its own lots (grant: issued by grants)
+	Lent     int64  // drawn by the other slice's lots (unused water spilled)
+	Borrowed int64  // what its lots drew of the other slice
+	// Claimants: floor, every claimant given a share; standing, those given
+	// a standing part; grant, 0.
 	Claimants int64
+	// Expected is the smoothed demand the day opened with: expected
+	// claimants (floor) or expected Σ ShareCents (standing).
+	Expected int64
+	// ShareCents is the standing slice's Σ ShareCents of today's roots.
+	ShareCents int64
 }
 
 // TransferStats are today's transfers of one resource.
@@ -161,8 +174,8 @@ type TransferStats struct {
 	LargestRecipientSharePPM int64 // of today's budget
 }
 
-// Config wires the ledger to the board: the classifier (Design 0, later
-// trust), the lever state and the parameter store. A nil Classifier is
+// Config wires the ledger to the board: the classifier (standing from the
+// latest trust run), the lever state and the parameter store. A nil Classifier is
 // DefaultClassifier; nil Levers means no lever is pulled; nil Params is a
 // ParamsStore with the compiled-in defaults.
 type Config struct {
@@ -198,6 +211,9 @@ type Ledger struct {
 
 	mu    sync.Mutex
 	cache map[[32]byte]*AllowanceParams
+	// refusals counts refused spends and reserves until the board takes
+	// them (refusals.go).
+	refusals map[refusalKey]int64
 }
 
 func New(cfg Config) *Ledger {
@@ -207,18 +223,19 @@ func New(cfg Config) *Ledger {
 	if cfg.Params == nil {
 		cfg.Params = ParamsStore{}
 	}
-	return &Ledger{cfg: cfg, cache: map[[32]byte]*AllowanceParams{}}
+	return &Ledger{cfg: cfg, cache: map[[32]byte]*AllowanceParams{}, refusals: map[refusalKey]int64{}}
 }
 
-// DefaultClassifier is the minimal Design 0 rule the ledger falls back on:
-// signed accounts are tier 3, anonymous subjects tier 4, one share each.
+// DefaultClassifier is the rule the ledger falls back on before any trust
+// run: signed accounts are signed, anonymous subjects anonymous, neither with
+// standing, so both get the floor only.
 type DefaultClassifier struct{}
 
 func (DefaultClassifier) Classify(_ context.Context, _ allowance.Querier, s allowance.Subject, _ int64) (allowance.Standing, error) {
 	if s.Signed {
-		return allowance.Standing{Tier: allowance.TierSigned, WeightPPM: ppm, Root: s.ID, Source: "design0", Reason: "A signed account."}, nil
+		return allowance.Standing{Band: allowance.BandSigned, Root: s.ID, Source: "none", Reason: "A signed account."}, nil
 	}
-	return allowance.Standing{Tier: allowance.TierAnonymous, WeightPPM: ppm, Root: s.ID, Source: "design0", Reason: "An anonymous caller, one subject per network."}, nil
+	return allowance.Standing{Band: allowance.BandAnonymous, Root: s.ID, Source: "none", Reason: "An anonymous caller, one subject per network."}, nil
 }
 
 func refuse(code string) error { return &allowance.Err{Code: code} }
@@ -268,7 +285,7 @@ func (l *Ledger) Params(ctx context.Context, q allowance.Querier, now int64) (Al
 
 func (l *Ledger) levers(ctx context.Context, q allowance.Querier, now int64) (allowance.Levers, error) {
 	if l.cfg.Levers == nil {
-		return allowance.Levers{Tier4SharePPM: -1}, nil
+		return allowance.Levers{AnonymousSharePPM: -1}, nil
 	}
 	lv, err := l.cfg.Levers.Levers(ctx, q, now)
 	if err != nil {
@@ -278,8 +295,8 @@ func (l *Ledger) levers(ctx context.Context, q allowance.Querier, now int64) (al
 }
 
 // classify asks the classifier and normalises its answer: an unsigned or
-// hosted subject is always tier 4, any other signed one never is, weights
-// are 0–1e9.
+// hosted subject is always anonymous, without standing (the floor only); any
+// other signed one is never anonymous; cents are never negative.
 func (l *Ledger) classify(ctx context.Context, q allowance.Querier, s allowance.Subject, now int64) (allowance.Standing, error) {
 	st, err := l.cfg.Classifier.Classify(ctx, q, s, now)
 	if err != nil {
@@ -287,11 +304,11 @@ func (l *Ledger) classify(ctx context.Context, q allowance.Querier, s allowance.
 	}
 	switch {
 	case !s.Signed || s.Hosted:
-		st.Tier = allowance.TierAnonymous
-	case st.Tier < allowance.TierTrusted || st.Tier > allowance.TierSigned:
-		st.Tier = allowance.TierSigned
+		st.Band, st.ShareCents = allowance.BandAnonymous, 0
+	case st.Band == allowance.BandAnonymous || st.Band > allowance.BandTrusted:
+		st.Band = allowance.BandSigned
 	}
-	st.WeightPPM = clamp(st.WeightPPM, 0, 1000*ppm)
+	st.Cents, st.ShareCents = max(0, st.Cents), clamp(st.ShareCents, 0, maxUnits)
 	if st.Root == "" {
 		st.Root = s.ID
 	}

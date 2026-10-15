@@ -34,7 +34,10 @@ import (
 
 // Lever names, in the order of §2.6.
 const (
-	LeverTier4Shrink     = "tier4-shrink"
+	// LeverAnonymousShrink caps what anonymous callers draw of the day's
+	// budget (RFC 0021 §12); a row under its earlier name, tier4-shrink,
+	// reads the same (leverTier4Shrink).
+	LeverAnonymousShrink = "anonymous-shrink"
 	LeverSignedOnly      = "signed-only"
 	LeverPauseNewKeys    = "pause-new-keys"
 	LeverCutBudget       = "cut-budget"
@@ -42,7 +45,7 @@ const (
 	LeverProvenOnly      = "proven-only"
 	LeverFreezeTransfers = "freeze-transfers"
 	// LeverSignedServices turns anonymous service calls off at once:
-	// unsigned service.call is refused and the anonymous tier gets no credit.
+	// unsigned service.call is refused and anonymous callers get no credit.
 	LeverSignedServices = "signed-services"
 	// LeverPauseRequests stops new conversation requests (RFC0013 §10):
 	// reaching anyone not already a contact answers 503 requests_paused,
@@ -53,8 +56,12 @@ const (
 	LeverPauseHosted = "pause-hosted"
 )
 
+// leverTier4Shrink is anonymous-shrink's name before RFC 0021, still read
+// from the lever table.
+const leverTier4Shrink = "tier4-shrink"
+
 // LeverNames are the levers the CLI accepts.
-var LeverNames = []string{LeverTier4Shrink, LeverSignedOnly, LeverPauseNewKeys, LeverCutBudget, LeverBlockPrefix, LeverProvenOnly, LeverFreezeTransfers, LeverSignedServices, LeverPauseRequests, LeverPauseHosted}
+var LeverNames = []string{LeverAnonymousShrink, LeverSignedOnly, LeverPauseNewKeys, LeverCutBudget, LeverBlockPrefix, LeverProvenOnly, LeverFreezeTransfers, LeverSignedServices, LeverPauseRequests, LeverPauseHosted}
 
 // Lever bounds. A blocked prefix is at least an IPv4 /8 or an IPv6 /16 (wider
 // is signed-only's job); an --until more than a year away is refused as a
@@ -165,7 +172,7 @@ func (s *Store) leverSnapshot(ctx context.Context, q allowance.Querier) (leverSn
 
 // levers is the allowance.Levers the snapshot means at now.
 func (snap leverSnapshot) levers(now int64) allowance.Levers {
-	l := allowance.Levers{Tier4SharePPM: -1, Version: snap.version}
+	l := allowance.Levers{AnonymousSharePPM: -1, Version: snap.version}
 	for _, r := range snap.rows {
 		if !leverActive(r.state, r.until, now) {
 			continue
@@ -187,8 +194,8 @@ func (snap leverSnapshot) levers(now int64) allowance.Levers {
 			l.SignedServices = true
 		case LeverPauseNewKeys:
 			l.PauseNewKeys, l.PauseNewKeysSince = true, r.pulledAt
-		case LeverTier4Shrink:
-			l.Tier4SharePPM = args.PPM
+		case LeverAnonymousShrink, leverTier4Shrink:
+			l.AnonymousSharePPM = args.PPM
 		case LeverCutBudget:
 			if l.BudgetCutPPM == nil {
 				l.BudgetCutPPM = map[allowance.Resource]int64{}
@@ -276,7 +283,7 @@ type leverSource struct{ s *Store }
 func (l leverSource) Levers(ctx context.Context, q allowance.Querier, now int64) (allowance.Levers, error) {
 	snap, err := l.s.leverSnapshot(ctx, q)
 	if err != nil {
-		return allowance.Levers{Tier4SharePPM: -1}, err
+		return allowance.Levers{AnonymousSharePPM: -1}, err
 	}
 	return snap.levers(now), nil
 }
@@ -441,7 +448,7 @@ func (s *Store) PullLever(ctx context.Context, p LeverPull) (LeverChange, error)
 	if p.Until != 0 && (p.Until <= now || p.Until > now+leverUntilMaxSeconds) {
 		return LeverChange{}, fmt.Errorf("--until must be a UNIX time in seconds after now (%d) and within a year", now)
 	}
-	want := map[string]int{LeverTier4Shrink: 1, LeverCutBudget: 2, LeverBlockPrefix: 1}[p.Name]
+	want := map[string]int{LeverAnonymousShrink: 1, LeverCutBudget: 2, LeverBlockPrefix: 1}[p.Name]
 	if !slices.Contains(LeverNames, p.Name) {
 		return LeverChange{}, fmt.Errorf("unknown lever %q; levers: %s", p.Name, strings.Join(LeverNames, ", "))
 	}
@@ -462,8 +469,8 @@ func (s *Store) PullLever(ctx context.Context, p LeverPull) (LeverChange, error)
 		row := p.Name
 		change.Args = map[string]any{}
 		switch p.Name {
-		case LeverTier4Shrink:
-			ppm, err := parsePPM(p.Args[0], "tier4-shrink PPM", 0)
+		case LeverAnonymousShrink:
+			ppm, err := parsePPM(p.Args[0], "anonymous-shrink PPM", 0)
 			if err != nil {
 				return LeverChange{}, err
 			}

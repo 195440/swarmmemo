@@ -3,7 +3,6 @@ package web
 import (
 	"context"
 	"math"
-	"sort"
 	"strconv"
 	"time"
 
@@ -12,12 +11,12 @@ import (
 )
 
 // /trust is the short guide to the allowance and trust model
-// (docs/TRUST_MODEL.md is the paper): the problem, the waterfall with today's
-// posting tiers, what standing is with one small interactive (assets/trust.js),
+// (docs/TRUST_MODEL.md is the paper): the problem, the share rule with
+// today's posting slices, what standing is with one small interactive (assets/trust.js),
 // the public trust network (assets/trust-network.js, on the /swarmchasing
 // renderer graph-gl.js), and how to check every number. /trust/network is the
 // network alone. Every live number is a cell (data-key, data-value) read
-// through the function its JSON API serves (invariant 9): the waterfall is
+// through the function its JSON API serves (invariant 9): the share rule is
 // ReadAllowanceStats (/api/stats/allowance), the network's list is the
 // store's TrustGraph (/api/trust/graph) and the latest run is TrustRun
 // (/api/trust/runs/ID). The page exists only while the ledger or trust is on;
@@ -98,32 +97,31 @@ type trustExplainerView struct {
 	LedgerOn, TrustOn, ExportOn bool
 	NetworkOnly                 bool // /trust/network: the network alone
 	Unavailable                 bool
-	Waterfall                   *explainerWaterfall
+	Share                       *explainerShare
 	Run                         *explainerRun
 	RunUnavailable              bool
 	Network                     *explainerNetwork
 	NetworkUnavailable          bool
-	Stake                       stakeDefaults
+	Edge                        edgeDefaults
 	Generated                   string
 	Sentence                    string
 }
 
-// explainerWaterfall is today's posting waterfall: one bar per tier.
-type explainerWaterfall struct {
+// explainerShare is today's posting budget by slice of the share rule.
+type explainerShare struct {
 	Day, Mode string
 	Budget    cell
 	Spent     cell
-	Tiers     []explainerTier
+	Slices    []explainerSlice
 }
 
-type explainerTier struct {
-	Tier       int
-	Name       string
-	Water      cell
-	Claimed    cell
-	Claimants  cell
-	WaterPct   float64 // of the day's budget: the bar's length
-	ClaimedPct float64 // of the tier's water: the bar's dark part
+type explainerSlice struct {
+	Name      string
+	Size      cell
+	Drawn     cell
+	Claimants cell
+	SizePct   float64 // of the day's budget: the bar's length
+	DrawnPct  float64 // of the slice's size: the bar's dark part
 }
 
 type explainerRun struct {
@@ -148,50 +146,66 @@ type networkRow struct {
 	Score            string
 }
 
-// stakeDefaults are the published parameters (trust parameter version 6)
-// the standing interactive uses, as data attributes, so the script and the
+// edgeDefaults are the published parameters (trust.DefaultParams) the
+// judgement interactive uses, as data attributes, so the script and the
 // text state the same numbers.
-type stakeDefaults struct {
-	StakePPM, BudgetPPM, VouchWeight, VouchMax, V0PPM, CRef, VFloor, Theta1, Theta2 int64
+type edgeDefaults struct {
+	Version, Unit, CoarseX, NodeCap, Theta2, V0PPM, CRef, VFloor int64
+	EvOpinion, EvObserved, EvWork                                int64
+	// ExampleX and ExampleCents are the interactive's starting rating and
+	// standing, which its text states without the script.
+	ExampleX, ExampleCents int64
+	params                 trust.Params
 }
 
-func defaultStake() stakeDefaults {
-	st := trust.DefaultStanding()
-	return stakeDefaults{StakePPM: st.StakePPM, BudgetPPM: st.StakeBudgetPPM, VouchWeight: st.EdgeWeights["vouch"], VouchMax: st.VouchWeightMax,
-		V0PPM: st.V0PPM, CRef: st.CRefCents, VFloor: st.VFloorCents, Theta1: st.Theta1Cents, Theta2: st.Theta2Cents}
+func defaultEdge() edgeDefaults {
+	p := trust.DefaultParams()
+	return edgeDefaults{Version: p.Version, Unit: p.UnitCents, CoarseX: p.CoarseX, NodeCap: p.NodeCapCents, Theta2: p.Theta2Cents,
+		V0PPM: p.V0PPM, CRef: p.CRefCents, VFloor: p.VFloorCents,
+		EvOpinion: p.EvidenceWeightPPM["opinion"], EvObserved: p.EvidenceWeightPPM["observed"], EvWork: p.EvidenceWeightPPM["work"],
+		ExampleX: 80, ExampleCents: 1000, params: p}
 }
 
-// Moves is what one act of this weight moves from an author with this
-// standing, in cents, as the text states it: "12.5".
-func (s stakeDefaults) Moves(cents, weight int64) string {
-	return strconv.FormatFloat(float64(cents)*float64(s.StakePPM*weight)/1e6, 'f', -1, 64)
+// Edge is the capacity in cents of a judgement of class ("opinion",
+// "observed", "work") at score x: U × (x − 50)/50 × evidence; none at 50
+// or below.
+func (e edgeDefaults) Edge(class string, x int64) float64 {
+	if x <= 50 {
+		return 0
+	}
+	return float64(e.Unit) * float64(x-50) / 50 * float64(e.params.EvidenceWeightPPM[class]) / 1e6
 }
 
-// Percent is the share of its author's standing one act of this weight
-// stakes: "2.5%".
-func (s stakeDefaults) Percent(weight int64) string {
-	return strconv.FormatFloat(float64(s.StakePPM*weight)/1e4, 'f', -1, 64) + "%"
+// Read is the interactive's readout for a rated accept at x by a judge with
+// this standing, as assets/trust.js words it.
+func (e edgeDefaults) Read(x, standing int64) string {
+	edge := e.Edge("work", x)
+	passes := math.Min(edge, float64(max(0, standing-e.NodeCap)))
+	return "A rated accept at " + strconv.FormatInt(x, 10) + " is a " + count(int64(math.Round(edge))) + "¢ edge. You keep your own costs first, up to " +
+		count(e.NodeCap) + "¢; of your " + count(standing) + "¢, " + count(int64(math.Round(passes))) + "¢ can pass along it. Your vote weighs " + e.VoteWeight(standing) + "."
 }
+
+// ExampleCentsText is ExampleCents as the text reads it.
+func (e edgeDefaults) ExampleCentsText() string { return count(e.ExampleCents) }
+
+// ReadExample is Read at the interactive's starting values.
+func (e edgeDefaults) ReadExample() string { return e.Read(e.ExampleX, e.ExampleCents) }
 
 // VoteWeight is v(s) for a voter with this standing, two decimals.
-func (s stakeDefaults) VoteWeight(cents int64) string {
-	if cents < s.VFloor || cents <= 0 || s.CRef <= 0 {
-		return "0"
-	}
-	v0 := float64(s.V0PPM) / 1e6
-	return strconv.FormatFloat(v0+(1-v0)*math.Sqrt(math.Min(1, float64(cents)/float64(s.CRef))), 'f', 2, 64)
+func (e edgeDefaults) VoteWeight(cents int64) string {
+	return strconv.FormatFloat(float64(e.params.VoteWeight(cents))/1e6, 'f', 2, 64)
 }
 
 func buildTrustExplainer(ctx context.Context, service board.Service, now time.Time) *trustExplainerView {
 	f := ServiceFeatures(service)
 	v := &trustExplainerView{LedgerOn: f.Ledger != board.LedgerOff, TrustOn: f.Trust != board.TrustOff, ExportOn: f.ExportEndorsements,
-		Generated: now.UTC().Format("2006-01-02 15:04 UTC"), Sentence: WaterfallSentence, Stake: defaultStake()}
+		Generated: now.UTC().Format("2006-01-02 15:04 UTC"), Sentence: ShareRuleSentence, Edge: defaultEdge()}
 	if v.LedgerOn {
 		stats, err := ReadAllowanceStats(ctx, service, f, AllowanceStatsDaysDefault, now)
 		if err != nil || stats == nil {
 			v.Unavailable = true
 		} else {
-			v.Waterfall = explainerWaterfallFrom(stats.Allowance)
+			v.Share = explainerShareFrom(stats.Allowance)
 		}
 	}
 	if v.TrustOn {
@@ -233,7 +247,7 @@ func buildTrustNetwork(ctx context.Context, service board.Service) (*explainerNe
 	return n, false
 }
 
-func explainerWaterfallFrom(w *WaterfallStats) *explainerWaterfall {
+func explainerShareFrom(w *ShareRuleStats) *explainerShare {
 	if w == nil {
 		return nil
 	}
@@ -242,28 +256,23 @@ func explainerWaterfallFrom(w *WaterfallStats) *explainerWaterfall {
 			continue
 		}
 		p := "allowance.resources." + strconv.Itoa(i) + "."
-		out := &explainerWaterfall{Day: string(r.Day), Mode: w.Ledger,
+		out := &explainerShare{Day: string(r.Day), Mode: w.Ledger,
 			Budget: cell{Key: p + "budget", Value: r.Budget, Text: units(r.Resource, r.Budget)},
 			Spent:  cell{Key: p + "spent", Value: r.Spent, Text: units(r.Resource, r.Spent)}}
-		for j, t := range r.Tiers {
-			if t.Tier < 1 || t.Tier > 4 {
-				continue
-			}
-			q := p + "tiers." + strconv.Itoa(j) + "."
-			row := explainerTier{Tier: t.Tier, Name: capitalize(t.Name),
-				Water:     cell{Key: q + "water", Value: t.Water, Text: units(r.Resource, t.Water)},
-				Claimed:   cell{Key: q + "claimed", Value: t.Claimed, Text: units(r.Resource, t.Claimed)},
-				Claimants: cell{Key: q + "claimants", Value: t.Claimants, Text: count(t.Claimants)}}
+		for j, sl := range r.Slices {
+			q := p + "slices." + strconv.Itoa(j) + "."
+			row := explainerSlice{Name: sliceLabel(sl.Slice),
+				Size:      cell{Key: q + "size", Value: sl.Size, Text: units(r.Resource, sl.Size)},
+				Drawn:     cell{Key: q + "drawn", Value: sl.Drawn, Text: units(r.Resource, sl.Drawn)},
+				Claimants: cell{Key: q + "claimants", Value: sl.Claimants, Text: count(sl.Claimants)}}
 			if r.Budget > 0 {
-				row.WaterPct = min(100, float64(max(0, t.Water))*100/float64(r.Budget))
+				row.SizePct = min(100, float64(max(0, sl.Size))*100/float64(r.Budget))
 			}
-			if t.Water > 0 {
-				row.ClaimedPct = min(100, float64(max(0, t.Claimed))*100/float64(t.Water))
+			if sl.Size > 0 {
+				row.DrawnPct = min(100, float64(max(0, sl.Drawn))*100/float64(sl.Size))
 			}
-			out.Tiers = append(out.Tiers, row)
+			out.Slices = append(out.Slices, row)
 		}
-		// Trusted first, whatever order the API lists the tiers in.
-		sort.SliceStable(out.Tiers, func(a, b int) bool { return out.Tiers[a].Tier < out.Tiers[b].Tier })
 		return out
 	}
 	return nil

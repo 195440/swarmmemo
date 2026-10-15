@@ -26,10 +26,8 @@ func setRewardParams(t *testing.T, s *Store) {
 	t.Helper()
 	p := s.allowanceDefaults()
 	rp := p.Resources[allowance.Credit]
-	rp.Budget, rp.SpendCeiling, rp.InboundCap, rp.TransferFee, rp.GrantSharePPM = 100_000, 100_000, 100_000, 2, 1_000_000
-	rp.Cap = []int64{1000, 1000, 1000, 10}
-	rp.Floor = []int64{100, 100, 100, 10}
-	rp.RootCap = []int64{5000, 5000, 5000, 10}
+	rp.Budget, rp.SpendCeiling, rp.InboundCap, rp.TransferFee, rp.GrantSharePPM = 100_000, 100_000, 100_000, 2, 500_000
+	rp.Floor, rp.Cap, rp.FloorSlicePPM, rp.AnonymousSharePPM = 100, 1000, 1_000_000, 100
 	if _, err := s.SetAllowanceParams(testContext, ledger.AllowanceNamespace, p.Marshal(), "work reward test", 0); err != nil {
 		t.Fatal(err)
 	}

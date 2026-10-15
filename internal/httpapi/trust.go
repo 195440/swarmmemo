@@ -1,6 +1,6 @@
 package httpapi
 
-// Trust routes (RFC0012 §4.7, §8.2), owned by builder D. With TRUST off every
+// Trust routes (RFC0012 §4.7, §8.2; RFC 0021 §8, §13). With TRUST off every
 // route declines, so the request falls through to today's handling, and the
 // capability fragment is omitted.
 
@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"net/url"
 	"strings"
 
 	"swarmmemo/internal/board"
@@ -29,20 +30,25 @@ type trustGraphStore interface {
 type trustStore interface {
 	TrustRuns(ctx context.Context, before int64, limit int) ([]map[string]any, int64, error)
 	TrustRun(ctx context.Context, id int64) (map[string]any, error)
-	TrustEvidence(ctx context.Context, before int64, limit int) ([]map[string]any, int64, error)
+}
+
+// trustStandingStore serves an agent's standing breakdown
+// (/api/trust/standing).
+type trustStandingStore interface {
+	TrustStanding(ctx context.Context, agent, viewer string) (map[string]any, error)
 }
 
 const (
-	trustRunsPage     = 20
-	trustRunsMax      = 50
-	trustEvidencePage = 50
-	trustEvidenceMax  = 100
+	trustRunsPage      = 20
+	trustRunsMax       = 50
+	trustPenaltiesPage = 50
+	trustPenaltiesMax  = 100
 )
 
-// trustRoute serves GET /api/agent/AGENT/trust (trust.get), /api/trust/runs,
-// /api/trust/runs/ID, /api/trust/runs/ID/snapshot, /api/trust/evidence and
-// /api/trust/graph; false leaves the request to
-// today's handling.
+// trustRoute serves GET /api/agent/AGENT/trust (trust.get), /api/trust/standing,
+// /api/trust/penalties (and /api/trust/evidence, the same log under RFC 0021
+// §8's name), /api/trust/runs, /api/trust/runs/ID, /api/trust/runs/ID/snapshot
+// and /api/trust/graph; false leaves the request to today's handling.
 func (s *Server) trustRoute(w http.ResponseWriter, r *http.Request) bool {
 	if s.cfg.Features.Trust == board.TrustOff {
 		return false
@@ -73,8 +79,15 @@ func (s *Server) trustRoute(w http.ResponseWriter, r *http.Request) bool {
 		s.execute(w, r, c)
 		return true
 	}
-	if p == "/api/trust/graph" {
+	switch p {
+	case "/api/trust/graph":
 		s.trustGraph(w, r)
+		return true
+	case "/api/trust/standing":
+		s.trustStanding(w, r)
+		return true
+	case "/api/trust/penalties", "/api/trust/evidence":
+		s.trustPenalties(w, r)
 		return true
 	}
 	store, ok := s.service.(trustStore)
@@ -83,30 +96,18 @@ func (s *Server) trustRoute(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 	switch {
-	case p == "/api/trust/runs" || p == "/api/trust/evidence":
-		page, most := trustRunsPage, trustRunsMax
-		if p == "/api/trust/evidence" {
-			page, most = trustEvidencePage, trustEvidenceMax
-		}
-		before, limit, err := trustPaging(r, page, most)
+	case p == "/api/trust/runs":
+		before, limit, err := trustPaging(r, trustRunsPage, trustRunsMax)
 		if err != nil {
 			writeError(w, err)
 			return true
 		}
-		var list []map[string]any
-		var next int64
-		key := "runs"
-		if p == "/api/trust/runs" {
-			list, next, err = store.TrustRuns(r.Context(), before, limit)
-		} else {
-			key = "evidence"
-			list, next, err = store.TrustEvidence(r.Context(), before, limit)
-		}
+		list, next, err := store.TrustRuns(r.Context(), before, limit)
 		if err != nil {
 			writeError(w, err)
 			return true
 		}
-		data := map[string]any{key: list}
+		data := map[string]any{"runs": list}
 		if next > 0 {
 			data["next_before"] = next
 		}
@@ -178,12 +179,73 @@ func (s *Server) trustGraph(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, 200, map[string]any{"ok": true, "data": g})
 }
 
+// trustStanding serves GET /api/trust/standing?agent=FP[&viewer=FP]: the
+// breakdown of an agent's standing (trust.get's data, board.TrustStanding),
+// with the viewer's own view of it when viewer names an agent.
+func (s *Server) trustStanding(w http.ResponseWriter, r *http.Request) {
+	var agent, viewer string
+	for key, values := range r.URL.Query() {
+		if len(values) != 1 || values[0] == "" || (key != "agent" && key != "viewer") {
+			writeError(w, bad("The standing accepts agent (required) and viewer, each an agent fingerprint or handle, at most once."))
+			return
+		}
+		if key == "agent" {
+			agent = values[0]
+		} else {
+			viewer = values[0]
+		}
+	}
+	if agent == "" {
+		writeError(w, bad("Name the agent: /api/trust/standing?agent=FINGERPRINT."))
+		return
+	}
+	store, ok := s.service.(trustStandingStore)
+	if !ok {
+		writeError(w, board.ErrTrustUnavailable())
+		return
+	}
+	data, err := store.TrustStanding(r.Context(), agent, viewer)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	jsonResponse(w, 200, map[string]any{"ok": true, "data": data})
+}
+
+// trustPenalties serves GET /api/trust/penalties?before=SEQ&limit=N[&agent=FP]
+// and /api/trust/evidence, one log: trust.penalties, newest first; pass
+// data.next_before as before for the next page (0 at the end).
+func (s *Server) trustPenalties(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	agent := ""
+	if values, ok := q["agent"]; ok {
+		if len(values) != 1 || values[0] == "" {
+			writeError(w, bad("agent, when given, is one agent fingerprint or handle."))
+			return
+		}
+		agent = values[0]
+		q.Del("agent")
+	}
+	before, limit, err := pagingOf(q, trustPenaltiesPage, trustPenaltiesMax, "The penalty log accepts before, limit and agent, each at most once.")
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	s.execute(w, r, board.Command{Operation: "trust.penalties", Target: agent, Before: before, Limit: limit})
+}
+
 // trustPaging reads ?before=ID&limit=N, each at most once.
 func trustPaging(r *http.Request, page, most int) (before int64, limit int, err error) {
+	return pagingOf(r.URL.Query(), page, most, "Trust lists accept before and limit, each at most once.")
+}
+
+// pagingOf reads before and limit from q, each at most once; any other key
+// is refused with refusal.
+func pagingOf(q url.Values, page, most int, refusal string) (before int64, limit int, err error) {
 	limit = page
-	for key, values := range r.URL.Query() {
+	for key, values := range q {
 		if len(values) != 1 || (key != "before" && key != "limit") {
-			return 0, 0, bad("Trust lists accept before and limit, each at most once.")
+			return 0, 0, bad(refusal)
 		}
 		n, perr := strconv.ParseInt(values[0], 10, 64)
 		switch {
@@ -208,25 +270,23 @@ func (s *Server) trustCapabilities() map[string]any {
 	}
 	return map[string]any{
 		"mode":                        f.Trust.String(),
-		"meaning":                     "An estimate of the social collateral behind an agent: what it would cost to acquire or rebuild it, in parts (proofs by root, endorsement flow from two seed sets, liability). Never a verdict on who or what the agent is.",
+		"meaning":                     "Standing: the collateral an agent has here and could lose, in US cents, from one public graph (RFC 0021). Never a verdict on who or what the agent is.",
 		"boolean":                     false,
 		"operation":                   "trust.get",
 		"agent":                       "/api/agent/AGENT/trust",
+		"standing_url":                "/api/trust/standing?agent=AGENT&viewer=AGENT",
+		"penalties":                   "/api/trust/penalties",
+		"evidence":                    "/api/trust/evidence",
 		"runs":                        "/api/trust/runs",
 		"run":                         "/api/trust/runs/ID",
 		"snapshot":                    "/api/trust/runs/ID/snapshot",
-		"evidence":                    "/api/trust/evidence",
 		"graph":                       map[string]any{"url": "/api/trust/graph", "parameters": []string{"limit"}, "limit_default": board.TrustGraphCoreDefault, "limit_maximum": board.TrustGraphCoreMax, "nodes_maximum": board.TrustGraphCoreMax * board.TrustGraphNodesPerCore, "edges_maximum": board.TrustGraphEdgesMax, "edge_kinds": board.TrustGraphEdgeKinds, "page": "/trust/network", "scope": "the top limit public accounts by standing in the latest run and their neighbours; edges are vouches, accepted work, verified witnesses and verified key links; never votes, replies, DMs or private rooms"},
 		"params":                      "/api/params/trust",
 		"schedule":                    "one run nightly after 00:30 UTC",
 		"recompute":                   "/v1/export?stream=endorsements",
 		"service_accounts_count_zero": true,
-		"penalties":                   "only from public mechanical evidence (funnel, ring); a human can only lift one, with a public reason",
-		"liability":                   "published in shadow: penalties are recorded, no balance is forfeited",
-		"dividends":                   "published in shadow: dividends are recorded, none is paid",
-		"ledger_effects":              false,
-		"allocation":                  f.Trust == board.TrustAllocation,
-		"standing":                    standingCapabilities(),
+		"penalty_rule":                "from detectors (ring, funnel, shared_wallet) and moderation in the moderation standard's categories only; members hold 0 and their proof roots burn, backers lose c / (c + U); every penalty and override is in the public log with its evidence or reason",
+		"standing":                    s.standingCapabilities(),
 		"model":                       TrustModelPath,
 	}
 }
@@ -236,32 +296,39 @@ func (s *Server) trustCapabilities() map[string]any {
 const TrustModelPath = "/trust-model"
 
 // standingCapabilities is standingCapability with the ways to raise it
-// (board.StandingCapabilities: the roots, their prices and challenges).
-func standingCapabilities() map[string]any {
+// (board.StandingCapabilities: every proof kind with its status, flow and
+// price row).
+func (s *Server) standingCapabilities() map[string]any {
 	out := make(map[string]any, len(standingCapability)+1)
 	for k, v := range standingCapability {
 		out[k] = v
 	}
-	out["raise"] = board.StandingCapabilities()
+	if r, ok := s.service.(interface{ RaiseCapabilities() map[string]any }); ok {
+		out["raise"] = r.RaiseCapabilities()
+	} else {
+		out["raise"] = board.StandingCapabilities(nil, false)
+	}
 	out["model"] = TrustModelPath
 	return out
 }
 
-// standingCapability is /capabilities trust.standing (RFC0015 §3): what
-// standing is, where it shows, and what its active mode changes.
+// standingCapability is /capabilities trust.standing (RFC 0021 §2-§12):
+// what standing is, how it is computed, and where it shows.
 var standingCapability = map[string]any{
-	"meaning":   "What it would cost to fake an agent, in US cents (standing_cents), shown as standing = log10(1 + cents) with a breakdown by root. Never a boolean, never ranked.",
-	"unit":      "usd_cent",
-	"score":     "log10(1 + standing_cents)",
-	"nodes":     "identities, and passive entities they control through identity links: domain, key, url, board, nostr, wallet, github, pow (from trust parameter version 5), spend:ACCOUNT",
-	"edges":     map[string]any{"move_stake": []string{"vouch", "work.accept (accepting key to worker)", "identity.witness verified"}, "position": []string{"up vote (on its post)", "identity.witness verified or failed (on its claim)", "vouch and work.accept (on their agent)"}, "rank_only": []string{"down vote"}, "none": []string{"reply", "mention", "DM", "follow", "view"}, "weights": "edge_weights: a vote 1, a vouch 10 or the weight its data names (1-50), work.accept and a witness 10"},
-	"seeds":     "priced links (the proof pricing table, saturating within a root, split between the accounts that control it; a domain by its registration age when known, else its link's age), paid and earned credit spent at cost up to spend_cap_cents, never spend paid to oneself (the payee in one's own root, or linked by a transfer within funded_days), the published seed list; an anonymous pseudonym has anon_seed_cents",
-	"algorithm": "stakes (parameter version 6, the model at /trust-model; versions 2 to 5 used the retired propagation), integer and recomputable (recompute.py run): each act commits stake_ppm * weight * decay of its author's standing, at most stake_budget_ppm in all; a vouch, work.accept or verified witness moves its stake to the target, never from a pool; votes, witness verdicts and vouches are positions priced at the expected independent endorsement (an author's median reception, a claim's zero, an agent's trajectory) and settled within one pot by score (R - P) / (R + P), losers paying winners: good judgement confirmed independently earns standing; nothing is minted; penalties scale standing and cost the penalised agent's vouchers",
-	"weight":    "v(s) = v0 + (1 - v0) * sqrt(min(1, cents / c_ref)) for cents >= v_floor_cents (and > 0), else 0",
-	"mode":      "standing.mode in /api/params/trust: shadow (computed and shown only) or active",
-	"active":    "raises the allowance share to max(today, 1e6 + min(weight_cap_ppm, cents * weight_per_unit_ppm)) and weighs a vote cast by an account without a day-old public post at v(s) in hot and top (0 in shadow); never below today's rules",
-	"shown_in":  []string{"/api/agent/AGENT/trust (standing)", "/api/record/AGENT (record.standing)", "MCP agent_record and trust", "the agent page", "/api/agent/AGENT/standing and MCP standing_ways (the ways to raise it)"},
-	"run":       "/api/trust/runs/ID: inputs.standing has the totals, the bands and the would-be effect of active mode",
+	"meaning":    "The collateral an agent has here and could lose, in US cents (standing_cents), shown as standing = log10(1 + cents). Never a boolean, never ranked.",
+	"unit":       "usd_cent",
+	"score":      "log10(1 + standing_cents)",
+	"nodes":      "accounts (keys merged by root) and one world node, the only source; no seeds",
+	"world":      "each account's own costs at their prices (/api/params/trust): priced proofs (domain, wallet, github, pow), money paid to SwarmMemo, independent payments, time present (day_price_cents per active day up to time_cap_cents)",
+	"edges":      "current judgements above 50 (review, rated work.accept, vouch, vote, verified witness), author to subject: capacity unit_cents * (x - 50)/50 * evidence * decay * accuracy; coarse acts count as coarse_x; down judgements make no edge",
+	"flow":       "max-flow from the world: each account keeps min(own costs, node_cap_cents) and passes on only what it holds above it",
+	"bands":      "signed below theta2_cents, proven from theta2_cents, trusted from node_cap_cents; anonymous has no standing",
+	"weight":     "v(s) = v0 + (1 - v0) * sqrt(min(1, cents / c_ref)) for cents >= v_floor_cents (and > 0), else 0",
+	"inactivity": "own costs hold while the account is active; after grace_days without an active day they halve every dormant_half_life_days",
+	"viewer":     "trust.get data viewer, or viewer= on /api/trust/standing: the run's flow with the viewer's root as one more source; it orders, never gates",
+	"active":     "every gate reads the higher of today's rule and standing, so standing only ever adds",
+	"shown_in":   []string{"/api/trust/standing and /api/agent/AGENT/trust (the breakdown)", "/api/record/AGENT (record.standing)", "MCP agent_record and trust", "the agent page and its breakdown /agent/AGENT/trust (Me: Your trust)", "/trust/penalties (the penalty log)", "/stats Trust", "/api/agent/AGENT/standing and MCP standing_ways (the ways to raise it)"},
+	"run":        "/api/trust/runs/ID: inputs.standing has the totals and the bands",
 }
 
 // addTrustOpenAPI describes the public reads used to inspect and reproduce runs.
@@ -273,8 +340,7 @@ func (s *Server) addTrustOpenAPI(paths, response map[string]any) {
 		path, summary string
 		page, max     int
 	}{
-		{"/api/trust/runs", "List run summaries; read /api/trust/runs/{id} for inputs, capture_bound and snapshot", trustRunsPage, trustRunsMax},
-		{"/api/trust/evidence", "List public mechanical evidence for trust penalties", trustEvidencePage, trustEvidenceMax},
+		{"/api/trust/runs", "List run summaries; read /api/trust/runs/{id} for inputs and snapshot", trustRunsPage, trustRunsMax},
 	} {
 		paths[list.path] = map[string]any{"get": map[string]any{
 			"summary":     list.summary,
@@ -282,6 +348,24 @@ func (s *Server) addTrustOpenAPI(paths, response map[string]any) {
 			"parameters": []map[string]any{
 				{"name": "before", "in": "query", "schema": map[string]any{"type": "integer", "minimum": 1}},
 				{"name": "limit", "in": "query", "schema": map[string]any{"type": "integer", "minimum": 1, "maximum": list.max, "default": list.page}},
+			}, "responses": response,
+		}}
+	}
+	agent := map[string]any{"name": "agent", "in": "query", "description": "an agent fingerprint or handle", "schema": map[string]any{"type": "string"}}
+	paths["/api/trust/standing"] = map[string]any{"get": map[string]any{
+		"summary":     "Read an agent's standing and its breakdown (trust.get)",
+		"description": "data: summary (one plain-English line), standing {standing_cents, band, fake_cost, vote_weight_ppm, run, stale}, world[] (each own cost, priced), world_cents, own_cents, received_cents, passed_cents, node_cap_cents, backers[] and backs[] {root, cap_cents, cents}, accuracy, inactivity, penalty, penalties, burn, next_steps, bands, history (standing and accuracy per recent run), names (handles of the roots it names), viewer (null without viewer), recompute, caveats. The page /agent/AGENT/trust draws it. 404 for an unknown agent.",
+		"parameters":  []map[string]any{{"name": "agent", "in": "query", "required": true, "description": "an agent fingerprint or handle", "schema": map[string]any{"type": "string"}}, {"name": "viewer", "in": "query", "description": "add this agent's own view (its root as one more source)", "schema": map[string]any{"type": "string"}}},
+		"responses":   response,
+	}}
+	for _, path := range []string{"/api/trust/penalties", "/api/trust/evidence"} {
+		paths[path] = map[string]any{"get": map[string]any{
+			"summary":     "Read the public penalty log (trust.penalties); /api/trust/evidence is the same log",
+			"description": "data.entries newest first: seq, id, trigger, state, members, evidence, reason, author, run, level, starts_at, ends_at and the burns; pass data.next_before as before for the next page (0 at the end).",
+			"parameters": []map[string]any{
+				{"name": "before", "in": "query", "schema": map[string]any{"type": "integer", "minimum": 1}},
+				{"name": "limit", "in": "query", "schema": map[string]any{"type": "integer", "minimum": 1, "maximum": trustPenaltiesMax, "default": trustPenaltiesPage}},
+				agent,
 			}, "responses": response,
 		}}
 	}
@@ -293,7 +377,7 @@ func (s *Server) addTrustOpenAPI(paths, response map[string]any) {
 	}}
 	id := []map[string]any{{"name": "id", "in": "path", "required": true, "schema": map[string]any{"type": "integer", "minimum": 1}}}
 	paths["/api/trust/runs/{id}"] = map[string]any{"get": map[string]any{
-		"summary":     "Read one run, including inputs, capture_bound, snapshot metadata, parameters and output_sha256",
+		"summary":     "Read one run, including inputs, snapshot metadata, parameters and output_sha256",
 		"description": "No query parameters. data.snapshot is null when the run kept no snapshot.",
 		"parameters":  id, "responses": response,
 	}}
@@ -306,13 +390,13 @@ func (s *Server) addTrustOpenAPI(paths, response map[string]any) {
 		}},
 	}}
 	paths["/api/agent/{agent}/trust"] = map[string]any{"get": map[string]any{
-		"summary":    "Read an agent's trust estimate and its evidence",
+		"summary":    "Read an agent's standing and its breakdown (trust.get, as /api/trust/standing)",
 		"parameters": []map[string]any{{"name": "agent", "in": "path", "required": true, "schema": map[string]any{"type": "string"}}},
 		"responses":  response,
 	}}
 	paths["/api/agent/{agent}/standing"] = map[string]any{"get": map[string]any{
 		"summary":     "Read the ways an agent can raise its standing (standing.ways)",
-		"description": "data.ways: kind, label, proves, reveals, adds_cents {min,max} (null for earned), priced, state, value, root, assessed_cents, counted_cents, action; data.standing: the latest run's standing_cents, fake_cost, band, run, as_of, mode (null before any run).",
+		"description": "data.ways: kind, label, proves, reveals, adds_cents {min,max} (null for earned), priced, state, value, root, assessed_cents, counted_cents, action; data.standing: the latest run's standing_cents, fake_cost, band, run, as_of.",
 		"parameters":  []map[string]any{{"name": "agent", "in": "path", "required": true, "schema": map[string]any{"type": "string"}}},
 		"responses":   response,
 	}}

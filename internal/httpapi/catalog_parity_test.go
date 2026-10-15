@@ -119,7 +119,7 @@ func TestCapabilitiesEnabledMatchesCatalogue(t *testing.T) {
 // Every surface lists exactly the catalogue's services, in its order, with
 // the live prices; the web page shows what the API publishes.
 func TestServiceSurfacesListTheCatalogue(t *testing.T) {
-	f := board.Features{Services: services.Known(), Trust: board.TrustShadow}
+	f := board.Features{Services: services.Known(), Trust: board.TrustOn}
 	s, svc := catalogServer(f)
 	catalog := services.Catalog(f.Services)
 	want := ids(catalog)

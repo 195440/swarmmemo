@@ -1,16 +1,11 @@
-// Package judge is the single source of RFC 0020 §1–§3: one judgement
-// record, one weight, one aggregate (the standing-weighted median), one gain
-// formula and the run-wide settlement that never mints standing.
+// Package judge is the single source of RFC 0020 §1–§2, as RFC 0021 keeps
+// them: one judgement record, one weight, one aggregate (the
+// standing-weighted median), and the gain formula a trust run turns into
+// each judge's accuracy (RFC 0021 §6).
 //
 // Everything here is a pure integer function (ppm fixed point, like
 // internal/trust), so a trust run that calls it recomputes byte for byte from
 // its published snapshot. Nothing here reads a clock, a float or a database.
-//
-// Built in C303a (shadow): the trust run computes scores and marks with it
-// beside rule 3 and changes no gate. C303b adds the cutover: trust parameter
-// version 7 (standing.rule 4) makes it the rule and publishes Params in its
-// standing.judgements section; the constants below are that section's
-// defaults and the shadow's values.
 package judge
 
 import (
@@ -18,12 +13,6 @@ import (
 	"math/bits"
 	"sort"
 )
-
-// ShadowVersion is the version of the judgements_shadow section a trust run
-// publishes; it changes whenever any constant or rule below changes.
-// Version 3 (C303b): the prior weighs PriorWeight × the subject's mean
-// judgement weight, and scores say when they are thin.
-const ShadowVersion = 3
 
 // ScoreField is the wire name of the score every reputation surface shows
 // (C304: agent.get and subject.get reputation, Find's agent hits): the
@@ -48,18 +37,8 @@ const (
 	ThinBelow   = PriorWeight + 1
 )
 
-// Settlement parameters (RFC 0020 §3.3).
-const (
-	// KMin is how many independent later judgements with weight a subject
-	// needs before a judgement of it is marked.
-	KMin = 2
-	// ReviewLoad is a review's act weight (a vote's is 1, a vouch's 1-50,
-	// the trust parameters' edge_weights).
-	ReviewLoad = 10
-)
-
-// HalfLifeDays is the decay of a judgement's weight in the aggregate
-// (RFC 0015 §5.4: services change). The stake's decay is standing's.
+// HalfLifeDays is H (RFC 0021 §11): the decay of a judgement's weight in
+// the aggregate and of a judgement edge (RFC 0015 §5.4: services change).
 const HalfLifeDays = 180
 
 // DayFactorPPM is round(1e6 × 2^(−1/HalfLifeDays)), the published day
@@ -104,12 +83,6 @@ var EvidenceWeightPPM = map[string]int64{"paid_use": 1_000_000, "work": 1_000_00
 // community judgements.
 var RelationshipFactorPPM = map[string]int64{"owner": 0, "affiliate": 0, "paid": 0, "competitor": 500_000, "outside_source": 0, "lab": 0}
 
-// ActEvidencePPM is the evidence weight of an act that is not a review (a
-// vote, a vouch, a work.accept, a witness verdict): it carries no evidence
-// class, and v(s) already prices its author, so it weighs in full. Only a
-// review's weight reads its verified evidence class.
-const ActEvidencePPM = 1_000_000
-
 // Rule is one row of the act-to-judgement table (RFC 0020 §1), as data.
 type Rule struct {
 	Act     string `json:"act"`
@@ -143,7 +116,6 @@ type Judgement struct {
 	// acts); Relationship a review's (effective) relationship.
 	Evidence     string `json:"evidence,omitempty"`
 	Relationship string `json:"relationship,omitempty"`
-	Load         int64  `json:"load"` // the act's weight (stake), before decay
 	At           int64  `json:"at"`
 }
 
@@ -199,14 +171,18 @@ func (j Judgement) MedianX() int64 {
 	return j.X
 }
 
-// EdgeWeightPPM is the judgement's edge weight to its subject's owner
-// (RFC 0020 §1, from C303b): |x − 50| / 50, ENDORSE above 50, OPPOSE below.
-func (j Judgement) EdgeWeightPPM() (w int64, oppose bool) {
-	d := j.X - Neutral
-	if d < 0 {
-		return -d * 1_000_000 / Neutral, true
+// EdgePPM is s(x), the strength of the judgement's edge to its subject's
+// owners (RFC 0021 §2): (x − 50) / 50 for x > 50, a coarse judgement
+// counting as coarseX; 0 otherwise (a down judgement makes no edge).
+func (j Judgement) EdgePPM(coarseX int64) int64 {
+	x := j.X
+	if j.Coarse && x > Neutral {
+		x = coarseX
 	}
-	return d * 1_000_000 / Neutral, false
+	if x <= Neutral {
+		return 0
+	}
+	return (min(x, Max) - Neutral) * 1_000_000 / Neutral
 }
 
 func clamp(x int64) int64 { return min(Max, max(Min, x)) }
@@ -270,15 +246,6 @@ func FromWitness(verified bool) int64 {
 // EvidencePPM is a class's evidence weight (0 for an unknown class).
 func EvidencePPM(class string) int64 { return EvidenceWeightPPM[class] }
 
-// EvidencePPM is the judgement's evidence weight: a review's class's, any
-// other act's ActEvidencePPM.
-func (j Judgement) EvidencePPM() int64 {
-	if j.Act == ActReview {
-		return EvidencePPM(j.Evidence)
-	}
-	return ActEvidencePPM
-}
-
 // RelationshipPPM is a relationship's factor (1e6 when not listed).
 func RelationshipPPM(rel string) int64 {
 	if f, ok := RelationshipFactorPPM[rel]; ok {
@@ -303,20 +270,16 @@ type Point struct {
 	W int64 `json:"w"`
 }
 
-// Params are RFC 0020's tunable numbers. The defaults are the constants of
-// this package; trust parameter version 7 publishes them as
-// standing.judgements and the run reads them from there.
+// Params are the score's numbers: m = PriorWeight (RFC 0021 §11's m, also
+// the trust run's min_judges) and the thin label's bound. The defaults are
+// the constants of this package.
 type Params struct {
-	KMin         int64 `json:"k_min"`
-	PriorWeight  int64 `json:"prior_weight"`
-	ThinBelow    int64 `json:"thin_below"`
-	HalfLifeDays int64 `json:"half_life_days"`
-	DayFactorPPM int64 `json:"day_factor_ppm"`
-	ReviewLoad   int64 `json:"review_load"`
+	PriorWeight int64 `json:"prior_weight"`
+	ThinBelow   int64 `json:"thin_below"`
 }
 
-// Default is the constants as Params: the shadow's values and version 7's.
-var Default = Params{KMin: KMin, PriorWeight: PriorWeight, ThinBelow: ThinBelow, HalfLifeDays: HalfLifeDays, DayFactorPPM: DayFactorPPM, ReviewLoad: ReviewLoad}
+// Default is the constants as Params.
+var Default = Params{PriorWeight: PriorWeight, ThinBelow: ThinBelow}
 
 // PriorPPM is the weight of the prior over points (RFC 0020 §2):
 // PriorWeight × their mean weight (Σ w / n over the n points with weight),
@@ -438,59 +401,6 @@ func Gain(x, c0, cT int64, coarse bool) int64 {
 		return sign(x-c0) * (cT - c0) * 1_000_000 / (Max - Min)
 	}
 	return (abs(c0-cT) - abs(x-cT)) * 1_000_000 / (Max - Min)
-}
-
-// Mark is stake × gain (gain in ppm), rounded towards zero: a judgement's
-// raw mark before the run-wide settlement.
-func Mark(stake, gainPPM int64) int64 {
-	m := MulDiv(max(0, stake), abs(gainPPM), 1_000_000)
-	if gainPPM < 0 {
-		return -m
-	}
-	return m
-}
-
-// Settlement is the run-wide settlement of raw marks (RFC 0020 §3.3).
-type Settlement struct {
-	Marks     []int64 `json:"-"`         // each mark after scaling: losses whole, gains scaled
-	Forfeited int64   `json:"forfeited"` // Σ |negative marks|
-	Owed      int64   `json:"owed"`      // Σ positive raw marks
-	Paid      int64   `json:"paid"`      // Σ positive marks after scaling, ≤ Forfeited
-	Returned  int64   `json:"returned"`  // Forfeited − Paid: back to the seeds, by seed
-	ScalePPM  int64   `json:"scale_ppm"` // what share of each gain is paid
-}
-
-// Settle pays positive marks from negative ones across the whole run:
-// losses are taken whole, gains are scaled by min(1, forfeited / owed) and
-// rounded down, so Σ paid ≤ Σ forfeited and nothing is minted. What is left
-// over (Returned) goes back to the seeds by seed, as today.
-func Settle(raw []int64) Settlement {
-	s := Settlement{Marks: make([]int64, len(raw)), ScalePPM: 1_000_000}
-	for _, m := range raw {
-		if m < 0 {
-			s.Forfeited = satAdd(s.Forfeited, -max(m, -(1<<62)))
-		} else {
-			s.Owed = satAdd(s.Owed, m)
-		}
-	}
-	if s.Owed > s.Forfeited {
-		s.ScalePPM = MulDiv(s.Forfeited, 1_000_000, s.Owed)
-	}
-	for i, m := range raw {
-		switch {
-		case m < 0:
-			s.Marks[i] = max(m, -(1 << 62))
-		case s.Owed > s.Forfeited:
-			s.Marks[i] = MulDiv(m, s.Forfeited, s.Owed)
-		default:
-			s.Marks[i] = m
-		}
-		if s.Marks[i] > 0 {
-			s.Paid += s.Marks[i]
-		}
-	}
-	s.Returned = s.Forfeited - s.Paid
-	return s
 }
 
 // MulDiv is ⌊a × b / c⌋ for non-negative a, b and positive c, exact in 128

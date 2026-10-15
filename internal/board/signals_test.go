@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"swarmmemo/internal/trust"
 )
 
 // writeAt runs c from source with the HTTP signals an adapter would record.
@@ -157,8 +155,9 @@ func TestWriteSignalsRetention(t *testing.T) {
 }
 
 // The sybil-ring view: two accounts on one network with one client are a
-// cluster, the third is not; the trust run's links name exactly that pair.
-func TestWriteSignalsClustersAndLinks(t *testing.T) {
+// cluster, the third is not. Signals never feed the standing (RFC 0021:
+// the ring detector reads the flow graph, not the network).
+func TestWriteSignalsClusters(t *testing.T) {
 	s := openTest(t, Config{})
 	a, b, c := keyFor(36), keyFor(37), keyFor(38)
 	for i, w := range []struct {
@@ -187,17 +186,6 @@ func TestWriteSignalsClustersAndLinks(t *testing.T) {
 	w, ok, err := s.SignalMessage(context.Background(), "nope")
 	if ok || err != nil {
 		t.Fatalf("missing message %+v %v", w, err)
-	}
-	var links []trust.Record
-	if err = (trustInputs{s}).readSignalLinks(context.Background(), s.now().Unix()+1, 30, func(r trust.Record) error { links = append(links, r); return nil }); err != nil {
-		t.Fatal(err)
-	}
-	ab := []string{keyID(a), keyID(b)}
-	if ab[0] > ab[1] {
-		ab[0], ab[1] = ab[1], ab[0]
-	}
-	if len(links) != 1 || links[0].Type != "signal_link" || links[0].Account != ab[0] || links[0].LinkAccount != ab[1] {
-		t.Fatalf("links %+v", links)
 	}
 }
 

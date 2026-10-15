@@ -33,7 +33,7 @@ func seedDocs() []Doc {
 		{Type: TypeService, Kind: KindX402, ID: "x402:cx1", Name: "Token price feed", Description: "Spot prices for crypto tokens.", Category: "crypto", URL: "/s/cx1", Price: 2000, Network: "base", Output: "json", Quality: Quality{LabLower: -1}},
 		{Type: TypeService, Kind: KindTool, ID: "swarmmemo:notary.stamp", Name: "Notary: stamp", Description: "Sign a timestamp for a hash.", Category: "other", URL: "/protocol.md#notary", Price: Unpriced, PriceText: "5 credits", Quality: Quality{LabLower: -1}},
 		{Type: TypeOffering, ID: "atlas/translate", Name: "Translate to Portuguese", Description: "I translate text to European Portuguese within an hour.", Category: "ai", URL: "/@atlas/translate", Price: 10000, Network: "base", Output: "text", Untrusted: true, Quality: Quality{State: "up", LabLower: -1}},
-		{Type: TypeAgent, ID: "fp-weatherbot", Name: "weatherbot", Description: "I answer weather questions for Lisbon and Porto.", Category: "weather", URL: "/agent/fp-weatherbot", Price: Unpriced, Untrusted: true, Quality: Quality{Standing: "proven", LabLower: -1}},
+		{Type: TypeAgent, ID: "fp-weatherbot", Name: "weatherbot", Description: "I answer weather questions for Lisbon and Porto.", Category: "weather", URL: "/agent/fp-weatherbot", Price: Unpriced, Untrusted: true, Quality: Quality{Standing: "proven", StandingV: 0.72, LabLower: -1}},
 		{Type: TypeSite, ID: "site:https://ipma.example/", Name: "https://ipma.example/", Description: "", Category: "", URL: "/s/ipma", Terms: "ipma example", Price: Unpriced, SubjectID: "ipma", Quality: Quality{Reviews: 3, ReviewMean: 0.8, ReviewWeight: 2.4, LabLower: -1}},
 		{Type: TypeMCP, ID: "mcp:https://mcp.example.com/weather", Name: "mcp.example.com/weather", URL: "/s/mcpwx", Terms: "mcp example com weather", Price: Unpriced, Quality: Quality{LabLower: -1}},
 		{Type: TypePkg, ID: "pkg:npm/weather-js", Name: "npm/weather-js", URL: "/s/pkgwx", Terms: "npm weather js", Price: Unpriced, Quality: Quality{LabLower: -1}},
@@ -177,7 +177,7 @@ func TestFindBM25Order(t *testing.T) {
 // of any quality, a close one is overtaken, and down or avoid sinks but is
 // never dropped.
 func TestQualityNeverOverridesClearlyBetter(t *testing.T) {
-	best := Quality{LabVerdict: "proceed", LabGrade: "A", LabLower: 95, Reviews: 40, ReviewMean: 0.99, ReviewWeight: 30, Standing: "trusted", State: "up"}
+	best := Quality{LabVerdict: "proceed", LabGrade: "A", LabLower: 95, Reviews: 40, ReviewMean: 0.99, ReviewWeight: 30, Standing: "trusted", StandingV: 1, State: "up"}
 	worst := Quality{LabVerdict: "avoid", LabLower: 5, Reviews: 9, ReviewMean: 0.01, ReviewWeight: 7, State: "down"}
 	ix := &Index{vocab: testVocab, docs: []Doc{
 		{Type: TypeService, ID: "strong", Name: "strong", Quality: worst},

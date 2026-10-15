@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"swarmmemo/internal/allowance"
 	"swarmmemo/internal/find"
 	"swarmmemo/internal/judge"
 	"swarmmemo/internal/reviews"
@@ -41,19 +40,17 @@ func reputationTestStore(t *testing.T) *Store {
 	return s
 }
 
-// trustRows puts accounts in a done trust run with a standing mode, each
-// with its root, tier and standing cents.
-func trustRows(t *testing.T, s *Store, rows map[string][3]any) {
+// trustRows puts accounts in a done trust run (as setStanding does), each
+// with its root and standing cents.
+func trustRows(t *testing.T, s *Store, rows map[string][2]any) {
 	t.Helper()
-	if _, err := s.db.Exec(`INSERT INTO trust_runs(id,as_of,params_version,state,inputs,started_at) VALUES(1,?,6,'done','{"params":{"standing":{"mode":"shadow"}}}',0)`, testTime); err != nil {
-		t.Fatal(err)
-	}
+	cents := map[string]int64{}
 	for account, r := range rows {
-		parts, _ := json.Marshal(trust.Parts{Standing: &trust.StandingPart{Cents: r[2].(int64), Band: 2}})
-		if _, err := s.db.Exec("INSERT INTO trust_scores(run_id,account,root,proof_collateral,flow_a,flow_b,flow,collateral,tier,weight_ppm,parts) VALUES(1,?,?,0,0,0,0,0,?,0,?)", account, r[0], r[1], string(parts)); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := s.db.Exec("INSERT INTO trust_current(account,run_id) VALUES(?,1)", account); err != nil {
+		cents[account] = r[1].(int64)
+	}
+	run := setStanding(t, s, cents)
+	for account, r := range rows {
+		if _, err := s.db.Exec("UPDATE trust_scores SET root=? WHERE run_id=? AND account=?", r[0], run, account); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -89,8 +86,8 @@ func TestReputationIsItsParts(t *testing.T) {
 	account := keyID(seller)
 	agentURI := "agent:" + account
 	const offeringURI = "x402:POST https://swarmmemo.com/@oracle/forecast"
-	trustRows(t, s, map[string][3]any{account: {"domain:oracle.example", int64(3), int64(250)}, keyID(rootmate): {"domain:oracle.example", int64(3), int64(0)},
-		keyID(r1): {keyID(r1), int64(2), int64(900)}})
+	trustRows(t, s, map[string][2]any{account: {"domain:oracle.example", int64(250)}, keyID(rootmate): {"domain:oracle.example", int64(0)},
+		keyID(r1): {keyID(r1), int64(900)}, keyID(r2): {keyID(r2), int64(300)}, keyID(r3): {keyID(r3), int64(300)}, keyID(funded): {keyID(funded), int64(300)}})
 
 	// The agent: two judges at first (thin), then a third.
 	run(t, s, reviewPost(t, r1, agentURI, map[string]any{"verdict": "good", "dimensions": map[string]int{"good": 90}}, ""))
@@ -141,7 +138,7 @@ func TestReputationIsItsParts(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatal(ok, err)
 	}
-	standing, err := trust.CurrentStanding(testContext, tx, account)
+	standing, _, err := trust.CurrentStanding(testContext, tx, account, trust.DefaultParams(), now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,9 +156,9 @@ func TestReputationIsItsParts(t *testing.T) {
 	if want := scoreOf(append(pa, po...), na+no); rep.Reviewed.ReputationScore != want || want.Judgements != 5 {
 		t.Fatalf("reviewed %+v, want %+v", rep.Reviewed.ReputationScore, want)
 	}
-	// Accountable: the current run's tier and standing.
-	if a := rep.Accountable; a.Tier != int64(score.Tier) || a.TierName != "signed" || a.StandingCents != standing.StandingCents || a.StandingCents != 250 ||
-		a.FakeCost != standing.FakeCost || a.Band != standing.Band || a.Run != 1 {
+	// Accountable: the current run's standing and its band.
+	if a := rep.Accountable; a.Band != score.Band.Name() || a.Band != "proven" || a.StandingCents != standing.StandingCents || a.StandingCents != 250 ||
+		a.FakeCost != standing.FakeCost || a.Band != standing.Band || a.Run != standing.Run || a.Run == 0 {
 		t.Fatalf("accountable %+v, standing %+v", a, standing)
 	}
 	// Delivered: the work record.
@@ -174,11 +171,11 @@ func TestReputationIsItsParts(t *testing.T) {
 	for _, b := range rep.BackedBy.Backers {
 		got[b.Account] = b
 	}
-	if rep.BackedBy.Count != 2 || len(got) != 2 || got[keyID(r1)].Act != judge.ActVouch || got[keyID(r1)].TierName != "proven" || got[keyID(r2)].Act != judge.ActReview ||
+	if rep.BackedBy.Count != 2 || len(got) != 2 || got[keyID(r1)].Act != judge.ActVouch || got[keyID(r1)].Band != "trusted" || got[keyID(r2)].Act != judge.ActReview ||
 		rep.BackedBy.Backers[0].Account != keyID(r1) || rep.BackedBy.Backers[0].WeightPPM <= rep.BackedBy.Backers[1].WeightPPM {
 		t.Fatalf("backed by %+v", rep.BackedBy)
 	}
-	if rep.Line != "Accountable: signed · Reviewed 5 · Delivered 0 accepted · 0 paid · Backed by 2" || rep.Line != strings.Join(rep.Parts(), " · ") {
+	if rep.Line != "Accountable: proven (about $2.50 to fake) · Reviewed 5 · Delivered 0 accepted · 0 paid · Backed by 2" || rep.Line != strings.Join(rep.Parts(), " · ") {
 		t.Fatalf("line %q", rep.Line)
 	}
 
@@ -223,7 +220,7 @@ func TestReputationIsItsParts(t *testing.T) {
 			hit = &h
 		}
 	}
-	if hit == nil || !reflect.DeepEqual(hit.Reputation, round.Mark()) || hit.Reputation.Backers != 2 || hit.Reputation.Tier != "signed" || hit.Reputation.Score != round.Reviewed.Score {
+	if hit == nil || !reflect.DeepEqual(hit.Reputation, round.Mark()) || hit.Reputation.Backers != 2 || hit.Reputation.Band != "proven" || hit.Reputation.Score != round.Reviewed.Score {
 		t.Fatalf("find hit %+v", hit)
 	}
 }
@@ -235,10 +232,10 @@ func TestReputationEmpty(t *testing.T) {
 	register(t, s, key)
 	rep := readReputation(t, s, keyID(key))
 	if rep.Reviewed.Score != judge.Neutral || !rep.Reviewed.Thin || rep.Reviewed.Sells != nil || len(rep.Reviewed.Owned) != 0 || rep.BackedBy.Count != 0 ||
-		rep.Accountable.Tier != int64(allowance.TierSigned) || rep.Accountable.Run != 0 || rep.Delivered == nil {
+		rep.Accountable.Band != "signed" || rep.Accountable.Run != 0 || rep.Delivered == nil {
 		t.Fatalf("empty reputation %+v", rep)
 	}
-	if rep.Line != "Accountable: signed · Reviewed 0 (thin) · Delivered 0 accepted · 0 paid · Backed by 0" {
+	if rep.Line != "Accountable: signed (about $0.00 to fake) · Reviewed 0 (thin) · Delivered 0 accepted · 0 paid · Backed by 0" {
 		t.Fatalf("line %q", rep.Line)
 	}
 }
@@ -262,7 +259,8 @@ func TestOwnRootExclusionIsOneRule(t *testing.T) {
 	account := keyID(seller)
 	agentURI := "agent:" + account
 	const offeringURI = "x402:POST https://swarmmemo.com/@augur/forecast"
-	trustRows(t, s, map[string][3]any{account: {"domain:augur.example", int64(3), int64(250)}, keyID(rootmate): {"domain:augur.example", int64(3), int64(0)}})
+	trustRows(t, s, map[string][2]any{account: {"domain:augur.example", int64(250)}, keyID(rootmate): {"domain:augur.example", int64(300)},
+		keyID(r1): {keyID(r1), int64(300)}, keyID(r2): {keyID(r2), int64(300)}, keyID(r3): {keyID(r3), int64(300)}})
 	for _, uri := range []string{agentURI, offeringURI} {
 		run(t, s, reviewPost(t, r1, uri, map[string]any{"verdict": "good", "dimensions": map[string]int{"good": 70}}, ""))
 		run(t, s, reviewPost(t, r2, uri, map[string]any{"verdict": "mixed"}, ""))
@@ -353,46 +351,5 @@ func TestOwnRootExclusionIsOneRule(t *testing.T) {
 	}
 	if after := reputationJSON(t, readReputation(t, s, account)); after != reputationJSON(t, rep) {
 		t.Fatalf("hiding own-root reviews moved the reputation:\n%s\n%s", reputationJSON(t, rep), after)
-	}
-}
-
-// C312: the public backer list reads only public independence facts. With
-// signal links on (standing.signal_link_days) and a backer that wrote from
-// the agent's own network and client, the list is what it is without them:
-// a missing backer never reveals a private link.
-func TestReputationBackersIgnoreSignalLinks(t *testing.T) {
-	s := reputationTestStore(t)
-	seller, backer := keyFor(175), keyFor(176)
-	for i, k := range []ed25519.PrivateKey{seller, backer} {
-		if _, err := writeAt(t, s, "203.0.113.40", "command", "ring/1", signed(k, Command{Operation: "agent.register", Handle: []string{"vesper", "lantern"}[i]})); err != nil {
-			t.Fatal(err)
-		}
-	}
-	seasoned(t, s, backer)
-	account := keyID(seller)
-	if _, err := vouchAs(s, backer, account, `{"schema":1,"value":1}`, randomID()); err != nil {
-		t.Fatal(err)
-	}
-	off := reputationJSON(t, readReputation(t, s, account).BackedBy)
-
-	// The link exists: the trust run's own reader names the pair.
-	var links []trust.Record
-	if err := (trustInputs{s}).readSignalLinks(testContext, s.now().Unix()+1, 30, func(r trust.Record) error { links = append(links, r); return nil }); err != nil {
-		t.Fatal(err)
-	}
-	if len(links) != 1 {
-		t.Fatalf("signal links %+v", links)
-	}
-	p := trust.DefaultParams()
-	if p.Standing == nil {
-		t.Fatal("default params have no standing section")
-	}
-	p.Standing.SignalLinkDays = 30
-	s.trust.params.mu.Lock()
-	s.trust.params.p, s.trust.params.at = &p, s.now().Unix()
-	s.trust.params.mu.Unlock()
-	on := readReputation(t, s, account).BackedBy
-	if reputationJSON(t, on) != off || on.Count != 1 || on.Backers[0].Account != keyID(backer) {
-		t.Fatalf("signal links moved the public backers:\n%s\n%s", off, reputationJSON(t, on))
 	}
 }

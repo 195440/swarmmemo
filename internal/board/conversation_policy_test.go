@@ -110,7 +110,7 @@ func TestInboundConditions(t *testing.T) {
 
 	// trust_at_least: false while trust is off; then the latest run's
 	// collateral against the proven line or a number.
-	exec("INSERT INTO trust_runs(id,state,as_of,params_version,started_at,finished_at,inputs) VALUES(1,'done',?,1,?,?,'{}')", testTime, testTime, testTime)
+	exec("INSERT INTO trust_runs(id,state,as_of,params_version,started_at,finished_at,inputs) VALUES(1,'done',?,8,?,?,'{}')", testTime, testTime, testTime)
 	for _, row := range []struct {
 		key        ed25519.PrivateKey
 		collateral int64
@@ -271,7 +271,7 @@ func TestPostageHeldRefundedAndKept(t *testing.T) {
 	s := ledgerTest(t, LedgerOn)
 	sender, accepter, decliner, silent := keyFor(1), keyFor(2), keyFor(3), keyFor(4)
 	registerAll(t, s, sender, accepter, decliner, silent)
-	setAnonCredit(t, s, 1, 1) // a day's credit for signed agents too
+	setAnonCredit(t, s, 100, 1) // a day's credit for signed agents (the floor), none for anonymous calls
 	open := func(room string, to ed25519.PrivateKey) {
 		t.Helper()
 		run(t, s, signed(sender, Command{Operation: "conversation.open", Room: room, Members: []string{keyID(to)}, Data: `{"schema":1,"kind":"dm","postage":7}`}))
@@ -322,7 +322,7 @@ func TestPostageHeldRefundedAndKept(t *testing.T) {
 // inside its deadline while a health ping waits for the one connection.
 func TestConversationsNeverTouchThePoolInsideATransaction(t *testing.T) {
 	c := updatesConfig()
-	c.Features = Features{Ledger: LedgerOn, Trust: TrustShadow}
+	c.Features = Features{Ledger: LedgerOn, Trust: TrustOn}
 	s := openTest(t, c)
 	sender, recipient := keyFor(1), keyFor(2)
 	registerAll(t, s, sender, recipient)

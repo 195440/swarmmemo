@@ -9,361 +9,83 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"testing"
 )
 
 var updateGolden = flag.Bool("update", false, "rewrite internal/trust/testdata golden files")
 
-// goldenSnapshot is the recomputability fixture (§4.8): the compiled-in
-// parameters (seed set A) plus one service account, and inputs that exercise
-// every part of a run: both seed sets, domain and history proofs, replies,
-// votes (signed, legacy, unsigned, down), vouches, a breaker, a funnel with
-// liability, an earlier penalty and a sponsorship that earns a dividend.
-func goldenSnapshot() Snapshot {
+// goldenUnifiedSnapshot is RFC 0021's recomputability fixture (parameter
+// version 8): every input a run reads. Proofs of each priced kind (a domain
+// with its age and rank, a wallet shared by two roots, a GitHub id, proof of
+// work), money paid here, independent and dependent payments with a payout
+// address, replies, votes (signed, unsigned, down), vouches, work accepts,
+// witness verdicts, reviews of agents and of an owned subject, a breaker, a
+// funnel, a carry from a previous run (money, time present, a fading
+// account, backing), and the penalty log: an applied entry with a burn and
+// a liability, a lifted entry and a pending moderation entry.
+// testdata/golden_inputs.jsonl and friends are the retired versions' frozen
+// fixtures, which only scripts/trust/test_recompute.py still verifies.
+func goldenUnifiedSnapshot() Snapshot {
 	b := newBuilder()
-	b.snap.Params = paramsV1()
-	b.snap.Params.ServiceAccounts = []string{acct("steward")}
-	b.snap.Meta = Meta{Schema: 1, AsOf: testAsOf, PriorRuns: 30, EventsSeq: 5000, EndorsementsSeq: 400, LedgerSeq: 900}
-	seeds := DefaultParams().Seeds
-	first := map[string]string{} // each account's newest post
-	add := func(a string, daysAgo, active int64, prior int64) {
-		b.snap.Accounts = append(b.snap.Accounts, Record{Type: "account", Account: a, FirstSeen: testAsOf - daysAgo*day})
-		for d := int64(1); d <= active; d++ {
-			b.post++
-			id := "post" + strconv.Itoa(b.post)
-			if d == 1 {
-				first[a] = id
-			}
-			b.snap.Posts = append(b.snap.Posts, Record{Type: "post", ID: id, Account: a, CreatedAt: testAsOf - d*day + 7200})
-		}
-		if prior > 0 {
-			b.snap.Priors = append(b.snap.Priors, Record{Type: "prior", Account: a, FlowSum: prior * 30, Standing: true})
-		}
+	for _, name := range []string{"alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi", "ivan", "judy", "mallory", "oscar", "peggy", "trent"} {
+		b.account(name, 60)
 	}
-	end := func(kind, from, to, msg string, value, daysAgo int64, sponsor bool) {
-		b.seq++
-		b.snap.Endorsements = append(b.snap.Endorsements, Record{Type: "endorsement", Seq: b.seq, Kind: kind, Voter: from, Target: to, MessageID: msg,
-			Value: value, Sponsor: sponsor, CreatedAt: testAsOf - daysAgo*day - 300})
+	b.domain("alice", "alice.example", 900, 120).github("alice", "1001", 250).pay("alice", 1200, 40)
+	b.wallet("bob", "0xb0b", 450).pay("bob", 300, 12)
+	b.wallet("carol", "0xc4", 600).wallet("dave", "0xc4", 600) // one wallet, two accounts: one root
+	b.snap.Proofs = append(b.snap.Proofs, Record{Type: "proof", Account: acct("erin"), Kind: "pow", LinkValue: "pow", State: "verified", CreatedAt: ago(30), CheckedAt: ago(2),
+		Root: "pow:" + acct("erin"), Assessed: 50_000_000})
+	b.link("frank", "erin")
+	b.pay("grace", 900, 3).pay("heidi", 150, 100).pay("judy", 80, 5)
+	b.payTo("alice", "bob", 400, 20, "").payTo("bob", "alice", 50, 18, "")          // a path back: counts 0
+	b.payTo("grace", "heidi", 300, 9, "0x4e1d1").payTo("alice", "ivan", 200, 7, "") // independent
+	b.reply("alice", "bob", 2).reply("bob", "carol", 3).reply("grace", "judy", 1).reply("grace", "judy", 4).reply("heidi", "ivan", 2)
+	b.vote("alice", "grace", 1).vote("bob", "heidi", 2).vote("carol", "ivan", 5).endorse("vote", "dave", "ivan", -1, 3)
+	b.snap.Endorsements = append(b.snap.Endorsements, Record{Type: "endorsement", Seq: 9000, Kind: "unsigned", Voter: acct("oscar"), Target: acct("alice"),
+		MessageID: b.postBy("alice", 3), Value: 1, CreatedAt: ago(2)})
+	b.vouch("grace", "judy", 6).vouch("alice", "heidi", 8).endorse("vouch", "bob", "heidi", 0, 4)
+	b.accept("alice", "judy", 3).accept("grace", "ivan", 10)
+	b.snap.Acts = append(b.snap.Acts, Record{Type: "edge", Kind: "witness", ID: "link:1", From: acct("bob"), To: acct("carol"), CreatedAt: ago(6), Value: 1},
+		Record{Type: "edge", Kind: "witness", ID: "link:1", From: acct("heidi"), To: acct("carol"), CreatedAt: ago(5), Value: -1})
+	for i, who := range []string{"alice", "bob", "grace", "heidi", "judy"} {
+		b.review(who, "ivan", int64(60+8*i), []string{"paid_use", "work", "observed", "free_use", "opinion"}[i], int64(20-i*3))
 	}
-	reply := func(from, to, parent string, daysAgo int64) {
-		b.post++
-		b.snap.Posts = append(b.snap.Posts, Record{Type: "post", ID: "post" + strconv.Itoa(b.post), Account: from, CreatedAt: testAsOf - daysAgo*day + 600,
-			ReplyTo: parent, ReplyToAccount: to})
+	b.review("ivan", "judy", 30, "work", 4)
+	b.snap.Reviews = append(b.snap.Reviews, Record{Type: "review", ID: "r-sub", Account: acct("bob"), Target: "subject:s1", Value: 85, Kind: "paid_use", LinkValue: "competitor",
+		State: "good", CreatedAt: ago(7)})
+	b.snap.Owners = append(b.snap.Owners, Record{Type: "owner", Target: "subject:s1", Account: acct("grace")})
+	b.snap.Breakers = append(b.snap.Breakers, Record{Type: "breaker", Account: acct("peggy"), StartedAt: ago(2), TrustUntil: testAsOf + 5*day})
+	b.vote("peggy", "alice", 1)
+	// A funnel: five farm keys send their unspent allowance to mallory.
+	for i := 0; i < 5; i++ {
+		f := "farm" + string(rune('a'+i))
+		b.snap.Claims = append(b.snap.Claims, Record{Type: "claim", Account: acct(f), Day: dayOf(testAsOf) - 2, Claimed: 4096, Spent: 1})
+		b.transfer(f, "mallory", 4000, 2)
 	}
-	domain := func(a, name string, checkedAgo int64) {
-		b.snap.Proofs = append(b.snap.Proofs, Record{Type: "proof", Account: a, Kind: "domain", LinkValue: name, State: "verified",
-			CreatedAt: testAsOf - 120*day, CheckedAt: testAsOf - checkedAgo*day})
-	}
-	for i, s := range seeds {
-		add(s, 100, 12, 20)
-		if i > 0 {
-			end("vouch", seeds[i-1], s, "", 1, int64(i), false)
-		}
-	}
-	// Three anchors (seed set B): a verified domain each, a history of posts
-	// drawing replies from seeds, old and active.
-	anchors := []string{acct("anchor0"), acct("anchor1"), acct("anchor2")}
-	for i, a := range anchors {
-		add(a, 60, 8, 15)
-		domain(a, "anchor"+strconv.Itoa(i)+".example", 2)
-		end("vouch", seeds[i], a, "", 1, 3, false)
-		end("vouch", a, anchors[(i+1)%3], "", 1, 2, false)
-	}
-	// Replies from seeds to anchors' posts qualify history days.
-	for _, r := range b.snap.Posts {
-		for i, a := range anchors {
-			if r.Account == a && r.ReplyTo == "" && r.CreatedAt > testAsOf-6*day {
-				reply(seeds[i], a, r.ID, (testAsOf-r.CreatedAt)/day)
-			}
-		}
-	}
-	regular := []string{acct("alice"), acct("bob"), acct("carol"), acct("dave")}
-	for i, a := range regular {
-		add(a, 40, int64(3+i), int64(4*i))
-	}
-	end("vote", seeds[0], regular[0], first[regular[0]], 1, 0, false)
-	end("vote", anchors[0], regular[0], first[regular[0]], 1, 0, false)
-	end("vouch", regular[0], regular[1], "", 1, 6, false)
-	end("vote", regular[1], regular[2], first[regular[2]], 1, 0, false)
-	end("vote", regular[1], regular[2], first[regular[2]], -1, 0, false) // changed to a down vote
-	end("legacy_vote", seeds[1], regular[3], first[regular[3]], 1, 0, false)
-	end("unsigned", seeds[2], regular[3], first[regular[3]], 1, 0, false)
-	reply(regular[2], regular[0], first[regular[0]], 0)
-	reply(regular[2], regular[0], first[regular[0]], 0) // one edge per (U, X, day)
-	domain(regular[1], "shop.bob.co.uk", 3)
-	domain(regular[1], "bob.co.uk", 3) // same root: saturates
-	domain(regular[3], "dave.example", 45)
-	b.snap.Proofs = append(b.snap.Proofs,
-		Record{Type: "proof", Account: regular[2], Kind: "ed25519", LinkValue: "k", State: "proof_attached", CreatedAt: testAsOf - 30*day, LinkAccount: regular[3]},
-		Record{Type: "proof", Account: regular[0], Kind: "url", LinkValue: "https://alice.example/", State: "claimed", CreatedAt: testAsOf - 30*day})
-	// The steward is a service account: its vouch is no edge.
-	add(acct("steward"), 200, 20, 0)
-	end("vouch", acct("steward"), regular[3], "", 1, 1, false)
-	// A breaker resets carol's outbound edges.
-	b.snap.Breakers = append(b.snap.Breakers, Record{Type: "breaker", Account: regular[2], StartedAt: testAsOf - 2*day, TrustUntil: testAsOf + 28*day})
-	// A funnel: six fresh keys forward their claims to one collector that
-	// bob endorsed.
-	collector := acct("collector")
-	add(collector, 10, 3, 0)
-	end("vouch", regular[1], collector, "", 1, 4, false)
-	for i := 0; i < 6; i++ {
-		f := acct("farm" + strconv.Itoa(i))
-		add(f, 5, 1, 0)
-		b.snap.Transfers = append(b.snap.Transfers, Record{Type: "transfer", From: f, To: collector, Amount: 4000, CreatedAt: testAsOf - 3*day})
-		b.snap.Claims = append(b.snap.Claims, Record{Type: "claim", Account: f, Day: dayOf(testAsOf) - 3, Claimed: 4194304, Spent: 64})
-	}
-	// An earlier penalty still running.
-	b.snap.Penalties = append(b.snap.Penalties, Record{Type: "penalty", Account: regular[3], Evidence: "funnel-0123456789abcdef01234567", FractionPPM: 250000, EndsAt: testAsOf + 5*day})
-	// A sponsorship: seed 4 sponsors a newcomer that others endorse too.
-	newcomer := acct("newcomer")
-	add(newcomer, 3, 3, 0)
-	end("vouch", seeds[4], newcomer, "", 1, 2, true)
-	end("vouch", anchors[1], newcomer, "", 1, 1, false)
-	b.snap.Sponsorships = append(b.snap.Sponsorships, Record{Type: "sponsorship", Invitee: newcomer, SponsorOf: seeds[4], HighWater: 0})
+	b.transfer("trent", "oscar", 10, 30)
+	// The previous run's carry.
+	D := dayOf(testAsOf)
+	b.snap.Carry = []Record{{Type: "carry", Kind: "run", AsOf: testAsOf - day}}
+	b.carryWorld("alice", CarryAccount{Money: 1200 * mc, Time: 90 * mc, LastActive: D - 2, Direct: 1650, Standing: 750, Backed: 30 * mc})
+	b.carryWorld("heidi", CarryAccount{Money: 150 * mc, LastActive: D - 140, FadePPM: 950000, Direct: 140, Standing: 140})
+	b.carryWorld("grace", CarryAccount{Time: 40 * mc, LastActive: D - 1, Direct: 0, Standing: 40})
+	// The penalty log.
+	b.snap.Penalties = append(b.snap.Penalties,
+		Record{Type: "penalty", ID: "ring-old", Kind: TriggerRing, Account: acct("trent"), CreatedAt: ago(10), EndsAt: ago(10) + 30*day, Value: 1, State: "applied", Evidence: "ring of 3"},
+		Record{Type: "penalty", ID: "override-x", Kind: TriggerOverride, Account: acct("oscar"), CreatedAt: ago(20), EndsAt: ago(20) + 30*day, Value: 1, State: "applied", Evidence: "mistake"},
+		Record{Type: "penalty", ID: "moderation-1", Kind: TriggerModeration, Account: acct("mallory"), CreatedAt: ago(1), State: "pending", Evidence: "post m1 (phishing)"})
+	b.snap.Burns = append(b.snap.Burns, Record{Type: "burn", ID: "ring-old", Root: "github:666"})
+	b.snap.Liabilities = append(b.snap.Liabilities, Record{Type: "liability", ID: "ring-old", Account: acct("peggy"), FractionPPM: 375000, CreatedAt: ago(10), EndsAt: ago(10) + 30*day, Value: 1})
+	b.snap.Lifts = append(b.snap.Lifts, Record{Type: "lift", ID: "override-x", CreatedAt: ago(15)})
+	b.snap.Meta.EventsSeq, b.snap.Meta.EndorsementsSeq, b.snap.Meta.LedgerSeq = 812, 9000, 77
 	return b.snap
 }
 
-// goldenStandingV2Snapshot is the standing fixture of parameter version 2
-// (phase 1A, published in 1.75.0): the golden inputs plus every standing
-// input: work.accept and witness edges, a down vote (already in the golden
-// inputs), credit spent, a spend-only account, a service account's spend
-// (ignored), and a penalised account. Its output is frozen: version 2 runs
-// recompute byte for byte.
-func goldenStandingV2Snapshot() Snapshot {
-	snap := goldenSnapshot()
-	p := paramsV2()
-	p.ServiceAccounts = snap.Params.ServiceAccounts
-	snap.Params = p
-	seeds := p.Seeds
-	alice, bob, carol, dave := acct("alice"), acct("bob"), acct("carol"), acct("dave")
-	D := dayOf(testAsOf)
-	snap.Acts = append(snap.Acts,
-		Record{Type: "edge", Kind: "work_accept", ID: "w1", From: acct("anchor0"), To: alice, CreatedAt: testAsOf - 3*day},
-		Record{Type: "edge", Kind: "work_accept", ID: "w2", From: bob, To: acct("newcomer"), CreatedAt: testAsOf - 2*day},
-		Record{Type: "edge", Kind: "work_accept", ID: "w3", From: alice, To: alice, CreatedAt: testAsOf - 2*day}, // self: no edge
-		Record{Type: "edge", Kind: "witness", From: seeds[2], To: dave, CreatedAt: testAsOf - day},
-		Record{Type: "edge", Kind: "witness", From: seeds[3], To: carol, CreatedAt: testAsOf + day}) // after the as-of time
-	snap.Spends = append(snap.Spends,
-		Record{Type: "spend", Account: bob, Day: D - 10, Amount: 2000000},
-		Record{Type: "spend", Account: carol, Day: D - 1, Amount: 50000},
-		Record{Type: "spend", Account: acct("payer"), Day: D - 30, Amount: 5000000},
-		Record{Type: "spend", Account: acct("steward"), Day: D - 1, Amount: 9000000},
-		Record{Type: "spend", Account: alice, Day: D, Amount: 7000000}) // today: not yet
-	return snap
-}
-
-// goldenStandingV3Snapshot is the standing fixture of parameter version 3
-// (the simulation's fixes): version 2's inputs under version 3, plus what
-// rule 1 reads: spend over the cap, self-dealt spend (to an account in the
-// spender's root, to a host on the spender's verified domain, to an account
-// the spender funded by a transfer within funded_days, and recycled through
-// a bounty reward), spend to an unrelated payee (counted), and domains with
-// and without a known registration date. Its output is frozen: version 3
-// runs recompute byte for byte.
-func goldenStandingV3Snapshot() Snapshot {
-	snap := goldenStandingV2Snapshot()
-	p := paramsV3()
-	p.ServiceAccounts = snap.Params.ServiceAccounts
-	snap.Params = p
-	alice, bob, carol, dave := acct("alice"), acct("bob"), acct("carol"), acct("dave")
-	payer, collector := acct("payer"), acct("collector")
-	D := dayOf(testAsOf)
-	for i, r := range snap.Proofs {
-		switch {
-		case r.Kind == "domain" && r.LinkValue == "anchor0.example":
-			snap.Proofs[i].RegisteredAt = testAsOf - 3*365*day // old: full price from day one
-		case r.Kind == "domain" && r.LinkValue == "bob.co.uk":
-			snap.Proofs[i].RegisteredAt = testAsOf - 20*day
-		}
-	}
-	snap.Transfers = append(snap.Transfers,
-		Record{Type: "transfer", From: payer, To: carol, Amount: 500000, CreatedAt: testAsOf - 20*day}, // payer funded carol
-		Record{Type: "transfer", From: dave, To: alice, Amount: 300000, CreatedAt: testAsOf - 40*day})  // too old to count
-	snap.Spends = append(snap.Spends,
-		Record{Type: "spend", Account: payer, Day: D - 2, Amount: 3000000, To: carol},                     // funded payee: self-dealt
-		Record{Type: "spend", Account: carol, Day: D - 2, Amount: 3000000, To: payer},                     // and back: self-dealt
-		Record{Type: "spend", Account: bob, Day: D - 3, Amount: 1000000, LinkValue: "api.shop.bob.co.uk"}, // own domain: self-dealt
-		Record{Type: "spend", Account: carol, Day: D - 4, Amount: 1000000, To: dave},                      // carol's root holds dave's key: self-dealt
-		Record{Type: "spend", Account: dave, Day: D - 5, Amount: 400000, To: alice},                       // funded 40 days ago: counts
-		Record{Type: "spend", Account: collector, Day: D - 1, Amount: 900000, LinkValue: "api.unrelated.example"},
-		Record{Type: "spend", Account: acct("steward"), Day: D - 1, Amount: 100000, To: alice}) // service: ignored
-	return snap
-}
-
-// goldenStandingV4Snapshot is the standing fixture of parameter version 4
-// (absolute weights): version 3's inputs under version 4, plus what rule 2
-// reads: vouches with a chosen weight (the cap, one over it, clamped, and one
-// under the default), a repeated vote on one pair (saturating at twice one
-// act) and a voter with many out-edges. Its output is frozen: version 4 runs
-// recompute byte for byte.
-func goldenStandingV4Snapshot() Snapshot {
-	snap := goldenStandingV3Snapshot()
-	p := paramsV4()
-	p.ServiceAccounts = snap.Params.ServiceAccounts
-	snap.Params = p
-	alice, bob, carol, dave := acct("alice"), acct("bob"), acct("carol"), acct("dave")
-	seq := int64(0)
-	for _, r := range snap.Endorsements {
-		seq = max(seq, r.Seq)
-	}
-	end := func(kind, from, to, msg string, weight, daysAgo int64) {
-		seq++
-		snap.Endorsements = append(snap.Endorsements, Record{Type: "endorsement", Seq: seq, Kind: kind, Voter: from, Target: to, MessageID: msg,
-			Value: 1, Weight: weight, CreatedAt: testAsOf - daysAgo*day - 900})
-	}
-	seeds := p.Seeds
-	end("vouch", seeds[0], alice, "", 50, 2) // the cap
-	end("vouch", seeds[1], bob, "", 80, 2)   // over the cap: counts as 50
-	end("vouch", alice, carol, "", 3, 4)     // under the default
-	end("vouch", alice, dave, "", 0, 5)      // no weight: the default
-	var posts []string
-	for _, r := range snap.Posts {
-		if r.Account == dave && r.ReplyTo == "" {
-			posts = append(posts, r.ID)
-		}
-	}
-	for i, id := range posts { // repeated votes on one pair saturate
-		end("vote", seeds[3], dave, id, 0, int64(i))
-	}
-	for _, r := range snap.Accounts { // a voter with many out-edges
-		if r.Account != seeds[5] && r.Account != acct("newcomer") {
-			end("vote", seeds[5], r.Account, "many-"+r.Account[:8], 0, 1)
-		}
-	}
-	return snap
-}
-
 func TestGoldenFixture(t *testing.T) {
-	testGolden(t, "golden", goldenSnapshot)
-	testGolden(t, "golden_standing_v2", goldenStandingV2Snapshot)
-	testGolden(t, "golden_standing_v3", goldenStandingV3Snapshot)
-	testGolden(t, "golden_standing_v4", goldenStandingV4Snapshot)
-	testGolden(t, "golden_standing_v5", goldenStandingV5Snapshot)
-	testGolden(t, "golden_standing", goldenStandingSnapshot)
-	testGolden(t, "golden_judgements", goldenJudgementsSnapshot)
-}
-
-// goldenJudgementsSnapshot is the fixture of parameter version 7 (rule 4,
-// RFC 0020 is the rule, C303b): version 6's inputs under JudgementsParams,
-// plus reviews of an owned subject (one by its owner, one low) and the
-// previous run's carry: an escrow, judgements in the window with their c0
-// and two that left it (a loss and a gain), a balance, a debt and a gain
-// still owed.
-func goldenJudgementsSnapshot() Snapshot {
-	snap := goldenStandingSnapshot()
-	p := JudgementsParams()
-	p.ServiceAccounts, p.Seeds = snap.Params.ServiceAccounts, snap.Params.Seeds
-	snap.Params = p
-	alice, bob, carol, dave := acct("alice"), acct("bob"), acct("carol"), acct("dave")
-	seeds := p.Seeds
-	subject := "subject:golden-offering"
-	snap.Owners = append(snap.Owners, Record{Type: "owner", Target: subject, Account: dave})
-	review := func(id, from string, x, daysAgo int64, class string) {
-		snap.Reviews = append(snap.Reviews, Record{Type: "review", ID: id, Account: from, Target: subject, Value: x, Kind: class, LinkValue: "customer",
-			State: "good", CreatedAt: testAsOf - daysAgo*day})
-	}
-	review("g1", seeds[0], 85, 20, "paid_use")
-	review("g2", seeds[1], 80, 15, "free_use")
-	review("g3", seeds[2], 90, 10, "paid_use")
-	review("g4", bob, 10, 9, "opinion")
-	review("g5", seeds[3], 88, 5, "paid_use")
-	review("g6", dave, 100, 4, "paid_use") // the owner's: no judgement
-	carry := &JudgementCarry{AsOf: testAsOf - 7*day, Escrow: 1234,
-		Judgements: []CarriedJudgement{
-			{ID: "review:g1", Author: seeds[0], At: testAsOf - 20*day, C0: 50, Raw: 900},
-			{ID: "review:gone-loss", Author: carol, At: testAsOf - 95*day, C0: 60, Raw: -2500},
-			{ID: "review:gone-gain", Author: alice, At: testAsOf - 93*day, C0: 40, Raw: 4000},
-		},
-		Balances: []CarriedBalance{{Account: alice, Amount: 7000}, {Account: bob, Amount: -9000}}, // with the escrow: −766 ≤ 0
-		Owed:     []CarriedOwed{{ID: "review:older", Author: seeds[4], Amount: 500}},
-	}
-	snap.Carry = carry.Records()
-	return snap
-}
-
-// goldenStandingV5Snapshot is the standing fixture of parameter version 5
-// (the assessed roots, C144): version 4's inputs under version 5, plus
-// wallet, github and pow proofs: counted, capped, saturating, stale,
-// unverified, a record without a root, and one wallet root claimed by two
-// accounts (its seed is split between them, never multiplied). Its output
-// is frozen: version 5 runs recompute byte for byte.
-func goldenStandingV5Snapshot() Snapshot {
-	snap := goldenStandingV4Snapshot()
-	p := paramsV5()
-	p.ServiceAccounts = snap.Params.ServiceAccounts
-	snap.Params = p
-	alice, bob, carol, dave := acct("alice"), acct("bob"), acct("carol"), acct("dave")
-	fresh, stale := int64(testAsOf-2*day), int64(testAsOf-40*day)
-	wallet := "wallet:eip155:1:0x00000000000000000000000000000000000000aa"
-	snap.Proofs = append(snap.Proofs,
-		Record{Type: "proof", Account: alice, Kind: "wallet", LinkValue: "0x00000000000000000000000000000000000000AA", State: "verified", CreatedAt: testAsOf - 10*day, CheckedAt: fresh, Root: wallet, Assessed: 450},
-		Record{Type: "proof", Account: bob, Kind: "wallet", LinkValue: "0x00000000000000000000000000000000000000AA", State: "verified", CreatedAt: testAsOf - 5*day, CheckedAt: fresh, Root: wallet, Assessed: 450},
-		Record{Type: "proof", Account: carol, Kind: "wallet", LinkValue: "0x00000000000000000000000000000000000000bb", State: "verified", CreatedAt: testAsOf - 5*day, CheckedAt: fresh, Root: "wallet:eip155:1:0x00000000000000000000000000000000000000bb", Assessed: 90000},
-		Record{Type: "proof", Account: alice, Kind: "github", LinkValue: "alice-gh", State: "verified", CreatedAt: testAsOf - 3*day, CheckedAt: fresh, Root: "github:101", Assessed: 241},
-		Record{Type: "proof", Account: carol, Kind: "github", LinkValue: "carol-gh", State: "verified", CreatedAt: testAsOf - 60*day, CheckedAt: stale, Root: "github:102", Assessed: 280},
-		Record{Type: "proof", Account: dave, Kind: "github", LinkValue: "dave-gh", State: "claimed", CreatedAt: testAsOf - day},
-		Record{Type: "proof", Account: dave, Kind: "wallet", LinkValue: "0x00000000000000000000000000000000000000cc", State: "verified", CreatedAt: testAsOf - day, CheckedAt: fresh, Assessed: 10},
-		Record{Type: "proof", Account: bob, Kind: "pow", LinkValue: "sha256", State: "verified", CreatedAt: testAsOf - 20*day, CheckedAt: fresh, Root: "pow:" + bob, Assessed: 2158000 * 25},
-		Record{Type: "proof", Account: dave, Kind: "pow", LinkValue: "sha256", State: "verified", CreatedAt: testAsOf - 20*day, CheckedAt: fresh, Root: "pow:" + dave, Assessed: 1 << 40})
-	return snap
-}
-
-// goldenStandingSnapshot is the standing fixture of the current version (6,
-// endorsements as stakes): version 5's inputs under DefaultParams, plus what
-// rule 3 reads: witness verdicts on claims (verified and failed, from
-// independent and linked witnesses, and one nobody else checked), early and
-// late votes on posts, a vouch for the penalised account, an accepted work
-// item, and a transfer that links two voters.
-func goldenStandingSnapshot() Snapshot {
-	snap := goldenStandingV5Snapshot()
-	p := DefaultParams()
-	p.ServiceAccounts = snap.Params.ServiceAccounts
-	snap.Params = p
-	alice, bob, carol, dave := acct("alice"), acct("bob"), acct("carol"), acct("dave")
-	seeds := p.Seeds
-	snap.Acts = append(snap.Acts,
-		Record{Type: "edge", Kind: "witness", ID: "ed25519:k1", From: seeds[0], To: alice, Value: 1, CreatedAt: testAsOf - 6*day},
-		Record{Type: "edge", Kind: "witness", ID: "ed25519:k1", From: seeds[1], To: alice, Value: 1, CreatedAt: testAsOf - 5*day},
-		Record{Type: "edge", Kind: "witness", ID: "ed25519:k1", From: bob, To: alice, Value: -1, CreatedAt: testAsOf - 4*day},
-		Record{Type: "edge", Kind: "witness", ID: "domain:bad.example", From: carol, To: bob, Value: 1, CreatedAt: testAsOf - 6*day},
-		Record{Type: "edge", Kind: "witness", ID: "domain:bad.example", From: seeds[2], To: bob, Value: -1, CreatedAt: testAsOf - 3*day},
-		Record{Type: "edge", Kind: "witness", ID: "domain:bad.example", From: seeds[3], To: bob, Value: -1, CreatedAt: testAsOf - 2*day},
-		Record{Type: "edge", Kind: "witness", ID: "url:lonely", From: dave, To: carol, Value: 1, CreatedAt: testAsOf - 2*day},
-		Record{Type: "edge", Kind: "work_accept", ID: "w9", From: seeds[4], To: dave, CreatedAt: testAsOf - 7*day})
-	snap.Transfers = append(snap.Transfers, Record{Type: "transfer", From: seeds[1], To: seeds[2], Amount: 100000, CreatedAt: testAsOf - 3*day})
-	seq := int64(0)
-	for _, r := range snap.Endorsements {
-		seq = max(seq, r.Seq)
-	}
-	end := func(kind, from, to, msg string, minutesAgo int64) {
-		seq++
-		snap.Endorsements = append(snap.Endorsements, Record{Type: "endorsement", Seq: seq, Kind: kind, Voter: from, Target: to, MessageID: msg,
-			Value: 1, CreatedAt: testAsOf - minutesAgo*60})
-	}
-	var bobPost string
-	for _, r := range snap.Posts {
-		if r.Account == bob && r.ReplyTo == "" {
-			bobPost = r.ID
-			break
-		}
-	}
-	end("vote", carol, bob, bobPost, 3000) // early
-	for i, s := range seeds[:6] {          // later, independent
-		end("vote", s, bob, bobPost, int64(2000-100*i))
-	}
-	for _, r := range snap.Penalties { // a vouch for the penalised account
-		end("vouch", alice, r.Account, "", 5000)
-	}
-	return snap
-}
-
-func testGolden(t *testing.T, name string, build func() Snapshot) {
-	inPath := filepath.Join("testdata", name+"_inputs.jsonl")
-	outPath := filepath.Join("testdata", name+"_output.json")
+	inPath := filepath.Join("testdata", "golden_unified_inputs.jsonl")
+	outPath := filepath.Join("testdata", "golden_unified_output.json")
 	if *updateGolden {
-		snap := build()
+		snap := goldenUnifiedSnapshot()
 		var buf bytes.Buffer
 		if err := snap.WriteJSONL(&buf); err != nil {
 			t.Fatal(err)
@@ -400,79 +122,25 @@ func testGolden(t *testing.T, name string, build func() Snapshot) {
 		t.Fatal(err)
 	}
 	if got := out.Canonical(); !bytes.Equal(got, want) {
-		t.Fatalf("golden output changed; if intended, rerun with -update and bump the parameter or detector version\n got %.400s", got)
+		t.Fatalf("golden output changed; if intended, rerun with -update and bump the parameter or detector version\n got %.600s", got)
 	}
 	// The fixture must exercise what it claims to.
-	if !out.SeedsBUsed || len(out.Evidence) == 0 || len(out.Dividends) == 0 || len(out.Penalties) == 0 {
-		t.Fatalf("fixture coverage: seeds_b=%v evidence=%d dividends=%d penalties=%d", out.SeedsBUsed, len(out.Evidence), len(out.Dividends), len(out.Penalties))
-	}
-	if strings.HasPrefix(name, "golden_standing") {
-		if out.Standing == nil || out.Standing.Inputs["work_accept"] == 0 || out.Standing.Inputs["witness"] == 0 || out.Standing.Inputs["down_vote"] == 0 ||
-			out.Standing.Inputs["spend"] == 0 || len(out.Standing.LargestMoves) == 0 {
-			t.Fatalf("standing fixture coverage: %+v", out.Standing)
-		}
-		testRecomputePy(t, raw, out.Canonical())
-	} else if strings.HasPrefix(name, "golden_judgements") {
-		// Rule 4: recompute.py refuses it (test_recompute.py); the section
-		// is in the canonical output, with a final settlement and a carry.
-		j := out.Judgements
-		if out.Standing == nil || out.JudgementsShadow != nil || j == nil || j.Carry == nil || j.CarryIn == "" || len(j.Final) == 0 || len(j.Marks) == 0 ||
-			j.Edges.Endorse == 0 || j.Edges.Oppose == 0 || j.Settlement.Paid > j.Settlement.Forfeited || j.StandingMass > j.SeedMass {
-			t.Fatalf("judgements fixture coverage: %+v", j)
-		}
-	} else if out.Standing != nil {
-		t.Fatal("a version 1 run has a standing summary")
-	}
-	history := false
+	kinds := map[string]bool{}
 	for _, sc := range out.Scores {
-		for _, p := range sc.Parts.Proofs {
-			history = history || p.Kind == "history"
+		for _, it := range sc.Parts.World {
+			kinds[it.Kind+":"+it.Source+":"+it.State] = true
 		}
 	}
-	if !history {
-		t.Fatal("fixture has no history proof")
+	for _, k := range []string{"proof:domain:verified", "proof:wallet:verified", "proof:github:verified", "proof:pow:verified", "money:paid_to_swarmmemo:counted",
+		"time_present:active_days:counted", "payments:independent_payments:counted"} {
+		if !kinds[k] {
+			t.Errorf("fixture coverage: no %s world item (%v)", k, kinds)
+		}
 	}
-}
-
-// paramsV1 is trust parameter version 1: version 2 without standing. Its
-// body is the one published as version 1 (sha256 a7db4479…).
-func paramsV1() Params {
-	p := paramsV4()
-	p.Version, p.Standing = SeedsAVersion, nil
-	return p
-}
-
-// paramsV2 is trust parameter version 2: phase 1A's standing, as published.
-func paramsV2() Params {
-	p := paramsV4()
-	p.Version, p.Standing = StandingVersion, StandingV2()
-	return p
-}
-
-// paramsV3 is trust parameter version 3: the simulation's fixes (C148).
-func paramsV3() Params {
-	p := paramsV4()
-	p.Version, p.Standing = StandingFixVersion, StandingV3()
-	return p
-}
-
-// paramsV5 is trust parameter version 5: the assessed roots' pricing rows
-// (C144), version 6 with version 5's standing section.
-func paramsV5() Params {
-	p := DefaultParams()
-	p.Version, p.Standing = RootsVersion, StandingV5()
-	return p
-}
-
-// paramsV4 is trust parameter version 4: absolute edge weights (C151),
-// version 5 without the assessed roots' pricing rows.
-func paramsV4() Params {
-	p := DefaultParams()
-	p.Version, p.Standing = StandingWeightsVersion, StandingV4()
-	for _, kind := range AssessedKinds() {
-		delete(p.Proofs, kind)
+	if len(out.Evidence) == 0 || len(out.Penalties) == 0 || out.Summary.Penalised == 0 || out.Summary.Liable == 0 || out.Summary.Marked == 0 || out.CarryIn == "" {
+		t.Errorf("fixture coverage: evidence %d, penalties %d, summary %+v, carry in %q", len(out.Evidence), len(out.Penalties), out.Summary, out.CarryIn)
 	}
-	return p
+	testRecomputePy(t, raw, out.Canonical())
 }
 
 // testRecomputePy runs the independent verifier (scripts/trust/recompute.py

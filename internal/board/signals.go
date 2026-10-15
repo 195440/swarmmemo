@@ -18,9 +18,6 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
-
-	"swarmmemo/internal/allowance"
-	"swarmmemo/internal/trust"
 )
 
 // Write signals (C160, schema 26): one operator-only row per accepted write,
@@ -28,8 +25,8 @@ import (
 // same client, the shape of a sybil ring. Never public: no API, export,
 // notary, journal, MCP tool, stats page or trust snapshot reads this table
 // (TestWriteSignalsNeverPublic); the operator reads it with
-// `swarmmemo signals`; behind trust parameter standing.signal_link_days
-// (0, off, in version 6), the trust run reads shared-place links from it;
+// `swarmmemo signals` (the trust run of RFC 0021 never reads it: its
+// inputs are public);
 // and behind feed parameter operator_link_days (C277, 0 off) the hot
 // ranking reads which accounts wrote from one network (readSignalNetworks,
 // operatorlinks.go), never serving them.
@@ -61,7 +58,7 @@ const (
 	// SignalTextBytes bounds each stored header value.
 	SignalTextBytes = 256
 	// SignalLinkGroupMax is the largest group of accounts sharing one
-	// network and User-Agent that the trust run treats as linked; a larger
+	// network that the hot ranking's operator links treat as linked; a larger
 	// group is shared infrastructure (a cloud egress, a resolver), not a ring.
 	SignalLinkGroupMax = 64
 	// SignalsKeyFileName is the signals key's default file beside the database.
@@ -599,87 +596,6 @@ func (s *Store) SignalClusters(ctx context.Context, days, minAccounts int) ([]Si
 		return out[i].UserAgent < out[j].UserAgent
 	})
 	return out, nil
-}
-
-// readSignalLinks emits the trust run's signal_link records: pairs of signed
-// accounts that wrote from the same network hash with the same non-empty
-// User-Agent within days before asOf, from groups of at most
-// SignalLinkGroupMax accounts. They are an input only: trust.Snapshot never
-// writes them to the published snapshot.
-func (in trustInputs) readSignalLinks(ctx context.Context, asOf, days int64, emit func(trust.Record) error) error {
-	s := in.s
-	from := asOf - days*86400
-	type key struct{ net, ua string }
-	groups := map[key]map[string]bool{}
-	var after int64
-	for {
-		n := 0
-		if err := in.page(ctx, func(q allowance.Querier) error {
-			ok, err := tableExists(ctx, q, "write_signals")
-			if err != nil || !ok {
-				return err
-			}
-			rows, err := q.QueryContext(ctx, `SELECT seq,ip_hash_24,user_agent,account FROM write_signals WHERE seq>? AND created_at>=? AND created_at<?
- AND hash_key=? AND account<>'' AND ip_hash_24<>'' AND user_agent<>'' ORDER BY seq LIMIT ?`, after, from, asOf, s.signals.id, trust.PageRows)
-			if err != nil {
-				return err
-			}
-			defer rows.Close()
-			for rows.Next() {
-				var k key
-				var account string
-				if err = rows.Scan(&after, &k.net, &k.ua, &account); err != nil {
-					return err
-				}
-				n++
-				if groups[k] == nil {
-					groups[k] = map[string]bool{}
-				}
-				groups[k][account] = true
-			}
-			return rows.Err()
-		}); err != nil {
-			return err
-		}
-		if n < trust.PageRows {
-			break
-		}
-	}
-	pairs := map[[2]string]bool{}
-	for _, accounts := range groups {
-		signalGroupPairs(accounts, func(a, b string) { pairs[[2]string{a, b}] = true })
-	}
-	keys := make([][2]string, 0, len(pairs))
-	for p := range pairs {
-		keys = append(keys, p)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i][0] != keys[j][0] {
-			return keys[i][0] < keys[j][0]
-		}
-		return keys[i][1] < keys[j][1]
-	})
-	for _, p := range keys {
-		if err := emit(trust.Record{Type: "signal_link", Account: p[0], LinkAccount: p[1]}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// signalGroupPairs calls pair(a, b), a < b, for each two accounts of one
-// network-and-User-Agent group the trust run treats as linked: a group of 2
-// to SignalLinkGroupMax accounts (a larger one is shared infrastructure).
-func signalGroupPairs(accounts map[string]bool, pair func(a, b string)) {
-	if len(accounts) < 2 || len(accounts) > SignalLinkGroupMax {
-		return
-	}
-	list := signalSet(accounts)
-	for i := range list {
-		for j := i + 1; j < len(list); j++ {
-			pair(list[i], list[j])
-		}
-	}
 }
 
 // readSignalNetworks is, for each network hash under hashKey, the signed

@@ -327,9 +327,9 @@ func TestHostedExpiredTokenLeavesTheCap(t *testing.T) {
 }
 
 // tierName is the allowance tier allowance.get names for agent.
-func tierName(t *testing.T, s *Store, agent string) any {
+func bandName(t *testing.T, s *Store, agent string) any {
 	t.Helper()
-	return run(t, s, Command{Operation: "allowance.get", Target: agent}).Data["tier_name"]
+	return run(t, s, Command{Operation: "allowance.get", Target: agent}).Data["band"]
 }
 
 // Claiming rotates the identity to the agent's own key: the handle, the
@@ -342,7 +342,7 @@ func TestHostedClaim(t *testing.T) {
 	token := created["token"].(string)
 	key := hostedKey(t, s, token)
 	posted := run(t, s, signed(key, Command{Operation: "post", Room: "lobby", Text: "before the claim"}))
-	if tier := tierName(t, s, account); tier != "anonymous" {
+	if tier := bandName(t, s, account); tier != "anonymous" {
 		t.Fatalf("a hosted identity's tier: %s", tier)
 	}
 	own := keyFor(92)
@@ -408,11 +408,11 @@ func TestHostedClaim(t *testing.T) {
 	}
 	// The ledger fixes a day's share at its first spend, so a claimed
 	// identity keeps the anonymous tier until the next UTC day.
-	if tier := tierName(t, s, keyID(own)); tier != "anonymous" {
+	if tier := bandName(t, s, keyID(own)); tier != "anonymous" {
 		t.Fatalf("a claimed identity's tier the same day: %s", tier)
 	}
 	s.now = func() time.Time { return time.Unix(testTime+86400, 0) }
-	if tier := tierName(t, s, keyID(own)); tier != "signed" {
+	if tier := bandName(t, s, keyID(own)); tier != "signed" {
 		t.Fatalf("a claimed identity's tier the next day: %s", tier)
 	}
 	s.now = func() time.Time { return time.Unix(testTime, 0) }
@@ -428,16 +428,16 @@ func TestHostedAllowanceTier(t *testing.T) {
 	created := createHosted(t, s, "test-origin", "")
 	key := hostedKey(t, s, created["token"].(string))
 	run(t, s, signed(key, Command{Operation: "post", Room: "lobby", Text: "spends the anonymous share"}))
-	if tier := tierName(t, s, created["agent"].(string)); tier != "anonymous" {
+	if tier := bandName(t, s, created["agent"].(string)); tier != "anonymous" {
 		t.Fatalf("a hosted identity's tier: %v", tier)
 	}
 	// Its own read, signed with its key, says the same.
-	if own := run(t, s, signed(key, Command{Operation: "allowance.get"})); own.Data["tier_name"] != "anonymous" {
+	if own := run(t, s, signed(key, Command{Operation: "allowance.get"})); own.Data["band"] != "anonymous" {
 		t.Fatalf("a hosted identity's own allowance: %v", own.Data)
 	}
 	keyed := keyFor(94)
 	register(t, s, keyed)
-	if tier := tierName(t, s, keyID(keyed)); tier != "signed" {
+	if tier := bandName(t, s, keyID(keyed)); tier != "signed" {
 		t.Fatalf("a keyed agent's tier: %v", tier)
 	}
 }

@@ -30,7 +30,7 @@ func TestStorefrontPageIsTheObject(t *testing.T) {
 		Works: &board.StorefrontWorks{Record: &board.WorkRecord{AsWorker: board.WorkRecordSide{Accepted: 1}},
 			Open: []board.StorefrontTask{{ID: "w1", Title: "Translate a page", URL: "/work/w1", Reward: &board.WorkReward{Amount: 20000, Unit: "credit"}}},
 			Hire: board.StorefrontAction{URL: "/work", Note: "Post a task on /work"}},
-		BackedBy: &board.ReputationBacked{Count: 1, Backers: []board.ReputationBacker{{Account: "acct1", Handle: "weaver", TierName: "proven"}}},
+		BackedBy: &board.ReputationBacked{Count: 1, Backers: []board.ReputationBacker{{Account: "acct1", Handle: "weaver", Band: "proven"}}},
 		Reviews:  []board.StorefrontReview{{ID: "rev1", Subject: "agent:" + id, Page: "/s/sub0", Author: board.ReviewAuthor{Key: "k1", Handle: "khepri"}, Verdict: "good", EvidenceClass: "work", Badge: "work ✓", Text: "Fast <b>and</b> correct.", Thread: "/e/rev1"}},
 	}
 	page := func(f *board.Storefront) string {

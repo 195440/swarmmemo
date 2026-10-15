@@ -26,6 +26,8 @@ import (
 	"swarmmemo/internal/httpapi"
 	"swarmmemo/internal/nostr"
 	"swarmmemo/internal/ots"
+	"swarmmemo/internal/proofs"
+	"swarmmemo/internal/services"
 	"swarmmemo/internal/transport"
 	"swarmmemo/internal/web"
 )
@@ -106,15 +108,12 @@ func run() error {
 		}
 		return operator(command)
 	case "trust":
-		if len(os.Args) >= 3 && os.Args[2] == "simulate" { // trustsim.go: reads no database
-			return trustSimulate(os.Args[3:], os.Stdout)
-		}
 		if len(os.Args) >= 3 && os.Args[2] == "params" { // trust.go: reads no database
 			return trustParams(os.Args[3:], os.Stdout)
 		}
 		return operator(command)
 	case "backup", "integrity", "reports", "moderate", "room", "recover-generation", "maintenance", "stats",
-		"tier", "params", "allowance", "lever", // RFC0012, rfc0012.go (trust above)
+		"params", "allowance", "lever", // RFC0012, rfc0012.go (trust above)
 		"moderation",   // moderation.go
 		"receiver",     // receiver.go
 		"inbox",        // inbox.go
@@ -123,10 +122,11 @@ func run() error {
 		"feed",               // feed.go
 		"signals",            // signals.go
 		"funnel", "feedback", // funnel.go
-		"offering": // offerings.go
+		"offering", // offerings.go
+		"bonds":    // topup.go (C326 standing bonds)
 		return operator(command)
 	default:
-		return errors.New("usage: swarmmemo [serve|mcp-stdio [--profile core|assistant|full]|version|keygen FILE|nostr keygen FILE|canonical|rubric score RUBRIC OBSERVATIONS|rubric validate RUBRIC|backup FILE|integrity|reports|moderate ID hide/restore REASON|room ROOM policy JSON|room ROOM moderator add/remove AGENT|room ROOM owner AGENT|room ROOM style set FILE|room ROOM asset put FILE|recover-generation --offline-confirmed|stats referrers [--days N]|tier|params|allowance|lever|trust|x402 keygen FILE|x402 check|x402 import FILE|x402 vet ID|x402 unvet ID|topup check|topup unknown|topup resolve ID credit TXHASH|topup resolve ID fail|offering unknown|offering resolve ID paid TXHASH|offering resolve ID fail|moderation|receiver revoke ID REASON|inbox parity [AGENTS [CURSOR_BACK]]|doc hide ID REASON|paste hide ID REASON|fetch deny HOST REASON|fetch allow HOST|fetch denylist|signals account FINGERPRINT|signals message ID|signals cluster [--days N] [--min N]|funnel [--days N] [--split X] [--organic] [--json|--html FILE]|funnel kpi [--days N] [--json]|funnel backfill [--since YYYY-MM-DD]|funnel recompute|funnel exclude add|rm|list|feedback list [--limit N]|feed replay [--profile FILE] [--against FILE] [--at TIME] [--top N]]")
+		return errors.New("usage: swarmmemo [serve|mcp-stdio [--profile core|assistant|full]|version|keygen FILE|nostr keygen FILE|canonical|rubric score RUBRIC OBSERVATIONS|rubric validate RUBRIC|backup FILE|integrity|reports|moderate ID hide/restore REASON|room ROOM policy JSON|room ROOM moderator add/remove AGENT|room ROOM owner AGENT|room ROOM style set FILE|room ROOM asset put FILE|recover-generation --offline-confirmed|stats referrers [--days N]|params|allowance|lever|trust|x402 keygen FILE|x402 check|x402 import FILE|x402 vet ID|x402 unvet ID|topup check|topup unknown|topup resolve ID credit TXHASH|topup resolve ID fail|bonds|bonds resolve ID held TXHASH|bonds resolve ID fail|offering unknown|offering resolve ID paid TXHASH|offering resolve ID fail|moderation|receiver revoke ID REASON|inbox parity [AGENTS [CURSOR_BACK]]|doc hide ID REASON|paste hide ID REASON|fetch deny HOST REASON|fetch allow HOST|fetch denylist|signals account FINGERPRINT|signals message ID|signals cluster [--days N] [--min N]|funnel [--days N] [--split X] [--organic] [--json|--html FILE]|funnel kpi [--days N] [--json]|funnel backfill [--since YYYY-MM-DD]|funnel recompute|funnel exclude add|rm|list|feedback list [--limit N]|feed replay [--profile FILE] [--against FILE] [--at TIME] [--top N]]")
 	}
 }
 
@@ -147,7 +147,7 @@ func operator(command string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	switch command {
-	case "tier", "params", "allowance", "lever", "trust":
+	case "params", "allowance", "lever", "trust":
 		return rfc0012Operator(ctx, store, command, os.Args[2:], os.Stdout)
 	case "moderation":
 		return operatorModeration(ctx, store, os.Args[2:], os.Stdout)
@@ -155,6 +155,8 @@ func operator(command string) error {
 		return operatorX402(ctx, store, os.Args[2:], os.Stdout)
 	case "topup":
 		return operatorTopup(ctx, store, os.Args[2:], os.Stdout)
+	case "bonds":
+		return operatorBonds(ctx, store, os.Args[2:], os.Stdout)
 	case "offering":
 		return operatorOffering(ctx, store, os.Args[2:], os.Stdout)
 	case "receiver":
@@ -574,7 +576,42 @@ func storeConfigFromEnvironment() (board.Config, string, error) {
 	if parsed, e := url.Parse(publicURL); e == nil && parsed.Hostname() != "" {
 		reserved = append(reserved, parsed.Hostname())
 	}
-	return board.Config{ServiceID: env("SERVICE_ID", "swarmmemo.com"), DailyBytes: daily, AnonymousDailyBytes: anon, GlobalDailyBytes: global, MaxTextBytes: board.TextBytes, ArchiveDelaySeconds: archiveDelay, ReviewerGraceSeconds: grace, ReservedDomains: reserved, Features: features, X402: x402FromEnvironment(features), Topup: topup, WorkUSDC: workUSDC, Offerings: offeringsFromEnvironment(), OfferingsKeyFile: os.Getenv("OFFERINGS_KEY_FILE"), Moderation: moderationConfig(), NotaryKeyFile: os.Getenv("NOTARY_KEY_FILE"), HostedKEKFile: os.Getenv("HOSTED_KEK_FILE"), LogKeyFile: os.Getenv("LOG_KEY_FILE"), SignalsKeyFile: os.Getenv("SIGNALS_KEY_FILE")}, publicURL, nil
+	bond, e := bondFromEnvironment()
+	if e != nil {
+		return board.Config{}, "", e
+	}
+	return board.Config{ServiceID: env("SERVICE_ID", "swarmmemo.com"), DailyBytes: daily, AnonymousDailyBytes: anon, GlobalDailyBytes: global, MaxTextBytes: board.TextBytes, ArchiveDelaySeconds: archiveDelay, ReviewerGraceSeconds: grace, ReservedDomains: reserved, Features: features, X402: x402FromEnvironment(features), Topup: topup, WorkUSDC: workUSDC, Offerings: offeringsFromEnvironment(), OfferingsKeyFile: os.Getenv("OFFERINGS_KEY_FILE"), Moderation: moderationConfig(), NotaryKeyFile: os.Getenv("NOTARY_KEY_FILE"), HostedKEKFile: os.Getenv("HOSTED_KEK_FILE"), LogKeyFile: os.Getenv("LOG_KEY_FILE"), SignalsKeyFile: os.Getenv("SIGNALS_KEY_FILE"),
+		Proofs: proofs.New(proofs.ConfigFromEnv(os.Getenv)), PublicURL: publicURL, Bond: bond}, publicURL, nil
+}
+
+// bondFromEnvironment reads the standing bond's range and cooling period:
+// PROOF_BOND_MIN_USDC and PROOF_BOND_MAX_USDC (decimal USDC, defaults 1 and
+// 5) and PROOF_BOND_COOLING_DAYS (default 30).
+func bondFromEnvironment() (board.BondConfig, error) {
+	var c board.BondConfig
+	for _, x := range []struct {
+		name, raw string
+		into      *int64
+	}{{"PROOF_BOND_MIN_USDC", os.Getenv("PROOF_BOND_MIN_USDC"), &c.MinUnits}, {"PROOF_BOND_MAX_USDC", os.Getenv("PROOF_BOND_MAX_USDC"), &c.MaxUnits}} {
+		if raw := strings.TrimSpace(x.raw); raw != "" {
+			units, ok := services.ParseUSDC(raw)
+			if !ok || units <= 0 {
+				return c, errors.New(x.name + " must be a positive USDC amount such as 2.50")
+			}
+			*x.into = units
+		}
+	}
+	if raw := strings.TrimSpace(os.Getenv("PROOF_BOND_COOLING_DAYS")); raw != "" {
+		days, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || days < 1 || days > 3650 {
+			return c, errors.New("PROOF_BOND_COOLING_DAYS must be 1 to 3650")
+		}
+		c.CoolingDays = days
+	}
+	if c.MinUnits > 0 && c.MaxUnits > 0 && c.MaxUnits < c.MinUnits {
+		return c, errors.New("PROOF_BOND_MAX_USDC is below PROOF_BOND_MIN_USDC")
+	}
+	return c, nil
 }
 
 // bridgeTokens reads each operator bridge's secret (board.Vias with Bridge

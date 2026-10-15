@@ -2,7 +2,7 @@ package ledger
 
 // Transfers, the account-change breaker and taint (RFC0012 §2.4). Every
 // bucket moves by default; a moved lot keeps its bucket, expiry, decay clock,
-// origin tier and origin account, with hops + 1, so a transfer never makes
+// origin and origin account, with hops + 1, so a transfer never makes
 // value newer, longer-lived or more liquid. A sender with an active breaker
 // waits transfer_delay, and the transfer can be cancelled by the account's
 // current key or by the key its rotation replaced.
@@ -102,7 +102,7 @@ func spike(ctx context.Context, q allowance.Querier, p *AllowanceParams, account
 func (p *AllowanceParams) transferable(x lot) bool {
 	switch x.Bucket {
 	case allowance.Free:
-		return slices.Contains(p.TransferableFreeTiers, x.OriginTier)
+		return p.TransferableFree
 	case allowance.Paid:
 		return p.PaidTransferable
 	}
@@ -167,7 +167,7 @@ func (l *Ledger) transfer(ctx context.Context, q allowance.Querier, o *op, from 
 	}
 	o.capOwn(lots, c)
 	// Moving units draws nothing: the recipient's spend of a moved free lot
-	// draws from the pools of the lot's origin tier.
+	// draws from the slices by the lot's origin.
 	parts, got := plan(lots, amount, o.p.transferable)
 	if got < amount {
 		if _, all := plan(lots, amount, nil); all >= amount {

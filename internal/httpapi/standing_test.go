@@ -31,7 +31,7 @@ func signedStanding(key ed25519.PrivateKey, op, data string, n int) string {
 // agree), a proof-of-work challenge and solution, and a wallet linked with
 // a Sign-In with Ethereum signature, whose link matches its published schema.
 func TestStandingOverHTTP(t *testing.T) {
-	features := board.Features{Trust: board.TrustShadow}
+	features := board.Features{Trust: board.TrustOn}
 	store, err := board.Open(filepath.Join(t.TempDir(), "standing.db"), board.Config{ServiceID: "swarmmemo.com", Features: features})
 	if err != nil {
 		t.Fatal(err)
@@ -60,11 +60,11 @@ func TestStandingOverHTTP(t *testing.T) {
 	}
 	w := makeRequest(s, "GET", "/api/agent/"+fingerprint+"/standing", "", "")
 	ways := read(w.Body.Bytes())
-	if w.Code != 200 || !ways.OK || len(ways.Data["ways"].([]any)) != 5 || ways.Data["agent"] != fingerprint {
+	if w.Code != 200 || !ways.OK || len(ways.Data["ways"].([]any)) != len(board.StandingWayKinds()) || ways.Data["agent"] != fingerprint {
 		t.Fatalf("ways: %d %s", w.Code, w.Body.String())
 	}
 	cmd := makeRequest(s, "POST", "/v1/command", `{"operation":"standing.ways","target":"`+fingerprint+`"}`, "application/json")
-	if viaCommand := read(cmd.Body.Bytes()); !viaCommand.OK || len(viaCommand.Data["ways"].([]any)) != 5 {
+	if viaCommand := read(cmd.Body.Bytes()); !viaCommand.OK || len(viaCommand.Data["ways"].([]any)) != len(board.StandingWayKinds()) {
 		t.Fatalf("standing.ways via /v1/command: %d %s", cmd.Code, cmd.Body.String())
 	}
 	if w = makeRequest(s, "GET", "/api/agent/"+fingerprint+"/standing?target=other", "", ""); w.Code != 400 {
@@ -153,6 +153,10 @@ func TestRaiseStandingCommands(t *testing.T) {
 		{raiseStandingInput{Action: "link", Kind: "wallet", Value: "0xA", Proof: "0xS", Nonce: "N"}, "identity.link", `{"kind":"wallet","nonce":"N","proof":"0xS","schema":1,"value":"0xA"}`, ""},
 		{raiseStandingInput{Action: "work", Nonce: "N", Solution: "42"}, "standing.work", `{"nonce":"N","schema":1,"solution":"42"}`, ""},
 		{raiseStandingInput{Action: "link", Kind: "domain", Value: "example.com"}, "identity.link", `{"kind":"domain","schema":1,"value":"example.com"}`, ""},
+		{raiseStandingInput{Action: "challenge", Kind: "google"}, "standing.challenge", `{"kind":"google","schema":1}`, ""},
+		{raiseStandingInput{Action: "link", Kind: "npm", Value: "swarm-tool", Nonce: "N"}, "identity.link", `{"kind":"npm","nonce":"N","schema":1,"value":"swarm-tool"}`, ""},
+		{raiseStandingInput{Action: "link", Kind: "farcaster", Value: "4242", Proof: "cast", Nonce: "N"}, "identity.link", `{"kind":"farcaster","nonce":"N","proof":"cast","schema":1,"value":"4242"}`, ""},
+		{raiseStandingInput{Action: "link", Kind: "ens", Value: "alice.eth"}, "identity.link", `{"kind":"ens","schema":1,"value":"alice.eth"}`, ""},
 	} {
 		c, err := tc.in.command(self)
 		if err != nil || c.Operation != tc.op || c.Data != tc.data || c.Target != tc.target {

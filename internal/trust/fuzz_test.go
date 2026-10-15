@@ -3,27 +3,25 @@ package trust
 import (
 	"bytes"
 	"context"
-	"strconv"
 	"testing"
 )
 
-// FuzzTrustGraph builds random small graphs and checks, on the flow network,
-// that whatever reaches a seed-free region is at most what the edges into it
-// can carry from their sources' transit, that no node absorbs more than U
-// and the total never exceeds the pool; and, on the whole computation, that
-// the output is deterministic and a node with no inbound edge has flow 0.
+// FuzzTrustGraph builds random small flow graphs and checks the bounds RFC
+// 0021 §15 claims of the flow: each node keeps min(world, cap) of its own
+// and never holds more than its cap; the total never exceeds the world's;
+// a region no world reaches, and no edge enters, holds nothing; and the
+// flow is deterministic.
 func FuzzTrustGraph(f *testing.F) {
 	f.Add([]byte{5, 2, 1, 0, 1, 2, 3, 4, 1, 3, 2, 4, 9, 9, 9})
-	f.Add([]byte("seed flow region bound determinism"))
+	f.Add([]byte("world flow region bound determinism"))
 	f.Add(bytes.Repeat([]byte{7, 1, 250, 3}, 40))
 	f.Fuzz(func(t *testing.T, data []byte) {
 		if len(data) < 3 {
 			return
 		}
 		n := 3 + int(data[0])%28
-		nSeeds := 1 + int(data[1])%3
-		region := int(data[2]) % (n - nSeeds + 1) // the last `region` nodes are seed-free
-		data = data[3:]
+		isolated := int(data[1]) % (n - 1) // the last `isolated` nodes have no world and no in-edges
+		data = data[2:]
 		next := func() int {
 			if len(data) == 0 {
 				return 0
@@ -32,125 +30,58 @@ func FuzzTrustGraph(f *testing.F) {
 			data = data[1:]
 			return v
 		}
-		const U = 20
-		g := &flowGraph{n: n, transit: make([]int64, n), hub: make([]int32, n), hubCap: 3 * U, nodeCap: U, steps: 5}
-		for i := range g.hub {
-			g.hub[i] = -1
-			g.transit[i] = int64(next() % 30)
+		const U, nodeCap = 200 * mc, 750 * mc
+		g := &Graph{RootOf: map[string]string{}, MaxWork: 1 << 40, Levels: flowLevels(U, nodeCap)}
+		for i := 0; i < n; i++ {
+			g.Labels = append(g.Labels, string(rune('a'+i)))
+			w := int64(next()%40) * 50 * mc
+			if i >= n-isolated {
+				w = 0
+			}
+			g.World = append(g.World, w)
+			g.Cap = append(g.Cap, nodeCap*int64(4+next()%5)/8)
 		}
-		if n > 4 && next()%2 == 1 { // one shared root
-			g.hubs = 1
-			g.hub[n-1], g.hub[n-2] = 0, 0
-		}
-		type pair struct{ s, d int }
-		seen := map[pair]bool{}
-		var edges []pair
-		for k := 0; k < 4*n && len(data) >= 3; k++ {
-			s, d := next()%n, next()%n
-			c := int64(next() % (U + 1))
-			if s == d || seen[pair{s, d}] {
+		type key struct{ s, d int32 }
+		seen := map[key]bool{}
+		for k := next() % 60; k > 0; k-- {
+			s, d := int32(next()%n), int32(next()%n)
+			if s == d || seen[key{s, d}] || int(d) >= n-isolated {
 				continue
 			}
-			seen[pair{s, d}] = true
-			edges = append(edges, pair{s, d})
-			g.cap = append(g.cap, c)
+			seen[key{s, d}] = true
+			g.Src, g.Dst, g.EdgeCap = append(g.Src, s), append(g.Dst, d), append(g.EdgeCap, int64(1+next()%250)*mc)
 		}
-		// Edges in (src, dst) order, as the run builds them.
-		order := make([]int, len(edges))
-		for i := range order {
-			order[i] = i
-		}
-		for i := 1; i < len(order); i++ {
-			for j := i; j > 0 && (edges[order[j]].s < edges[order[j-1]].s || edges[order[j]].s == edges[order[j-1]].s && edges[order[j]].d < edges[order[j-1]].d); j-- {
-				order[j], order[j-1] = order[j-1], order[j]
+		// edges must be in (src, dst) order
+		for i := 1; i < len(g.Src); i++ {
+			for j := i; j > 0 && (g.Src[j] < g.Src[j-1] || g.Src[j] == g.Src[j-1] && g.Dst[j] < g.Dst[j-1]); j-- {
+				g.Src[j], g.Src[j-1] = g.Src[j-1], g.Src[j]
+				g.Dst[j], g.Dst[j-1] = g.Dst[j-1], g.Dst[j]
+				g.EdgeCap[j], g.EdgeCap[j-1] = g.EdgeCap[j-1], g.EdgeCap[j]
 			}
 		}
-		caps := g.cap
-		g.cap = nil
-		for _, i := range order {
-			g.src = append(g.src, int32(edges[i].s))
-			g.dst = append(g.dst, int32(edges[i].d))
-			g.cap = append(g.cap, caps[i])
-		}
-		var seeds []int32
-		for i := 0; i < nSeeds; i++ {
-			seeds = append(seeds, int32(i))
-		}
-		pool := int64(U * n)
-		res, _, err := runFlow(context.Background(), g, seeds, pool, 1e8, 0)
+		g.Reindex()
+		res, err := g.flow(context.Background(), nil, g.MaxWork, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
-		again, _, _ := runFlow(context.Background(), g, seeds, pool, 1e8, 0)
-		inRegion := func(i int32) bool { return int(i) >= n-region }
-		var captured, total int64
-		for i, v := range res.node {
-			if v < 0 || v > U || v != again.node[i] {
-				t.Fatalf("node %d absorbs %d (again %d)", i, v, again.node[i])
+		var total, world int64
+		for i := 0; i < n; i++ {
+			world += g.World[i]
+			total += res.Standing[i]
+			if res.Standing[i] > g.Cap[i] || res.Own[i] != min(g.World[i], g.Cap[i]) || res.Standing[i] < res.Own[i] {
+				t.Fatalf("node %d: standing %d, own %d, world %d, cap %d", i, res.Standing[i], res.Own[i], g.World[i], g.Cap[i])
 			}
-			total += v
-			if inRegion(int32(i)) {
-				captured += v
-			}
-		}
-		if total > pool {
-			t.Fatalf("total %d above pool %d", total, pool)
-		}
-		intoRegion := map[int32]int64{}
-		for k := range g.src {
-			if res.edge[k] > g.cap[k] {
-				t.Fatalf("edge %d carries %d over %d", k, res.edge[k], g.cap[k])
-			}
-			if !inRegion(g.src[k]) && inRegion(g.dst[k]) {
-				intoRegion[g.src[k]] += g.cap[k]
+			if i >= n-isolated && res.Standing[i] != 0 {
+				t.Fatalf("isolated node %d holds %d", i, res.Standing[i])
 			}
 		}
-		var bound int64
-		for s, c := range intoRegion {
-			limit := g.transit[s]
-			if int(s) < nSeeds {
-				limit = pool
-			}
-			bound += min(c, limit)
+		if total > world {
+			t.Fatalf("total %d > world %d", total, world)
 		}
-		if captured > bound {
-			t.Fatalf("region captured %d above its cut bound %d", captured, bound)
-		}
-
-		// The whole computation on a snapshot built from the same graph.
-		b := newBuilder()
-		b.snap.Params.Seeds = nil
-		names := make([]string, n)
-		for i := range names {
-			names[i] = "n" + strconv.Itoa(i)
-			b.account(names[i], int64(1+i%40), int64(1+i%9), g.transit[i])
-			if i < nSeeds {
-				b.snap.Params.Seeds = append(b.snap.Params.Seeds, acct(names[i]))
-			}
-		}
-		inbound := map[string]bool{}
-		for k := range g.src {
-			kind := []string{"vote", "vouch", "legacy_vote", "unsigned"}[int(g.cap[k])%4]
-			b.endorse(kind, names[g.src[k]], names[g.dst[k]], 1, g.cap[k]%20)
-			if kind == "vote" || kind == "vouch" {
-				inbound[acct(names[g.dst[k]])] = true
-			}
-		}
-		one, err := Compute(context.Background(), b.snap)
-		if err != nil {
-			t.Fatal(err)
-		}
-		two, _ := Compute(context.Background(), b.snap)
-		if !bytes.Equal(one.Canonical(), two.Canonical()) {
-			t.Fatal("not deterministic")
-		}
-		seed := map[string]bool{}
-		for _, s := range b.snap.Params.Seeds {
-			seed[s] = true
-		}
-		for _, sc := range one.Scores {
-			if !seed[sc.Account] && !inbound[sc.Account] && sc.Flow != 0 {
-				t.Fatalf("%s has flow %d with no inbound edge", sc.Account, sc.Flow)
+		again, _ := g.flow(context.Background(), nil, g.MaxWork, 0)
+		for i := range res.Standing {
+			if again.Standing[i] != res.Standing[i] {
+				t.Fatal("the flow is not deterministic")
 			}
 		}
 	})

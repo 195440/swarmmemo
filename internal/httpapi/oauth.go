@@ -1011,7 +1011,7 @@ func (s *Server) oauthPage(w http.ResponseWriter, status int, redirect string, v
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	var b bytes.Buffer
 	if err := oauthTemplate.Execute(&b, v); err != nil {
-		writeError(w, &board.Error{Status: 500, Code: "internal", Message: "The page could not be shown."})
+		writeError(w, errPageNotShown())
 		return
 	}
 	w.WriteHeader(status)

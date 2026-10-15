@@ -64,7 +64,7 @@
     };
     const fill = () => {
       box.replaceChildren();
-      make('b', 'chart-readout-x', box).textContent = xs[at] + (at === n - 1 ? ' (so far)' : '');
+      make('b', 'chart-readout-x', box).textContent = xs[at] + (at === n - 1 && 'partial' in plot.dataset ? ' (so far)' : '');
       for (const s of series) {
         const row = make('span', 'chart-readout-row', box);
         make('span', 'chart-readout-key ' + (s.area ? 'band ' : s.cls ? 'line ' : 'none ') + s.cls, row);

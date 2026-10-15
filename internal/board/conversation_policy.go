@@ -13,7 +13,6 @@ import (
 	"swarmmemo/internal/leakscan"
 	"swarmmemo/internal/ledger"
 	"swarmmemo/internal/services"
-	"swarmmemo/internal/trust"
 )
 
 // Messaging settings (RFC0013 §3.4, §5.1): the inbound policy that decides
@@ -380,8 +379,8 @@ func checkCondition(c PolicyCondition, depth int) error {
 			return policyError("vouched.hops is 0 or 1.")
 		}
 	case c.TrustAtLeast != nil:
-		if !c.TrustAtLeast.Low && c.TrustAtLeast.Collateral < 0 {
-			return policyError(`trust_at_least is "low" or a collateral of 0 or more.`)
+		if b := c.TrustAtLeast.Band; b != "" && b != allowance.BandProven.Name() && b != allowance.BandTrusted.Name() || b == "" && c.TrustAtLeast.Cents < 0 {
+			return policyError(`trust_at_least is a band ("proven" or "trusted") or a standing of 0 or more cents.`)
 		}
 	case c.KeyAgeAtLeast != nil:
 		if *c.KeyAgeAtLeast < 0 || *c.KeyAgeAtLeast > 3650 {
@@ -596,7 +595,7 @@ func presetRules(p InboundPolicy) ([]PolicyRule, string) {
 	switch p.Preset {
 	case presetKnown:
 		week := KnownPresetKeyAgeDays
-		known := []PolicyCondition{{TrustAtLeast: &TrustBar{Low: true}}, {All: []PolicyCondition{{KeyAgeAtLeast: &week}, {HasProfile: &yes}}}}
+		known := []PolicyCondition{{TrustAtLeast: &TrustBar{Band: allowance.BandProven.Name()}}, {All: []PolicyCondition{{KeyAgeAtLeast: &week}, {HasProfile: &yes}}}}
 		if amount := p.Postage.Amount; amount > 0 {
 			known = append(known, PolicyCondition{PostageAtLeast: &amount})
 		}
@@ -657,19 +656,19 @@ func (e *policyEval) holds(ctx context.Context, c PolicyCondition) (bool, error)
 		if !in.Trust {
 			return false, nil // no estimate while trust is off
 		}
-		score, ok, err := trust.Current(ctx, q, in.Sender)
-		if err != nil || !ok {
+		cents, err := accountStanding(ctx, q, in.Sender)
+		if err != nil {
 			return false, err
 		}
-		bar := c.TrustAtLeast.Collateral
-		if c.TrustAtLeast.Low {
+		bar := c.TrustAtLeast.Cents
+		if band, ok := allowance.ParseBand(c.TrustAtLeast.Band); ok {
 			params, err := trustParams(ctx, q, in.Now)
 			if err != nil {
 				return false, err
 			}
-			bar = float64(params.ThetaProven)
+			bar = float64(params.BandFloorCents(band))
 		}
-		return float64(score.Collateral) >= bar, nil
+		return float64(cents) >= bar, nil
 	case c.KeyAgeAtLeast != nil:
 		var first sql.NullInt64
 		if err := q.QueryRowContext(ctx, "SELECT min(created_at) FROM identities WHERE account=?", in.Sender).Scan(&first); err != nil {

@@ -1,6 +1,7 @@
 // Package allowance holds the types shared by the ledger, the service
-// providers, the trust module and the board (RFC0012 §3.1). It is a leaf: it
-// imports only the standard library, so every other package may depend on it.
+// providers, the trust module and the board (RFC0012 §3.1, RFC 0021 §12).
+// It is a leaf: it imports only the standard library, so every other
+// package may depend on it.
 package allowance
 
 import (
@@ -9,29 +10,42 @@ import (
 	"strconv"
 )
 
-type Tier uint8      // 0 grant pool, 1 trusted, 2 proven, 3 signed, 4 anonymous
 type Resource string // "post_bytes", "memory_bytes", "credit"
 type Bucket string   // "free", "granted", "earned", "paid"
 
+// Band is the one coarse reading of standing (RFC 0021 §12), from one trust
+// run: anonymous (no key, or a hosted key not yet claimed), signed (a key,
+// standing below theta2 = U), proven (standing ≥ theta2) and trusted
+// (standing ≥ node_cap). Gates read a band or cents; nothing reads a tier.
+type Band uint8
+
 const (
-	TierPool      Tier = 0
-	TierTrusted   Tier = 1
-	TierProven    Tier = 2
-	TierSigned    Tier = 3
-	TierAnonymous Tier = 4
+	BandAnonymous Band = 0
+	BandSigned    Band = 1
+	BandProven    Band = 2
+	BandTrusted   Band = 3
 )
 
-// TierNames are the tiers' public names, by Tier: the one spelling every
-// wire, page and log uses (a page may show tier 0 as "grant pool", a label
-// keyed by TierPool, never a second spelling of the name).
-var TierNames = [5]string{"pool", "trusted", "proven", "signed", "anonymous"}
+// BandNames are the bands' public names, by Band: the one spelling every
+// wire, page and log uses.
+var BandNames = [4]string{"anonymous", "signed", "proven", "trusted"}
 
-// Name is the tier's public name (TierNames), or "tier N" outside 0-4.
-func (t Tier) Name() string {
-	if int(t) < len(TierNames) {
-		return TierNames[t]
+// Name is the band's public name (BandNames), or "band N" outside 0-3.
+func (b Band) Name() string {
+	if int(b) < len(BandNames) {
+		return BandNames[b]
 	}
-	return "tier " + strconv.Itoa(int(t))
+	return "band " + strconv.Itoa(int(b))
+}
+
+// ParseBand reads a band's public name.
+func ParseBand(name string) (Band, bool) {
+	for i, n := range BandNames {
+		if n == name {
+			return Band(i), true
+		}
+	}
+	return 0, false
 }
 
 const (
@@ -53,7 +67,7 @@ type Subject struct {
 	KeyID  string // signing key fingerprint; "" when anonymous
 	Signed bool
 	// Hosted is a signed account whose key SwarmMemo holds (RFC0013 §2.4):
-	// it shares the anonymous tier until it is claimed.
+	// it gets the floor only (as anonymous callers do) until it is claimed.
 	Hosted bool
 	// Credential names the delegated credential the command came through
 	// ("key:" + a worker key's fingerprint, "token:" + a hosted token's
@@ -62,13 +76,22 @@ type Subject struct {
 	Credential string
 }
 
+// Standing is what the allowance and every gate read about a subject: its
+// standing in cents from the latest trust run (RFC 0021) and its band.
 type Standing struct {
-	Tier      Tier
-	WeightPPM int64  // share weight inside the tier; 1e6 is one ordinary share
-	Root      string // saturation root; the account itself when it has none
-	NewKey    bool   // first signed write after pause-new-keys
-	Source    string // "design0" or "trust:RUN_ID"
-	Reason    string // one public sentence
+	Band Band
+	// Cents is the subject's standing in the latest trust run: 0 for an
+	// anonymous subject, a hosted key not yet claimed, or a key the run did
+	// not score. Every account of one root reports the root's standing.
+	Cents int64
+	// ShareCents is what the allowance's standing slice weighs (RFC 0021
+	// §12): min(Cents, node_cap); 0 when the subject has no standing share.
+	// The ledger shares it once per Root.
+	ShareCents int64
+	Root       string // saturation root; the account itself when it has none
+	NewKey     bool   // first signed write after pause-new-keys
+	Source     string // "standing:RUN_ID", or "none" before any run
+	Reason     string // one public sentence
 }
 
 // Querier is satisfied by *sql.Tx and *sql.DB.
@@ -83,13 +106,16 @@ type Classifier interface {
 }
 
 type Levers struct {
+	// SignedOnly gives anonymous callers nothing; ProvenOnly gives every
+	// subject below the proven band nothing.
 	SignedOnly, ProvenOnly, FreezeTransfers, PauseNewKeys bool
 	// SignedServices is the signed-services lever: unsigned service calls
-	// are refused and the anonymous tier gets no credit (its credit pool and
-	// every anonymous credit share are zero until it is released).
+	// are refused and anonymous callers get no credit.
 	SignedServices    bool
 	PauseNewKeysSince int64
-	Tier4SharePPM     int64              // -1 when the lever is not pulled
+	// AnonymousSharePPM caps what anonymous callers draw of the day's
+	// budget (the anonymous-shrink lever); -1 when the lever is not pulled.
+	AnonymousSharePPM int64
 	BudgetCutPPM      map[Resource]int64 // absent when not pulled
 	Version           int64
 }
@@ -116,10 +142,10 @@ type Err struct {
 	// "per_call" or "expired") and its value in credits.
 	SpendLimit      string
 	SpendLimitValue int64
-	// Resource and Tier are a tier_has_no_share refusal's: the resource the
-	// parameters give the subject's tier no share of, and that tier (1–4).
+	// Resource and Band are a no_share refusal's: the resource the
+	// parameters give the subject no share of, and the subject's band.
 	Resource Resource
-	Tier     int
+	Band     Band
 	// Details is structured context the refusal must carry to be
 	// actionable (doc_conflict's current version); never secrets.
 	Details any

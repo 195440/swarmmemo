@@ -23,20 +23,32 @@ func (f *fakeLevers) PrefixBlocked(context.Context, allowance.Querier, string, i
 	return false, nil
 }
 
-// tierClassifier reads the tier from the subject id: "t1-…" is tier 1, and
-// so on; anything else is Design 0 (signed 3, anonymous 4). "root-X-…"
-// shares root X.
-type tierClassifier struct{}
+// standingClassifier reads standing from the subject id's dash-separated
+// segments: "cN" is N cents of standing (ShareCents N; band proven from 100,
+// trusted from 1000), "root" followed by X shares root X, "new" is a new key;
+// anything else is DefaultClassifier (signed or anonymous, no standing).
+type standingClassifier struct{}
 
-func (tierClassifier) Classify(ctx context.Context, q allowance.Querier, s allowance.Subject, now int64) (allowance.Standing, error) {
+func (standingClassifier) Classify(ctx context.Context, q allowance.Querier, s allowance.Subject, now int64) (allowance.Standing, error) {
 	st, _ := DefaultClassifier{}.Classify(ctx, q, s, now)
-	for tier := 1; tier <= 4; tier++ {
-		if strings.HasPrefix(s.ID, fmt.Sprintf("t%d-", tier)) {
-			st.Tier = allowance.Tier(tier)
+	segs := strings.Split(s.ID, "-")
+	for i, seg := range segs {
+		var n int64
+		if _, err := fmt.Sscanf(seg, "c%d", &n); err == nil && fmt.Sprintf("c%d", n) == seg {
+			st.Cents, st.ShareCents, st.Source = n, n, "standing:test"
+			switch {
+			case n >= 1000:
+				st.Band = allowance.BandTrusted
+			case n >= 100:
+				st.Band = allowance.BandProven
+			}
 		}
-	}
-	if rest, ok := strings.CutPrefix(s.ID, "root-"); ok {
-		st.Root, _, _ = strings.Cut(rest, "-")
+		if seg == "root" && i+1 < len(segs) {
+			st.Root = segs[i+1]
+		}
+		if seg == "new" {
+			st.NewKey = true
+		}
 	}
 	return st, nil
 }
@@ -63,18 +75,17 @@ func newHarness(t testing.TB, p AllowanceParams) *harness {
 	}
 	h := &harness{t: t, db: db, levers: &fakeLevers{lv: noLevers()}, p: p, now: day0 * 86400}
 	store := ParamsStore{Overrides: map[string]Namespace{AllowanceNamespace: {Body: func() []byte { return h.p.Marshal() }, Validate: func(b []byte) error { _, err := ParseAllowanceParams(b); return err }}}}
-	h.l = New(Config{Classifier: tierClassifier{}, Levers: h.levers, Params: store})
+	h.l = New(Config{Classifier: standingClassifier{}, Levers: h.levers, Params: store})
 	return h
 }
 
-// smallParams: post_bytes budget 1000, caps 400/300/200/100, floors 0.
+// smallParams: post_bytes budget 1000, floor 200, cap 400, half of it the
+// floor slice (500) and half the standing slice (500).
 func smallParams() AllowanceParams {
 	p := DefaultAllowanceParams()
 	rp := p.Resources[allowance.PostBytes]
 	rp.Budget, rp.SpendCeiling, rp.InboundCap, rp.TransferFee = 1000, 2000, 1000, 10
-	rp.Cap = []int64{400, 300, 200, 100}
-	rp.Floor = []int64{0, 0, 0, 0}
-	rp.RootCap = []int64{1000, 1000, 1000, 1000}
+	rp.Floor, rp.Cap, rp.FloorSlicePPM = 200, 400, 500_000
 	return p
 }
 
@@ -180,9 +191,10 @@ func checkInvariants(t testing.TB, db *sql.DB, p AllowanceParams) {
 			t.Fatal(err)
 		}
 	}
-	// 1. Budget: Σ pools + unallocated = B; no pool overdrawn, so what the
-	// pools gave (free spend and held free units, grants) ≤ B; non-paid spend
-	// ≤ the spend ceiling. Entitlements are not bounded by B (overbooking).
+	// 1. Budget: Σ slices + unallocated = B; no slice overdrawn, so what the
+	// slices gave (free spend and held free units, grants) ≤ B; non-paid
+	// spend ≤ the spend ceiling. Entitlements are not bounded by B
+	// (overbooking).
 	type dayKey struct {
 		r   string
 		day int64
@@ -199,50 +211,52 @@ func checkInvariants(t testing.TB, db *sql.DB, p AllowanceParams) {
 			t.Fatal(err)
 		}
 		if d.allocated()+d.Unallocated != d.Budget {
-			fail("%s day %d: pools %d + unallocated %d != budget %d", k.r, k.day, d.allocated(), d.Unallocated, d.Budget)
+			fail("%s day %d: slices %d + unallocated %d != budget %d", k.r, k.day, d.allocated(), d.Unallocated, d.Budget)
 		}
-		var issued, lent, borrowed int64
-		for tier, pl := range d.Pools {
+		var issued int64
+		for s, pl := range d.Slices {
 			if pl.avail() < 0 {
-				fail("%s day %d tier %d overdrawn: %+v", k.r, k.day, tier, pl)
+				fail("%s day %d slice %s overdrawn: %+v", k.r, k.day, SliceNames[s], pl)
 			}
 			issued += pl.Claimed + pl.Lent
-			lent += pl.Lent
-			borrowed += pl.Borrowed
 		}
 		if issued > d.Budget {
 			fail("%s day %d issued %d over budget %d", k.r, k.day, issued, d.Budget)
 		}
-		// The pools of tiers 1–4 gave exactly the free units spent that day
-		// (spends and fees) plus those held by the day's service holds, open or
-		// committed; tier 0 exactly the day's grants and dividends.
-		var spent, held, committed, grants int64
-		if err = db.QueryRow("SELECT coalesce(sum(amount),0) FROM ledger_entries WHERE resource=? AND day=? AND bucket='free' AND kind IN ('spend','fee')", k.r, k.day).Scan(&spent); err != nil {
-			t.Fatal(err)
+		// The floor and standing slices gave exactly the free units spent
+		// that day (spends and fees) plus those held by the day's service
+		// holds, open or committed; the grant slice exactly the day's grants.
+		// The anonymous account holds exactly the anonymous lots' part.
+		drawnBy := func(origin string) int64 {
+			t.Helper()
+			var spent, held, committed int64
+			if err = db.QueryRow("SELECT coalesce(sum(e.amount),0) FROM ledger_entries e JOIN ledger_lots l ON l.id=e.lot_id WHERE e.resource=? AND e.day=? AND e.bucket='free' AND e.kind IN ('spend','fee') AND "+origin, k.r, k.day).Scan(&spent); err != nil {
+				t.Fatal(err)
+			}
+			if err = db.QueryRow("SELECT coalesce(sum(hp.units),0) FROM ledger_hold_parts hp JOIN ledger_holds h ON h.id=hp.hold_id JOIN ledger_lots l ON l.id=hp.lot_id WHERE h.resource=? AND h.created_at/86400=? AND h.state='held' AND h.service<>'ledger' AND l.bucket='free' AND "+origin, k.r, k.day).Scan(&held); err != nil {
+				t.Fatal(err)
+			}
+			if err = db.QueryRow("SELECT coalesce(sum(e.amount),0) FROM ledger_entries e JOIN ledger_holds h ON h.id=e.hold_id JOIN ledger_lots l ON l.id=e.lot_id WHERE e.kind='commit' AND e.bucket='free' AND h.resource=? AND h.created_at/86400=? AND "+origin, k.r, k.day).Scan(&committed); err != nil {
+				t.Fatal(err)
+			}
+			return spent + held + committed
 		}
-		if err = db.QueryRow("SELECT coalesce(sum(hp.units),0) FROM ledger_hold_parts hp JOIN ledger_holds h ON h.id=hp.hold_id JOIN ledger_lots l ON l.id=hp.lot_id WHERE h.resource=? AND h.created_at/86400=? AND h.state='held' AND h.service<>'ledger' AND l.bucket='free'", k.r, k.day).Scan(&held); err != nil {
-			t.Fatal(err)
-		}
-		if err = db.QueryRow("SELECT coalesce(sum(e.amount),0) FROM ledger_entries e JOIN ledger_holds h ON h.id=e.hold_id WHERE e.kind='commit' AND e.bucket='free' AND h.resource=? AND h.created_at/86400=?", k.r, k.day).Scan(&committed); err != nil {
-			t.Fatal(err)
-		}
+		var grants int64
 		if err = db.QueryRow("SELECT coalesce(sum(amount),0) FROM ledger_entries WHERE resource=? AND day=? AND kind IN ('grant','earn')", k.r, k.day).Scan(&grants); err != nil {
 			t.Fatal(err)
 		}
-		if drawn := issued - d.Pools[0].Claimed; drawn != spent+held+committed || d.Pools[0].Claimed != grants {
-			fail("%s day %d: pools gave %d (grants %d) but free spend %d + held %d + committed %d, grants %d", k.r, k.day, drawn, d.Pools[0].Claimed, spent, held, committed, grants)
+		g := d.Slices[sliceGrant]
+		if drawn, free := issued-g.Claimed, drawnBy("1=1"); drawn != free || g.Claimed != grants {
+			fail("%s day %d: slices gave %d (grants %d) but free spend and holds %d, grants %d", k.r, k.day, drawn, g.Claimed, free, grants)
 		}
-		// 4. Priority: a tier never borrows from a higher tier.
-		if lent != borrowed || d.Pools[1].Lent != 0 || d.Pools[4].Borrowed != 0 || d.Pools[0].Lent != 0 || d.Pools[0].Borrowed != 0 {
-			fail("%s day %d: lending out of order %+v", k.r, k.day, d.Pools)
+		if anon := drawnBy("l.origin_tier=4"); d.Anon.Claimed != anon {
+			fail("%s day %d: anonymous account %d but anonymous lots drew %d", k.r, k.day, d.Anon.Claimed, anon)
 		}
-		var lentUpTo, borrowedBelow int64
-		for tier := 1; tier <= 4; tier++ {
-			lentUpTo += d.Pools[tier].Lent
-			if lentUpTo > borrowedBelow {
-				fail("%s day %d: tiers ≤ %d lent %d but tiers above borrowed %d", k.r, k.day, tier, lentUpTo, borrowedBelow)
-			}
-			borrowedBelow += d.Pools[tier].Borrowed
+		// 4. Spill once: what one slice lent the other borrowed; the grant
+		// slice neither lends nor borrows.
+		f, s := d.Slices[sliceFloor], d.Slices[sliceStanding]
+		if f.Lent != s.Borrowed || s.Lent != f.Borrowed || g.Lent != 0 || g.Borrowed != 0 {
+			fail("%s day %d: lending out of balance %+v", k.r, k.day, d.Slices)
 		}
 		if rp := p.Resources[allowance.Resource(k.r)]; rp != nil && d.SpentNonpaid > rp.SpendCeiling {
 			fail("%s day %d: non-paid spend %d over the ceiling %d", k.r, k.day, d.SpentNonpaid, rp.SpendCeiling)
@@ -259,9 +273,9 @@ func checkInvariants(t testing.TB, db *sql.DB, p AllowanceParams) {
 		"(SELECT coalesce(sum(amount),0) FROM ledger_entries e WHERE e.lot_id=l.id AND e.account=l.account AND e.kind IN ('spend','commit','fee','transfer_out','expire','decay','forfeit')),"+
 		"(SELECT coalesce(sum(hp.units),0) FROM ledger_hold_parts hp JOIN ledger_holds h ON h.id=hp.hold_id WHERE hp.lot_id=l.id AND h.state='held') FROM ledger_lots l",
 		func(scan func(...any) error) error {
-			var id, tier, issued, expires, hl, initial, remaining, held, credits, debits, holds int64
+			var id, origin, issued, expires, hl, initial, remaining, held, credits, debits, holds int64
 			var bucket, state string
-			if err := scan(&id, &bucket, &tier, &issued, &expires, &hl, &initial, &remaining, &held, &state, &credits, &debits, &holds); err != nil {
+			if err := scan(&id, &bucket, &origin, &issued, &expires, &hl, &initial, &remaining, &held, &state, &credits, &debits, &holds); err != nil {
 				return err
 			}
 			if held < 0 || held > remaining || remaining > initial {
@@ -276,10 +290,11 @@ func checkInvariants(t testing.TB, db *sql.DB, p AllowanceParams) {
 			if state != "live" && (remaining != 0 || held != 0) {
 				fail("lot %d is %s with %d remaining", id, state, remaining)
 			}
-			// 3. No banking: tier 3–4 free lots expire at the end of their
-			// issue day, whoever holds them; paid lots never decay.
-			if bucket == "free" && tier >= 3 && expires != (issued+1)*86400 {
-				fail("lot %d: tier-%d free lot issued day %d expires %d", id, tier, issued, expires)
+			// 3. No banking: free lots expire at the end of their issue day
+			// plus claim_expiry_days, whoever holds them; paid lots never
+			// decay.
+			if bucket == "free" && expires != (issued+1+p.ClaimExpiryDays)*86400 {
+				fail("lot %d: free lot of origin %d issued day %d expires %d", id, origin, issued, expires)
 			}
 			if bucket == "paid" && (hl != 0 || expires != 0) {
 				fail("lot %d: paid lot decays (half-life %d, expiry %d)", id, hl, expires)

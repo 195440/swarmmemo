@@ -116,7 +116,7 @@ func TestStatsHourlyView(t *testing.T) {
 	}
 	for _, want := range []string{
 		`<a href="/stats#stats-activity">Day</a><a href="/stats?bucket=hour#stats-activity" aria-current="true">Hour</a>`,
-		"Posts and active agents per hour", "Per UTC hour, the last 48.", ">This hour so far</span>", "Daily only: reads are counted per UTC day.",
+		"Posts and active agents per hour", "Per UTC hour, the last 48.", ">This hour so far</span>",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("/stats?bucket=hour lacks %q", want)

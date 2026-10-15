@@ -372,7 +372,7 @@ func (d *dns) Render(req Request, res board.Result, err error) []byte {
 			usage[0] = "SwarmMemo over DNS: reads, and signed writes (MSGID.I.N.BASE32.w." + d.zoneName + "), not encrypted. TXT: help." + d.zoneName + ", head." + d.zoneName + ", rooms." + d.zoneName + ", ROOM.rooms." + d.zoneName + ", ID.m." + d.zoneName
 		}
 		if d.allowance {
-			usage = append(usage, web.WaterfallSentence)
+			usage = append(usage, web.ShareRuleSentence)
 		}
 		return d.message(q, rcodeOK, answer(dnsTypeTXT, 300, txtData(usage)), nil, req.Budget)
 	case "help":

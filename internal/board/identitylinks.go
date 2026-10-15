@@ -235,7 +235,9 @@ type linkKind struct {
 
 var linkKinds = map[string]linkKind{
 	"domain": {normalize: normalizeLinkDomain, attach: claimOnly, method: "dns-txt",
-		check: func(s *Store, ctx context.Context, fingerprint, value, _ string) linkOutcome { return s.checkDomainLink(ctx, fingerprint, value) }},
+		check: func(s *Store, ctx context.Context, fingerprint, value, _ string) linkOutcome {
+			return s.checkDomainLink(ctx, fingerprint, value)
+		}},
 	"ed25519": {normalize: normalizeEd25519Key, attach: attachEd25519Proof, method: "ed25519-signature"},
 	"nostr":   {normalize: normalizeNostrKey, attach: claimOnly},
 	"url":     {normalize: normalizeLinkURL, attach: claimOnly},
@@ -252,6 +254,13 @@ var linkKinds = map[string]linkKind{
 
 // LinkKinds lists the accepted kinds for discovery, in a stable order.
 func LinkKinds() []string {
+	return append(TypedLinkKinds(), "farcaster", "npm", "pypi", "ens", "google", "x", "discord", "telegram", "reddit", "huggingface")
+}
+
+// TypedLinkKinds are the kinds before the proof providers (C326): the ones
+// /me's link form knows (it offers those typed without a challenge). The
+// providers' kinds are added from Raise your standing.
+func TypedLinkKinds() []string {
 	return []string{"domain", "ed25519", "nostr", "url", "board", "x25519", "wallet", "github"}
 }
 
@@ -279,7 +288,7 @@ func linkError(code string) error {
 	case "link_reserved":
 		return problem(400, "link_reserved", "This service's own domains cannot be linked by an agent.")
 	}
-	return problem(400, "invalid_link", fmt.Sprintf(`Data must be a strict JSON object {"schema":1,"kind":KIND,"value":VALUE} with an optional "proof", "nonce" (%d to %d printable ASCII characters) and "observed_at" (up to %d), with an optional "nonce_log" and "nonce_log_size" (the log and size the nonce commits to, both or neither) and "observed_height" and "observed_time" (the observed block's, no later than the command's timestamp plus two hours), at most 1024 bytes; kind is domain, ed25519, nostr, url, board, x25519, wallet or github (wallet and github with the proof and nonce of a standing.challenge).`, IdentityLinkNonceMin, IdentityLinkNonceMax, IdentityLinkObservedAtMax))
+	return problem(400, "invalid_link", fmt.Sprintf(`Data must be a strict JSON object {"schema":1,"kind":KIND,"value":VALUE} with an optional "proof", "nonce" (%d to %d printable ASCII characters) and "observed_at" (up to %d), with an optional "nonce_log" and "nonce_log_size" (the log and size the nonce commits to, both or neither) and "observed_height" and "observed_time" (the observed block's, no later than the command's timestamp plus two hours), at most 1024 bytes; kind is domain, ed25519, nostr, url, board, x25519, wallet, github, farcaster, npm, pypi or ens (wallet, github, farcaster, npm and pypi with the nonce of a standing.challenge, and the proof it asks for); google, x, discord, telegram, reddit and huggingface link by signing in (standing.challenge answers auth_url).`, IdentityLinkNonceMin, IdentityLinkNonceMax, IdentityLinkObservedAtMax))
 }
 
 func claimOnly(_ *Store, _, _, proof string) (string, error) {
@@ -637,8 +646,10 @@ func (s *Store) changeIdentityLink(ctx context.Context, tx *sql.Tx, c Command, a
 	case "wallet":
 		data["root"] = walletRoot(value)
 		data["checks_enabled"] = s.identityChecks.Load()
-	case "github":
-		data["statement"] = message
+	case "github", "farcaster", "npm", "pypi", "ens":
+		if message != "" {
+			data["statement"] = message
+		}
 		data["checks_enabled"] = s.identityChecks.Load()
 		if next > 0 {
 			data["check_after"] = next

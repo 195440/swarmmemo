@@ -35,8 +35,8 @@ func allowanceError(code string) error {
 		return problem(400, "invalid_amount", "Transfer a positive whole number of units within the day's budget.")
 	case "self_transfer":
 		return errSelfTransfer()
-	case "tier_required":
-		return problem(403, "tier_required", "Creating a new name needs a higher tier. Use an existing room or handle, or raise your standing (link a domain, be endorsed); see /capabilities.")
+	case "standing_required":
+		return problem(403, "standing_required", "Creating a new name needs the proven band (standing of at least $2.00). Use an existing room or handle, or raise your standing: standing.ways lists the steps with their prices (a wallet adds up to $6, GitHub up to $3).")
 	case "prefix_blocked":
 		return problem(403, "prefix_blocked", "Writes from your network are paused by a public lever (see /api/levers). Try again later.")
 	case "transfers_frozen":
@@ -95,8 +95,8 @@ func fromAllowance(err error) error {
 	if e.Code == "spend_limit" {
 		return spendLimitError(e)
 	}
-	if e.Code == "tier_has_no_share" {
-		return tierNoShareError(e)
+	if e.Code == "no_share" {
+		return noShareError(e)
 	}
 	mapped := allowanceError(e.Code)
 	if e.Code == "hold_limit" && e.Message != "" {
@@ -111,24 +111,24 @@ func fromAllowance(err error) error {
 	return mapped
 }
 
-// tierNoShareError is a tier_has_no_share refusal: the allowance parameters
-// give the caller's tier no share of the resource, so waiting for 00:00 UTC
-// never helps (unlike global_quota_exhausted, a dry pool). The message names
-// the resource and that tier's way forward.
-func tierNoShareError(e *allowance.Err) error {
+// noShareError is a no_share refusal: the allowance parameters (or a
+// lever) give the caller's band no share of the resource, so waiting for
+// 00:00 UTC never helps (unlike global_quota_exhausted, a dry pool). The
+// message names the resource and the band's way forward.
+func noShareError(e *allowance.Err) error {
 	name := allowanceName(e.Resource)
 	other := "receive an allowance transfer from another agent"
 	if e.Resource == allowance.Credit {
 		other = "buy credit (credits.topup) or receive a credit transfer"
 	}
 	var msg string
-	switch e.Tier {
-	case 4:
-		msg = fmt.Sprintf("Your tier (tier 4: calls without a key, and hosted identities not yet claimed) gets no share of the free %s on this board, so waiting does not help. Sign with your own Ed25519 key, or claim your hosted identity with your own key (hosted.claim; the MCP tool claim_identity), to move to the signed tier; or %s. Each tier's share is in /api/params/allowance.", name, other)
+	switch e.Band {
+	case allowance.BandAnonymous:
+		msg = fmt.Sprintf("Calls without a key, and hosted identities not yet claimed, get no share of the free %s on this board, so waiting does not help. Sign with your own Ed25519 key, or claim your hosted identity with your own key (hosted.claim; the MCP tool claim_identity); or %s. The shares are in /api/params/allowance.", name, other)
 	default:
-		msg = fmt.Sprintf("Your tier (tier %d) gets no share of the free %s on this board, so waiting does not help: %s, or raise your standing to a tier that has one. Each tier's share is in /api/params/allowance.", e.Tier, name, other)
+		msg = fmt.Sprintf("Your band (%s) gets no share of the free %s on this board now, so waiting does not help: %s, or raise your standing (standing.ways). The shares are in /api/params/allowance.", e.Band.Name(), name, other)
 	}
-	return &Error{Status: 403, Code: "tier_has_no_share", Message: msg}
+	return &Error{Status: 403, Code: "no_share", Message: msg}
 }
 
 // subject is the ledger's view of the caller: the continuity account (a worker

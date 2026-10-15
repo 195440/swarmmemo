@@ -1,13 +1,13 @@
-// Package trust is the trust module (RFC0012 §4): it estimates the social
-// collateral behind an account, what it would cost to acquire or rebuild it,
-// from priced proofs and stake-bounded endorsement flow from two seed sets,
-// with mechanical evidence, liability and sponsor dividends. It never answers
-// "is this a human" and never as a boolean: every answer carries its parts,
-// sources, as-of time and parameter version.
+// Package trust is the trust module (RFC 0021, one trust graph): it
+// estimates the collateral an account has here and could lose, in cents,
+// as a capacity-bounded max-flow from the world node over judgement edges.
+// It never answers "is this a human" and never as a boolean: every answer
+// carries its parts, sources, as-of time and parameter version.
 //
-// Compute is a pure function of a Snapshot, so a third party can recompute a
-// run from the public exports (§4.8). Run pages the inputs, computes without
-// holding the database, and records the result in short transactions.
+// Compute is a pure function of a Snapshot, so a third party can recompute
+// a run from its published snapshot (scripts/trust/recompute.py). Run pages
+// the inputs, computes without holding the database, and records the
+// result, the new penalty log entries and the graph in short transactions.
 package trust
 
 import (
@@ -23,12 +23,20 @@ import (
 	"hash"
 	"io"
 	"math"
+	"strconv"
 	"strings"
 
 	"swarmmemo/internal/allowance"
 )
 
 // Schema is migration fragment D (RFC0012 §7), applied after services.Schema.
+// trust_scores keeps RFC 0012's column names; from parameter version 8 they
+// hold: proof_collateral the direct costs, flow_a the cents received over
+// judgement edges, flow_b the cents passed on, flow the cents kept of its own
+// costs, collateral the standing, tier the band (allowance.Band) and
+// weight_ppm v(s); parts is Parts. trust_evidence, trust_penalties,
+// trust_sponsorships and trust_dividends hold retired runs' rows, kept
+// (never deleted) and no longer written.
 const Schema = `
 CREATE TABLE IF NOT EXISTS trust_runs (
  id INTEGER PRIMARY KEY AUTOINCREMENT, as_of INTEGER NOT NULL, params_version INTEGER NOT NULL,
@@ -63,6 +71,25 @@ CREATE TABLE IF NOT EXISTS trust_run_snapshots (
  run_id INTEGER PRIMARY KEY REFERENCES trust_runs(id), sha256 TEXT NOT NULL, bytes INTEGER NOT NULL, gz BLOB NOT NULL);
 `
 
+// PenaltyLogSchema is schema 38 (RFC 0021 §8, C320a): the public penalty
+// log and each run's flow graph (for per-viewer standing). Every penalty,
+// moderation decision and operator override is an entry; a lift is an
+// entry that reverses another (lifts). members, burned and backers are
+// canonical JSON arrays; evidence is the trigger's evidence (a detector's
+// detail, the hidden posts of a moderation decision).
+const PenaltyLogSchema = `
+CREATE TABLE IF NOT EXISTS trust_penalty_log (
+ seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
+ trigger TEXT NOT NULL CHECK(trigger IN ('ring','funnel','shared_wallet','moderation','override','lift')),
+ state TEXT NOT NULL CHECK(state IN ('pending','applied')), members TEXT NOT NULL DEFAULT '[]',
+ evidence TEXT NOT NULL DEFAULT '', reason TEXT NOT NULL, author TEXT NOT NULL, detector_version INTEGER NOT NULL DEFAULT 0,
+ run_id INTEGER NOT NULL DEFAULT 0, level INTEGER NOT NULL DEFAULT 0, starts_at INTEGER NOT NULL, ends_at INTEGER NOT NULL DEFAULT 0,
+ burned TEXT NOT NULL DEFAULT '[]', backers TEXT NOT NULL DEFAULT '[]', burned_cents INTEGER NOT NULL DEFAULT 0,
+ lifts TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS trust_penalty_log_lifts ON trust_penalty_log(lifts) WHERE lifts<>'';
+CREATE TABLE IF NOT EXISTS trust_run_graphs (run_id INTEGER PRIMARY KEY REFERENCES trust_runs(id), gz BLOB NOT NULL);
+`
+
 // DB runs short transactions. The board implements it on its one
 // connection; the trust module never holds a transaction while computing.
 type DB interface {
@@ -85,32 +112,8 @@ type RunSummary struct {
 	// SnapshotBytesMax.
 	SnapshotSHA256 string
 	SnapshotBytes  int64
-}
-
-// Score is one account's current trust_scores row.
-type Score struct {
-	RunID           int64
-	Account         string
-	Root            string
-	ProofCollateral int64
-	FlowA, FlowB    int64 // FlowB is -1 when seed set B had too few members
-	Flow            int64
-	Collateral      int64
-	Tier            allowance.Tier
-	WeightPPM       int64
-	Parts           Parts
-}
-
-// Report is the trust.get answer (§4.7), marshalled as its data object.
-type Report map[string]any
-
-// Histogram is the trust distribution for /stats (§11).
-type Histogram struct {
-	RunID               int64
-	AsOf                int64
-	Stale               bool
-	CollateralLog10Bins []int64                  // bin i: 10^i ≤ collateral < 10^(i+1); bin 0 also holds collateral 0
-	TierCounts          map[allowance.Tier]int64 // would-be tiers of the run
+	// Penalties are the log entries the run opened or applied.
+	Penalties []PenaltyOut
 }
 
 // ErrBusy is returned when a run is already in progress.
@@ -159,7 +162,7 @@ func Run(ctx context.Context, db DB, in Inputs, p Params, asOf, now int64, compu
 		})
 		return sum, cause
 	}
-	snap := Snapshot{Params: p, Meta: Meta{Schema: 1, AsOf: asOf}}
+	snap := Snapshot{Params: p, Meta: Meta{Schema: SnapshotSchema, AsOf: asOf}}
 	if err = in.Read(ctx, asOf, p, func(r Record) error {
 		if r.Type == "params" {
 			return fmt.Errorf("trust inputs: the reader may not replace the parameters")
@@ -168,7 +171,7 @@ func Run(ctx context.Context, db DB, in Inputs, p Params, asOf, now int64, compu
 	}); err != nil {
 		return fail(err)
 	}
-	snap.Meta.AsOf = asOf
+	snap.Meta.AsOf, snap.Meta.Schema = asOf, SnapshotSchema
 	out, err := Compute(ctx, snap)
 	sum.Work = out.Work
 	if err != nil {
@@ -179,6 +182,7 @@ func Run(ctx context.Context, db DB, in Inputs, p Params, asOf, now int64, compu
 	}
 	canonical := out.Canonical()
 	sum.OutputSHA256 = sha256Hex(canonical)
+	sum.Penalties = out.Penalties
 	// The inputs exactly as computed, published so anyone can recompute the
 	// run (recompute.py run). Kept only when within SnapshotBytesMax.
 	snapshot, snapErr := packSnapshot(&snap)
@@ -188,12 +192,10 @@ func Run(ctx context.Context, db DB, in Inputs, p Params, asOf, now int64, compu
 		batch := out.Scores[start:min(start+500, len(out.Scores))]
 		if err = db.Write(ctx, func(q allowance.Querier) error {
 			for _, sc := range batch {
-				flowB := int64(-1)
-				if sc.FlowB != nil {
-					flowB = *sc.FlowB
-				}
+				band, _ := allowance.ParseBand(sc.Band)
 				if _, err := q.ExecContext(ctx, "INSERT INTO trust_scores(run_id,account,root,proof_collateral,flow_a,flow_b,flow,collateral,tier,weight_ppm,parts) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-					id, sc.Account, sc.Root, sc.ProofCollateral, sc.FlowA, flowB, sc.Flow, sc.Collateral, sc.Tier, sc.WeightPPM, string(Canonical(sc.Parts))); err != nil {
+					id, sc.Account, sc.Root, sc.Parts.DirectCents, sc.Parts.ReceivedCents, sc.Parts.PassedCents, sc.Parts.OwnCents, sc.Cents, int64(band), sc.VoteWeightPPM,
+					string(Canonical(sc.Parts))); err != nil {
 					return err
 				}
 			}
@@ -202,38 +204,17 @@ func Run(ctx context.Context, db DB, in Inputs, p Params, asOf, now int64, compu
 			return fail(err)
 		}
 	}
-	record := map[string]any{"summary": out.Inputs, "params_version": p.Version, "params_sha256": out.ParamsSHA256, "params": json.RawMessage(p.Body()),
-		"seeds_a": out.SeedsA, "seeds_b": out.SeedsB, "seeds_b_used": out.SeedsBUsed, "pool_units": out.PoolUnits, "active_accounts": out.Active,
-		"snapshot_sha256": snapshot.sha256, "snapshot_bytes": snapshot.bytes, "standing": out.Standing, "judgements_shadow": shadowPublished(out.JudgementsShadow)}
-	// Rule 4: the section as the rule, and its carry in full, which the
-	// next run reads back (LatestCarry) and a verifier compares with the
-	// next snapshot's carry records (both are in this run's output).
-	if out.Judgements != nil {
-		record["judgements"], record["judgements_carry"] = out.Judgements.Published(ShadowPublishedMax), out.Judgements.Carry
+	graph, err := packGraph(out.Graph)
+	if err != nil {
+		return fail(err)
 	}
+	record := map[string]any{"summary": out.Inputs, "params_version": p.Version, "params_sha256": out.ParamsSHA256, "params": json.RawMessage(p.Body()),
+		"standing": out.Summary, "carry_in_sha256": out.CarryIn, "carry": out.Carry, "evidence": out.Evidence, "penalties": out.Penalties,
+		"snapshot_sha256": snapshot.sha256, "snapshot_bytes": snapshot.bytes}
 	inputs := Canonical(record)
 	err = db.Write(ctx, func(q allowance.Querier) error {
-		for _, ev := range out.Evidence {
-			if _, err := q.ExecContext(ctx, "INSERT OR IGNORE INTO trust_evidence(id,run_id,kind,members,detail,detector_version,created_at) VALUES(?,?,?,?,?,?,?)",
-				ev.ID, id, ev.Kind, string(Canonical(ev.Members)), ev.Detail, ev.DetectorVersion, asOf); err != nil {
-				return err
-			}
-		}
 		for _, pen := range out.Penalties {
-			if _, err := q.ExecContext(ctx, "INSERT OR IGNORE INTO trust_penalties(account,evidence_id,fraction_ppm,starts_at,ends_at) VALUES(?,?,?,?,?)",
-				pen.Account, pen.Evidence, pen.FractionPPM, pen.StartsAt, pen.EndsAt); err != nil {
-				return err
-			}
-		}
-		for _, sp := range out.Sponsorships {
-			if _, err := q.ExecContext(ctx, `INSERT INTO trust_sponsorships(invitee,sponsor,record_seq,created_at,ends_at,high_water) VALUES(?,?,?,?,?,?)
- ON CONFLICT(invitee) DO UPDATE SET sponsor=excluded.sponsor,record_seq=excluded.record_seq,created_at=excluded.created_at,ends_at=excluded.ends_at,high_water=excluded.high_water`,
-				sp.Invitee, sp.Sponsor, sp.RecordSeq, sp.CreatedAt, sp.EndsAt, sp.HighWater); err != nil {
-				return err
-			}
-		}
-		for _, dv := range out.Dividends {
-			if _, err := q.ExecContext(ctx, "INSERT INTO trust_dividends(run_id,sponsor,invitee,units) VALUES(?,?,?,?)", id, dv.Sponsor, dv.Invitee, dv.Units); err != nil {
+			if err := recordPenalty(ctx, q, id, pen, out.Evidence, p.Detectors.Version, now); err != nil {
 				return err
 			}
 		}
@@ -242,11 +223,14 @@ func Run(ctx context.Context, db DB, in Inputs, p Params, asOf, now int64, compu
 				return err
 			}
 		}
+		if _, err := q.ExecContext(ctx, "INSERT INTO trust_run_graphs(run_id,gz) VALUES(?,?)", id, graph); err != nil {
+			return err
+		}
 		if _, err := q.ExecContext(ctx, "INSERT INTO trust_current(account,run_id) SELECT account,run_id FROM trust_scores WHERE run_id=? ON CONFLICT(account) DO UPDATE SET run_id=excluded.run_id", id); err != nil {
 			return err
 		}
 		_, err := q.ExecContext(ctx, "UPDATE trust_runs SET state='done',inputs=?,nodes=?,edges=?,work=?,capture_bound=?,output_sha256=?,finished_at=? WHERE id=?",
-			string(inputs), out.Nodes, out.Edges, out.Work, string(Canonical(out.CaptureBound)), sum.OutputSHA256, now, id)
+			string(inputs), out.Nodes, out.Edges, out.Work, string(Canonical(out.Summary)), sum.OutputSHA256, now, id)
 		return err
 	})
 	if err != nil {
@@ -256,32 +240,33 @@ func Run(ctx context.Context, db DB, in Inputs, p Params, asOf, now int64, compu
 	return sum, nil
 }
 
-// shadowPublished is the judgements_shadow section as a run records it
-// (nil before rule 3).
-func shadowPublished(s *JudgementsShadow) any {
-	if s == nil {
-		return nil
+// recordPenalty writes a run's penalty: a detector's finding as a new
+// applied entry, or a pending entry (moderation, override) as applied, with
+// its level, end, burned roots and backers.
+func recordPenalty(ctx context.Context, q allowance.Querier, run int64, pen PenaltyOut, evidence []EvidenceOut, detector, now int64) error {
+	backers := Canonical(pen.Backers)
+	burned := Canonical(pen.Burned)
+	if !pen.Opened {
+		_, err := q.ExecContext(ctx, "UPDATE trust_penalty_log SET state='applied',run_id=?,level=?,ends_at=?,burned=?,backers=?,burned_cents=? WHERE id=? AND state='pending'",
+			run, pen.Level, pen.EndsAt, string(burned), string(backers), pen.BurnedCents, pen.ID)
+		return err
 	}
-	return s.Published(ShadowPublishedMax)
+	reason := "detector " + pen.Trigger + " v" + strconv.FormatInt(detector, 10) + " in trust run " + strconv.FormatInt(run, 10)
+	_, err := q.ExecContext(ctx, `INSERT OR IGNORE INTO trust_penalty_log(id,trigger,state,members,evidence,reason,author,detector_version,run_id,level,starts_at,ends_at,burned,backers,burned_cents,created_at)
+ VALUES(?,?,'applied',?,?,?,?,?,?,?,?,?,?,?,?,?)`, pen.ID, pen.Trigger, string(Canonical(pen.Members)), pen.Evidence, reason, "run:"+strconv.FormatInt(run, 10),
+		detector, run, pen.Level, pen.StartsAt, pen.EndsAt, string(burned), string(backers), pen.BurnedCents, now)
+	return err
 }
 
-// LatestCarry reads the carry of the latest done run (rule 4, RFC 0020):
-// nil when that run had none (an earlier rule, or none yet), so a run after
-// a rule 3 run starts with no balances and computes every c0 itself.
-func LatestCarry(ctx context.Context, q allowance.Querier) (*JudgementCarry, error) {
-	var raw sql.NullString
-	err := q.QueryRowContext(ctx, "SELECT json_extract(inputs,'$.judgements_carry') FROM trust_runs WHERE state='done' ORDER BY id DESC LIMIT 1").Scan(&raw)
-	if errors.Is(err, sql.ErrNoRows) || err == nil && (!raw.Valid || raw.String == "" || raw.String == "null") {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var c JudgementCarry
-	if err = json.Unmarshal([]byte(raw.String), &c); err != nil {
-		return nil, fmt.Errorf("trust: the latest run's judgements_carry: %w", err)
-	}
-	return &c, nil
+// Score is one account's row in the latest done run.
+type Score struct {
+	RunID         int64
+	Account       string
+	Root          string
+	Cents         int64
+	Band          allowance.Band
+	VoteWeightPPM int64
+	Parts         Parts
 }
 
 // Current reads an account's score in the latest done run; ok is false when
@@ -300,7 +285,8 @@ const currentScoresChunk = 200
 
 // CurrentScores is Current for many accounts in a few reads: each named
 // account's score in the latest done run, absent when that run has no row
-// for it.
+// for it (standing 0). Rows of a retired run (before parameter version 8)
+// are not standing and read as absent.
 func CurrentScores(ctx context.Context, q allowance.Querier, accounts []string) (map[string]Score, error) {
 	out := map[string]Score{}
 	for start := 0; start < len(accounts); start += currentScoresChunk {
@@ -309,21 +295,21 @@ func CurrentScores(ctx context.Context, q allowance.Querier, accounts []string) 
 		for i, a := range chunk {
 			args[i] = a
 		}
-		rows, err := q.QueryContext(ctx, `SELECT s.run_id,s.account,s.root,s.proof_collateral,s.flow_a,s.flow_b,s.flow,s.collateral,s.tier,s.weight_ppm,s.parts
+		rows, err := q.QueryContext(ctx, `SELECT s.run_id,s.account,s.root,s.collateral,s.tier,s.weight_ppm,s.parts
  FROM trust_current c JOIN trust_scores s ON s.run_id=c.run_id AND s.account=c.account
- WHERE c.account IN (?`+strings.Repeat(",?", len(chunk)-1)+`) AND c.run_id=(SELECT max(id) FROM trust_runs WHERE state='done')`, args...)
+ WHERE c.account IN (?`+strings.Repeat(",?", len(chunk)-1)+`) AND c.run_id=(SELECT max(id) FROM trust_runs WHERE state='done' AND params_version>=`+strconv.Itoa(UnifiedVersion)+`)`, args...)
 		if err != nil {
 			return nil, err
 		}
 		for rows.Next() {
 			var score Score
 			var parts string
-			var tier int64
-			if err = rows.Scan(&score.RunID, &score.Account, &score.Root, &score.ProofCollateral, &score.FlowA, &score.FlowB, &score.Flow, &score.Collateral, &tier, &score.WeightPPM, &parts); err != nil {
+			var band int64
+			if err = rows.Scan(&score.RunID, &score.Account, &score.Root, &score.Cents, &band, &score.VoteWeightPPM, &parts); err != nil {
 				rows.Close()
 				return nil, err
 			}
-			score.Tier = allowance.Tier(tier)
+			score.Band = allowance.Band(band)
 			if err = json.Unmarshal([]byte(parts), &score.Parts); err != nil {
 				rows.Close()
 				return nil, err
@@ -340,215 +326,114 @@ func CurrentScores(ctx context.Context, q allowance.Querier, accounts []string) 
 	return out, nil
 }
 
-// latestRuns reads the latest done run and the latest run of any state.
-func latestRuns(ctx context.Context, q allowance.Querier) (done map[string]any, lastState string, err error) {
-	var id, asOf, version, finished int64
-	var summary string
-	// Only the summary: a run's inputs also carry its standing and
-	// judgements_shadow sections, too large to parse on every read.
-	err = q.QueryRowContext(ctx, "SELECT id,as_of,params_version,finished_at,coalesce(json_extract(inputs,'$.summary'),'{}') FROM trust_runs WHERE state='done' ORDER BY id DESC LIMIT 1").Scan(&id, &asOf, &version, &finished, &summary)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, "", err
-	}
-	if err == nil {
-		var in InputsSummary
-		_ = json.Unmarshal([]byte(summary), &in)
-		done = map[string]any{"id": id, "as_of": asOf, "params_version": version, "computed_at": finished, "summary": in}
-	}
-	err = q.QueryRowContext(ctx, "SELECT state FROM trust_runs WHERE state<>'running' ORDER BY id DESC LIMIT 1").Scan(&lastState)
-	if errors.Is(err, sql.ErrNoRows) {
-		err = nil
-	}
-	return done, lastState, err
-}
-
-// AnswerOptions is what the board knows that the trust tables do not.
-type AnswerOptions struct {
-	Agent           string // the key the caller named
-	Mode            string // "shadow" or "allocation"
-	Effective       *int64 // the tier allocation uses now; nil when unknown
-	EffectiveReason string
-	BreakerActive   bool
-	BreakerUntil    int64
-	Now             int64
-	ArchiveDelay    int64
-}
-
 // StaleAfter is how long a run stays fresh.
 const StaleAfter = 2 * day
 
-// Answer is the public trust.get answer for an account (§4.7). It is never
-// a boolean: collateral with its parts, flows from both seed sets, liability,
-// sponsorship, the breaker and both tiers, with as-of time, run and version.
-func Answer(ctx context.Context, q allowance.Querier, account string, opt AnswerOptions) (Report, error) {
-	run, lastState, err := latestRuns(ctx, q)
-	if err != nil {
-		return nil, err
-	}
-	caveats := []string{}
-	report := Report{"schema": 1, "agent": opt.Agent, "account": account, "mode": opt.Mode, "boolean": false}
-	if run == nil {
-		caveats = append(caveats, "no trust run has finished yet")
-		report["run"], report["as_of"], report["computed_at"], report["params_version"], report["stale"] = nil, nil, nil, nil, true
-		report["inputs_through"] = nil
-	} else {
-		asOf := run["as_of"].(int64)
-		summary := run["summary"].(InputsSummary)
-		stale := lastState == "aborted" || opt.Now-asOf > StaleAfter
-		if lastState == "aborted" {
-			caveats = append(caveats, "the latest run was aborted at its work bound; this answer is from the previous run")
-		}
-		report["run"], report["as_of"], report["computed_at"], report["params_version"], report["stale"] = run["id"], asOf, run["computed_at"], run["params_version"], stale
-		report["inputs_through"] = map[string]any{"events_seq": summary.EventsSeq, "endorsements_seq": summary.EndorsementsSeq, "ledger_seq": summary.LedgerSeq}
-		report["recomputable_from"] = asOf + opt.ArchiveDelay
-	}
-	score, ok, err := Current(ctx, q, account)
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		score = Score{Account: account, Root: account, FlowB: -1, Tier: allowance.TierSigned, WeightPPM: 1e6, Parts: Parts{Proofs: []ProofPart{}, Endorsers: []EndorserPart{}}}
-		if run != nil {
-			caveats = append(caveats, "not scored in the latest run: no public signed activity, endorsement or proof in its window")
-		}
-	}
-	var log10 float64
-	if score.Collateral > 0 {
-		log10 = math.Round(math.Log10(float64(score.Collateral+1))*100) / 100
-	}
-	report["collateral"] = map[string]any{"total": score.Collateral, "proof": score.ProofCollateral, "endorsement": score.Collateral - score.ProofCollateral, "log10": log10, "unit": "see /api/params/trust (collateral_unit)"}
-	report["root"] = score.Root
-	proofs := score.Parts.Proofs
-	if proofs == nil {
-		proofs = []ProofPart{}
-	}
-	report["proofs"] = proofs
-	var flowB any
-	if score.FlowB >= 0 {
-		flowB = score.FlowB
-	} else {
-		caveats = append(caveats, "seed set B had fewer members than its minimum; flow is from seed set A only")
-	}
-	endorsers := score.Parts.Endorsers
-	if endorsers == nil {
-		endorsers = []EndorserPart{}
-	}
-	report["endorsements"] = map[string]any{
-		"flow":            map[string]any{"a": score.FlowA, "b": flowB, "effective": score.Flow, "unit": "1/unit_per_share of a fair share"},
-		"endorsers":       endorsers,
-		"endorsers_total": score.Parts.EndorsersTotal,
-		"down_votes":      score.Parts.DownVotes,
-		"own_avg":         score.Parts.OwnAvg,
-		"transit":         score.Parts.Transit,
-		"seed":            score.Parts.Seed,
-	}
-	liability, err := accountLiability(ctx, q, account, opt.Now)
-	if err != nil {
-		return nil, err
-	}
-	liability["penalty_ppm"] = score.Parts.PenaltyPPM
-	report["liability"] = liability
-	sponsor, err := accountSponsor(ctx, q, account)
-	if err != nil {
-		return nil, err
-	}
-	report["sponsor"] = sponsor
-	report["breaker"] = map[string]any{"active": opt.BreakerActive, "trust_until": opt.BreakerUntil, "reset_in_run": score.Parts.Reset}
-	tier := map[string]any{"would_be": int64(score.Tier), "effective": nil, "reason": opt.EffectiveReason}
-	if opt.Effective != nil {
-		tier["effective"] = *opt.Effective
-	}
-	report["tier"] = tier
-	report["weight_ppm"] = score.WeightPPM
-	// RFC0015 standing (trust parameter version 2): null before.
-	standing, err := CurrentStanding(ctx, q, account)
-	if err != nil {
-		return nil, err
-	}
-	report["standing"] = standing
-	for _, part := range proofs {
-		if part.Kind == "history" {
-			caveats = append(caveats, "history is lagged one run")
-			break
-		}
-	}
-	for _, part := range proofs {
-		if part.Kind == "domain" && part.WeightPPM > 0 {
-			caveats = append(caveats, "domain verified age is unknown: counted at most half its ramp")
-			break
-		}
-	}
-	caveats = append(caveats, "proof states are this service's attestation (RFC0009); endorsements and replies are recomputable from /v1/export")
-	report["caveats"] = caveats
-	return report, nil
+// LatestRun is the latest done run of the one trust graph (parameter
+// version 8 on): its id, as-of time, parameter version, when it finished
+// and whether the latest attempt since was aborted.
+type LatestRun struct {
+	ID, AsOf, Version, ComputedAt int64
+	LastAborted                   bool
 }
 
-func accountLiability(ctx context.Context, q allowance.Querier, account string, now int64) (map[string]any, error) {
-	rows, err := q.QueryContext(ctx, `SELECT p.evidence_id,p.fraction_ppm,p.starts_at,p.ends_at,e.kind,e.lifted_at,e.lift_reason FROM trust_penalties p JOIN trust_evidence e ON e.id=p.evidence_id
- WHERE p.account=? AND p.ends_at>? ORDER BY p.starts_at DESC,p.evidence_id LIMIT 20`, account, now)
+// Stale reports whether the run is too old to rely on at now.
+func (r LatestRun) Stale(now int64) bool { return r.LastAborted || now-r.AsOf > StaleAfter }
+
+// Latest reads the latest done run; ok is false before any.
+func Latest(ctx context.Context, q allowance.Querier) (run LatestRun, ok bool, err error) {
+	err = q.QueryRowContext(ctx, "SELECT id,as_of,params_version,finished_at FROM trust_runs WHERE state='done' AND params_version>=? ORDER BY id DESC LIMIT 1", UnifiedVersion).
+		Scan(&run.ID, &run.AsOf, &run.Version, &run.ComputedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return LatestRun{}, false, nil
+	}
+	if err != nil {
+		return LatestRun{}, false, err
+	}
+	var last string
+	err = q.QueryRowContext(ctx, "SELECT state FROM trust_runs WHERE state<>'running' ORDER BY id DESC LIMIT 1").Scan(&last)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return LatestRun{}, false, err
+	}
+	run.LastAborted = last == "aborted"
+	return run, true, nil
+}
+
+// RunSummaryOf reads a done run's summary (Output.Summary, stored as its
+// capture_bound) and its carry's as-of time; ok false when the run is not
+// a done run of the one trust graph.
+func RunSummaryOf(ctx context.Context, q allowance.Querier, id int64) (Summary, bool, error) {
+	var raw string
+	err := q.QueryRowContext(ctx, "SELECT capture_bound FROM trust_runs WHERE id=? AND state='done' AND params_version>=?", id, UnifiedVersion).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Summary{}, false, nil
+	}
+	if err != nil {
+		return Summary{}, false, err
+	}
+	var s Summary
+	if err = json.Unmarshal([]byte(raw), &s); err != nil {
+		return Summary{}, false, err
+	}
+	return s, true, nil
+}
+
+// LatestCarry reads the carry of the latest done run of the one trust graph
+// as snapshot records (nil before any: the next run starts without one).
+func LatestCarry(ctx context.Context, q allowance.Querier) ([]Record, error) {
+	var raw sql.NullString
+	err := q.QueryRowContext(ctx, "SELECT json_extract(inputs,'$.carry') FROM trust_runs WHERE state='done' AND params_version>=? ORDER BY id DESC LIMIT 1", UnifiedVersion).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && (!raw.Valid || raw.String == "" || raw.String == "null") {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	penalties := []map[string]any{}
-	evidence := []string{}
-	for rows.Next() {
-		var id, kind, reason string
-		var fraction, starts, ends, lifted int64
-		if err = rows.Scan(&id, &fraction, &starts, &ends, &kind, &lifted, &reason); err != nil {
-			return nil, err
-		}
-		pen := map[string]any{"evidence": id, "kind": kind, "fraction_ppm": fraction, "starts_at": starts, "ends_at": ends, "lifted": lifted > 0}
-		if lifted > 0 {
-			pen["lifted_at"], pen["lift_reason"] = lifted, reason
-		}
-		penalties = append(penalties, pen)
-		evidence = append(evidence, id)
+	var c Carry
+	if err = json.Unmarshal([]byte(raw.String), &c); err != nil {
+		return nil, fmt.Errorf("trust: the latest run's carry: %w", err)
 	}
-	return map[string]any{"penalties": penalties, "evidence": evidence}, rows.Err()
+	return c.Records(), nil
 }
 
-func accountSponsor(ctx context.Context, q allowance.Querier, account string) (map[string]any, error) {
-	var sponsoredBy any
-	var by string
-	err := q.QueryRowContext(ctx, "SELECT sponsor FROM trust_sponsorships WHERE invitee=?", account).Scan(&by)
-	if err == nil {
-		sponsoredBy = by
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return nil, err
-	}
-	var sponsoring, units int64
-	if err = q.QueryRowContext(ctx, "SELECT count(*) FROM trust_sponsorships WHERE sponsor=?", account).Scan(&sponsoring); err != nil {
-		return nil, err
-	}
-	if err = q.QueryRowContext(ctx, "SELECT coalesce(sum(units),0) FROM trust_dividends WHERE sponsor=?", account).Scan(&units); err != nil {
-		return nil, err
-	}
-	return map[string]any{"sponsored_by": sponsoredBy, "sponsoring": sponsoring, "dividends": map[string]any{"units": units, "paid": false}}, nil
+// Histogram is the trust distribution for /stats: the latest run's standing
+// in log10 bins of cents and its accounts per band.
+type Histogram struct {
+	RunID       int64
+	AsOf        int64
+	Stale       bool
+	CentsLog10  []int64          // bin i: 10^i ≤ cents < 10^(i+1); bin 0 also holds 0
+	BandCounts  map[string]int64 // signed, proven, trusted
+	AboveFloor  int64            // accounts at or above v_floor
+	VFloorCents int64
 }
 
-// Distribution is the public trust distribution of the latest done run;
-// stale as in Answer.
-func Distribution(ctx context.Context, q allowance.Querier, now int64) (Histogram, error) {
-	h := Histogram{CollateralLog10Bins: make([]int64, 12), TierCounts: map[allowance.Tier]int64{}, Stale: true}
-	run, lastState, err := latestRuns(ctx, q)
-	if err != nil || run == nil {
+// Distribution is the public trust distribution of the latest done run.
+func Distribution(ctx context.Context, q allowance.Querier, now int64, p Params) (Histogram, error) {
+	h := Histogram{CentsLog10: make([]int64, 8), BandCounts: map[string]int64{}, Stale: true, VFloorCents: p.VFloorCents}
+	for _, b := range []allowance.Band{allowance.BandSigned, allowance.BandProven, allowance.BandTrusted} {
+		h.BandCounts[b.Name()] = 0
+	}
+	run, ok, err := Latest(ctx, q)
+	if err != nil || !ok {
 		return h, err
 	}
-	h.RunID, h.AsOf = run["id"].(int64), run["as_of"].(int64)
-	h.Stale = lastState == "aborted" || now-h.AsOf > StaleAfter
-	rows, err := q.QueryContext(ctx, "SELECT max(0,length(CAST(collateral AS TEXT))-1)*(collateral>0),tier,count(*) FROM trust_scores WHERE run_id=? GROUP BY 1,2", h.RunID)
+	h.RunID, h.AsOf, h.Stale = run.ID, run.AsOf, run.Stale(now)
+	rows, err := q.QueryContext(ctx, "SELECT max(0,length(CAST(collateral AS TEXT))-1)*(collateral>0),tier,collateral>=?,count(*) FROM trust_scores WHERE run_id=? GROUP BY 1,2,3", p.VFloorCents, h.RunID)
 	if err != nil {
 		return h, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var bin, tier, n int64
-		if err = rows.Scan(&bin, &tier, &n); err != nil {
+		var bin, band, above, n int64
+		if err = rows.Scan(&bin, &band, &above, &n); err != nil {
 			return h, err
 		}
-		h.CollateralLog10Bins[min(bin, int64(len(h.CollateralLog10Bins)-1))] += n
-		h.TierCounts[allowance.Tier(tier)] += n
+		h.CentsLog10[min(bin, int64(len(h.CentsLog10)-1))] += n
+		h.BandCounts[allowance.Band(band).Name()] += n
+		if above > 0 {
+			h.AboveFloor += n
+		}
 	}
 	return h, rows.Err()
 }
@@ -576,12 +461,12 @@ func Runs(ctx context.Context, q allowance.Querier, before int64, limit int) ([]
 	return out, rows.Err()
 }
 
-// RunDetail is one run with its inputs, parameters and capture bound.
+// RunDetail is one run with its inputs and parameters.
 func RunDetail(ctx context.Context, q allowance.Querier, id int64) (map[string]any, bool, error) {
 	var asOf, version, nodes, edges, work, started, finished int64
-	var state, inputs, bound, hash, failure string
-	err := q.QueryRowContext(ctx, "SELECT as_of,params_version,state,inputs,nodes,edges,work,capture_bound,output_sha256,error,started_at,finished_at FROM trust_runs WHERE id=?", id).
-		Scan(&asOf, &version, &state, &inputs, &nodes, &edges, &work, &bound, &hash, &failure, &started, &finished)
+	var state, inputs, hash, failure string
+	err := q.QueryRowContext(ctx, "SELECT as_of,params_version,state,inputs,nodes,edges,work,output_sha256,error,started_at,finished_at FROM trust_runs WHERE id=?", id).
+		Scan(&asOf, &version, &state, &inputs, &nodes, &edges, &work, &hash, &failure, &started, &finished)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, false, nil
 	}
@@ -589,79 +474,29 @@ func RunDetail(ctx context.Context, q allowance.Querier, id int64) (map[string]a
 		return nil, false, err
 	}
 	out := map[string]any{"id": id, "as_of": asOf, "params_version": version, "state": state, "inputs": json.RawMessage(inputs), "nodes": nodes, "edges": edges,
-		"work": work, "capture_bound": nil, "output_sha256": hash, "error": failure, "started_at": started, "finished_at": finished, "snapshot": nil,
-		"recompute": "Rebuild the inputs from /v1/export, /v1/export?stream=endorsements, /api/ledger and the previous runs, apply the published algorithm, and compare the sha256 of the canonical output with output_sha256."}
+		"work": work, "output_sha256": hash, "error": failure, "started_at": started, "finished_at": finished, "snapshot": nil, "recompute": RecomputeText(id, version, false)}
 	var snapSHA string
 	var snapBytes int64
 	err = q.QueryRowContext(ctx, "SELECT sha256,bytes FROM trust_run_snapshots WHERE run_id=?", id).Scan(&snapSHA, &snapBytes)
 	switch {
 	case err == nil:
 		out["snapshot"] = map[string]any{"url": fmt.Sprintf("/api/trust/runs/%d/snapshot", id), "sha256": snapSHA, "bytes": snapBytes}
-		out["recompute"] = fmt.Sprintf("Download /api/trust/runs/%d/snapshot (its sha256 is snapshot.sha256), run scripts/trust/recompute.py run on it, and compare the sha256 of its output with output_sha256.", id)
+		out["recompute"] = RecomputeText(id, version, true)
 	case !errors.Is(err, sql.ErrNoRows):
 		return nil, false, err
 	}
-	if bound != "" {
-		out["capture_bound"] = json.RawMessage(bound)
-	}
-	var evidence int64
-	if err = q.QueryRowContext(ctx, "SELECT count(*) FROM trust_evidence WHERE run_id=?", id).Scan(&evidence); err != nil {
-		return nil, false, err
-	}
-	out["evidence"] = evidence
 	return out, true, nil
 }
 
-// EvidenceList lists evidence newest first with its penalties, before the
-// given rowid (0: from the newest).
-func EvidenceList(ctx context.Context, q allowance.Querier, before int64, limit int) ([]map[string]any, int64, error) {
-	if before <= 0 {
-		before = math.MaxInt64
+// RecomputeText says how to verify a run.
+func RecomputeText(id, version int64, snapshot bool) string {
+	if !snapshot {
+		return "This run kept no snapshot; its inputs and output_sha256 stay published."
 	}
-	rows, err := q.QueryContext(ctx, `SELECT rowid,id,run_id,kind,members,detail,detector_version,created_at,lifted_at,lift_reason,
- (SELECT count(*) FROM trust_penalties p WHERE p.evidence_id=trust_evidence.id) FROM trust_evidence WHERE rowid<? ORDER BY rowid DESC LIMIT ?`, before, limit)
-	if err != nil {
-		return nil, 0, err
+	if version < UnifiedVersion && version > 6 {
+		return fmt.Sprintf("Run %d used retired parameter version %d (RFC 0020's marks), which no verifier recomputes; its snapshot and output_sha256 stay published.", id, version)
 	}
-	defer rows.Close()
-	out := []map[string]any{}
-	var last int64
-	for rows.Next() {
-		var rowid, run, version, created, lifted, penalties int64
-		var id, kind, members, detail, reason string
-		if err = rows.Scan(&rowid, &id, &run, &kind, &members, &detail, &version, &created, &lifted, &reason, &penalties); err != nil {
-			return nil, 0, err
-		}
-		last = rowid
-		ev := map[string]any{"id": id, "run": run, "kind": kind, "members": json.RawMessage(members), "detail": json.RawMessage(detail), "detector_version": version,
-			"created_at": created, "penalties": penalties, "lifted": lifted > 0}
-		if lifted > 0 {
-			ev["lifted_at"], ev["lift_reason"] = lifted, reason
-		}
-		out = append(out, ev)
-	}
-	if len(out) < limit {
-		last = 0
-	}
-	return out, last, rows.Err()
-}
-
-// Lift lifts evidence and every penalty resting on it, with a public
-// reason. It is the only human action on evidence: a human can lift a
-// penalty, never impose one.
-func Lift(ctx context.Context, q allowance.Querier, id, reason string, now int64) error {
-	reason = strings.TrimSpace(reason)
-	if reason == "" || len(reason) > 500 {
-		return fmt.Errorf("a public reason of 1–500 bytes is required")
-	}
-	res, err := q.ExecContext(ctx, "UPDATE trust_evidence SET lifted_at=?,lift_reason=? WHERE id=? AND lifted_at=0", now, reason, id)
-	if err != nil {
-		return err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return fmt.Errorf("no unlifted evidence %q", id)
-	}
-	return nil
+	return fmt.Sprintf("Download /api/trust/runs/%d/snapshot (its sha256 is snapshot.sha256), run scripts/trust/recompute.py run on it, and compare the sha256 of its output with output_sha256.", id)
 }
 
 // SnapshotBytesMax bounds one run's published input snapshot (JSONL,
@@ -736,4 +571,49 @@ func OpenSnapshot(ctx context.Context, q allowance.Querier, id int64) (r io.Read
 		return nil, "", 0, false, err
 	}
 	return io.LimitReader(zr, SnapshotBytesMax), sha, n, true, nil
+}
+
+// packGraph is a run's graph as gzipped JSON.
+func packGraph(g *Graph) ([]byte, error) {
+	if g == nil {
+		g = &Graph{}
+	}
+	raw, err := json.Marshal(g)
+	if err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	zw, _ := gzip.NewWriterLevel(&buf, gzip.BestSpeed)
+	if _, err = zw.Write(raw); err != nil {
+		return nil, err
+	}
+	if err = zw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// GraphBytesMax bounds a stored graph read back.
+const GraphBytesMax = 256 << 20
+
+// LoadGraph reads run id's flow graph; ok is false when the run kept none.
+func LoadGraph(ctx context.Context, q allowance.Querier, id int64) (*Graph, bool, error) {
+	var gz []byte
+	err := q.QueryRowContext(ctx, "SELECT gz FROM trust_run_graphs WHERE run_id=?", id).Scan(&gz)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(gz))
+	if err != nil {
+		return nil, false, err
+	}
+	var g Graph
+	if err = json.NewDecoder(io.LimitReader(zr, GraphBytesMax)).Decode(&g); err != nil {
+		return nil, false, err
+	}
+	g.Reindex()
+	return &g, true, nil
 }

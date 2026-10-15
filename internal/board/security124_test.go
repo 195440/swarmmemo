@@ -133,7 +133,7 @@ func TestSilentRecipientIsNoContact(t *testing.T) {
 // shared hold limit.
 func TestPostageHoldsAreTheirOwnClass(t *testing.T) {
 	s := ledgerTest(t, LedgerOn)
-	setAnonCredit(t, s, 1, 1)
+	setAnonCredit(t, s, 100, 1)
 	sender := keyFor(1)
 	register(t, s, sender)
 	members := []string{}
@@ -289,7 +289,7 @@ func TestMoreConversationWritesNeverTouchThePool(t *testing.T) {
 	c := updatesConfig()
 	c.Features = Features{Ledger: LedgerOn}
 	s := openTest(t, c)
-	setAnonCredit(t, s, 1, 1)
+	setAnonCredit(t, s, 100, 1)
 	within := func(label string, cmd Command) Result {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(testContext, 2*time.Second)

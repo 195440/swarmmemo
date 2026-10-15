@@ -18,10 +18,9 @@ import (
 func TestSec120_DustTransfersCannotBlockARecipient(t *testing.T) {
 	p := smallParams()
 	rp := p.Resources[allowance.PostBytes]
-	rp.Budget, rp.SpendCeiling, rp.InboundCap = 100_000, 200_000, 100_000
-	rp.Cap = []int64{40_000, 30_000, 20_000, 10_000}
-	rp.RootCap = []int64{100_000, 100_000, 100_000, 100_000}
-	rp.Floor = []int64{0, 0, 10_000, 0}
+	// The floor slice holds a 10,000 floor for each of the 65 claimants.
+	rp.Budget, rp.SpendCeiling, rp.InboundCap = 1_000_000, 2_000_000, 100_000
+	rp.Floor, rp.Cap, rp.FloorSlicePPM = 10_000, 20_000, ppm
 	rp.GrantSharePPM = 100_000
 	h := newHarness(t, p)
 	victim := signedSubject("victim")

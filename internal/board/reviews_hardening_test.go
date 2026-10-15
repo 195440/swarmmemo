@@ -14,6 +14,7 @@ import (
 
 	"swarmmemo/internal/reviews"
 	"swarmmemo/internal/rubric"
+	"swarmmemo/internal/trust"
 )
 
 // The C186 security review's findings, each pinned (C197): lab keys and
@@ -519,8 +520,8 @@ func TestReviewReplacesFrozenCurrent(t *testing.T) {
 
 // M5: a subject with 50,000 current reviews reads quickly and whole: the
 // order and aggregate run in SQL, a page loads only its cards, and id lists
-// go in chunks. They are all fresh, seasoned opinions of one day, so the
-// burst cap holds the day's weight to ReviewBurstCap.
+// go in chunks. They are all fresh opinions of one day by accounts with
+// standing, so the burst cap holds the day's weight to ReviewBurstCap.
 func TestReviewManyReviews(t *testing.T) {
 	s := reviewsStore(t)
 	key := keyFor(88)
@@ -557,6 +558,14 @@ func TestReviewManyReviews(t *testing.T) {
 		}
 	}
 	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	// Each fixture reviewer holds standing of C_ref (v = 1) in the latest run;
+	// key, whose review is of another day, has none.
+	runID := setStanding(t, s, map[string]int64{})
+	if _, err = s.db.Exec(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?)
+ INSERT INTO trust_scores(run_id,account,root,proof_collateral,flow_a,flow_b,flow,collateral,tier,weight_ppm,parts) SELECT ?,printf('%064x',i),printf('%064x',i),0,0,0,0,?,2,1000000,'{}' FROM n`,
+		n, runID, trust.DefaultParams().CRefCents); err != nil {
 		t.Fatal(err)
 	}
 	start := time.Now()

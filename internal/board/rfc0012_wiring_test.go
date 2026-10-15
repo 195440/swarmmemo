@@ -1,7 +1,6 @@
 package board
 
 import (
-	"slices"
 	"testing"
 
 	"swarmmemo/internal/trust"
@@ -31,23 +30,15 @@ func TestRFC0012Wiring(t *testing.T) {
 	}
 	pv, err := s.AllowanceParams(testContext, "trust", trust.DefaultVersion)
 	if err != nil || !pv.CompiledIn {
-		t.Fatalf("trust version 1: %+v %v", pv, err)
+		t.Fatalf("trust version %d: %+v %v", trust.DefaultVersion, pv, err)
 	}
-	p, err := trust.ParseParams(pv.Version, pv.Body)
-	if err != nil || !slices.Contains(p.ServiceAccounts, "031d734fde4d37a59f39471fc4c452c32180bee8186844654177626d6ed0e774") || !slices.Contains(p.ServiceAccounts, "4de11d5d8e4ef9f822bb51b95a557687713f9977802caffac31f911663ccce18") {
-		t.Fatalf("trust version 1 service accounts: %v %v", p.ServiceAccounts, err)
+	if _, err := trust.ParseParams(pv.Version, pv.Body); err != nil {
+		t.Fatal(err)
 	}
-	if _, ok := s.classifier().(design0Classifier); !ok {
-		t.Fatal("classifier without TRUST=allocation is not Design 0")
-	}
-	alloc := openTest(t, Config{Features: Features{Trust: TrustAllocation}})
-	// Standing wraps whichever classifier runs while trust is on; it only
-	// ever raises a share (standing.go).
-	sc, ok := alloc.classifier().(standingClassifier)
-	if !ok {
-		t.Fatal("TRUST=allocation is not wrapped by standing")
-	}
-	if _, ok := sc.inner.(trustClassifier); !ok {
-		t.Fatal("TRUST=allocation does not classify with trust")
+	// One classifier, trust on or off: the standing (standing.go).
+	for _, st := range []*Store{s, openTest(t, Config{Features: Features{Trust: TrustOn}})} {
+		if _, ok := st.classifier().(standingClassifier); !ok {
+			t.Fatalf("classifier %T is not the standing", st.classifier())
+		}
 	}
 }

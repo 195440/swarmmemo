@@ -3,6 +3,7 @@ package board
 import (
 	"context"
 
+	"swarmmemo/internal/proofs"
 	"swarmmemo/internal/services"
 )
 
@@ -427,13 +428,18 @@ type Hint struct {
 // AllowanceNote is what a caller got today and how to get more (RFC0012 §11):
 // Line is the one sentence text wires print after the ok line.
 type AllowanceNote struct {
-	Line        string `json:"line"`
-	Resource    string `json:"resource"`
-	Tier        int    `json:"tier"`
-	Entitlement int64  `json:"entitlement"`
-	Remaining   int64  `json:"remaining"`
-	ResetsAt    int64  `json:"resets_at"`
-	More        string `json:"more,omitempty"`
+	Line     string `json:"line"`
+	Resource string `json:"resource"`
+	// Band and StandingCents are the caller's (RFC 0021 §12); the
+	// entitlement is its floor part plus its standing part.
+	Band          string `json:"band"`
+	StandingCents int64  `json:"standing_cents"`
+	Entitlement   int64  `json:"entitlement"`
+	FloorPart     int64  `json:"floor_part"`
+	StandingPart  int64  `json:"standing_part"`
+	Remaining     int64  `json:"remaining"`
+	ResetsAt      int64  `json:"resets_at"`
+	More          string `json:"more,omitempty"`
 	// Services is the service catalogue's URL while any service is enabled.
 	Services string `json:"services,omitempty"`
 }
@@ -516,6 +522,17 @@ type Config struct {
 	// signals.go), created at 0600 when missing. Empty means signals.key
 	// beside the database.
 	SignalsKeyFile string
+	// Proofs is the proof-provider registry (internal/proofs, C326) with the
+	// operator's OAuth credentials (proofs.ConfigFromEnv); nil means
+	// proofs.Default: every kind listed, the OAuth and widget kinds disabled.
+	Proofs *proofs.Registry
+	// PublicURL is the service's public origin (PUBLIC_URL): OAuth proofs'
+	// start pages and the redirect URIs registered with each provider are
+	// under it. Empty means https://ServiceID.
+	PublicURL string
+	// Bond is the refundable standing bond's range and cooling period
+	// (proofbond.go); the zero value means the defaults.
+	Bond BondConfig
 }
 
 // Service is shared by HTML, HTTP compatibility adapters and future tool adapters.

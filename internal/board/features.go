@@ -17,7 +17,6 @@ type Features struct {
 	// Design 0 (builder A).
 	ReservedHandles bool // RESERVED_HANDLES
 	AnonPrefix      bool // ANON_PREFIX
-	AllowanceTiers  bool // ALLOWANCE_TIERS: Design 0 tier caps on the legacy path
 	HeatAuthors     bool // HEAT_AUTHORS
 	NameGate        bool // NAME_GATE
 	// Ledger (builder B).
@@ -57,10 +56,8 @@ type Features struct {
 	// paste.
 	ContentURL string
 	// Trust (builder D).
-	Trust          TrustMode // TRUST
-	TrustLiability bool      // TRUST_LIABILITY
-	TrustDividends bool      // TRUST_DIVIDENDS
-	HeatTrust      bool      // HEAT_TRUST
+	Trust     TrustMode // TRUST
+	HeatTrust bool      // HEAT_TRUST
 	// Endorsements (builder E).
 	VoteRecords        bool // VOTE_RECORDS
 	ExportEndorsements bool // EXPORT_ENDORSEMENTS
@@ -135,16 +132,18 @@ const (
 
 func (m LedgerMode) String() string { return [...]string{"off", "shadow", "on"}[m] }
 
-// TrustMode is TRUST: off (the zero value), shadow or allocation.
+// TrustMode is TRUST: off (the zero value: no trust runs, so every standing
+// is 0) or on (the nightly run, RFC 0021; every consumer reads its
+// standing). There is no shadow: "shadow" and "allocation", RFC 0012's
+// values, are read as on.
 type TrustMode uint8
 
 const (
 	TrustOff TrustMode = iota
-	TrustShadow
-	TrustAllocation
+	TrustOn
 )
 
-func (m TrustMode) String() string { return [...]string{"off", "shadow", "allocation"}[m] }
+func (m TrustMode) String() string { return [...]string{"off", "on"}[m] }
 
 // KnownServices are the service ids SERVICES may name.
 var KnownServices = []string{"echo", "memory"}
@@ -169,11 +168,8 @@ func ParseFeatures(getenv func(string) string) (Features, error) {
 	}
 	boolean("RESERVED_HANDLES", &f.ReservedHandles)
 	boolean("ANON_PREFIX", &f.AnonPrefix)
-	boolean("ALLOWANCE_TIERS", &f.AllowanceTiers)
 	boolean("HEAT_AUTHORS", &f.HeatAuthors)
 	boolean("NAME_GATE", &f.NameGate)
-	boolean("TRUST_LIABILITY", &f.TrustLiability)
-	boolean("TRUST_DIVIDENDS", &f.TrustDividends)
 	boolean("HEAT_TRUST", &f.HeatTrust)
 	boolean("VOTE_RECORDS", &f.VoteRecords)
 	boolean("EXPORT_ENDORSEMENTS", &f.ExportEndorsements)
@@ -193,12 +189,10 @@ func ParseFeatures(getenv func(string) string) (Features, error) {
 	}
 	switch v := getenv("TRUST"); v {
 	case "", "off":
-	case "shadow":
-		f.Trust = TrustShadow
-	case "allocation":
-		f.Trust = TrustAllocation
+	case "on", "shadow", "allocation":
+		f.Trust = TrustOn
 	default:
-		errs = append(errs, fmt.Sprintf("TRUST must be off, shadow or allocation, not %q", v))
+		errs = append(errs, fmt.Sprintf("TRUST must be off or on, not %q", v))
 	}
 	switch v := getenv("MPP"); v {
 	case "", "off":

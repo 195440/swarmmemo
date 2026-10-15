@@ -49,6 +49,15 @@ func (h *harness) limitStatus(account, credential string) SpendLimitStatus {
 
 func ptr(v int64) *int64 { return &v }
 
+// signedCreditParams: anonCreditParams with a floor of 1,000 credits, all
+// of the budget the floor slice (ten claimants at the full floor).
+func signedCreditParams() AllowanceParams {
+	p := anonCreditParams()
+	rp := p.Resources[allowance.Credit]
+	rp.Floor, rp.FloorSlicePPM = 1000, ppm
+	return p
+}
+
 func spendLimitOf(err error) (string, int) {
 	if e, ok := err.(*allowance.Err); ok && e.Code == "spend_limit" {
 		return e.SpendLimit, e.RetryAfter
@@ -57,7 +66,7 @@ func spendLimitOf(err error) (string, int) {
 }
 
 func TestSpendLimitDaily(t *testing.T) {
-	h := newHarness(t, anonCreditParams())
+	h := newHarness(t, signedCreditParams())
 	key := limited("owner", "key:worker")
 	h.setLimit("owner", "key:worker", ptr(100), nil, 0)
 	hold, err := h.reserveCredit(key, 60, "a")
@@ -108,7 +117,7 @@ func TestSpendLimitDaily(t *testing.T) {
 }
 
 func TestSpendLimitRefundFreesTheLimit(t *testing.T) {
-	h := newHarness(t, anonCreditParams())
+	h := newHarness(t, signedCreditParams())
 	key := limited("owner", "key:worker")
 	h.setLimit("owner", "key:worker", ptr(100), nil, 0)
 	hold, err := h.reserveCredit(key, 100, "a")
@@ -155,7 +164,7 @@ func TestSpendLimitRefundFreesTheLimit(t *testing.T) {
 }
 
 func TestSpendLimitPerCallAndExpiry(t *testing.T) {
-	h := newHarness(t, anonCreditParams())
+	h := newHarness(t, signedCreditParams())
 	key := limited("owner", "token:abc")
 	h.setLimit("owner", "token:abc", nil, ptr(40), h.now+600)
 	_, err := h.reserveCredit(key, 41, "a")
@@ -193,7 +202,7 @@ func TestSpendLimitPerCallAndExpiry(t *testing.T) {
 }
 
 func TestSpendLimitTransfers(t *testing.T) {
-	p := anonCreditParams()
+	p := signedCreditParams()
 	p.Resources[allowance.Credit].TransferFee = 5
 	h := newHarness(t, p)
 	key := limited("owner", "key:worker")
@@ -239,7 +248,7 @@ func TestSpendLimitTransfers(t *testing.T) {
 // connection, so each runs in its own transaction one after the other, and
 // the second reads the first's count: exactly one fits the limit.
 func TestSpendLimitConcurrentReserves(t *testing.T) {
-	h := newHarness(t, anonCreditParams())
+	h := newHarness(t, signedCreditParams())
 	key := limited("owner", "key:worker")
 	h.setLimit("owner", "key:worker", ptr(100), nil, 0)
 	var wg sync.WaitGroup

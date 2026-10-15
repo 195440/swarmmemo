@@ -335,6 +335,9 @@ type settleObservationKey struct{}
 // work that owes USDC: an unrelated key cannot make the board call the RPC.
 // The command checks the result against the work (settleWorkUSDC).
 func (s *Store) preflightSettle(ctx context.Context, cmd Command, a actor) context.Context {
+	if cmd.Operation == "standing.challenge" {
+		return s.preflightBondSettle(ctx, cmd, a)
+	}
 	if cmd.Operation != WorkSettle || !a.signed || !s.WorkUSDCEnabled() {
 		return ctx
 	}
@@ -382,25 +385,6 @@ func (s *Store) settleWorkUSDC(ctx context.Context, tx *sql.Tx, w workRow, d wor
 	if err != nil {
 		return err
 	}
-	obs, _ := ctx.Value(settleObservationKey{}).(*settleObservation)
-	if obs == nil || obs.txHash != d.TxHash {
-		return &Error{Status: 503, Code: "chain_unavailable", Message: "The transaction could not be read on chain for this command; send work.settle again shortly.", RetryAfter: 10}
-	}
-	var ce *services.ChainError
-	if errors.As(obs.err, &ce) && ce.Code == "usdc_tx_not_found" {
-		return &Error{Status: 409, Code: "settle_tx_not_found", Message: "No mined transaction has this hash on " + r.Network + " yet. Check the hash and the chain, wait for it to be mined, then settle again.", RetryAfter: 10}
-	}
-	if obs.err != nil {
-		return &Error{Status: 503, Code: "chain_unavailable", Message: "The chain could not be read just now; nothing changed. Send work.settle again shortly.", RetryAfter: 30}
-	}
-	t, cfg := obs.tx, s.config.WorkUSDC
-	if !t.Success {
-		return problem(409, "settle_tx_failed", "That transaction failed on chain (status 0); it paid nothing.")
-	}
-	if t.Confirmations < cfg.Confirmations {
-		return &Error{Status: 409, Code: "settle_unconfirmed", Message: fmt.Sprintf("That transaction has %d of the %d confirmations a settlement needs; settle again in a few seconds.", t.Confirmations, cfg.Confirmations), RetryAfter: 10}
-	}
-	payTo, _ := services.ParseEVMAddress(strings.ToLower(r.PayTo))
 	// A requester with verified wallet links pays from one of them: only
 	// those transfers count. Without any, any sender is accepted and the
 	// settlement says so (sender_unlinked).
@@ -408,51 +392,106 @@ func (s *Store) settleWorkUSDC(ctx context.Context, tx *sql.Tx, w workRow, d wor
 	if err != nil {
 		return err
 	}
-	paid, payer, found, fromLinked := new(big.Int), "", false, false
+	pay, err := s.checkUSDCPayment(ctx, tx, usdcOwed{command: WorkSettle, txHash: d.TxHash, network: r.Network, asset: r.Asset, payTo: r.PayTo, amount: r.Amount,
+		notBefore: r.Created, senders: linked, payee: "the worker", payeeAddress: "the worker's payout address", before: "this work was created",
+		unlinked: "Pay from a linked wallet (or link this one first: standing.challenge kind wallet, then identity.link), then settle."})
+	if err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, "UPDATE work_usdc SET state='paid',tx_hash=?,payer=?,paid_amount=?,block=?,settled_at=?,reason=? WHERE work_id=? AND state='payable'", d.TxHash, pay.payer, pay.amount, pay.block, now, pay.note, w.ID); err != nil {
+		return err
+	}
+	return s.stampWorkPaid(ctx, tx, w.ID, now)
+}
+
+// usdcOwed is one owed USDC payment a settlement must match: work USDC
+// (work.settle) or a bond refund (standing.challenge kind bond, action
+// settle, proofbond.go). One rail: the same chain read, the same checks,
+// one transaction settling one item across both.
+type usdcOwed struct {
+	command, txHash, network, asset, payTo string
+	amount, notBefore                      int64
+	// senders are the addresses that may pay; empty accepts any sender,
+	// noted sender_unlinked.
+	senders map[services.EVMAddress]bool
+	// The wording of the refusals: who is paid, at which address, after
+	// what, and how to pay from an allowed sender.
+	payee, payeeAddress, before, unlinked string
+}
+
+// usdcPaid is a verified settlement.
+type usdcPaid struct {
+	payer, amount, note string
+	block               int64
+}
+
+// checkUSDCPayment checks what preflightSettle read on chain against an
+// owed payment: mined, confirmed, a transfer of the token to the payee from
+// an allowed sender of at least the amount, after the debt arose, and a
+// transaction no other item was settled with.
+func (s *Store) checkUSDCPayment(ctx context.Context, tx *sql.Tx, o usdcOwed) (usdcPaid, error) {
+	obs, _ := ctx.Value(settleObservationKey{}).(*settleObservation)
+	if obs == nil || obs.txHash != o.txHash {
+		return usdcPaid{}, &Error{Status: 503, Code: "chain_unavailable", Message: "The transaction could not be read on chain for this command; send " + o.command + " again shortly.", RetryAfter: 10}
+	}
+	var ce *services.ChainError
+	if errors.As(obs.err, &ce) && ce.Code == "usdc_tx_not_found" {
+		return usdcPaid{}, &Error{Status: 409, Code: "settle_tx_not_found", Message: "No mined transaction has this hash on " + o.network + " yet. Check the hash and the chain, wait for it to be mined, then settle again.", RetryAfter: 10}
+	}
+	if obs.err != nil {
+		return usdcPaid{}, &Error{Status: 503, Code: "chain_unavailable", Message: "The chain could not be read just now; nothing changed. Send " + o.command + " again shortly.", RetryAfter: 30}
+	}
+	t, cfg := obs.tx, s.config.WorkUSDC
+	if !t.Success {
+		return usdcPaid{}, problem(409, "settle_tx_failed", "That transaction failed on chain (status 0); it paid nothing.")
+	}
+	if t.Confirmations < cfg.Confirmations {
+		return usdcPaid{}, &Error{Status: 409, Code: "settle_unconfirmed", Message: fmt.Sprintf("That transaction has %d of the %d confirmations a settlement needs; settle again in a few seconds.", t.Confirmations, cfg.Confirmations), RetryAfter: 10}
+	}
+	payTo, _ := services.ParseEVMAddress(strings.ToLower(o.payTo))
+	paid, payer, found, allowed := new(big.Int), "", false, false
 	for _, tr := range t.Transfers {
 		if tr.To != payTo {
 			continue
 		}
 		found = true
-		if len(linked) > 0 && !linked[tr.From] {
+		if len(o.senders) > 0 && !o.senders[tr.From] {
 			continue
 		}
-		if !fromLinked {
+		if !allowed {
 			payer = tr.From.String()
 		}
-		fromLinked = true
+		allowed = true
 		paid.Add(paid, tr.Value)
 	}
 	if !found {
-		return problem(409, "settle_wrong_recipient", "That transaction has no "+r.Network+" USDC ("+r.Asset+") transfer to the worker's payout address "+r.PayTo+". Pay that address in that token, then settle with the new hash.")
+		return usdcPaid{}, problem(409, "settle_wrong_recipient", "That transaction has no "+o.network+" USDC ("+o.asset+") transfer to "+o.payeeAddress+" "+o.payTo+". Pay that address in that token, then settle with the new hash.")
 	}
-	if !fromLinked {
-		return problem(409, "settle_sender_unlinked", "That transaction pays the worker from an address that is none of your verified wallet links. Pay from a linked wallet (or link this one first: standing.challenge kind wallet, then identity.link), then settle.")
+	if !allowed {
+		return usdcPaid{}, problem(409, "settle_sender_unlinked", "That transaction pays "+o.payee+" from an address that is none of your verified wallet links. "+o.unlinked)
 	}
 	note := ""
-	if len(linked) == 0 {
+	if len(o.senders) == 0 {
 		note = "sender_unlinked"
 	}
-	if paid.Cmp(big.NewInt(r.Amount)) < 0 {
-		return problem(409, "settle_amount_short", "That transaction pays the worker "+services.FormatUSDC(paid.Int64())+" USDC; "+services.FormatUSDC(r.Amount)+" is owed. A settlement is one transaction paying at least the amount owed.")
+	if paid.Cmp(big.NewInt(o.amount)) < 0 {
+		return usdcPaid{}, problem(409, "settle_amount_short", "That transaction pays "+o.payee+" "+services.FormatUSDC(paid.Int64())+" USDC; "+services.FormatUSDC(o.amount)+" is owed. A settlement is one transaction paying at least the amount owed.")
 	}
-	if t.BlockTime < r.Created {
-		return problem(409, "settle_tx_before_work", "That transaction was mined before this work was created, so it cannot be its payment.")
+	if t.BlockTime < o.notBefore {
+		return usdcPaid{}, problem(409, "settle_tx_before_work", "That transaction was mined before "+o.before+", so it cannot be its payment.")
 	}
-	var used string
-	if err = tx.QueryRowContext(ctx, "SELECT work_id FROM work_usdc WHERE tx_hash=?", d.TxHash).Scan(&used); err == nil {
-		return problem(409, "settle_tx_used", "That transaction already settled another work item; one transaction settles one item.")
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return err
+	var used int
+	if err := tx.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM work_usdc WHERE tx_hash=?)+(SELECT count(*) FROM proof_bonds WHERE tx_hash=? OR refund_tx_hash=?)", o.txHash, o.txHash, o.txHash).Scan(&used); err != nil {
+		return usdcPaid{}, err
+	}
+	if used > 0 {
+		return usdcPaid{}, problem(409, "settle_tx_used", "That transaction already settled another item; one transaction settles one item.")
 	}
 	amount := paid.String()
 	if paid.IsInt64() {
 		amount = services.FormatUSDC(paid.Int64())
 	}
-	if _, err = tx.ExecContext(ctx, "UPDATE work_usdc SET state='paid',tx_hash=?,payer=?,paid_amount=?,block=?,settled_at=?,reason=? WHERE work_id=? AND state='payable'", d.TxHash, payer, amount, t.Block, now, note, w.ID); err != nil {
-		return err
-	}
-	return s.stampWorkPaid(ctx, tx, w.ID, now)
+	return usdcPaid{payer: payer, amount: amount, note: note, block: t.Block}, nil
 }
 
 // requesterWallets is the set of verified wallet links of account's keys.

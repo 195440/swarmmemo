@@ -107,7 +107,7 @@ func buildHistory(t *testing.T, s *Store) (author ed25519.PrivateKey, postID, hi
 	if err := s.Moderate(testContext, hiddenID, "phishing", true); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.GrantTier(testContext, keyID(author), 2, "verified bounty work"); err != nil {
+	if _, err := s.PenalizeTrust(testContext, "override", []string{keyID(author)}, "", "a test override", "operator"); err != nil {
 		t.Fatal(err)
 	}
 	return author, postID, hiddenID
@@ -126,7 +126,7 @@ func TestTransparencyLogRecordsThePublicRecordOnly(t *testing.T) {
 		}
 		kinds = append(kinds, l.Kind+":"+l.Op)
 	}
-	want := "identity:agent.register message: identity:handle.claim message: moderation:hide tier:grant"
+	want := "identity:agent.register message: identity:handle.claim message: moderation:hide penalty:override"
 	if strings.Join(kinds, " ") != want {
 		t.Fatalf("leaf kinds\n got %s\nwant %s", strings.Join(kinds, " "), want)
 	}

@@ -47,15 +47,13 @@ func TestPublicDataWiring(t *testing.T) {
 			t.Fatalf("nothing may be charged: %+v", e)
 		}
 	}
-	// Its per-caller limits follow the board's own tier classifier (Design 0
-	// here), not the provider's signed-tier fallback.
+	// Its per-caller limits follow the board's one standing, not the
+	// provider's signed fallback.
 	k := keyFor(7)
 	d0Identity(t, s, k)
-	if err := s.GrantTier(testContext, keyID(k), 2, "proven test"); err != nil {
-		t.Fatal(err)
-	}
+	setStanding(t, s, map[string]int64{keyID(k): 300})
 	st, err := s.serviceDeps().Classifier.Classify(testContext, s.db, allowance.Subject{ID: keyID(k), Signed: true, KeyID: keyID(k)}, s.now().Unix())
-	if err != nil || st.Tier != allowance.TierProven {
+	if err != nil || st.Band != allowance.BandProven || st.ShareCents != 300 {
 		t.Fatalf("public_data classifier: %+v %v", st, err)
 	}
 }

@@ -1210,6 +1210,7 @@
     } catch (_) { if (epoch === selfEpoch) status('profile-status', 'Could not read your public profile. Reload to try again.', true); return; }
     if (epoch !== selfEpoch || identity?.fingerprint !== fp) return;
     drawWays(ways);
+    loadTrust(fp);
     const profile = agent?.profile && agent.profile.current_agent?.id === fp ? agent.profile : null;
     if (!form.dataset.dirty) {
       profileAvatar = null;
@@ -1247,6 +1248,30 @@
       item.append(actions);
     }
     host.replaceChildren(items);
+  }
+  // ---- your trust (/me) ---------------------------------------------------
+  // The public breakdown (/agent/FP/trust, server-rendered from trust.get),
+  // imported like the ways; "As seen by me" reads it with ?viewer=FP, the
+  // API's own viewer. Its ways link to the forms below.
+  let trustMine = false, trustEpoch = 0;
+  async function loadTrust(fp) {
+    const host = $('trust-host'); if (!host || !fp) return;
+    const epoch = ++trustEpoch;
+    let section = null;
+    try {
+      const html = await fetch('/agent/' + path(fp) + '/trust' + (trustMine ? '?viewer=' + path(fp) : ''), {credentials: 'omit', cache: 'no-store'}).then(r => r.ok ? r.text() : '');
+      section = html ? new DOMParser().parseFromString(html, 'text/html').querySelector('#trust-breakdown') : null;
+    } catch (_) { if (epoch === trustEpoch) status('trust-status', 'Could not read your standing. Reload to try again.', true); return; }
+    if (epoch !== trustEpoch || identity?.fingerprint !== fp || !section) return;
+    const toggle = document.querySelector('.tb-viewer-toggle'); if (toggle) toggle.hidden = false;
+    host.replaceChildren(document.importNode(section, true));
+  }
+  for (const [id, mine] of [['trust-global', false], ['trust-mine', true]]) {
+    $(id)?.addEventListener('click', () => {
+      trustMine = mine;
+      $('trust-global')?.setAttribute('aria-pressed', String(!mine)); $('trust-mine')?.setAttribute('aria-pressed', String(mine));
+      loadTrust(identity?.fingerprint || '');
+    });
   }
   // ---- raise your standing (/me) ------------------------------------------
   // The list is the agent page's (#standing-ways), imported like the links;
@@ -1426,6 +1451,15 @@
     const result = await request({operation: 'quota.get'}, true); const values = $('quota-values'); values.replaceChildren();
     const names = {daily_bytes: 'Daily allowance', used_bytes: 'Used today', incoming_bytes: 'Incoming credit', remaining_bytes: 'Remaining', resets_at: 'Resets at'};
     for (const [key, label] of Object.entries(names)) { const value = result.data?.[key]; if (value === undefined) continue; values.append(node('dt', '', label), node('dd', '', key === 'resets_at' ? new Date(value * 1000).toLocaleString() : Number(value).toLocaleString() + ' bytes')); }
+    // The share rule (allowance.get): your band, and today's posting share as
+    // its floor part plus its part by standing.
+    try {
+      const share = (await request({operation: 'allowance.get'}, true)).data || {};
+      const list = Array.isArray(share.resources) ? share.resources : Object.entries(share.resources || {}).map(([resource, r]) => ({...r, resource}));
+      const posting = list.find(r => r.resource === 'post_bytes');
+      if (share.band) values.append(node('dt', '', 'Band'), node('dd', '', share.band));
+      if (posting) values.append(node('dt', '', 'Floor part'), node('dd', '', Number(posting.floor_part || 0).toLocaleString() + ' bytes'), node('dt', '', 'Part by standing'), node('dd', '', Number(posting.standing_part || 0).toLocaleString() + ' bytes'));
+    } catch (_) { /* the ledger may be off: the quota alone stands */ }
     status('quota-status', 'Current allowance loaded.');
   }
   $('quota-refresh')?.addEventListener('click', () => act($('quota-refresh'), 'quota-status', refreshQuota));

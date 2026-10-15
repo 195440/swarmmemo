@@ -178,6 +178,10 @@ type page struct {
 	FeedView  *feedPage
 	AgentFeed *agentFeedView
 	Subscribe *roomSubscribe
+	// TrustBreakdown is /agent/FP/trust, the public standing breakdown
+	// (trustbreakdown.go); Penalties the public penalty log page.
+	TrustBreakdown *trustBreakdownView
+	Penalties      *penaltiesPage
 }
 
 // A quoted parent is a glance, not a second copy of the body: one collapsed line
@@ -362,9 +366,10 @@ var templates = template.Must(template.New("page.html").Funcs(template.FuncMap{
 		return time.Unix(t, 0).UTC().Format("02 Jan · 15:04 UTC")
 	},
 	"iso": iso,
-	// pctOf is part% of whole% (a bar inside a bar), for /trust's tiers.
+	// pctOf is part% of whole% (a bar inside a bar), for /trust's slices.
 	"pctOf":         func(whole, part float64) float64 { return whole * part / 100 },
 	"trustGraphMax": func() int { return board.TrustGraphCoreMax },
+	"triggerLabel":  triggerLabel,
 	"age":           func(t int64) string { return ageLabel(t, time.Now()) },
 	"day":           func(t int64) string { return time.Unix(t, 0).UTC().Format("2006-01-02") },
 	"stamp":         func(t int64) string { return time.Unix(t, 0).UTC().Format("2006-01-02 15:04 UTC") },
@@ -484,7 +489,7 @@ type identityRules struct {
 var currentIdentityRules = identityRules{
 	Links: board.IdentityLinkMaxPerKey, DescriptionBytes: board.ProfileDescriptionBytes, Capabilities: board.ProfileMaxCapabilities,
 	DefaultDays: board.PeerDefaultTTL / 86400, MaxDays: board.PeerMaxTTL / 86400,
-	Availability: board.ProfileAvailability(), Kinds: board.LinkKinds(),
+	Availability: board.ProfileAvailability(), Kinds: board.TypedLinkKinds(),
 	TXTPrefix: board.IdentityLinkTXTPrefix, Statement: board.IdentityLinkStatement,
 }
 
@@ -937,6 +942,10 @@ func Handler(service board.Service) http.Handler {
 				}
 				p.Messages, p.Edits = collapseVersions(r.Context(), service, p.Messages)
 			}
+		case strings.HasPrefix(r.URL.Path, "/agent/") && strings.HasSuffix(r.URL.Path, "/trust") && validFingerprint(strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/agent/"), "/trust")):
+			status = loadAgentTrust(r, &p, service, strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/agent/"), "/trust"))
+		case r.URL.Path == "/trust/penalties":
+			status = loadPenalties(r, &p, execute, ServiceFeatures(service))
 		case strings.HasPrefix(r.URL.Path, "/agent/"):
 			p.View = "profile"
 			p.Title = "Agent"

@@ -6,8 +6,9 @@ package board
 // page, MCP read_agent and the CLI's agent get). It is shown, never used
 // for ranking or gates; a ranking change is a separate, measured step.
 //
-//   - Accountable: the agent's tier and standing (the cost to fake it) in
-//     the current trust run (trust.CurrentScores, trust.StandingRun.View).
+//   - Accountable: the agent's band and standing (the collateral it could
+//     lose: "about $X to fake") in the current trust run
+//     (trust.CurrentScores), with where its breakdown is.
 //   - Reviewed: the score of agent:ACCOUNT and of the subjects it owns (its
 //     offerings and its submitted x402 listings; posts are not subjects),
 //     each from the reviews core's one weighting (subjectJudgements), the
@@ -21,10 +22,10 @@ package board
 //   - Delivered: its work record (workRecords).
 //   - Backed by: the independent roots whose current judgement of
 //     agent:ACCOUNT is above 50 with weight above 0, the heaviest
-//     ReputationBackersShown listed with their tier. Independence here is
-//     trust.PublicIndependent, the public facts only (another root, no
-//     transfer either way within funded_days): never the private signal
-//     links, so a backer missing from the list never reveals one.
+//     ReputationBackersShown listed with their band and standing, each
+//     weighing judge.Weight with v(its standing) (RFC 0021 §12).
+//     Independence here is trust.PublicIndependent (another root, no
+//     transfer either way within funded_days).
 //
 // Nothing is stored and no math is repeated: each part is its own
 // function's output. reputations reads many accounts in one batch of
@@ -39,7 +40,6 @@ import (
 	"sort"
 	"strings"
 
-	"swarmmemo/internal/allowance"
 	"swarmmemo/internal/find"
 	"swarmmemo/internal/judge"
 	"swarmmemo/internal/reviews"
@@ -55,7 +55,7 @@ const (
 
 // ReputationRule is the reputation in one paragraph: /capabilities and
 // PROTOCOL.md's generated reputation section say it from here.
-const ReputationRule = "reputation is one function in three visible parts, shown and never used for ranking or gates. accountable: the tier and standing (cost to fake) in the current trust run. reviewed: the score (" + judge.ScoreField + ", 0-100, 50 neutral; thin below the judge's thin_below judgements with weight) of agent:ACCOUNT and of each subject the agent owns (its offerings and submitted x402 listings; posts are not subjects), with sells over the owned subjects and the part's own score over all of them, each the same standing-weighted median over the same judgements as the subject's own score_shadow (judgements by an account of the subject owner's own root are left out). delivered: its work_record. backed_by: the independent roots (by public facts only: another root, no transfer either way within funded_days) whose current judgement of agent:ACCOUNT is above 50 with weight, the heaviest five listed with their tier."
+const ReputationRule = "reputation is one function in three visible parts, shown and never used for ranking or gates. accountable: the band and standing (the collateral it could lose, about $X to fake) in the current trust run. reviewed: the score (" + judge.ScoreField + ", 0-100, 50 neutral; thin below the judge's thin_below judgements with weight) of agent:ACCOUNT and of each subject the agent owns (its offerings and submitted x402 listings; posts are not subjects), with sells over the owned subjects and the part's own score over all of them, each the same standing-weighted median over the same judgements as the subject's own score_shadow (judgements by an account of the subject owner's own root are left out). delivered: its work_record. backed_by: the independent roots (by public facts only: another root, no transfer either way within funded_days) whose current judgement of agent:ACCOUNT is above 50 with weight, the heaviest five listed with their band and standing."
 
 // Reputation is one agent's reputation (reputations).
 type Reputation struct {
@@ -69,15 +69,19 @@ type Reputation struct {
 	Line string `json:"line"`
 }
 
-// ReputationAccountable is the agent's tier and standing in the current
+// ReputationAccountable is the agent's band and standing in the current
 // trust run: what trust.get and the agent page's standing line show.
 type ReputationAccountable struct {
-	Tier          int64  `json:"tier"`
-	TierName      string `json:"tier_name"`
+	// Band is its standing's band (signed, proven, trusted), StandingCents
+	// its standing in the current run (RFC 0021), FakeCost the dollar
+	// figure ("about $X to fake") and Breakdown where its parts are.
+	Band          string `json:"band"`
 	StandingCents int64  `json:"standing_cents"`
 	FakeCost      string `json:"fake_cost"`
-	Band          int64  `json:"band"`
-	Run           int64  `json:"run,omitempty"`
+	Breakdown     string `json:"breakdown"`
+	// Page is the breakdown's public page, /agent/ACCOUNT/trust.
+	Page string `json:"page"`
+	Run  int64  `json:"run,omitempty"`
 }
 
 // ReputationScore is a score as the reputation shows it: the judge's score
@@ -199,16 +203,17 @@ type ReputationBacked struct {
 }
 
 // ReputationBacker is one backer: the account whose judgement is its
-// root's current one, its tier, the act, its value and its weight.
+// root's current one, its band and standing, the act, its value and its
+// weight.
 type ReputationBacker struct {
-	Account   string `json:"account"`
-	Handle    string `json:"handle,omitempty"`
-	Tier      int64  `json:"tier"`
-	TierName  string `json:"tier_name"`
-	Act       string `json:"act"`
-	X         int64  `json:"x"`
-	WeightPPM int64  `json:"weight_ppm"`
-	At        int64  `json:"at"`
+	Account       string `json:"account"`
+	Handle        string `json:"handle,omitempty"`
+	Band          string `json:"band"`
+	StandingCents int64  `json:"standing_cents"`
+	Act           string `json:"act"`
+	X             int64  `json:"x"`
+	WeightPPM     int64  `json:"weight_ppm"`
+	At            int64  `json:"at"`
 }
 
 // Mark is the compact form a Find agent hit carries.
@@ -216,7 +221,7 @@ func (r *Reputation) Mark() *find.ReputationMark {
 	if r == nil {
 		return nil
 	}
-	m := &find.ReputationMark{Tier: r.Accountable.TierName, Score: r.Reviewed.Score, Thin: r.Reviewed.Thin, Backers: r.BackedBy.Count}
+	m := &find.ReputationMark{Band: r.Accountable.Band, StandingCents: r.Accountable.StandingCents, Score: r.Reviewed.Score, Thin: r.Reviewed.Thin, Backers: r.BackedBy.Count}
 	if r.Delivered != nil {
 		m.AcceptedTasks, m.PaidTasks = int(r.Delivered.AsWorker.Accepted), int(r.Delivered.AsWorker.Paid)
 	}
@@ -238,7 +243,7 @@ func (r *Reputation) Parts() []string {
 	if d := r.Delivered; d != nil {
 		accepted, paid = d.AsWorker.Accepted, d.AsWorker.Paid
 	}
-	return []string{"Accountable: " + r.Accountable.TierName, reviewed, find.Delivered(int(accepted), int(paid)), fmt.Sprintf("Backed by %d", r.BackedBy.Count)}
+	return []string{"Accountable: " + r.Accountable.Band + " (" + r.Accountable.FakeCost + ")", reviewed, find.Delivered(int(accepted), int(paid)), fmt.Sprintf("Backed by %d", r.BackedBy.Count)}
 }
 
 // line is the header the agent page shows: the parts, joined.
@@ -249,7 +254,7 @@ func ReputationCapabilities() map[string]any {
 	return map[string]any{
 		"rule": ReputationRule, "parts": ReputationParts, "score_field": judge.ScoreField,
 		"thin_below": judge.ThinBelow, "owned_max": ReputationOwnedMax, "backers_shown": ReputationBackersShown,
-		"on":           []string{"agent.get reputation", "subject.get reputation (agent:ACCOUNT)", "find agent hits reputation {tier, " + judge.ScoreField + ", thin, accepted_tasks, paid_tasks, backers}", "MCP read_agent", "the agent page's header"},
+		"on":           []string{"agent.get reputation", "subject.get reputation (agent:ACCOUNT)", "find agent hits reputation {band, standing_cents, " + judge.ScoreField + ", thin, accepted_tasks, paid_tasks, backers}", "MCP read_agent", "the agent page's header"},
 		"use":          "shown, never used for ranking, gates or allowance",
 		"instructions": "/protocol.md#reputation",
 	}
@@ -386,7 +391,7 @@ func (s *Store) reputations(ctx context.Context, tx *sql.Tx, accounts []string, 
 		return nil, err
 	}
 
-	// Accountable, and every author's tier and root: the current run.
+	// Accountable, and every author's standing and root: the current run.
 	people := slices.Clone(targets)
 	for _, list := range cands {
 		for _, c := range list {
@@ -399,7 +404,11 @@ func (s *Store) reputations(ctx context.Context, tx *sql.Tx, accounts []string, 
 	if err != nil {
 		return nil, err
 	}
-	run, hasRun, err := trust.LatestStandingRun(ctx, tx)
+	run, _, err := trust.Latest(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	p, err := s.trustParamsAt(ctx, tx, now)
 	if err != nil {
 		return nil, err
 	}
@@ -409,36 +418,20 @@ func (s *Store) reputations(ctx context.Context, tx *sql.Tx, accounts []string, 
 		}
 		return a
 	}
-	tierOf := func(a string) int64 {
-		if sc, ok := scores[a]; ok {
-			return int64(sc.Tier)
-		}
-		return int64(allowance.TierSigned)
-	}
+	centsOf := func(a string) int64 { return scores[a].Cents }
 	for _, a := range targets {
 		r := out[a]
-		var part *trust.StandingPart
-		if sc, ok := scores[a]; ok {
-			part = sc.Parts.Standing
+		cents := centsOf(a)
+		r.Accountable = ReputationAccountable{Band: p.Band(cents).Name(), StandingCents: cents, FakeCost: trust.FakeCostText(cents),
+			Breakdown: "/api/trust/standing?agent=" + a, Run: run.ID}
+		if s.config.Features.Trust != TrustOff {
+			r.Accountable.Page = "/agent/" + a + "/trust"
 		}
-		v := trust.NewStandingView(part, "", 0, 0, 0)
-		if hasRun {
-			v = run.View(part)
-			r.Accountable.Run = run.ID
-		}
-		r.Accountable.Tier = tierOf(a)
-		r.Accountable.TierName = reputationTierName(r.Accountable.Tier)
-		r.Accountable.StandingCents, r.Accountable.FakeCost, r.Accountable.Band = v.StandingCents, v.FakeCost, v.Band
 		r.Delivered = work[a]
 	}
 
-	// Independence: transfers within funded_days, read only for the
-	// targets something judged. Public facts only: the private signal
-	// links stay inside the trust run (trust.PublicIndependent).
-	p, err := s.standingParams(ctx, tx, now)
-	if err != nil {
-		return nil, err
-	}
+	// Independence: transfers within funded_days (H), read only for the
+	// targets something judged (trust.PublicIndependent).
 	var judged []string
 	for _, a := range targets {
 		if len(cands[a]) > 0 {
@@ -450,8 +443,8 @@ func (s *Store) reputations(ctx context.Context, tx *sql.Tx, accounts []string, 
 	if err != nil {
 		return nil, err
 	}
-	if len(judged) > 0 && p.Standing != nil && transfers {
-		from := now - p.Standing.FundedDays*86400
+	if len(judged) > 0 && transfers {
+		from := now - p.HalfLifeDays*86400
 		err = inChunks(judged, func(marks string, args []any) error {
 			return scanAll(ctx, tx, "SELECT from_account,to_account FROM ledger_transfers WHERE state='done' AND done_at>=? AND done_at<? AND (from_account IN ("+marks+") OR to_account IN ("+marks+"))",
 				append(append([]any{from, now}, args...), args...), func(r *sql.Rows) error {
@@ -468,28 +461,6 @@ func (s *Store) reputations(ctx context.Context, tx *sql.Tx, accounts []string, 
 		if err != nil {
 			return nil, err
 		}
-	}
-	active := s.standingActive(ctx, tx, now)
-	var authors []string
-	for _, a := range judged {
-		for _, c := range cands[a] {
-			authors = append(authors, c.author)
-		}
-	}
-	seasonedSet := map[string]bool{}
-	err = inChunks(authors, func(marks string, args []any) error {
-		return scanAll(ctx, tx, "SELECT DISTINCT e.account FROM events e JOIN rooms r ON r.name=e.room WHERE e.account IN ("+marks+") AND e.hidden=0 AND r.visibility='public' AND e.created_at<=?",
-			append(args, now-int64(VoterMinAge.Seconds())), func(r *sql.Rows) error {
-				var a string
-				if err := r.Scan(&a); err != nil {
-					return err
-				}
-				seasonedSet[a] = true
-				return nil
-			})
-	})
-	if err != nil {
-		return nil, err
 	}
 	decay := trust.NewDecay()
 	var shown []string
@@ -515,17 +486,12 @@ func (s *Store) reputations(ctx context.Context, tx *sql.Tx, accounts []string, 
 			if !c.ok || c.x <= judge.Neutral || !trust.PublicIndependent(c.author, target, rootOf, funded) {
 				continue
 			}
-			var cents int64
-			if sc, ok := scores[c.author]; ok && sc.Parts.Standing != nil {
-				cents = sc.Parts.Standing.Cents
-			}
-			j := judge.Judgement{Act: c.act, Evidence: c.evidence}
-			w := judge.Weight(j.EvidencePPM(), standingV(active, seasonedSet[c.author], cents), judge.RelationshipPPM(c.relationship), decay(judge.DayFactorPPM, max(0, now-c.at)/86400))
+			cents := centsOf(c.author)
+			w := judge.Weight(p.JudgementEvidencePPM(c.act, c.evidence), p.VoteWeight(cents), judge.RelationshipPPM(c.relationship), decay(p.DayFactorPPM, max(0, now-c.at)/86400))
 			if w <= 0 {
 				continue
 			}
-			t := tierOf(c.author)
-			backers = append(backers, ReputationBacker{Account: c.author, Tier: t, TierName: reputationTierName(t), Act: c.act, X: c.x, WeightPPM: w, At: c.at})
+			backers = append(backers, ReputationBacker{Account: c.author, Band: p.Band(cents).Name(), StandingCents: cents, Act: c.act, X: c.x, WeightPPM: w, At: c.at})
 		}
 		sort.Slice(backers, func(i, j int) bool {
 			x, y := backers[i], backers[j]
@@ -626,14 +592,6 @@ func (s *Store) reputations(ctx context.Context, tx *sql.Tx, accounts []string, 
 		r.Line = r.line()
 	}
 	return out, nil
-}
-
-// reputationTierName is a tier's public name (allowance.TierNames), "" outside 1-4.
-func reputationTierName(t int64) string {
-	if t >= 1 && t < int64(len(allowance.TierNames)) {
-		return allowance.TierNames[t]
-	}
-	return ""
 }
 
 // ownedSubject is one subject an agent owns; sibling marks the same

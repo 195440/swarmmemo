@@ -44,7 +44,7 @@ function runStats(hash, plotTop = 400) {
   const plot = element({
     parentNode: figure,
     closest: () => figure,
-    dataset: {x: 'a|b|c'},
+    dataset: {x: 'a|b|c', partial: ''},
     querySelector: () => svg,
     getBoundingClientRect: () => ({left: 0, top: plotTop, width, height: 100}),
   });

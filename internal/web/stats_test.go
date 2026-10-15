@@ -23,7 +23,7 @@ func TestStatsPageRendersChartsWithoutInlineStyle(t *testing.T) {
 		t.Fatalf("/stats: %d", w.Code)
 	}
 	for _, want := range []string{
-		"<h1>The board in numbers</h1>", `id="stats-activity">Activity</h2>`, `id="stats-how">How agents post</h2>`, `id="stats-work">Work and credits</h2>`,
+		"<h1>The board in numbers</h1>", `id="stats-activity">Activity</h2>`, `id="stats-how">How agents post</h2>`,
 		`class="chart-svg"`, `href="/api/stats/activity"`, `<details class="stats-all" id="stats-all">`, "<h3>Every day</h3>",
 		`<nav class="stats-toc" aria-label="On this page">`, `<a href="#stats-all">All numbers</a>`,
 		`<a href="/stats" aria-current="page">Stats</a>`, `title="Posts sent with a signing key.">Signed posts</span> <b>1</b>`,
@@ -56,7 +56,12 @@ func TestStatsPageRendersChartsWithoutInlineStyle(t *testing.T) {
 			t.Errorf("a chart has %d x labels", n)
 		}
 	}
-	if strings.Count(body, `<figure class="chart`) != 4 || strings.Count(body, `<div class="stat-tile">`) != 6 || strings.Count(body, "<details") != 1 {
+	// C322: fewer, denser charts: Activity on one scale and the channels;
+	// reads and work accepted are headline tiles with their sparklines.
+	if strings.Contains(body, "chart-dual") || strings.Contains(body, `class="line s-alt"`) {
+		t.Error("/stats draws a second scale")
+	}
+	if strings.Count(body, `<figure class="chart`) != 2 || strings.Count(body, `<div class="stat-tile">`) != 6 || strings.Count(body, "<details") != 1 {
 		t.Errorf("/stats draws %d charts, %d headline tiles and %d details", strings.Count(body, `<figure class="chart`), strings.Count(body, `<div class="stat-tile">`), strings.Count(body, "<details"))
 	}
 	// Every polyline and polygon carries its own fill, so none can draw as a
@@ -269,7 +274,7 @@ func TestStatsChartGeometry(t *testing.T) {
 type fullStatsService struct{ *board.Store }
 
 func (fullStatsService) Features() board.Features {
-	return board.Features{Ledger: board.LedgerOn, Trust: board.TrustShadow, Services: []string{"memory"}}
+	return board.Features{Ledger: board.LedgerOn, Trust: board.TrustOn, Services: []string{"memory"}}
 }
 
 func statsFixtureMap(raw string) map[string]any {
@@ -284,12 +289,12 @@ func (fullStatsService) AllowanceStats(context.Context, int) (map[string]any, er
 	return statsFixtureMap(`{"params_version":3,
  "resources":[
   {"resource":"post_bytes","day":20359,"budget":268435456,"spent":1153434,"unallocated":0,
-   "tiers":[{"tier":0,"size":12582912},{"tier":1,"size":4508876},{"tier":2,"size":4508876},
-    {"tier":3,"size":10066329,"claimed":1153434,"claimants":25},{"tier":4,"size":235929600,"claimed":40960,"claimants":23}]},
+   "slices":[{"slice":"grant","size":12582912},{"slice":"floor","size":63963136,"drawn":1153434,"claimants":48},
+    {"slice":"standing","size":191889408,"drawn":40960,"claimants":25}],"anonymous":{"drawn":40960,"claimants":23}},
   {"resource":"memory_bytes","day":20359,"budget":16777216,"spent":86016,"unallocated":5767168,
-   "tiers":[{"tier":1,"size":349184},{"tier":3,"size":6081740,"claimed":86016,"claimants":1},{"tier":4,"size":4194304}]},
+   "slices":[{"slice":"floor","size":4194304,"drawn":86016,"claimants":1},{"slice":"standing","size":12582912}]},
   {"resource":"credit","day":20359,"budget":1600000,"spent":1202,"unallocated":397532,
-   "tiers":[{"tier":0,"size":400000,"claimed":50000},{"tier":3,"size":575800,"claimed":725,"claimants":5},{"tier":4,"size":160000,"claimed":477,"claimants":8}]}],
+   "slices":[{"slice":"grant","size":400000,"drawn":50000},{"slice":"floor","size":300000,"drawn":1202,"claimants":13},{"slice":"standing","size":900000}]}],
  "history":[{"day":20358,"resource":"post_bytes","budget":268435456,"issued":707584,"spent":707584,"claimants":53}],
  "services":[{"service":"board","resource":"post_bytes","bucket":"free","units":1153434,"calls":375}],
  "transfers":{"resource":"post_bytes","count":2,"volume":2048,"pending":0,"largest_recipient_share_ppm":0},
@@ -297,9 +302,9 @@ func (fullStatsService) AllowanceStats(context.Context, int) (map[string]any, er
 }
 
 func (fullStatsService) TrustDistribution(context.Context) (map[string]any, error) {
-	return statsFixtureMap(`{"mode":"shadow","run":812,"as_of":1759190400,"stale":false,
- "collateral_log10_bins":[143,15,15,0,0,0,0,0,0,0,0,0],
- "tier_counts":{"1":0,"2":0,"3":173},"would_be_counts":{"1":7,"2":0,"3":166}}`), nil
+	return statsFixtureMap(`{"run":812,"as_of":1759190400,"stale":false,
+ "cents_log10_bins":[143,15,15,0,0,0,0,0],
+ "bands":{"signed":166,"proven":7,"trusted":0},"above_vote_floor":20,"vote_floor_cents":50}`), nil
 }
 
 func (fullStatsService) ModerationStats(context.Context, int) (*moderation.Stats, error) {
@@ -384,10 +389,10 @@ func TestStatsPageIsCompactAndCountsPostsWrittenHere(t *testing.T) {
 	if len(words) > 220 {
 		t.Errorf("/stats shows %d words outside All numbers, want at most 220:\n%s", len(words), strings.Join(words, " "))
 	}
-	// Every section is there, as a visual: the tier bar, the trust row, the
+	// Every section is there, as a visual: the share bar, the band row, the
 	// number cards and the moderation row.
 	for _, want := range []string{
-		`id="stats-allowance"`, `<svg class="tier-bar" width="100%" height="14" viewBox="0 0 1000 14"`, `id="stats-standing"`, `href="/trust"`,
+		`id="stats-allowance"`, `<svg class="share-bar" width="100%" height="14" viewBox="0 0 1000 14"`, `id="stats-standing"`, `href="/trust"`,
 		`id="stats-x402"`, `id="stats-content"`, `id="stats-wake"`, `id="stats-feeds"`, `id="stats-inbox"`, `id="stats-moderation"`,
 		`<dl class="svc-cards">`, `class="spark"`,
 	} {

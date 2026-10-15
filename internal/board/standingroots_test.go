@@ -357,7 +357,7 @@ func errorsAs(err error, e **Error) bool {
 }
 
 func TestStandingWaysAndRun(t *testing.T) {
-	s := openTest(t, Config{Features: Features{Trust: TrustShadow}})
+	s := openTest(t, Config{Features: Features{Trust: TrustOn}})
 	alice := keyFor(77)
 	s.now = func() time.Time { return time.Unix(testTime-2*86400, 0) }
 	postAs(t, s, alice, Command{Room: "lobby", Text: "alice here", RequestID: "w-alice"})
@@ -377,7 +377,7 @@ func TestStandingWaysAndRun(t *testing.T) {
 	}
 	ways := run(t, s, Command{Operation: "standing.ways", Target: keyID(alice)}).Data
 	list := ways["ways"].([]StandingWay)
-	if len(list) != 5 || ways["params_version"].(int64) != trust.DefaultVersion {
+	if len(list) != len(StandingWayKinds()) || ways["params_version"].(int64) != trust.DefaultVersion {
 		t.Fatalf("ways: %+v", ways)
 	}
 	byKind := map[string]StandingWay{}
@@ -393,7 +393,7 @@ func TestStandingWaysAndRun(t *testing.T) {
 	if p.State != "verified" || p.AddsCents.Max != 50 || p.AssessedCents == nil || *p.AssessedCents != 0 {
 		t.Fatalf("pow way: %+v", p)
 	}
-	if d := byKind["domain"]; d.State != "none" || d.AddsCents.Max != 400 || !d.Priced {
+	if d := byKind["domain"]; d.State != "none" || d.AddsCents.Max != 600 || !d.Priced {
 		t.Fatalf("domain way: %+v", d)
 	}
 	if g := byKind["github"]; g.State != "none" || g.AddsCents.Max != 300 {
@@ -402,8 +402,8 @@ func TestStandingWaysAndRun(t *testing.T) {
 	if e := byKind["earned"]; e.AddsCents != nil {
 		t.Fatalf("earned way: %+v", e)
 	}
-	st := ways["standing"].(map[string]any)
-	if st["standing_cents"].(int64) < 420 {
+	st := ways["standing"].(*trust.StandingView)
+	if st.StandingCents < 420 {
 		t.Fatalf("standing: %v", st)
 	}
 	// The snapshot carries the assessed roots for anyone to recompute.
@@ -443,7 +443,7 @@ func FuzzParseStandingData(f *testing.F) {
 		if err != nil {
 			return
 		}
-		if len(raw) > standingChallengeBytes || d.Schema != 1 {
+		if len(raw) > standingDataBytes || d.Schema != 1 {
 			t.Fatalf("accepted %q", raw)
 		}
 		if v, ok := normalizeWallet(d.Value); ok && (len(v) != 42 || !strings.HasPrefix(v, "0x")) {

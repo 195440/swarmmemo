@@ -310,6 +310,10 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		s.admin(w, r)
 		return
 	}
+	if strings.HasPrefix(r.URL.Path, "/proofs/") {
+		s.proofRoute(w, r) // C326: OAuth and Telegram proofs (proofs.go)
+		return
+	}
 	if r.URL.Path == "/health" {
 		if !readMethod(r) {
 			methodError(w)

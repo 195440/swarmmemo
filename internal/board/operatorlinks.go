@@ -148,7 +148,8 @@ func readOperatorLinks(ctx context.Context, tx *sql.Tx, hashKey string, from, to
 // accounts as the author (rankInputs gives them only for a linked author):
 // thread is "account=n,..." for every counted replier (the author among
 // them), voters "account=value=trusted,..." for its seasoned voters among
-// the first VoteScanRows. votes is the post's seasoned vote sum.
+// the first VoteScanRows. votes is the post's seasoned vote sum (the
+// whole-vote part of its ranking weight, rankWeight).
 func (l *operatorLinks) collapse(r *rankedPost, thread, voters string, votes *int64) {
 	if len(l.peers[r.account]) == 0 {
 		return

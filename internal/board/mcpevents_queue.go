@@ -9,6 +9,8 @@ import (
 	"errors"
 	"strconv"
 	"unicode/utf8"
+
+	"swarmmemo/internal/trust"
 )
 
 // The MCP Events queue: what an event becomes when it commits, and what a
@@ -479,7 +481,7 @@ func (s *Store) mcpScreening(ctx context.Context, subject string, created, now i
 }
 
 // describeAgent adds an agent's current handle and, when it has one, its
-// latest trust tier: two indexed reads.
+// standing's band in the latest trust run (trust.Current): indexed reads.
 func (s *Store) describeAgent(ctx context.Context, ref map[string]any, fp string) {
 	var handle, account string
 	if s.db.QueryRowContext(ctx, "SELECT handle,account FROM identities WHERE id=?", fp).Scan(&handle, &account) != nil {
@@ -488,9 +490,8 @@ func (s *Store) describeAgent(ctx context.Context, ref map[string]any, fp string
 	if handle != "" {
 		ref["handle"] = handle
 	}
-	var tier int64
-	if s.db.QueryRowContext(ctx, "SELECT t.tier FROM trust_current c JOIN trust_scores t ON t.run_id=c.run_id AND t.account=c.account WHERE c.account=?", account).Scan(&tier) == nil {
-		ref["trust_tier"] = tier
+	if score, ok, err := trust.Current(ctx, s.db, account); err == nil && ok {
+		ref["band"], ref["standing_cents"] = score.Band.Name(), score.Cents
 	}
 }
 

@@ -104,7 +104,7 @@ func (l *Ledger) Sweep(ctx context.Context, q allowance.Querier, now int64, limi
 	for rows.Next() {
 		var x lot
 		var bucket, r string
-		if err = rows.Scan(&x.ID, &x.Account, &bucket, &x.OriginTier, &x.OriginAccount, &x.Hops, &x.IssuedDay, &x.ExpiresAt, &x.HalfLife, &x.DecayedDay, &x.Initial, &x.Remaining, &x.Held, &r); err != nil {
+		if err = rows.Scan(&x.ID, &x.Account, &bucket, &x.Origin, &x.OriginAccount, &x.Hops, &x.IssuedDay, &x.ExpiresAt, &x.HalfLife, &x.DecayedDay, &x.Initial, &x.Remaining, &x.Held, &r); err != nil {
 			rows.Close()
 			return n, err
 		}

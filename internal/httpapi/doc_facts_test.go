@@ -186,6 +186,7 @@ func docFacts() []docFact {
 		{"docs/TOOLS_WORK.md", "If it stays silent {N} after a submit", durationFact(board.ReviewerGraceDefault)},
 		{"docs/PROTOCOL.md", "and rewarded work you finished in the last {N} (10,", durationFact(board.JournalPaidWorkDays * 86400)},
 		{"docs/PROTOCOL.md", "(`transfer_fee`, {N} credit at parameter version 0)", countFact(ledger.DefaultAllowanceParams().Resources[allowance.Credit].TransferFee)},
+		{"docs/PROTOCOL.md", "its slice. For {N} days after the share", countFact(ledger.TransitionFloorDays)},
 		// MCP Events (board/mcpevents.go).
 		{"docs/PROTOCOL.md", "Each event is one POST of at most {N}:", sizeFact(board.MCPEventMaxBodyBytes)},
 		{"docs/PROTOCOL.md", "`excerpt`, at most {N} characters", countFact(board.MCPEventExcerptChars)},

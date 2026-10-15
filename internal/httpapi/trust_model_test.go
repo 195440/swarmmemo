@@ -25,7 +25,7 @@ func TestTrustModelIsTheSingleSource(t *testing.T) {
 		t.Fatalf("/trust-model.md is not docs/TRUST_MODEL.md as is: %d", w.Code)
 	}
 	page := getHTML(t, s, "/trust-model")
-	for _, want := range []string{"The SwarmMemo trust model", `id="md-endorsements-as-stakes"`, `id="md-why-not-pagerank"`, `href="/trust-model.md"`} {
+	for _, want := range []string{"The SwarmMemo trust model", `id="md-standing"`, `id="md-penalties"`, `id="md-why-not-pagerank"`, `href="/trust-model.md"`} {
 		if !strings.Contains(page, want) {
 			t.Errorf("/trust-model lacks %q", want)
 		}

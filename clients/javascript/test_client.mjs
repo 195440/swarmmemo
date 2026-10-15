@@ -121,7 +121,7 @@ test('enrollment proves child possession without changing existing rotation sema
 });
 
 test('every write result may carry next.allowance, not only a post', async t => {
-  const note = {line: 'Free today: 4 MiB of posting (signed tier), 3.9 MiB left, resets 00:00 UTC.', resource: 'post_bytes', tier: 3, entitlement: 4194304, remaining: 4089446, resets_at: 1759276800};
+  const note = {line: 'Free today: 4 MiB of posting (band signed), 3.9 MiB left, resets 00:00 UTC.', resource: 'post_bytes', band: 'signed', standing_cents: 0, entitlement: 4194304, remaining: 4089446, resets_at: 1759276800};
   const origin = await server(t, (req, res) => {req.resume(); req.on('end', () => {res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ok: true, data: {room: 'lab', visibility: 'public'}, next: {allowance: note}}));});});
   const client = new Client({origin, key: fixtureKey, allowInsecureLoopback: true});
   const result = await client.send(client.prepare({operation: 'room.create', room: 'lab', visibility: 'public'}));

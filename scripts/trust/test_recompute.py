@@ -274,13 +274,61 @@ class Standing(unittest.TestCase):
             recompute.read_snapshot([json.dumps(bad)])
 
     def test_rule4_is_refused_plainly(self):
-        # Version 7 (rule 4, RFC 0020 is the rule) is recomputed by
-        # `swarmmemo trust replay --snapshot`; this script says so.
+        # Version 7 (rule 4, RFC 0020's marks) is retired by RFC 0021: no
+        # tool recomputes it, and this script says so.
         lines = (golden_dir() / "golden_judgements_inputs.jsonl").read_text(encoding="utf-8").splitlines()
         params = next(json.loads(line) for line in lines if '"type":"params"' in line)
         self.assertEqual(params["body"]["standing"]["rule"], 4)
-        with self.assertRaisesRegex(recompute.InputError, "trust replay"):
+        with self.assertRaisesRegex(recompute.InputError, "retired"):
             recompute.check_params(params["body"])
+
+
+class Unified(unittest.TestCase):
+    """RFC 0021 (parameter version 8, snapshot schema 2): the Go reference's
+    golden_unified fixture recomputes byte for byte, in any record order."""
+
+    def fixture(self):
+        inputs, output = golden_dir() / "golden_unified_inputs.jsonl", golden_dir() / "golden_unified_output.json"
+        if not inputs.exists():
+            self.skipTest(f"no golden_unified fixture at {golden_dir()}")
+        return inputs.read_text(encoding="utf-8").splitlines(), output.read_text(encoding="utf-8").rstrip("\n")
+
+    def test_matches_reference(self):
+        lines, want = self.fixture()
+        self.assertEqual(recompute.snapshot_schema(lines), 2)
+        self.assertEqual(recompute.canonical(recompute.compute_any(lines)), want)
+
+    def test_record_order_does_not_matter(self):
+        lines, want = self.fixture()
+        self.assertEqual(recompute.canonical(recompute.compute_any(list(reversed(lines)))), want)
+
+    def test_strict_records_and_params(self):
+        lines, _ = self.fixture()
+        bad = [line.replace('"type":"payment"', '"type":"spend"', 1) for line in lines]
+        with self.assertRaises(recompute.InputError):
+            recompute.compute_any(bad)
+        params = next(json.loads(line) for line in lines if '"type":"params"' in line)
+        params["body"]["node_cap_cents"] += 1
+        with self.assertRaises(recompute.InputError):
+            recompute.check_params_v2(params["body"], params["version"])
+        with self.assertRaises(recompute.InputError):
+            recompute.check_params_v2(json.loads(next(line for line in lines if '"type":"params"' in line))["body"], 7)
+
+    def test_log10(self):
+        import math
+        for n in (1, 2, 3, 10, 99, 100, 101, 12345, 10**6, 987654321, 2**62):
+            self.assertLessEqual(abs(recompute.log10_ppm(n) - math.floor(1e6 * math.log10(n))), 2, n)
+        self.assertEqual(recompute.log10_ppm(1), 0)
+
+    def test_judge_median(self):
+        # The score's median: the smallest x whose cumulative weight reaches
+        # half; at exactly half, the midpoint with the next x.
+        self.assertEqual(recompute.j_median([(20, 1), (80, 1)], 0), 50)
+        self.assertEqual(recompute.j_median([(20, 1), (80, 3)], 0), 80)
+        self.assertEqual(recompute.j_median([], 0), 50)
+        # The prior weighs 2 × the mean weight at 50.
+        self.assertEqual(recompute.j_consensus([(100, 10)], 2), 50)
+        self.assertEqual(recompute.j_consensus([(100, 10), (100, 10), (100, 10)], 2), 100)
 
 
 if __name__ == "__main__":

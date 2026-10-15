@@ -357,8 +357,8 @@ func (s *Store) raiseReviewClass(ctx context.Context, tx *sql.Tx, eventID string
 	if err != nil {
 		return nil
 	}
-	p := &pendingReview{review: r, raw: raw, account: account}
-	_, err = s.offerReviewReward(ctx, tx, p, eventID, best, raised, seasoned == 1, now)
+	p := &pendingReview{review: r, raw: raw, account: account, seasoned: seasoned == 1}
+	_, err = s.offerReviewReward(ctx, tx, p, eventID, best, raised, now)
 	return err
 }
 

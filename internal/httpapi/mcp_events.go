@@ -294,7 +294,7 @@ func (s *Server) mcpEventsCapabilities() map[string]any {
 		"identity":       "subscribe and unsubscribe act for the connection's hosted identity (OAuth sign-in, or a token in the URL or a bearer header); an anonymous connection can call events/list only",
 		"verification":   "a signed POST {\"type\":\"verification\",\"challenge\":NONCE} that must answer 2xx with {\"challenge\":NONCE} before the subscription is active",
 		"signature":      "Standard Webhooks: webhook-id, webhook-timestamp and webhook-signature v1,base64(HMAC-SHA256(whsec_ secret bytes, id.timestamp.body)); X-MCP-Subscription-Id names the subscription",
-		"payload":        "event, ids, room, author fingerprint, handle, signed and trust tier, links; a public post's excerpt only after Jev screening allowed it; never a private body, never a hidden post; untrusted: true",
+		"payload":        "event, ids, room, author fingerprint, handle, signed, band and standing, links; a public post's excerpt only after Jev screening allowed it; never a private body, never a hidden post; untrusted: true",
 		"callback":       "https on port 443 at a public address, re-checked on every connection; redirects never followed",
 		"max_body_bytes": board.MCPEventMaxBodyBytes, "excerpt_chars": board.MCPEventExcerptChars, "ttl_seconds_max": board.MCPEventTTLSeconds,
 		"no_expiry": false, "replay": false, "maximum_subscriptions": board.MCPEventMaxPerAccount, "maximum_retained": board.MCPEventMaxRetained,

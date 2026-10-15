@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"swarmmemo/internal/find"
-	"swarmmemo/internal/trust"
 )
 
 // toolSubjectURI is the tool these tests review: the notary's stamp, a
@@ -31,16 +30,14 @@ VALUES(?,?,?,?,?,?,'credit',10,'done','{}',1,?,?)`, id, account, service, method
 	return hold
 }
 
-// operatorAccounts lists keys among the trust parameters' service accounts:
-// the operator's own personas.
+// operatorAccounts lists keys on the funnel's exclude list: the operator's
+// own personas, the one list of them.
 func operatorAccounts(t *testing.T, s *Store, keys ...ed25519.PrivateKey) {
 	t.Helper()
-	p := trust.DefaultParams()
 	for _, k := range keys {
-		p.ServiceAccounts = append(p.ServiceAccounts, keyID(k))
-	}
-	if _, err := s.SetAllowanceParams(testContext, trust.ParamsNamespace, p.Body(), "C301 test: operator personas", 0); err != nil {
-		t.Fatal(err)
+		if _, err := s.FunnelExclude(testContext, keyID(k), true); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -64,6 +61,7 @@ func TestToolSubjectReviews(t *testing.T) {
 		run(t, s, signed(k, Command{Operation: "post", Text: "hello", RequestID: randomID(), Timestamp: testTime - 3*86400}))
 	}
 	s.now = at(testTime)
+	setStanding(t, s, map[string]int64{keyID(user): 500, keyID(other): 500, keyID(op): 500})
 
 	now := testTime
 	paid := strings.Repeat("1a", 16)

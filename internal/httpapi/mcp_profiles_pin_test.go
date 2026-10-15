@@ -52,7 +52,7 @@ func pinServerWith(t *testing.T, pages bool) *Server {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { store.Close() })
-	f := board.Features{Services: services.Known(), Ledger: board.LedgerOn, Trust: board.TrustAllocation}
+	f := board.Features{Services: services.Known(), Ledger: board.LedgerOn, Trust: board.TrustOn}
 	var handler http.Handler
 	if pages {
 		handler = web.Handler(store)

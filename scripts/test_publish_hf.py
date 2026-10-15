@@ -301,6 +301,48 @@ class PublisherTests(unittest.TestCase):
         token.chmod(0o600)
         self.assertEqual(publisher.read_secret(token), "hf_test_not_real")
 
+    def test_status_file_records_success_then_failure_keeping_last_success(self):
+        with server([event()]) as url:
+            argv = ["--work", str(self.work), "--origin", url, "--card", str(self.card),
+                    "--before", "999999", "--status-file", str(self.work / "status.json")]
+            self.assertEqual(publisher.main(argv), 0)
+            status = json.loads((self.work / "status.json").read_bytes())
+            self.assertEqual(status["last_mode"], "dry-run")
+            self.assertIsNone(status["last_error_category"])
+            self.assertGreater(status["rows"], 0)
+            first_success = status["last_success_at"]
+            self.assertIsNotNone(first_success)
+
+            # A publish attempt with no repo/terms fails (ValueError); last_success_at is
+            # kept from the earlier good run, the new error category is recorded, and the
+            # row count from the last successful manifest carries forward.
+            argv_fail = argv + ["--publish"]
+            self.assertEqual(publisher.main(argv_fail), 1)
+            status = json.loads((self.work / "status.json").read_bytes())
+            self.assertEqual(status["last_error_category"], "ValueError")
+            self.assertEqual(status["last_success_at"], first_success)
+            self.assertGreater(status["rows"], 0)
+
+    def test_status_file_default_path_and_env_override(self):
+        with server([event()]) as url:
+            argv = ["--work", str(self.work), "--origin", url, "--card", str(self.card), "--before", "999999"]
+            self.assertEqual(publisher.main(argv), 0)
+            self.assertTrue((self.work / "status.json").exists())
+
+            other = self.work / "elsewhere.json"
+            with patch.dict(os.environ, {"SWARMMEMO_PUBLISHER_STATUS_FILE": str(other)}):
+                self.assertEqual(publisher.main(argv), 0)
+            self.assertTrue(other.exists())
+
+    def test_status_write_failure_does_not_change_the_exit_code(self):
+        # "blocker" is a regular file, so <status-file>'s parent can never be mkdir'd;
+        # write_status must swallow the OSError and leave the real exit code alone.
+        blocker = self.work / "blocker"; blocker.write_text("not a directory")
+        with server([event()]) as url:
+            argv = ["--work", str(self.work), "--origin", url, "--card", str(self.card),
+                    "--before", "999999", "--status-file", str(blocker / "status.json")]
+            self.assertEqual(publisher.main(argv), 0)
+
     def test_remote_commit_verification_and_idempotence(self):
         manifest = publisher.build(self.work, [event()], "g:1", 999999, "https://swarmmemo.com", "swarmmemo.com", self.card)
         remote, commits = {}, []
@@ -336,6 +378,168 @@ class PublisherTests(unittest.TestCase):
                 publisher.publish(self.work / "dataset", manifest, "example/archive", "test", api=API())
 
 
+def endorsement(seq=1, type="vote", voter=None, created_at=172800, **overrides):
+    result = {"type": type, "seq": seq, "voter": voter or ("a" * 63 + str(seq % 10)),
+              "public_key": "pk-not-a-real-key", "value": 1, "created_at": created_at}
+    if type == "vouch":
+        result["target"] = overrides.pop("target", "b" * 64)
+    else:
+        result["message_id"] = overrides.pop("message_id", "event-" + str(seq))
+    result.update(overrides)
+    return result
+
+
+@contextmanager
+def endorsement_server(records, capture=None):
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args): pass
+        def do_GET(self):
+            from urllib.parse import parse_qs, urlsplit
+            if capture is not None: capture.append(self.path)
+            path = urlsplit(self.path)
+            query = parse_qs(path.query)
+            if path.path == "/v1/export" and query.get("stream", [""])[0] == "endorsements":
+                cursor = query.get("cursor", [""])[0]
+                number = int(cursor.rsplit(":", 1)[-1]) if cursor else 0
+                rows = [row for row in records if row["seq"] > number][:2]
+                body = b"".join(publisher.encode(row) for row in rows)
+                self.send_response(200); self.send_header("Content-Type", "application/x-ndjson")
+                self.send_header("X-Next-Cursor", "e:" + str(rows[-1]["seq"] if rows else number))
+            else:
+                body = b'{"ok":true}'
+                self.send_response(200); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+    http = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    worker = threading.Thread(target=http.serve_forever, daemon=True); worker.start()
+    try: yield "http://127.0.0.1:" + str(http.server_port)
+    finally: http.shutdown(); http.server_close(); worker.join()
+
+
+class EndorsementTests(unittest.TestCase):
+    """C323: the endorsements archive config (/v1/export?stream=endorsements), separate from
+    the messages config above but sharing build()/publish()'s machinery via `config=`."""
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.work = Path(self.temporary.name)
+        self.card = Path(publisher.__file__).with_name("dataset_card.md")
+
+    def tearDown(self): self.temporary.cleanup()
+
+    def test_validate_endorsement_allowlist_and_shape(self):
+        self.assertEqual(publisher.validate_endorsement(endorsement()), endorsement())
+        vouch = endorsement(type="vouch", seq=2)
+        self.assertEqual(publisher.validate_endorsement(vouch), vouch)
+        legacy = endorsement(type="legacy_vote", seq=0, weight=0)
+        self.assertEqual(publisher.validate_endorsement(legacy), legacy)
+        with self.assertRaises(ValueError): publisher.validate_endorsement(endorsement(extra_field="nope"))
+        with self.assertRaises(ValueError): publisher.validate_endorsement(endorsement(type="bogus"))
+        with self.assertRaises(ValueError): publisher.validate_endorsement(endorsement(voter="not-a-fingerprint"))
+        with self.assertRaises(ValueError): publisher.validate_endorsement(endorsement(seq=-1))
+        with self.assertRaises(ValueError): publisher.validate_endorsement(endorsement(value="1"))
+        with self.assertRaises(ValueError):  # a vote must not carry a vouch's target
+            publisher.validate_endorsement(endorsement(target="b" * 64))
+        with self.assertRaises(ValueError):  # a vouch must not carry a vote's message_id
+            publisher.validate_endorsement(endorsement(type="vouch", message_id="event-1"))
+        with self.assertRaises(ValueError):
+            publisher.validate_endorsement(endorsement(type="vouch", target="not-hex"))
+        with self.assertRaises(ValueError): publisher.validate_endorsement(endorsement(sponsor="yes"))
+        with self.assertRaises(ValueError): publisher.validate_endorsement(endorsement(weight="3"))
+        with self.assertRaises(ValueError): publisher.validate_endorsement(endorsement(signature=5))
+        with self.assertRaises(ValueError): publisher.validate_endorsement({"type": "vote"})
+
+    def test_endorsement_key_distinguishes_votes_vouches_and_legacy(self):
+        self.assertEqual(publisher.endorsement_key(endorsement(message_id="m1")), "vote:m1:" + endorsement(message_id="m1")["voter"])
+        self.assertNotEqual(publisher.endorsement_key(endorsement(type="vote", message_id="m1")),
+                            publisher.endorsement_key(endorsement(type="legacy_vote", message_id="m1")))
+        v = endorsement(type="vouch", target="c" * 64)
+        self.assertEqual(publisher.endorsement_key(v), "vouch:" + "c" * 64 + ":" + v["voter"])
+
+    def test_fetch_endorsements_paginates_cycles_and_bounds(self):
+        rows = [endorsement(seq=i) for i in range(1, 7)]
+        with endorsement_server(rows) as url:
+            actual, cursor = publisher.fetch_endorsements(url, "")
+            self.assertEqual(actual, rows); self.assertEqual(cursor, "e:6")
+            with self.assertRaises(ValueError): publisher.fetch_endorsements(url, "", max_bytes=5)
+
+    def test_build_and_publish_endorsements_config_is_isolated_from_messages(self):
+        messages_manifest = publisher.build(self.work, [event()], "g:1", 999999, "https://swarmmemo.com",
+                                            "swarmmemo.com", self.card)
+        rows = [endorsement(seq=1), endorsement(type="vouch", seq=2, target="d" * 64)]
+        endorsements_manifest = publisher.build(self.work, rows, "e:2", 0, "https://swarmmemo.com",
+                                                "swarmmemo.com", self.card, config=publisher.ENDORSEMENTS_CONFIG)
+        dataset = self.work / "dataset"
+        self.assertTrue((dataset / "manifest.json").exists())
+        self.assertTrue((dataset / "manifest-endorsements.json").exists())
+        self.assertIn("data/date=1970-01-03/messages.jsonl", messages_manifest["files"])
+        self.assertIn("data/date=1970-01-03/endorsements.jsonl", endorsements_manifest["files"])
+        self.assertNotIn("data/date=1970-01-03/endorsements.jsonl", messages_manifest["files"])
+        self.assertNotIn("data/date=1970-01-03/messages.jsonl", endorsements_manifest["files"])
+        # Each config's row carries only that config's allowed fields: a vouch has no sha256.
+        endorsement_body = (dataset / "data/date=1970-01-03/endorsements.jsonl").read_bytes()
+        self.assertNotIn(b"sha256", endorsement_body)
+
+    def test_vouch_value_update_overwrites_in_place_not_appended(self):
+        target, voter = "d" * 64, "f" * 64  # same (target, voter) pair across both builds
+        first = publisher.build(self.work, [endorsement(type="vouch", seq=1, target=target, voter=voter, value=1)],
+                                "e:1", 0, "https://swarmmemo.com", "swarmmemo.com", self.card,
+                                config=publisher.ENDORSEMENTS_CONFIG)
+        second = publisher.build(self.work, [endorsement(type="vouch", seq=2, target=target, voter=voter, value=5)],
+                                 "e:2", 0, "https://swarmmemo.com", "swarmmemo.com", self.card,
+                                 config=publisher.ENDORSEMENTS_CONFIG)
+        self.assertEqual(first["rows"], 1); self.assertEqual(second["rows"], 1)
+        body = (self.work / "dataset" / "data/date=1970-01-03/endorsements.jsonl").read_bytes()
+        self.assertEqual(len(body.splitlines()), 1)
+        self.assertEqual(json.loads(body)["value"], 5)
+
+    def test_run_end_to_end_with_config_endorsements(self):
+        with endorsement_server([endorsement(seq=1)]) as url:
+            argv = ["--work", str(self.work), "--origin", url, "--card", str(self.card),
+                    "--config", "endorsements", "--status-file", str(self.work / "status.json")]
+            self.assertEqual(publisher.main(argv), 0)
+            status = json.loads((self.work / "status.json").read_bytes())
+            self.assertEqual(status["config"], "endorsements")
+            self.assertEqual(status["rows"], 1)
+            # A later messages-config run against the same --work refuses: identity carries
+            # the config, so the two archives are never silently cross-contaminated.
+            argv_messages = ["--work", str(self.work), "--origin", url, "--card", str(self.card)]
+            self.assertEqual(publisher.main(argv_messages), 1)
+
+    def test_remote_publish_keeps_configs_in_separate_manifests_and_never_cross_deletes(self):
+        manifest = publisher.build(self.work, [endorsement(seq=1)], "e:1", 0, "https://swarmmemo.com",
+                                   "swarmmemo.com", self.card, config=publisher.ENDORSEMENTS_CONFIG)
+        remote, commits = {"manifest.json": publisher.encode({"files": {"data/date=1970-01-03/messages.jsonl": {}}})}, []
+        class Add:
+            def __init__(self, path_in_repo, path_or_fileobj): self.name, self.value = path_in_repo, path_or_fileobj
+        class Delete:
+            def __init__(self, path_in_repo): self.name = path_in_repo
+        class API:
+            def repo_info(self, **kwargs): return types.SimpleNamespace(sha="current")
+            def create_commit(self, **kwargs):
+                commits.append(kwargs)
+                for operation in kwargs["operations"]:
+                    if isinstance(operation, Add):
+                        remote[operation.name] = operation.value if isinstance(operation.value, bytes) else Path(operation.value).read_bytes()
+                    else: remote.pop(operation.name, None)
+                return types.SimpleNamespace(oid="rev-1")
+        def download(repo, name, **kwargs):
+            if name not in remote: raise Missing()
+            path = self.work / "remote" / name; path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(remote[name]); return str(path)
+        class Missing(Exception): pass
+        module = types.ModuleType("huggingface_hub")
+        module.HfApi, module.CommitOperationAdd, module.CommitOperationDelete, module.hf_hub_download = API, Add, Delete, download
+        errors = types.ModuleType("huggingface_hub.errors"); errors.EntryNotFoundError = Missing
+        with patch.dict(sys.modules, {"huggingface_hub": module, "huggingface_hub.errors": errors}):
+            publisher.publish(self.work / "dataset", manifest, "example/archive", "test", api=API(),
+                              config=publisher.ENDORSEMENTS_CONFIG)
+            # The messages config's manifest.json and its (unrelated, pre-existing) file are untouched.
+            self.assertIn("manifest.json", remote)
+            self.assertIn("manifest-endorsements.json", remote)
+            self.assertEqual(len(commits), 1)
+            for operation in commits[0]["operations"]:
+                self.assertNotEqual(getattr(operation, "name", ""), "manifest.json")
+
+
 if __name__ == "__main__": unittest.main()
 
 
@@ -349,3 +553,14 @@ class ExportFieldReview(unittest.TestCase):
         fields = set(msg["required"]) | set(msg["optional"])
         unreviewed = fields - publisher.ALLOWED - publisher.REVIEWED_NOT_ARCHIVED
         self.assertFalse(unreviewed, f"review these message fields for the public archive: {sorted(unreviewed)}")
+
+    def test_every_endorsement_field_is_reviewed(self):
+        """EndorsementRecord (internal/board/endorsements.go) is not part of clients/contract.json
+        (that contract covers message.* only), so this pins the archive's allowlist directly
+        against the Go struct's own json tags: a field added there without review fails here."""
+        import pathlib, re as _re
+        go = (pathlib.Path(__file__).resolve().parents[1] / "internal/board/endorsements.go").read_text()
+        struct = go.split("type EndorsementRecord struct {", 1)[1].split("\n}\n", 1)[0]
+        fields = set(_re.findall(r'json:"([a-zA-Z_]+)', struct))
+        unreviewed = fields - publisher.ENDORSEMENT_ALLOWED
+        self.assertFalse(unreviewed, f"review these endorsement fields for the public archive: {sorted(unreviewed)}")

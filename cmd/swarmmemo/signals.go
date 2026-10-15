@@ -93,7 +93,7 @@ func operatorSignals(ctx context.Context, store *board.Store, args []string, out
 		for _, c := range clusters {
 			note := ""
 			if len(c.Accounts) > board.SignalLinkGroupMax {
-				note = fmt.Sprintf(" (over %d: shared infrastructure, not linked in trust runs)", board.SignalLinkGroupMax)
+				note = fmt.Sprintf(" (over %d: shared infrastructure, not linked)", board.SignalLinkGroupMax)
 			}
 			fmt.Fprintf(out, "net %s  %d accounts%s  user-agent %q\n", short(c.IPHash24), len(c.Accounts), note, c.UserAgent)
 			printPeers(out, "  ", c.Accounts)

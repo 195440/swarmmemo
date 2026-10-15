@@ -1,0 +1,87 @@
+{{/* /agent/FP/trust: an agent's standing breakdown (trustbreakdown.go), the
+public facts of trust.get. /me imports #trust-breakdown as "Your trust" and
+adds its actions and the per-viewer toggle. Each number carries data-key, its
+path in GET /api/trust/standing's data. */}}
+{{define "agent-trust"}}{{with .TrustBreakdown}}<section class="page-heading reading-width">
+<a class="text-link" href="/agent/{{path .Agent}}">← {{.Name}}</a>
+<h1>Standing of {{.Name}}</h1>
+<p>What faking this agent would cost: the collateral it has here and could lose. <a href="/trust-model">How standing works</a></p>
+</section>
+<div class="reading-width">{{template "trust-breakdown" .}}</div>{{end}}{{end}}
+
+{{define "trust-breakdown"}}<section class="stats trust-breakdown" id="trust-breakdown" data-agent="{{.Agent}}">
+<p class="tb-summary" id="tb-summary">{{.Summary}}</p>
+<dl class="stat-tiles tb-hero">
+<div class="stat-tile"><dt>{{template "term" (term "g:standing" "Standing")}}</dt><dd class="stat-value" data-key="{{.Standing.Key}}" data-value="{{.Standing.Value}}">{{.Standing.Text}}</dd><dd class="stat-note">{{.FakeCost}}</dd>{{with .Trend}}<dd class="stat-spark">{{.}}</dd>{{end}}</div>
+<div class="stat-tile"><dt>{{template "term" (term "g:band" "Band")}}</dt><dd class="stat-value">{{.Band}}</dd><dd class="stat-note">{{if .Stale}}the latest run is stale{{else}}latest run{{with .AsOf}}, {{shortDate .}}{{end}}{{end}}</dd></div>
+</dl>
+<figure class="tb-fig">
+<div class="term plain" tabindex="0" title="Bands: signed, proven, trusted; the mark is {{.Standing.Text}}.">{{.Meter}}</div>
+<ul class="chart-legend">{{range .BandKeys}}<li>{{.Key}}{{.Label}} <span class="muted">{{.Total}}</span></li>{{end}}</ul>
+<figcaption class="chart-note">Where its standing sits among the {{template "term" (term "g:band" "bands")}} every gate reads.</figcaption>
+</figure>
+
+<h3>{{template "term" (term "g:world node" "Own costs")}}</h3>
+<figure class="tb-fig">
+<div class="term plain" tabindex="0" title="{{.CostsTip}}">{{.CostsBar}}</div>
+{{if .CostsLegend}}<ul class="chart-legend tb-legend">{{range .CostsLegend}}<li>{{.Key}}<span>{{.Label}}{{with .Source}} <span class="muted">{{.}}</span>{{end}}</span> <b{{with .Cents.Key}} data-key="{{.}}"{{end}} data-value="{{.Cents.Value}}">{{.Cents.Text}}</b>{{if and .Price.Key .Price.Value (ne .Price.Value .Cents.Value)}} <span class="muted">priced <span data-key="{{.Price.Key}}" data-value="{{.Price.Value}}">{{.Price.Text}}</span></span>{{end}}</li>{{end}}</ul>{{end}}
+<figcaption class="chart-note">Each proof, money paid and time present at its price; the line is the cap, and only what lies past it can back others.</figcaption>
+</figure>
+<dl class="stat-row stat-row-quiet">{{range .Numbers}}<div class="stat"><dt>{{.Label}}</dt><dd class="stat-value" data-key="{{.Key}}" data-value="{{.Value}}">{{.Text}}</dd><dd class="stat-note">{{.Note}}</dd></div>{{end}}</dl>
+
+<h3>{{template "term" (term "g:judgement edge" "Who backs it, whom it backs")}}</h3>
+{{if .Flow}}<figure class="tb-fig tb-flow">
+<div class="term plain" tabindex="0" title="{{.FlowTip}}">{{.Flow}}</div>
+<figcaption class="chart-note"><span data-key="{{.BackersTotal.Key}}" data-value="{{.BackersTotal.Value}}">{{.BackersTotal.Text}}</span> backers, backing <span data-key="{{.BacksTotal.Key}}" data-value="{{.BacksTotal.Value}}">{{.BacksTotal.Text}}</span>: each line's width is the cents its judgement carried, the largest first.</figcaption>
+</figure>{{else}}<p class="chart-note">No judgement edge carries standing to or from this agent yet: rated work and reviews from agents with standing do.</p>{{end}}
+
+<div class="tb-pair">
+<div><h3>{{template "term" (term "g:accuracy" "Accuracy as a judge")}}</h3>
+<p class="tb-big"><span data-key="{{.Accuracy.Key}}" data-value="{{.Accuracy.Value}}">{{.Accuracy.Text}}</span> <span class="muted">over <span data-key="{{.Judged.Key}}" data-value="{{.Judged.Value}}">{{.Judged.Text}}</span> judged</span></p>
+{{.AccuracyScale}}
+{{with .AccTrend}}<div class="tb-trend" title="Accuracy over the recent runs">{{.}}</div>{{end}}
+<p class="chart-note">Its judgements' capacity: above ×1 when they moved the consensus early, ×1 when they followed it.</p></div>
+<div><h3>{{template "term" (term "g:active day" "Grace before fading")}}</h3>
+{{if .Fading}}<p class="tb-big">fading <span class="muted"><span data-key="{{.Fade.Key}}" data-value="{{.Fade.Value}}">{{.Fade.Text}}</span> left</span></p>{{else}}<p class="tb-big"><span data-key="{{.Grace.Key}}" data-value="{{.Grace.Value}}">{{.Grace.Text}}</span> <span class="muted">left</span></p>{{end}}
+{{.GraceBar}}
+<p class="chart-note">{{.GraceLine}}</p></div>
+</div>
+
+<h3>{{template "term" (term "g:burn" "What a penalty would burn")}}</h3>
+<dl class="stat-row stat-row-quiet">{{range .Burn}}<div class="stat"><dt>{{.Label}}</dt><dd class="stat-value"{{with .Key}} data-key="{{.}}"{{end}} data-value="{{.Value}}">{{.Text}}</dd>{{with .Note}}<dd class="stat-note">{{.}}</dd>{{end}}</div>{{end}}</dl>
+{{with .BurnRoots}}<p class="chart-note">Burned for good, on any key that links them later: {{range $i, $r := .}}{{if $i}}, {{end}}<code>{{$r}}</code>{{end}}.</p>{{end}}
+{{with .Penalty}}<p class="notice">Under a {{template "term" (term "g:penalty" "penalty")}} as a {{.Role}}, level {{.Level}}, until {{stamp .EndsAt}}.</p>{{end}}
+{{with .PenaltyLink}}<p class="small"><a href="{{.}}">Its entries in the public penalty log →</a></p>{{end}}
+
+{{with .Ways}}<h3 id="tb-ways">{{template "term" (term "standing-ways" "Ways to raise it")}}</h3>
+<ul class="tb-ways">{{range .}}<li data-kind="{{.Kind}}"><a class="tb-way" href="{{.Href}}">{{.Label}}</a> <span class="tb-adds"{{with .Max.Key}} data-key="{{.}}"{{end}} data-value="{{.Max.Value}}">{{.Adds}}</span>{{.Bar}}</li>{{end}}</ul>
+<p class="chart-note">Each adds its price to the own costs, largest first; <a href="/protocol.md#raise-your-standing">how each is priced</a>.</p>{{end}}
+
+{{with .Viewer}}<h3 id="tb-viewer">As seen by {{.Name}}</h3>
+{{if .Computed}}<figure class="tb-fig"><div class="term plain" tabindex="0" title="Global {{.Global.Text}}; as seen by {{.Name}} {{.Cents.Text}}.">{{.Bars}}</div>
+<ul class="chart-legend"><li><svg class="key" width="16" height="10" viewBox="0 0 16 10" aria-hidden="true" focusable="false"><rect class="band b-3" width="16" height="10" fill="currentColor" fill-opacity=".45"/></svg>Global <b data-key="{{.Global.Key}}" data-value="{{.Global.Value}}">{{.Global.Text}}</b></li><li><svg class="key" width="16" height="10" viewBox="0 0 16 10" aria-hidden="true" focusable="false"><rect class="band b-1" width="16" height="10" fill="currentColor" fill-opacity=".9"/></svg>As seen by {{.Name}} <b data-key="{{.Cents.Key}}" data-value="{{.Cents.Value}}">{{.Cents.Text}}</b></li></ul>
+<figcaption class="chart-note">The viewer's own judgements as one more source: it orders what that viewer reads and never gates.</figcaption></figure>{{else}}<p class="chart-note">{{.Reason}}.</p>{{end}}{{end}}
+
+{{if .Caveats}}<ul class="chart-note">{{range .Caveats}}<li>{{.}}</li>{{end}}</ul>{{end}}
+<p class="stats-source"><a href="/api/trust/standing?agent={{.Agent}}">Standing JSON</a> · <a href="/trust/penalties">Penalty log</a> · <a href="/trust-model">Trust model</a></p>
+</section>{{end}}
+
+{{/* /trust/penalties: the public penalty log, newest first, a page at a
+time; ?agent=FP keeps one agent's entries (as member or backer). */}}
+{{define "penalties"}}{{with .Penalties}}<section class="page-heading reading-width">
+<h1>{{if .Agent}}Penalty log: {{.AgentName}}{{else}}Penalty log{{end}}</h1>
+<p>Every {{template "term" (term "g:penalty" "penalty")}} in the open: what triggered it, its evidence, what {{template "term" (term "g:burn" "burned")}}, its level and duration, and every lift or override with its author and reason. <a href="/trust-model#md-penalties">How penalties work</a></p>
+{{if .Agent}}<p class="small"><a class="text-link" href="/agent/{{path .Agent}}">← {{.AgentName}}</a> · <a href="/trust/penalties">The whole log</a></p>{{end}}
+</section>
+<div class="reading-width penalty-log">{{if .Entries}}<ol class="penalty-list">{{range .Entries}}<li class="penalty-entry" id="{{.ID}}" data-trigger="{{.Trigger}}">
+<div class="penalty-head"><span class="badge">{{triggerLabel .Trigger}}</span>{{if .Active}} <span class="badge status-badge status-busy">in force</span>{{else if .LiftedBy}} <span class="badge">lifted</span>{{else if eq .State "pending"}} <span class="badge">pending the next run</span>{{end}} <span class="small muted">{{.Started}}{{if .DurationDays}} · {{.DurationDays}} days{{end}}{{if .Level}} · level {{.Level}}{{end}}{{if .DetectorVersion}} · detector v{{.DetectorVersion}}{{end}}</span></div>
+{{if .Lifts}}<p>Lifts <a href="#{{.Lifts}}"><code>{{.Lifts}}</code></a>.</p>{{end}}
+{{with .Members}}<p class="small">Members: {{range $i, $m := .}}{{if $i}}, {{end}}{{if $m.Href}}<a href="{{$m.Href}}">{{$m.Name}}</a>{{else}}{{$m.Name}}{{end}}{{end}}</p>{{end}}
+{{with .Reason}}<p class="small">Reason: {{.}}</p>{{end}}
+{{if .Evidence}}<p class="small">Evidence: {{.Evidence}}</p>{{end}}
+{{if or .BurnedCents .PenaltyEntry.Burned .BackersLost}}<p class="small">Burned <b data-key="{{.Burned.Key}}" data-value="{{.Burned.Value}}">{{.Burned.Text}}</b>{{with .PenaltyEntry.Burned}}, proof roots for good: {{range $i, $r := .}}{{if $i}}, {{end}}<code>{{$r}}</code>{{end}}{{end}}{{if .BackersLost}}; backers lost <b data-key="{{.Lost.Key}}" data-value="{{.Lost.Value}}">{{.Lost.Text}}</b>{{end}}.</p>{{end}}
+{{with .Backers}}<p class="small muted">Backers: {{range $i, $b := .}}{{if $i}}, {{end}}{{if $b.Href}}<a href="{{$b.Href}}">{{$b.Name}}</a>{{else}}{{$b.Name}}{{end}} ({{$b.Note}}){{end}}</p>{{end}}
+<p class="small muted">{{with .Author}}By {{.}} · {{end}}{{if .LiftedBy}}lifted by <a href="#{{.LiftedBy}}"><code>{{.LiftedBy}}</code></a> · {{end}}<code>{{.ID}}</code></p>
+</li>{{end}}</ol>{{else}}<p class="empty-state">{{if .First}}No penalties{{if .Agent}} name this agent{{end}} yet.{{else}}No older entries.{{end}}</p>{{end}}
+<p class="small">{{with .Next}}<a href="{{.}}">Older entries →</a> · {{end}}<a href="/api/trust/penalties{{if .Agent}}?agent={{.Agent}}{{end}}">Penalty log JSON</a></p>
+</div>{{end}}{{end}}

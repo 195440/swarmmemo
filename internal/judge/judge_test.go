@@ -3,7 +3,6 @@ package judge_test
 import (
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"os"
 	"slices"
 	"strings"
@@ -38,8 +37,6 @@ func TestRFCWorkedNumbers(t *testing.T) {
 	}
 	gain := func(x, c0, cT int64) string { return fmt.Sprintf("%+.2f", float64(judge.Gain(x, c0, cT, false))/1e6) }
 	griefed := append(pts(80, 80, 80, 80, 80, 80), judge.Point{X: 0, W: 2 * w})
-	s1 := judge.Settle([]int64{6, -3, -1})
-	s2 := judge.Settle([]int64{6 - s1.Marks[0], -5, -s1.Returned})
 	for _, want := range []string{
 		// §2
 		fmt.Sprintf("`m = %d` pseudo-judgements at %d", judge.PriorWeight, judge.Neutral),
@@ -51,12 +48,6 @@ func TestRFCWorkedNumbers(t *testing.T) {
 		// §3.1
 		fmt.Sprintf("75 → you say 60 → it ends at 62: %s.", gain(60, 75, 62)),
 		fmt.Sprintf("you say 99 at 80, and it ends at 99: %s.", gain(99, 80, 99)),
-		// §3.3
-		fmt.Sprintf("at least `k_min = %d` independent later judgements", judge.KMin),
-		fmt.Sprintf("a group whose raw marks are +6 and −3, with 1 in escrow, pays the +6 judgement %d, owes it %d, and leaves %d in escrow; a next group whose losses forfeit 5 pays the %d owed and leaves %d in escrow.",
-			s1.Marks[0], 6-s1.Marks[0], s1.Returned, s2.Marks[0], s2.Returned),
-		// §4: version 7's section names every tunable of judge.Params.
-		"`k_min`, `prior_weight`, `thin_below`, `half_life_days`, `review_load`",
 	} {
 		if !strings.Contains(rfc, want) {
 			t.Errorf("RFC 0020 does not say what the code computes:\n  %s", want)
@@ -66,7 +57,7 @@ func TestRFCWorkedNumbers(t *testing.T) {
 	b, _ := json.Marshal(judge.Default)
 	_ = json.Unmarshal(b, &keys)
 	for k := range keys {
-		if k != "day_factor_ppm" && !strings.Contains(rfc, "`"+k+"`") {
+		if !strings.Contains(rfc, "`"+k+"`") {
 			t.Errorf("RFC 0020 §4 does not name judge.Params %s", k)
 		}
 	}
@@ -292,11 +283,16 @@ func TestMappingGolden(t *testing.T) {
 	if (judge.Judgement{X: 80, Coarse: true}).MedianX() != 100 || (judge.Judgement{X: 20, Coarse: true}).MedianX() != 0 || (judge.Judgement{X: 80}).MedianX() != 80 {
 		t.Fatal("MedianX")
 	}
-	if w, opp := (judge.Judgement{X: 80}).EdgeWeightPPM(); w != 600_000 || opp {
-		t.Fatalf("edge weight %d %v", w, opp)
-	}
-	if w, opp := (judge.Judgement{X: 0}).EdgeWeightPPM(); w != 1_000_000 || !opp {
-		t.Fatalf("edge weight %d %v", w, opp)
+	// RFC 0021 §2: s(x) = (x − 50)/50 above 50, a coarse act at coarse_x,
+	// a down judgement no edge.
+	for _, c := range []struct {
+		j    judge.Judgement
+		want int64
+	}{{judge.Judgement{X: 80}, 600_000}, {judge.Judgement{X: 100, Coarse: true}, 500_000}, {judge.Judgement{X: 0}, 0}, {judge.Judgement{X: 50}, 0},
+		{judge.Judgement{X: 0, Coarse: true}, 0}} {
+		if got := c.j.EdgePPM(75); got != c.want {
+			t.Fatalf("EdgePPM(%+v) = %d, want %d", c.j, got, c.want)
+		}
 	}
 }
 
@@ -314,64 +310,6 @@ func TestWeight(t *testing.T) {
 	}
 	if judge.DayFactorPPM != trust.DayFactor(judge.HalfLifeDays) {
 		t.Fatalf("judge.DayFactorPPM %d, trust.DayFactor(%d) %d", judge.DayFactorPPM, judge.HalfLifeDays, trust.DayFactor(judge.HalfLifeDays))
-	}
-}
-
-// TestSettleConserves is the conservation property (RFC 0020 §3.3): over
-// random runs, Σ paid ≤ Σ forfeited, losses are taken whole, no gain is paid
-// more than it earned or with the wrong sign, and the marks sum to ≤ 0.
-func TestSettleConserves(t *testing.T) {
-	rng := rand.New(rand.NewSource(20))
-	for run := 0; run < 2000; run++ {
-		n := rng.Intn(40)
-		raw := make([]int64, n)
-		for i := range raw {
-			switch rng.Intn(4) {
-			case 0:
-				raw[i] = 0
-			case 1:
-				raw[i] = -rng.Int63n(1e9)
-			default:
-				raw[i] = judge.Mark(rng.Int63n(1e12), rng.Int63n(2e6+1)-1e6)
-			}
-		}
-		checkSettle(t, raw)
-	}
-	checkSettle(t, nil)
-	checkSettle(t, []int64{5, 7})                // only gains: nothing paid
-	checkSettle(t, []int64{-5, -7})              // only losses: all returned
-	checkSettle(t, []int64{1 << 61, -(1 << 61)}) // large values
-}
-
-func FuzzSettle(f *testing.F) {
-	f.Add(int64(10), int64(-3), int64(7))
-	f.Fuzz(func(t *testing.T, a, b, c int64) {
-		// Marks are bounded by stakes (a share of standing in millicents).
-		a, b, c = a%(1<<50), b%(1<<50), c%(1<<50)
-		checkSettle(t, []int64{a, b, c, -a / 2})
-	})
-}
-
-func checkSettle(t *testing.T, raw []int64) {
-	t.Helper()
-	s := judge.Settle(raw)
-	var paid, forfeited, total int64
-	for i, m := range s.Marks {
-		switch {
-		case raw[i] < 0:
-			if m != max(raw[i], -(1<<62)) {
-				t.Fatalf("a loss is not taken whole: %d → %d", raw[i], m)
-			}
-			forfeited -= m
-		case m < 0 || m > raw[i]:
-			t.Fatalf("a gain %d paid %d", raw[i], m)
-		default:
-			paid += m
-		}
-		total += m
-	}
-	if paid != s.Paid || forfeited != s.Forfeited || paid > forfeited || total > 0 || s.Returned != forfeited-paid || s.Returned < 0 {
-		t.Fatalf("not conserved: paid %d forfeited %d total %d settlement %+v", paid, forfeited, total, s)
 	}
 }
 

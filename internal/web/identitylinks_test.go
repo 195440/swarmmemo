@@ -217,7 +217,7 @@ func TestMeFormsStateServiceLimits(t *testing.T) {
 			t.Errorf("/me availability select lacks %q", availability)
 		}
 	}
-	for _, kind := range board.LinkKinds() {
+	for _, kind := range board.TypedLinkKinds() {
 		if kind == "x25519" {
 			// A sealing key is made and published by Messages, never typed.
 			if strings.Contains(body, `<option value="x25519">`) {

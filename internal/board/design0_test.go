@@ -18,8 +18,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"swarmmemo/internal/allowance"
 )
 
 var anonPseudonymRE = regexp.MustCompile(`^anon:[0-9a-f]{32}$`)
@@ -101,17 +99,10 @@ func TestDesign0FlagsOffKeepsTodaysKeying(t *testing.T) {
 	if n := sqlCount(t, s, "SELECT count(*) FROM meta WHERE key LIKE 'anon_salt%'"); n != 0 {
 		t.Fatalf("salt stored with ANON_PREFIX off: %d rows", n)
 	}
-	if n := sqlCount(t, s, "SELECT count(*) FROM quota WHERE actor LIKE 'global:t%'"); n != 0 {
-		t.Fatalf("tier rows with ALLOWANCE_TIERS off: %d", n)
-	}
-	// A tier grant has no effect while ALLOWANCE_TIERS is off.
 	key := keyFor(90)
 	run(t, s, signed(key, Command{Operation: "agent.register", Handle: "anon-bob"}))
-	if err = s.GrantTier(testContext, keyID(key), 1, "test"); err != nil {
-		t.Fatal(err)
-	}
 	if q := run(t, s, signed(key, Command{Operation: "quota.get"})); q.Data["daily_bytes"] != int64(4<<20) {
-		t.Fatalf("quota.get with tiers off: %v", q.Data)
+		t.Fatalf("quota.get with every flag off: %v", q.Data)
 	}
 	// Room creation and new rooms by post stay open to every signed tier.
 	other := keyFor(91)
@@ -349,7 +340,7 @@ func TestAnonRetryAcrossMidnight(t *testing.T) {
 // an address, its unsalted hash or its prefix, and yesterday's salt is gone
 // after 01:00.
 func TestAnonPrefixStoresNoAddress(t *testing.T) {
-	s := openTest(t, Config{ArchiveDelaySeconds: -1, Features: Features{AnonPrefix: true, AllowanceTiers: true}})
+	s := openTest(t, Config{ArchiveDelaySeconds: -1, Features: Features{AnonPrefix: true}})
 	d0At(s, testTime+600)
 	sources := []string{"203.0.113.77", "2001:db8:aa:bb::5", "::ffff:198.51.100.9"}
 	for i, src := range sources {
@@ -423,217 +414,6 @@ func TestAnonPrefixStoresNoAddress(t *testing.T) {
 	scan(salt)
 }
 
-func TestTierCapsNested(t *testing.T) {
-	config := Config{ArchiveDelaySeconds: -1, GlobalDailyBytes: 10000, DailyBytes: 4000, AnonymousDailyBytes: 4000, Features: Features{AllowanceTiers: true}}
-	s := openTest(t, config)
-	k1, k2 := keyFor(101), keyFor(102)
-	d0Identity(t, s, k1)
-	d0Identity(t, s, k2)
-	if err := s.GrantTier(testContext, keyID(k1), 1, "trusted test"); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.GrantTier(testContext, keyID(k2), 2, "proven test"); err != nil {
-		t.Fatal(err)
-	}
-	// A flood of tier-4 subjects at 00:00 fills only tier 4's half.
-	refused := 0
-	for i := 0; i < 20; i++ {
-		if err := d0Charge(s, d0Anon(fmt.Sprint("flood", i)), 1000); err != nil {
-			if d0Code(err) != "global_quota_exhausted" {
-				t.Fatal(err)
-			}
-			refused++
-		}
-	}
-	if d0Used(t, s, "global:t4") != 5000 || refused != 15 {
-		t.Fatalf("tier 4 used %d, refused %d", d0Used(t, s, "global:t4"), refused)
-	}
-	// Fresh signed keys then fill tier 3 up to 80% with tier 4.
-	for i := 0; i < 20; i++ {
-		err := d0Charge(s, d0Signed(keyFor(byte(120+i))), 1000)
-		if err != nil && d0Code(err) != "global_quota_exhausted" {
-			t.Fatal(err)
-		}
-	}
-	if d0Used(t, s, "global:t3") != 3000 {
-		t.Fatalf("tier 3 used %d", d0Used(t, s, "global:t3"))
-	}
-	// Tiers 1 and 2 still draw their reserves in full.
-	if err := d0Charge(s, d0Signed(k2), 1000); err != nil {
-		t.Fatalf("tier 2 reserve: %v", err)
-	}
-	if err := d0Charge(s, d0Signed(k2), 1); d0Code(err) != "global_quota_exhausted" {
-		t.Fatalf("tier 2 past 90%%: %v", err)
-	}
-	if err := d0Charge(s, d0Signed(k1), 1000); err != nil {
-		t.Fatalf("tier 1 reserve: %v", err)
-	}
-	if err := d0Charge(s, d0Signed(k1), 1); d0Code(err) != "global_quota_exhausted" {
-		t.Fatalf("tier 1 past the budget: %v", err)
-	}
-	if d0Used(t, s, "global") != 10000 || d0Used(t, s, "global") != d0Used(t, s, "global:t1")+d0Used(t, s, "global:t2")+d0Used(t, s, "global:t3")+d0Used(t, s, "global:t4") {
-		t.Fatal("the global row is not the sum of the tier rows")
-	}
-
-	// Per-subject caps: d_t = 16, 8, 4, 4 × the configured units.
-	s = openTest(t, Config{ArchiveDelaySeconds: -1, GlobalDailyBytes: 100000, DailyBytes: 4000, AnonymousDailyBytes: 3000, Features: Features{AllowanceTiers: true}})
-	d0Identity(t, s, k1)
-	d0Identity(t, s, k2)
-	_ = s.GrantTier(testContext, keyID(k1), 1, "trusted test")
-	_ = s.GrantTier(testContext, keyID(k2), 2, "proven test")
-	k3 := keyFor(103)
-	for _, tc := range []struct {
-		a   actor
-		cap int64
-	}{{d0Signed(k1), 16000}, {d0Signed(k2), 8000}, {d0Signed(k3), 4000}, {d0Anon("one"), 3000}} {
-		if err := d0Charge(s, tc.a, tc.cap); err != nil {
-			t.Fatalf("%s up to its cap: %v", tc.a.account, err)
-		}
-		if err := d0Charge(s, tc.a, 1); d0Code(err) != "quota_exhausted" {
-			t.Fatalf("%s past its cap: %v", tc.a.account, err)
-		}
-	}
-	for _, tc := range []struct {
-		key  ed25519.PrivateKey
-		want int64
-	}{{k1, 16000}, {k2, 8000}, {k3, 4000}} {
-		q := run(t, s, signed(tc.key, Command{Operation: "quota.get"}))
-		if q.Data["daily_bytes"] != tc.want || q.Data["remaining_bytes"] != int64(0) {
-			t.Fatalf("quota.get %v, want daily %d", q.Data, tc.want)
-		}
-	}
-	// A transfer respects the sender's tier cap.
-	k4 := keyFor(104)
-	d0Identity(t, s, k3)
-	d0Identity(t, s, k4)
-	_ = s.GrantTier(testContext, keyID(k4), 1, "trusted sender")
-	run(t, s, signed(k4, Command{Operation: "credit.transfer", Target: keyID(k3), Amount: 10000}))
-}
-
-func TestDesign0Classifier(t *testing.T) {
-	s := openTest(t, Config{})
-	now := testTime
-	classify := func(subj allowance.Subject) allowance.Standing {
-		t.Helper()
-		st, err := s.classifier().Classify(testContext, s.db, subj, now)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if st.WeightPPM != 1_000_000 || st.Source != "design0" || st.Reason == "" {
-			t.Fatalf("standing %+v", st)
-		}
-		return st
-	}
-	if st := classify(allowance.Subject{ID: "anon:abc"}); st.Tier != allowance.TierAnonymous || st.Root != "anon:abc" {
-		t.Fatalf("anonymous: %+v", st)
-	}
-	key := keyFor(110)
-	id := d0Identity(t, s, key)
-	subj := allowance.Subject{ID: id, KeyID: id, Signed: true}
-	if st := classify(subj); st.Tier != allowance.TierSigned || st.Root != id || st.NewKey {
-		t.Fatalf("signed: %+v", st)
-	}
-	// A verified domain link checked in the last 30 days is proven.
-	if _, err := s.db.Exec("INSERT INTO identity_links(agent,kind,value,state,created_at,checked_at) VALUES(?,?,?,?,?,?)", id, "domain", "example.com", "verified", now-40*86400, now-86400); err != nil {
-		t.Fatal(err)
-	}
-	if st := classify(subj); st.Tier != allowance.TierProven || st.Root != "domain:example.com" {
-		t.Fatalf("domain: %+v", st)
-	}
-	for _, update := range []string{"UPDATE identity_links SET checked_at=? WHERE agent=?", "UPDATE identity_links SET state='lapsed',checked_at=? WHERE agent=?"} {
-		checked := now - 31*86400
-		if strings.Contains(update, "lapsed") {
-			checked = now
-		}
-		if _, err := s.db.Exec(update, checked, id); err != nil {
-			t.Fatal(err)
-		}
-		if st := classify(subj); st.Tier != allowance.TierSigned {
-			t.Fatalf("stale or lapsed link still proven: %+v", st)
-		}
-	}
-	// Tier grants: 1 trusted, 2 proven; revocation returns to tier 3.
-	if err := s.GrantTier(testContext, id, 1, "trusted"); err != nil {
-		t.Fatal(err)
-	}
-	if st := classify(subj); st.Tier != allowance.TierTrusted {
-		t.Fatalf("grant 1: %+v", st)
-	}
-	if err := s.GrantTier(testContext, id, 2, "proven"); err != nil {
-		t.Fatal(err)
-	}
-	if st := classify(subj); st.Tier != allowance.TierProven {
-		t.Fatalf("grant 2: %+v", st)
-	}
-	if err := s.RevokeTier(testContext, id, "done"); err != nil {
-		t.Fatal(err)
-	}
-	if st := classify(subj); st.Tier != allowance.TierSigned {
-		t.Fatalf("revoked: %+v", st)
-	}
-	// A rotated-away key's link does not count for the account.
-	if _, err := s.db.Exec("UPDATE identity_links SET state='verified',checked_at=? WHERE agent=?", now, id); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.db.Exec("UPDATE identities SET successor='x' WHERE id=?", id); err != nil {
-		t.Fatal(err)
-	}
-	if st := classify(subj); st.Tier != allowance.TierSigned {
-		t.Fatalf("rotated-away link: %+v", st)
-	}
-}
-
-func TestTierGrantList(t *testing.T) {
-	s := openTest(t, Config{})
-	if err := s.GrantTier(testContext, keyID(keyFor(1)), 1, "unknown"); d0Code(err) != "agent_not_found" {
-		t.Fatalf("unregistered agent: %v", err)
-	}
-	ids := []string{}
-	for i := 0; i < TierGrantsMax+1; i++ {
-		ids = append(ids, d0Identity(t, s, keyFor(byte(i+1))))
-	}
-	for _, bad := range []struct {
-		tier   int
-		reason string
-	}{{3, "x"}, {0, "x"}, {1, ""}, {1, " "}, {1, "two\nlines"}, {1, strings.Repeat("x", TierGrantReasonBytes+1)}, {1, "\xff"}} {
-		if err := s.GrantTier(testContext, ids[0], bad.tier, bad.reason); err == nil {
-			t.Fatalf("grant %+v accepted", bad)
-		}
-	}
-	for _, id := range ids[:TierGrantsMax] {
-		if err := s.GrantTier(testContext, id, 2, "listed"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := s.GrantTier(testContext, ids[TierGrantsMax], 1, "one too many"); err == nil {
-		t.Fatal("the tier list grew past its maximum")
-	}
-	if err := s.GrantTier(testContext, ids[0], 1, "promoted"); err != nil {
-		t.Fatalf("regrant at the maximum: %v", err)
-	}
-	if err := s.RevokeTier(testContext, ids[1], "removed"); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.RevokeTier(testContext, ids[1], "again"); err == nil {
-		t.Fatal("revoked twice")
-	}
-	if err := s.GrantTier(testContext, ids[TierGrantsMax], 1, "room now"); err != nil {
-		t.Fatal(err)
-	}
-	grants, err := s.TierGrants(testContext)
-	if err != nil || len(grants) != TierGrantsMax || grants[0].Tier != 1 {
-		t.Fatalf("list: %d %v", len(grants), err)
-	}
-	// Revocation marks, never deletes; every change is logged.
-	if sqlCount(t, s, "SELECT count(*) FROM tier_grants") != TierGrantsMax+1 || sqlCount(t, s, "SELECT count(*) FROM tier_grant_log") != TierGrantsMax+3 {
-		t.Fatal("tier list rows or log wrong")
-	}
-	log, err := s.TierGrantLog(testContext, 2)
-	if err != nil || len(log) != 2 || log[0].Action != "grant" || log[1].Action != "revoke" {
-		t.Fatalf("log: %+v %v", log, err)
-	}
-}
-
 func TestReservedHandles(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "board.sqlite")
 	s, err := Open(path, Config{ArchiveDelaySeconds: -1})
@@ -686,15 +466,15 @@ func TestNameGate(t *testing.T) {
 	trusted, proven, plain := keyFor(140), keyFor(141), keyFor(142)
 	d0Identity(t, s, trusted)
 	d0Identity(t, s, proven)
-	_ = s.GrantTier(testContext, keyID(trusted), 1, "trusted")
-	_ = s.GrantTier(testContext, keyID(proven), 2, "proven")
+	setStanding(t, s, map[string]int64{keyID(trusted): 750, keyID(proven): 200})
 	run(t, s, signed(trusted, Command{Operation: "post", Room: "lobby", Text: "opening the lobby"}))
 
-	// Tier 3: no new room names, by command or by post; nothing is published or charged.
-	fails(t, s, signed(plain, Command{Operation: "room.create", Room: "den"}), "tier_required")
-	fails(t, s, signed(plain, Command{Operation: "room.create", Room: "secret", Visibility: "private"}), "tier_required")
-	fails(t, s, signed(plain, Command{Operation: "post", Room: "fresh-room", Text: "squat"}), "tier_required")
-	if _, err := d0Exec(s, "203.0.113.1", Command{Operation: "post", Room: "anon-room", Text: "squat"}); d0Code(err) != "tier_required" {
+	// Below the proven band: no new room names, by command or by post;
+	// nothing is published or charged.
+	fails(t, s, signed(plain, Command{Operation: "room.create", Room: "den"}), "standing_required")
+	fails(t, s, signed(plain, Command{Operation: "room.create", Room: "secret", Visibility: "private"}), "standing_required")
+	fails(t, s, signed(plain, Command{Operation: "post", Room: "fresh-room", Text: "squat"}), "standing_required")
+	if _, err := d0Exec(s, "203.0.113.1", Command{Operation: "post", Room: "anon-room", Text: "squat"}); d0Code(err) != "standing_required" {
 		t.Fatalf("anonymous new room: %v", err)
 	}
 	if n := sqlCount(t, s, "SELECT count(*) FROM rooms WHERE name IN ('den','secret','fresh-room','anon-room')") + sqlCount(t, s, "SELECT count(*) FROM events WHERE room<>'lobby'") + sqlCount(t, s, "SELECT count(*) FROM quota WHERE actor=?", keyID(plain)); n != 0 {
@@ -706,14 +486,15 @@ func TestNameGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	run(t, s, signed(plain, Command{Operation: "post", Room: "@" + keyID(plain), Text: "my own room"}))
-	// No new handle below the name tier: a post is published without it.
+	// No new handle below the proven band: a post is published without it.
 	res := run(t, s, signed(plain, Command{Operation: "post", Room: "lobby", Text: "call me", Handle: "newname"}))
-	if h := res.Receipt.HandleNotApplied; h == nil || h.Reason != "tier_required" || handleOf(t, s, keyID(plain)) != "" {
+	if h := res.Receipt.HandleNotApplied; h == nil || h.Reason != "standing_required" || handleOf(t, s, keyID(plain)) != "" {
 		t.Fatalf("hint %+v", h)
 	}
-	fails(t, s, signed(plain, Command{Operation: "agent.register", Handle: "newname"}), "tier_required")
+	fails(t, s, signed(plain, Command{Operation: "agent.register", Handle: "newname"}), "standing_required")
 	run(t, s, signed(plain, Command{Operation: "agent.register"}))
-	// Tiers 1-2 name rooms and handles; reserved handles stay reserved.
+	// The proven and trusted bands name rooms and handles; reserved handles
+	// stay reserved.
 	run(t, s, signed(proven, Command{Operation: "room.create", Room: "den"}))
 	run(t, s, signed(proven, Command{Operation: "post", Room: "den-two", Text: "opened"}))
 	run(t, s, signed(proven, Command{Operation: "agent.register", Handle: "prover"}))
@@ -787,19 +568,17 @@ func TestHeatAuthors(t *testing.T) {
 
 func TestDesign0AllFlagsTogether(t *testing.T) {
 	s := openTest(t, Config{ArchiveDelaySeconds: -1, GlobalDailyBytes: 1 << 20, AnonymousDailyBytes: 4000,
-		Features: Features{ReservedHandles: true, AnonPrefix: true, AllowanceTiers: true, HeatAuthors: true, NameGate: true}})
+		Features: Features{ReservedHandles: true, AnonPrefix: true, HeatAuthors: true, NameGate: true}})
 	d0At(s, testTime+600)
 	op := keyFor(170)
 	d0Identity(t, s, op)
-	if err := s.GrantTier(testContext, keyID(op), 1, "operator of the lobby"); err != nil {
-		t.Fatal(err)
-	}
+	setStanding(t, s, map[string]int64{keyID(op): 750})
 	run(t, s, signed(op, Command{Operation: "post", Room: "lobby", Text: "open", Handle: "lobbyist", Timestamp: testTime + 600}))
 	anon, err := d0Exec(s, "2001:db8:5:6::1", Command{Operation: "post", Text: "anonymous hello"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = d0Exec(s, "2001:db8:5:6::2", Command{Operation: "post", Room: "new-name", Text: "x"}); d0Code(err) != "tier_required" {
+	if _, err = d0Exec(s, "2001:db8:5:6::2", Command{Operation: "post", Room: "new-name", Text: "x"}); d0Code(err) != "standing_required" {
 		t.Fatalf("anonymous new room: %v", err)
 	}
 	q, err := d0Exec(s, "2001:db8:5:6::3", Command{Operation: "quota.get"})
@@ -818,23 +597,20 @@ func TestDesign0AllFlagsTogether(t *testing.T) {
 	if err = s.db.QueryRow("SELECT account FROM events WHERE id=?", anon.Receipt.ID).Scan(&account); err != nil || !anonPseudonymRE.MatchString(account) {
 		t.Fatalf("anonymous account %q %v", account, err)
 	}
-	if d0Used(t, s, "global:t1") == 0 || d0Used(t, s, "global:t3") == 0 || d0Used(t, s, "global:t4") == 0 {
-		t.Fatal("tier rows not charged")
-	}
 }
 
 func TestDesign0Capabilities(t *testing.T) {
-	all := Design0Capabilities(Features{ReservedHandles: true, AnonPrefix: true, AllowanceTiers: true, HeatAuthors: true, NameGate: true})
+	all := Design0Capabilities(Features{ReservedHandles: true, AnonPrefix: true, HeatAuthors: true, NameGate: true})
 	anon := all["anonymous"].(map[string]any)
 	if anon["prefix_v6"] != AnonPrefixV6Bits || anon["prefix_v4"] != AnonPrefixV4Bits || anon["salted_daily"] != true || anon["raw_addresses_stored"] != false {
 		t.Fatalf("anonymous: %v", anon)
 	}
-	if all["heat"] != "signed_authors" || all["name_min_tier"] != 2 || all["tier_caps"].(map[string]any)["enabled"] != true || all["reserved_handles"].(map[string]any)["enabled"] != true {
+	if all["heat"] != "signed_authors" || all["name_gate"].(map[string]any)["min_band"] != "proven" || all["tier_caps"] != nil || all["reserved_handles"].(map[string]any)["enabled"] != true {
 		t.Fatalf("design0: %v", all)
 	}
 	one := Design0Capabilities(Features{HeatAuthors: true})
-	if one["heat"] != "signed_authors" || one["name_min_tier"] != nil || one["anonymous"].(map[string]any)["salted_daily"] != false ||
-		one["anonymous"].(map[string]any)["prefix_v4"] != nil || one["tier_caps"].(map[string]any)["enabled"] != false || one["reserved_handles"].(map[string]any)["enabled"] != false {
+	if one["heat"] != "signed_authors" || one["name_gate"].(map[string]any)["min_band"] != nil || one["anonymous"].(map[string]any)["salted_daily"] != false ||
+		one["anonymous"].(map[string]any)["prefix_v4"] != nil || one["reserved_handles"].(map[string]any)["enabled"] != false {
 		t.Fatalf("heat only: %v", one)
 	}
 	if Design0Capabilities(Features{Ledger: LedgerOn, VoteRecords: true}) != nil {
@@ -854,7 +630,7 @@ func TestDesign0SchemaMigration(t *testing.T) {
 	}
 	s.Close()
 	for i := 0; i < 2; i++ {
-		if s, err = Open(path, Config{Features: Features{AllowanceTiers: true, AnonPrefix: true}}); err != nil {
+		if s, err = Open(path, Config{Features: Features{AnonPrefix: true}}); err != nil {
 			t.Fatal(err)
 		}
 		if v := sqlCount(t, s, "PRAGMA user_version"); v != int64(SchemaVersion) || SchemaVersion < 21 {

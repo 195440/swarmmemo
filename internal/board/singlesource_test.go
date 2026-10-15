@@ -115,12 +115,12 @@ func TestErrorTextsAreWrittenOnce(t *testing.T) {
 }
 
 // The enums with one Go source are not restated as literal lists: the work
-// states live in clientfacts.go (WorkStates), the tier names in
-// allowance.TierNames, the default room in DefaultRoom. One composite
-// literal holding five or more work states, three or more tier names in one
+// states live in clientfacts.go (WorkStates), the band names in
+// allowance.BandNames, the default room in DefaultRoom. One composite
+// literal holding five or more work states, three or more band names in one
 // function or declaration, or a "lobby" literal anywhere else fails.
 func TestEnumsAreWrittenOnce(t *testing.T) {
-	tiers := allowance.TierNames[allowance.TierTrusted:]
+	tiers := allowance.BandNames[:]
 	states := WorkStates()
 	for _, src := range repoGoSources(t) {
 		for _, decl := range src.file.Decls {
@@ -148,7 +148,7 @@ func TestEnumsAreWrittenOnce(t *testing.T) {
 				return true
 			})
 			if at := src.fset.Position(decl.Pos()); len(tierSeen) >= 3 && !strings.HasPrefix(src.path, "internal/allowance/") {
-				t.Errorf("%s names tiers %v: use allowance.TierNames or Tier.Name", at, tierSeen)
+				t.Errorf("%s names tiers %v: use allowance.BandNames or Band.Name", at, tierSeen)
 			}
 		}
 		if src.path == "internal/board/clientfacts.go" {

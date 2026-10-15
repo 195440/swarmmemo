@@ -31,8 +31,7 @@ var publicCallPage = strings.Repeat("A line of page text. ", 2000)
 
 // hostedPublicCallServer is a store with hosted identities, the ledger,
 // fetch (served by a stub site at http://site.example/) and the notary; the
-// anonymous tier, a hosted identity's until it is claimed, gets credit as
-// its share of the day.
+// floor, a hosted identity's share until it is claimed, is credit.
 func hostedPublicCallServer(t *testing.T, credit int64) *Server {
 	t.Helper()
 	dir := t.TempDir()
@@ -65,10 +64,7 @@ func hostedPublicCallServer(t *testing.T, credit int64) *Server {
 	p := ledger.DefaultAllowanceParams()
 	rp := p.Resources[allowance.Credit]
 	rp.Budget, rp.SpendCeiling, rp.InboundCap = 10_000_000, 10_000_000, 10_000_000
-	rp.Cap = []int64{1_000_000, 1_000_000, 1_000_000, credit}
-	rp.Floor = []int64{100_000, 100_000, 100_000, credit}
-	rp.RootCap = []int64{10_000_000, 10_000_000, 10_000_000, credit}
-	rp.ShareMaxPPM = []int64{1_000_000, 1_000_000, 1_000_000, 1_000_000}
+	rp.Cap, rp.Floor, rp.AnonymousSharePPM = 1_000_000, credit, 1_000_000
 	if _, err = store.SetAllowanceParams(t.Context(), ledger.AllowanceNamespace, p.Marshal(), "test", 0); err != nil {
 		t.Fatal(err)
 	}

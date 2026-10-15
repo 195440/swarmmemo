@@ -28,10 +28,12 @@ func openAnonStore(t *testing.T, anonCap int64) *board.Store {
 	p := ledger.DefaultAllowanceParams()
 	rp := p.Resources[allowance.Credit]
 	rp.Budget, rp.SpendCeiling, rp.InboundCap = 1_600_000, 1_600_000, 1_600_000
-	rp.Cap = []int64{400_000, 200_000, 100_000, anonCap}
-	rp.Floor = []int64{1600, 1600, 1600, anonCap}
-	rp.RootCap = []int64{1_600_000, 800_000, 400_000, anonCap}
-	rp.ShareMaxPPM = []int64{1_000_000, 1_000_000, 1_000_000, 100_000}
+	// The share rule: every claimant's floor is anonCap; anonymous callers
+	// get none of it at anonCap 0.
+	rp.Cap, rp.Floor, rp.AnonymousSharePPM = 400_000, anonCap, 0
+	if anonCap > 0 {
+		rp.AnonymousSharePPM = 100_000 // a tenth of the day for all networks together
+	}
 	if _, err = store.SetAllowanceParams(context.Background(), ledger.AllowanceNamespace, p.Marshal(), "test", 0); err != nil {
 		t.Fatal(err)
 	}

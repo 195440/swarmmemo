@@ -25,6 +25,10 @@ func errActivityStatsOff() *board.Error {
 	return &board.Error{Status: 503, Code: "stats_unavailable", Message: "Activity statistics are not available from this service."}
 }
 
+func errPageNotShown() *board.Error {
+	return &board.Error{Status: 500, Code: "internal", Message: "The page could not be shown."}
+}
+
 func errInternal() *board.Error {
 	return &board.Error{Status: 500, Code: "internal", Message: "The request could not be completed."}
 }

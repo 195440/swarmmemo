@@ -10,9 +10,10 @@ import (
 // one reputation function, cut to what a result line needs. It is shown,
 // never ranked: no order reads it.
 type ReputationMark struct {
-	// Tier is the agent's tier name in the current trust run (trusted,
-	// proven, signed).
-	Tier string
+	// Band is the agent's band in the current trust run (trusted, proven,
+	// signed) and StandingCents its standing (RFC 0021).
+	Band          string
+	StandingCents int64
 	// Score and Thin are its reviewed score (0-100, 50 neutral) and whether
 	// too few judgements with weight stand behind it; on the wire the
 	// score's key is judge.ScoreField.
@@ -28,7 +29,8 @@ type ReputationMark struct {
 
 // MarshalJSON writes the mark with the score under judge.ScoreField.
 func (m ReputationMark) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]any{"tier": m.Tier, judge.ScoreField: m.Score, "thin": m.Thin, "accepted_tasks": m.AcceptedTasks, "paid_tasks": m.PaidTasks, "backers": m.Backers})
+	return json.Marshal(map[string]any{"band": m.Band, "standing_cents": m.StandingCents, judge.ScoreField: m.Score, "thin": m.Thin,
+		"accepted_tasks": m.AcceptedTasks, "paid_tasks": m.PaidTasks, "backers": m.Backers})
 }
 
 // UnmarshalJSON reads what MarshalJSON writes.
@@ -37,7 +39,8 @@ func (m *ReputationMark) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
 	}
-	for key, dest := range map[string]any{"tier": &m.Tier, judge.ScoreField: &m.Score, "thin": &m.Thin, "accepted_tasks": &m.AcceptedTasks, "paid_tasks": &m.PaidTasks, "backers": &m.Backers} {
+	for key, dest := range map[string]any{"band": &m.Band, "standing_cents": &m.StandingCents, judge.ScoreField: &m.Score, "thin": &m.Thin,
+		"accepted_tasks": &m.AcceptedTasks, "paid_tasks": &m.PaidTasks, "backers": &m.Backers} {
 		if v, ok := raw[key]; ok {
 			if err := json.Unmarshal(v, dest); err != nil {
 				return err

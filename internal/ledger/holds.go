@@ -3,9 +3,9 @@ package ledger
 // Metering for remote and async calls (RFC0012 §2.5): Reserve holds units in
 // the command's transaction; Commit settles at used <= max and refunds the
 // rest to the lots it came from; Refund releases everything. A hold counts in
-// the day's spend, and its free part is drawn from the pools, from the moment
+// the day's spend, and its free part is drawn from the slices, from the moment
 // it is reserved, so the budget and the spend ceiling hold while calls are
-// open; what is refunded goes back to the pools of the day it was drawn. The
+// open; what is refunded goes back to the slices of the day it was drawn. The
 // sweeper settles an expired hold at its maximum.
 
 import (
@@ -88,6 +88,7 @@ func (l *Ledger) Reserve(ctx context.Context, q allowance.Querier, s allowance.S
 		return Hold{}, err
 	}
 	if refusal != nil {
+		l.noteRefusal(o.day, r, refusal)
 		return Hold{}, refusal
 	}
 	return h, nil
@@ -190,8 +191,8 @@ func (l *Ledger) GetHold(ctx context.Context, q allowance.Querier, id string) (H
 }
 
 type holdPart struct {
-	LotID, Units, ExpiresAt, OriginTier int64
-	Bucket                              allowance.Bucket
+	LotID, Units, ExpiresAt, Origin int64
+	Bucket                          allowance.Bucket
 }
 
 func loadHoldParts(ctx context.Context, q allowance.Querier, id string) ([]holdPart, error) {
@@ -205,7 +206,7 @@ func loadHoldParts(ctx context.Context, q allowance.Querier, id string) ([]holdP
 	for rows.Next() {
 		var p holdPart
 		var b string
-		if err = rows.Scan(&p.LotID, &p.Units, &p.ExpiresAt, &p.OriginTier, &b); err != nil {
+		if err = rows.Scan(&p.LotID, &p.Units, &p.ExpiresAt, &p.Origin, &b); err != nil {
 			return nil, err
 		}
 		p.Bucket = allowance.Bucket(b)
@@ -257,7 +258,7 @@ func (l *Ledger) settle(ctx context.Context, q allowance.Querier, id string, use
 	ref := Ref{Service: h.Service, Method: h.Method}
 	left := used
 	var backNonpaid, backPaid int64
-	var backFree [5]int64 // free units to return to each origin tier's pools
+	var backFree [5]int64 // free units to return, by lot origin
 	for _, p := range parts {
 		take := min(p.Units, left)
 		left -= take
@@ -285,8 +286,8 @@ func (l *Ledger) settle(ctx context.Context, q allowance.Querier, id string, use
 		} else {
 			backNonpaid += back
 		}
-		if p.Bucket == allowance.Free && p.OriginTier >= 1 && p.OriginTier <= 4 {
-			backFree[p.OriginTier] += back
+		if p.Bucket == allowance.Free && p.Origin >= 1 && p.Origin <= 4 {
+			backFree[p.Origin] += back
 		}
 	}
 	made := h.CreatedAt / 86400
@@ -310,7 +311,7 @@ func (l *Ledger) settle(ctx context.Context, q allowance.Querier, id string, use
 	return Receipt{HoldID: id, Resource: h.Resource, Used: used, Refunded: h.Max - used, ParamsVersion: version}, nil
 }
 
-// undrawDay returns a settled hold's unused free units to the pools of the
+// undrawDay returns a settled hold's unused free units to the slices of the
 // day the hold drew them from (overbooking counts only actual spend).
 func undrawDay(ctx context.Context, q allowance.Querier, r allowance.Resource, day int64, back [5]int64) error {
 	if back == [5]int64{} {
@@ -321,8 +322,8 @@ func undrawDay(ctx context.Context, q allowance.Querier, r allowance.Resource, d
 		return err
 	}
 	orig := d
-	for t := 1; t <= 4; t++ {
-		undraw(&d, t, back[t])
+	for o := int64(originFloor); o <= originAnonymous; o++ {
+		undraw(&d, o, back[o])
 	}
 	return saveDay(ctx, q, &d, &orig)
 }
