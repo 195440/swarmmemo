@@ -574,10 +574,11 @@ func (r *run) compute(ctx context.Context) (Output, error) {
 	}
 
 	// Breakers and pause-new-keys: such an account's judgements make no
-	// edge and it is no responder.
+	// edge and it is no responder. A breaker holds until its trust_until,
+	// or for version 11 its reason's breaker_trust_days if sooner (§2.2).
 	reset := map[string]bool{}
 	for _, x := range snap.Breakers {
-		if x.StartedAt <= asOf && x.TrustUntil > asOf {
+		if x.StartedAt <= asOf && p.BreakerUntil(x) > asOf {
 			reset[x.Account] = true
 		}
 	}

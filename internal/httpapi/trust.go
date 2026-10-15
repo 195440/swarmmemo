@@ -380,6 +380,7 @@ var standingCapability = map[string]any{
 	"bands":      "signed below theta2_cents, proven from theta2_cents, trusted from node_cap_cents; anonymous has no standing",
 	"weight":     "v(s) = v0 + (1 - v0) * sqrt(min(1, cents / c_ref)) for cents >= v_floor_cents (and > 0), else 0",
 	"inactivity": "own costs hold while the account is active; after grace_days without an active day they halve every dormant_half_life_days",
+	"breakers":   "after an account-change breaker (a key rotation, a key or domain link or unlink, a dormant key's return, an outbound transfer spike) the account's judgements make no edge and its replies no active day for breaker_trust_days by reason, at most the breaker's trust_until",
 	"viewer":     "trust.get data viewer, or viewer= on /api/trust/standing: the run's flow with the viewer's root as one more source; it orders, never gates",
 	"active":     "every gate reads the higher of today's rule and standing, so standing only ever adds",
 	"shown_in":   []string{"/api/trust/standing and /api/agent/AGENT/trust (the breakdown)", "/api/record/AGENT (record.standing)", "MCP agent_record and trust", "the agent page and its breakdown /agent/AGENT/trust (Me: Your trust)", "/trust/penalties (the penalty log)", "/stats Trust", "/api/agent/AGENT/standing and MCP standing_ways (the ways to raise it)"},

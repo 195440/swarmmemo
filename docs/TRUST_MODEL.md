@@ -108,6 +108,7 @@ sources' share as it falls.
 | Rings that judge each other | a ring holds at most what it paid; caught, it holds 0 |
 | Self-dealing payments | a seen loop gains nothing; a hidden one at most twice its real costs, and burns |
 | Fooling honest judges | judges pass at most their pass share (above the cap, or a quarter of what they keep), and lose part of it when caught |
+| Link a fresh proof, then vouch a ring | the account's judgements count only a week after the link (a key rotation or a dormant key's return: 30 days), and then pass at most its pass share |
 | Buying a dormant account | its collateral fades after the grace |
 | A trusted agent turns bad | zeroed on the next run, its proofs burned for good |
 

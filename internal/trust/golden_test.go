@@ -171,6 +171,7 @@ func testRecomputePy(t *testing.T, inputs, want []byte) {
 // share (a root at or below node_cap passing standing).
 func TestGoldenPassRecompute(t *testing.T) {
 	snap := goldenUnifiedSnapshot()
+	snap.Params = PassParams()
 	if snap.Params.Version != PassVersion || snap.Params.PassSharePPM == 0 {
 		t.Fatalf("the fixture runs version %d", snap.Params.Version)
 	}

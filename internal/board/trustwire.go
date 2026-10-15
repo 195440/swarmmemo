@@ -595,11 +595,13 @@ func (in trustInputs) Read(ctx context.Context, asOf int64, p trust.Params, emit
 		}
 	}
 	if exists["account_breakers"] {
-		if err := paged("SELECT seq,account,started_at,trust_until FROM account_breakers WHERE seq>? AND trust_until>? AND started_at<? ORDER BY seq LIMIT ?", []any{asOf, asOf},
+		// kind is the breaker's reason: version 11 sizes its window by it
+		// (breaker_trust_days, RFC 0021 §2.2).
+		if err := paged("SELECT seq,account,reason,started_at,trust_until FROM account_breakers WHERE seq>? AND trust_until>? AND started_at<? ORDER BY seq LIMIT ?", []any{asOf, asOf},
 			func(r *sql.Rows) (trust.Record, int64, error) {
 				rec := trust.Record{Type: "breaker"}
 				var seq int64
-				err := r.Scan(&seq, &rec.Account, &rec.StartedAt, &rec.TrustUntil)
+				err := r.Scan(&seq, &rec.Account, &rec.Kind, &rec.StartedAt, &rec.TrustUntil)
 				return rec, seq, err
 			}); err != nil {
 			return err

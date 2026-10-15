@@ -63,7 +63,7 @@ func TestProofRowsV9(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Version 10 (C336) is version 9 plus pass_share_ppm, refused before it.
-	d := DefaultParams()
+	d := PassParams()
 	if _, err := ParseParams(PassVersion, d.Body()); err != nil || d.Version != PassVersion || d.PassSharePPM != DefaultPassSharePPM {
 		t.Fatalf("version 10: %v, %+v", err, d.Version)
 	}

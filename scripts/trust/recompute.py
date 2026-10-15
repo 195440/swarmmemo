@@ -1594,6 +1594,8 @@ MC = 1000
 SNAPSHOT_SCHEMA_V2 = 2
 UNIFIED_VERSION = 8
 PASS_VERSION = 10
+BREAKER_VERSION = 11
+BREAKER_REASONS = {"agent.rotate", "dormant", "identity.link", "identity.unlink", "spike"}
 
 RECORD_FIELDS_V2 = [
     ("type", ""), ("schema", 0), ("as_of", 0), ("pause_new_keys_since", 0), ("events_seq", 0), ("endorsements_seq", 0), ("ledger_seq", 0),
@@ -1671,11 +1673,18 @@ class SnapshotV2:
 def check_params_v2(body: dict, version: int) -> None:
     if version < UNIFIED_VERSION:
         raise InputError(f"params: version {version} is not a schema 2 version")
-    # pass_share_ppm is version 10's (C336), omitted when 0.
-    if not isinstance(body, dict) or set(body) - {"pass_share_ppm"} != PARAM_KEYS_V2:
-        raise InputError(f"params body: fields must be exactly {sorted(PARAM_KEYS_V2)}, and pass_share_ppm from version {PASS_VERSION}")
+    # pass_share_ppm is version 10's (C336), omitted when 0;
+    # breaker_trust_days version 11's (C338), omitted when empty.
+    if not isinstance(body, dict) or set(body) - {"pass_share_ppm", "breaker_trust_days"} != PARAM_KEYS_V2:
+        raise InputError(f"params body: fields must be exactly {sorted(PARAM_KEYS_V2)}, pass_share_ppm from version {PASS_VERSION} "
+                         f"and breaker_trust_days from version {BREAKER_VERSION}")
     if "pass_share_ppm" in body and (version < PASS_VERSION or not 0 < body["pass_share_ppm"] <= PPM):
         raise InputError(f"params: pass_share_ppm is version {PASS_VERSION}'s, 1–{PPM}")
+    if "breaker_trust_days" in body:
+        days = body["breaker_trust_days"]
+        if version < BREAKER_VERSION or not isinstance(days, dict) or not days or not set(days) <= BREAKER_REASONS \
+                or any(isinstance(d, bool) or not isinstance(d, int) or not 0 <= d <= 365 for d in days.values()):
+            raise InputError(f"params: breaker_trust_days is version {BREAKER_VERSION}'s, 0–365 days for each of {sorted(BREAKER_REASONS)}")
     for section, keys in PARAM_SECTIONS_V2.items():
         if not isinstance(body[section], dict) or set(body[section]) != keys:
             raise InputError(f"params {section}: fields must be exactly {sorted(keys)}")
@@ -2036,9 +2045,18 @@ def compute_unified(snap: SnapshotV2) -> dict:
         known.update(e["members"])
     known.discard("")
 
+    # A breaker holds until its trust_until, or (version 11) its reason's
+    # breaker_trust_days after it started if sooner (RFC 0021 §2.2).
+    breaker_days = p.get("breaker_trust_days", {})
+
+    def breaker_until(x):
+        if x.kind in breaker_days:
+            return min(x.trust_until, x.started_at + breaker_days[x.kind] * DAY)
+        return x.trust_until
+
     reset = set()
     for x in snap.of("breaker"):
-        if x.started_at <= as_of < x.trust_until:
+        if x.started_at <= as_of < breaker_until(x):
             reset.add(x.account)
     since = snap.meta.pause_new_keys_since
     if since > 0:

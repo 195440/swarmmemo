@@ -78,7 +78,9 @@ type Meta struct {
 //	             link_account registered_at root assessed rank (registered_at:
 //	             a domain's registry creation time; rank: its list rank; root
 //	             and assessed: an assessed root's key and assessment)
-//	breaker      account started_at trust_until
+//	breaker      account kind started_at trust_until (kind: the reason,
+//	             agent.rotate, dormant, identity.link, identity.unlink or
+//	             spike)
 //	transfer     from to amount created_at
 //	claim        account day claimed spent
 //	payment      id kind account to amount created_at link_value (money in

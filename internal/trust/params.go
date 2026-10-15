@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -62,6 +63,15 @@ type Params struct {
 	// most its edges' total capacity (§2.1, Graph.setPass). Versions 8 and
 	// 9 offer only the surplus (0, omitted from their bodies).
 	PassSharePPM int64 `json:"pass_share_ppm,omitempty"`
+
+	// Fixed (version 11, C338): how many days an account-change breaker
+	// (RFC 0012 §2.4, account_breakers) keeps its account's judgements from
+	// making edges and its replies from making active days, by the
+	// breaker's reason: min(the row's trust_until, started_at + these
+	// days). A reason it does not name keeps the row's trust_until, as
+	// versions 8 to 10 do for every reason. RFC 0021 §2.2 says why each
+	// window still bounds the damage.
+	BreakerTrustDays map[string]int64 `json:"breaker_trust_days,omitempty"`
 
 	// Data: the price rows (§10), the day price of time present and its
 	// cap (§2), the coarse acts' x on an edge, the evidence class of each
@@ -159,10 +169,27 @@ const PassVersion = 10
 // DefaultPassSharePPM is version 10's pass_share_ppm: a quarter.
 const DefaultPassSharePPM = 250000
 
+// BreakerVersion is version 10 plus C338's breaker windows
+// (breaker_trust_days, RFC 0021 §2.2): a key rotation or a dormant key's
+// return still silences an account's judgements for 30 days, a proof link
+// or unlink for 7, and a spike in outbound credit transfers (paying
+// bounties) no longer does: the conserved flow bounds what any judgement
+// passes, and the ledger still delays the transfers.
+const BreakerVersion = 11
+
+// breakerReasons are the reasons an account_breakers row names
+// (ledger.Breaker).
+var breakerReasons = []string{"agent.rotate", "dormant", "identity.link", "identity.unlink", "spike"}
+
+// DefaultBreakerTrustDays is version 11's breaker_trust_days.
+func DefaultBreakerTrustDays() map[string]int64 {
+	return map[string]int64{"agent.rotate": 30, "dormant": 30, "identity.link": 7, "identity.unlink": 7, "spike": 0}
+}
+
 // DefaultVersion is the compiled-in trust parameter version: RFC 0021 with
-// C326's price rows and C336's pass share, active from the deploy that
-// ships it (no parameter write is needed).
-const DefaultVersion = PassVersion
+// C326's price rows, C336's pass share and C338's breaker windows, active
+// from the deploy that ships it (no parameter write is needed).
+const DefaultVersion = BreakerVersion
 
 // Evidence classes (RFC 0015 §5.4, judge.EvidenceWeightPPM).
 var evidenceClasses = []string{"free_use", "observed", "opinion", "paid_use", "work"}
@@ -181,11 +208,13 @@ func DayFactor(halfLifeDays int64) int64 {
 	return int64(math.Round(1e6 * math.Pow(2, -1/float64(halfLifeDays))))
 }
 
-// DefaultParams is the compiled-in parameter set (version 10): RFC 0021's
+// DefaultParams is the compiled-in parameter set (version 11): RFC 0021's
 // knobs (G 120 days, Hd 180, H 180, the evidence weights), U = 200¢ and
 // m = 2, the values derived from them, the price rows of §10 and C326's
-// (proofRowsV9), and C336's pass share. ProofsParams is version 9, the same
-// without the pass share; UnifiedParams version 8, also without C326's rows.
+// (proofRowsV9), C336's pass share and C338's breaker windows. PassParams
+// is version 10, the same without the breaker windows; ProofsParams version
+// 9, also without the pass share; UnifiedParams version 8, also without
+// C326's rows.
 func DefaultParams() Params {
 	p := Params{
 		Version:             DefaultVersion,
@@ -201,6 +230,7 @@ func DefaultParams() Params {
 		MinJudges:           judge.PriorWeight,
 		V0PPM:               250000,
 		PassSharePPM:        DefaultPassSharePPM,
+		BreakerTrustDays:    DefaultBreakerTrustDays(),
 		Proofs: map[string]ProofPrice{
 			// §10: age (RDAP) + rank (Tranco), ≤ 600¢; unknown counts 0;
 			// with neither fetched yet, the old flat 400¢.
@@ -233,9 +263,17 @@ func DefaultParams() Params {
 	return p
 }
 
-// ProofsParams is parameter version 9: DefaultParams without the pass share.
-func ProofsParams() Params {
+// PassParams is parameter version 10: DefaultParams without the breaker
+// windows.
+func PassParams() Params {
 	p := DefaultParams()
+	p.Version, p.BreakerTrustDays = PassVersion, nil
+	return p
+}
+
+// ProofsParams is parameter version 9: PassParams without the pass share.
+func ProofsParams() Params {
+	p := PassParams()
 	p.Version, p.PassSharePPM = ProofsVersion, 0
 	return p
 }
@@ -260,6 +298,16 @@ func UnifiedParams() Params {
 func (p Params) OfferCents(world int64) int64 {
 	keep := min(max(0, world), p.NodeCapCents)
 	return max(world-keep, mulDiv(keep, p.PassSharePPM, 1e6))
+}
+
+// BreakerUntil is when a breaker row stops silencing its account's
+// judgements under p: its trust_until, or started_at plus the days
+// breaker_trust_days names for its reason (the record's kind) if sooner.
+func (p Params) BreakerUntil(r Record) int64 {
+	if d, ok := p.BreakerTrustDays[r.Kind]; ok {
+		return min(r.TrustUntil, r.StartedAt+d*day)
+	}
+	return r.TrustUntil
 }
 
 // PassPercent is pass_share_ppm as copy reads it ("25%").
@@ -362,6 +410,11 @@ func (p Params) Validate() error {
 	in("v0_ppm", p.V0PPM, 0, 1e6)
 	in("pass_share_ppm", p.PassSharePPM, 0, 1e6)
 	check(p.Version >= PassVersion || p.PassSharePPM == 0, "pass_share_ppm is version %d's: earlier versions offer none", PassVersion)
+	check(p.Version >= BreakerVersion || p.BreakerTrustDays == nil, "breaker_trust_days is version %d's: earlier versions keep each breaker's trust_until", BreakerVersion)
+	for reason, d := range p.BreakerTrustDays {
+		check(slices.Contains(breakerReasons, reason), "breaker_trust_days.%s is not a breaker reason (%s)", reason, strings.Join(breakerReasons, ", "))
+		in("breaker_trust_days."+reason, d, 0, 365)
+	}
 	for _, kind := range []string{"domain", "ed25519", "board", "url", "nostr"} {
 		_, ok := p.Proofs[kind]
 		check(ok, "proofs.%s is required", kind)

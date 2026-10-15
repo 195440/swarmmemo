@@ -1,5 +1,5 @@
 {
-  "allowlist_sha256": "b9e4f8bce685acfaccbffe32806e03db464b4e54648402979f5e05469a9c6a7e",
+  "allowlist_sha256": "b4522339a8f6e35dd2dc75951f02c46d8e74d37c29d280f943d5eac01a8f7bf5",
   "files": [
     {
       "mode": "0644",
@@ -664,8 +664,8 @@
     {
       "mode": "0644",
       "path": "docs/GLOSSARY.md",
-      "sha256": "593d4bf065776802b402c98d7aa96b96dd5a64e57e0d7c5d40569b00c7627fb3",
-      "size": 29497
+      "sha256": "48404ffc900661c192d7da3097c5707b522e0f6ab7b23bb31df06d7e14916378",
+      "size": 29896
     },
     {
       "mode": "0644",
@@ -688,8 +688,8 @@
     {
       "mode": "0644",
       "path": "docs/PROTOCOL.md",
-      "sha256": "88ab797ff4c60069fa0823c5ef95e5477922c23ef9b0ac697bd6497a5fed4229",
-      "size": 512398
+      "sha256": "4629817a3069a7d36fc75707f31d6c505509423974a66e3f3f1d1be6e8a20624",
+      "size": 512948
     },
     {
       "mode": "0644",
@@ -820,8 +820,8 @@
     {
       "mode": "0644",
       "path": "docs/TRUST_MODEL.md",
-      "sha256": "4e8b34457ad70508fbb200702cb116e5dfd6323aa5f5294f532d4cd377a709c6",
-      "size": 6691
+      "sha256": "de727e57a454c102d9f9184214fe4dd9c195dfb8d78d4c2436a8edba5e2ebacf",
+      "size": 6883
     },
     {
       "mode": "0644",
@@ -3106,8 +3106,8 @@
     {
       "mode": "0644",
       "path": "internal/board/trustwire.go",
-      "sha256": "7fcb16321f64eed448862d013d8c1f7fb205716e1e2f03612432469884b13a7a",
-      "size": 39658
+      "sha256": "0c355f5c8b918413cf25512fb33dace4d0a2ae5edc333ab9143559e247c39822",
+      "size": 39788
     },
     {
       "mode": "0644",
@@ -4906,8 +4906,8 @@
     {
       "mode": "0644",
       "path": "internal/httpapi/trust.go",
-      "sha256": "7663a86e093d818795709035cf71d28760e53f7bdfe2c1e23010fc30da19db09",
-      "size": 23948
+      "sha256": "deb47e78f0d551d8c2fc91ac3b69346bcb63b728439be22ad22ad068fd150cfc",
+      "size": 24235
     },
     {
       "mode": "0644",
@@ -7005,6 +7005,12 @@
     },
     {
       "mode": "0644",
+      "path": "internal/trust/breaker_window_test.go",
+      "sha256": "5e1a57db5b2830293caf9e35f94268e11e902189a6d490b27f0ff79f798abbd7",
+      "size": 11945
+    },
+    {
+      "mode": "0644",
       "path": "internal/trust/canonical.go",
       "sha256": "cf5abe51afc73b0cde8566d38b8a24bf7c2b8cb5ff8703e92f44367055d0f915",
       "size": 1487
@@ -7018,8 +7024,8 @@
     {
       "mode": "0644",
       "path": "internal/trust/compute.go",
-      "sha256": "7b5d6f1d6d381f7476f5388f2c58530c671b26c99e7d984e4c1cf9825cf33861",
-      "size": 48070
+      "sha256": "7b2d5199f15101e3954f60b38052ef3addd6cc9d76aa163ed19fe62677395faf",
+      "size": 48187
     },
     {
       "mode": "0644",
@@ -7042,8 +7048,8 @@
     {
       "mode": "0644",
       "path": "internal/trust/golden_test.go",
-      "sha256": "f706c3964b61b675f8b326391d7fb0dba3aae4e38f0b2681dcaead346ee915e4",
-      "size": 9531
+      "sha256": "fb35edb27cea47c8f10a38c53df7ae98d8c3c2c47047ed6d5d71fbb36e644a87",
+      "size": 9559
     },
     {
       "mode": "0644",
@@ -7066,8 +7072,8 @@
     {
       "mode": "0644",
       "path": "internal/trust/inputs.go",
-      "sha256": "2e14e472738dd20ef5ec8d7bafaa9f74595cc5ebef286a16e93b42d836c82958",
-      "size": 11110
+      "sha256": "3c0cdaf06793c739eb6121cab2052a56ab4782de6545ed51eb78dffa1dff6db4",
+      "size": 11230
     },
     {
       "mode": "0644",
@@ -7078,8 +7084,8 @@
     {
       "mode": "0644",
       "path": "internal/trust/params.go",
-      "sha256": "f505e21db0c8486fc054e93648e3128bc2598c5ed4a6b0980ddfbd5cf7639304",
-      "size": 20304
+      "sha256": "1135a09a5ac9f01b616182c3001c81d0dae801fe834933f30f7bbc45e52cc455",
+      "size": 22834
     },
     {
       "mode": "0644",
@@ -7102,8 +7108,8 @@
     {
       "mode": "0644",
       "path": "internal/trust/proofrows_test.go",
-      "sha256": "733cca6d417294c57da5264a5258bd113b810bdf1d9e71b03a02e1e18606be86",
-      "size": 3883
+      "sha256": "55cbb868791051e7be47d1a34540fbb80fc7c12684ea1dbdb15458e2e05321fd",
+      "size": 3880
     },
     {
       "mode": "0644",
@@ -9868,8 +9874,8 @@
     {
       "mode": "0644",
       "path": "scripts/trust/recompute.py",
-      "sha256": "38c1c232baaaea07048fcae403bb3d4866858697f66c61a8da60b48a50aa96dc",
-      "size": 136018
+      "sha256": "e1d9ca7d3762f88f185424d48b0c956fb8d2ec10efd7bac1f91d628da79f6a69",
+      "size": 137122
     },
     {
       "mode": "0644",
