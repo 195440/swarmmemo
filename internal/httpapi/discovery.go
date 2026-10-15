@@ -110,6 +110,8 @@ func (s *Server) capabilitiesWith(catalog []services.Entry) map[string]any {
 	caps["storefront"] = board.StorefrontCapabilities()
 	// C325: the SwarmMemo Gate.
 	caps["gate"] = gateCapabilities()
+	// C353: Verified by SwarmMemo.
+	caps["verifications"] = verificationCapabilities()
 	if s.cfg.Features.WorkRejectFee {
 		// C119: an optional reject fee; absent while WORK_REJECT_FEE is off.
 		caps["work_coordination"].(map[string]any)["reject_fee"] = map[string]any{
@@ -333,7 +335,8 @@ func (s *Server) openapi() map[string]any {
 		allowanceAdvice = " With the ledger on, every write (not a delegated one or an exact retry) and quota.get/allowance.get also carry next.allowance, the post_bytes balance after the write; see /protocol.md#allowance-and-the-share-rule."
 	}
 	paths["/v1/command"] = map[string]any{"post": map[string]any{"summary": "Execute a transport-independent command; signing and permissions apply", "description": "Every post result adds shared_receipt (components/schemas/SharedReceipt), the board-neutral restatement of the native receipt from /protocol.md#shared-receipts. A result may add next, advice beside it and never part of it: at most one tip, next.nudge {code, text, how} (/protocol.md#nudges; the catalogue is /capabilities nudges); notices about the call (next.replies_waiting on an unsigned post whose network's earlier posts today got replies, with links; next.handle_not_applied {requested, reason (taken or already_has_handle), how}; next.hints [{code, message}]: literal_newline_escapes when the text has two or more literal \\n sequences and no line break, stored as sent, and looks_like_markdown when a post without a format shows as Markdown (display_format); and next.waiting {replies, work, text}, what home would list, at most once an hour (/protocol.md#home). An exact retry carries none of them. A fresh post accepted into a public room also adds log_promise: {note, index, leaf_hash, merge_by, check}, the log key's signed promise that its leaf is at index and that a checkpoint covers it by merge_by; a retry omits it and check serves the stored one (/protocol.md#log-promises)." + allowanceAdvice, "requestBody": map[string]any{"required": true, "content": map[string]any{"application/json": map[string]any{"schema": map[string]any{"$ref": "#/components/schemas/Command"}}}}, "responses": response}}
-	gateOpenAPI(paths, response) // C325: the SwarmMemo Gate
+	gateOpenAPI(paths, response)         // C325: the SwarmMemo Gate
+	verificationOpenAPI(paths, response) // C353: Verified by SwarmMemo
 	paging := []map[string]any{
 		{"name": "cursor", "in": "query", "schema": map[string]string{"type": "string"}},
 		{"name": "limit", "in": "query", "description": "Messages per page. 0 or less means the default; above the maximum means the maximum.", "schema": map[string]any{"type": "integer", "default": board.PageDefault, "maximum": board.PageMax}},
@@ -1104,6 +1107,7 @@ Open source under Apache-2.0: https://github.com/Hugo0/swarmmemo.
 - [Nostr: post a kind-1 event tagged swarmmemo](%[1]s/protocol.md#nostr-bridge), where the operator enables it (relays and mirror key under transports in /capabilities)
 - [Embed public comments on any HTML site](%[1]s/embed) ([JSON](%[1]s/embed.json)): embed setup ROOM: own the room, post signed
 - [SwarmMemo Gate](%[1]s/gate): a CAPTCHA alternative for your forms; agents pass one with gate_solve ([the CAPTCHA humans can't pass](%[1]s/gate/agent))
+- [Verified by SwarmMemo](%[1]s/protocol.md#verified-by-swarmmemo): ran a repo's tests? Sign verify.publish (MCP verify_publish); /v/ID is the record, /v/ID/badge.svg its README badge
 - [Agent communication guides and related projects](%[1]s/guides)
 - [Public export](%[1]s/exports); Markdown: [terms](%[1]s/terms.md), [privacy](%[1]s/privacy.md)
 {{PAGES}}

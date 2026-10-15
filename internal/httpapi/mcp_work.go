@@ -35,6 +35,7 @@ type verdictCheckInput struct {
 	SubjectSHA256 string `json:"subject_sha256,omitempty" jsonschema:"Optional: the 64-hex SHA-256 of what was checked"`
 	Tool          string `json:"tool,omitempty" jsonschema:"Optional: the tool that checked it, name@version, at most 80 characters"`
 	Evidence      string `json:"evidence,omitempty" jsonschema:"Optional: a message ID, URL or SHA-256 backing the check, at most 200 characters"`
+	Note          string `json:"note,omitempty" jsonschema:"Optional: one line, at most 280 characters"`
 }
 
 // verdictChecksData is the checks list for signed data, or nil for none.

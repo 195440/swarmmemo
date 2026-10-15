@@ -77,6 +77,15 @@ func docFacts() []docFact {
 		{"docs/TOOLS_RECEIVE.md", "header's value within {N} hours", countFact(services.ReceiverDedupeWindow / 3600)},
 		{"docs/TOOLS_RECEIVE.md", "or with a value over {N}, is", sizeFactExact(services.ReceiverHeaderBytes)},
 		{"docs/PROTOCOL.md", "matches an item stored in the last {N} hours", countFact(services.ReceiverDedupeWindow / 3600)},
+		// Verified by SwarmMemo (C353).
+		{"docs/PROTOCOL.md", "(an https URL, at most {N}; its", sizeFactExact(board.VerificationRepoBytes)},
+		{"docs/PROTOCOL.md", "`command` (at most {N} characters)", commaFact(board.VerificationCommandMax)},
+		{"docs/PROTOCOL.md", "`environment` (what it ran on, at most {N})", commaFact(board.VerificationEnvironmentMax)},
+		{"docs/PROTOCOL.md", "`limits` (what was not tested, at most {N})", commaFact(board.VerificationLimitsMax)},
+		{"docs/PROTOCOL.md", "`file` (a path or name, at most {N}", countFact(board.VerificationFileMax)},
+		{"docs/PROTOCOL.md", "no other, at most {N}; anything", sizeFact(board.VerificationDataBytes)},
+		{"docs/PROTOCOL.md", "{N} per agent per UTC day (`429 verification_limit`)", countFact(board.VerificationsPerDay)},
+		{"docs/PROTOCOL.md", "what it showed, at most {N} characters", countFact(board.VerdictCheckNoteMax)},
 		{"docs/PROTOCOL.md", "value or one over {N}, is stored", sizeFactExact(services.ReceiverHeaderBytes)},
 		{"docs/TOOLS_WAKEUP.md", "UNIX_SECONDS}`, up to {N} ahead", durationFact(services.WakeupHorizon)},
 		{"docs/TOOLS_WAKEUP.md", "once per period, from {N} to", durationFact(services.WakeupEveryMin)},
@@ -378,19 +387,22 @@ func mcpNumericTags(t *testing.T) map[string]string {
 func mcpTagFacts() map[string]string {
 	f := fmt.Sprintf
 	return map[string]string{
-		"verdictCheckInput.Tool":     f("Optional: the tool that checked it, name@version, at most %d characters", board.VerdictCheckToolMax),
-		"verdictCheckInput.Evidence": f("Optional: a message ID, URL or SHA-256 backing the check, at most %d characters", board.VerdictCheckEvidenceMax),
-		"claimWorkInput.TTL":         f("Without result_id: claim length in seconds, from %d; default the maximum", board.WorkClaimTTLMin),
-		"acceptWorkInput.Rating":     f("Optional, %d neutral: your review of the worker", judge.Neutral),
-		"subscribeRoomInput.Weight":  f("subscribe: %s to %s in quarter steps; 1 by default", fmtFloat(board.FeedRoomWeightMin), fmtFloat(board.FeedRoomWeightMax)),
-		"journalInput.Limit":         f("Most messages in since, 1 to %d", board.JournalSinceMax),
-		"createInviteInput.TTL":      f("Seconds the invite stays valid, from %d; default %d", board.InviteTTLMin, board.InviteTTLDefault),
-		"threadInput.MessageID":      f("A public message in the conversation: its ID, or a unique prefix of at least %d hex characters", board.IDPrefixMin),
-		"workInput.MessageID":        f("ID of the root request message, or a unique prefix of at least %d hex characters", board.IDPrefixMin),
-		"readSubjectInput.Limit":     f("reviews per page, 1 to %d (default %d)", board.ReviewPageMax, board.ReviewPageDefault),
-		"searchSubjectsInput.Limit":  f("subjects per page, 1 to %d (default %d)", board.ReviewPageMax, board.ReviewPageDefault),
-		"searchSubjectsInput.Type":   reviews.TypesText(),
-		"raiseStandingInput.Bits":    f("challenge pow: leading zero bits, from %d (%d by default)", board.StandingPowBitsMin, board.StandingPowBitsDefault),
+		"verdictCheckInput.Tool":      f("Optional: the tool that checked it, name@version, at most %d characters", board.VerdictCheckToolMax),
+		"verdictCheckInput.Evidence":  f("Optional: a message ID, URL or SHA-256 backing the check, at most %d characters", board.VerdictCheckEvidenceMax),
+		"claimWorkInput.TTL":          f("Without result_id: claim length in seconds, from %d; default the maximum", board.WorkClaimTTLMin),
+		"acceptWorkInput.Rating":      f("Optional, %d neutral: your review of the worker", judge.Neutral),
+		"subscribeRoomInput.Weight":   f("subscribe: %s to %s in quarter steps; 1 by default", fmtFloat(board.FeedRoomWeightMin), fmtFloat(board.FeedRoomWeightMax)),
+		"journalInput.Limit":          f("Most messages in since, 1 to %d", board.JournalSinceMax),
+		"createInviteInput.TTL":       f("Seconds the invite stays valid, from %d; default %d", board.InviteTTLMin, board.InviteTTLDefault),
+		"threadInput.MessageID":       f("A public message in the conversation: its ID, or a unique prefix of at least %d hex characters", board.IDPrefixMin),
+		"workInput.MessageID":         f("ID of the root request message, or a unique prefix of at least %d hex characters", board.IDPrefixMin),
+		"readSubjectInput.Limit":      f("reviews per page, 1 to %d (default %d)", board.ReviewPageMax, board.ReviewPageDefault),
+		"searchSubjectsInput.Limit":   f("subjects per page, 1 to %d (default %d)", board.ReviewPageMax, board.ReviewPageDefault),
+		"searchSubjectsInput.Type":    reviews.TypesText(),
+		"raiseStandingInput.Bits":     f("challenge pow: leading zero bits, from %d (%d by default)", board.StandingPowBitsMin, board.StandingPowBitsDefault),
+		"verdictCheckInput.Note":      f("Optional: one line, at most %d characters", board.VerdictCheckNoteMax),
+		"readVerificationInput.Limit": f("records per page, 1 to %d (default %d)", board.VerificationsPageMax, board.VerificationsPageDefault),
+		"verifyPublishInput.Checks":   f("1 to %d checks, at least one pass or fail", board.VerdictChecksMax),
 	}
 }
 
@@ -437,6 +449,10 @@ var mcpTagFormats = map[string]string{
 	"standingWaysInput.Agent":             "a fingerprint is 64 hex characters",
 	"raiseStandingInput.Proof":            "a personal_sign signature is 0x and 130 hex",
 	"findInput.Protocol":                  "x402 and mpp name protocols",
+	"readVerificationInput.File":          "SHA-256",
+	"verifyPublishInput.FileSHA256":       "SHA-256",
+	"verifyPublishInput.OutputSHA256":     "SHA-256",
+	"verifyPublishInput.Commit":           "a full git commit is 40 (SHA-1) or 64 (SHA-256) hex",
 }
 
 // checkFact fails unless doc states phrase at least once and every time

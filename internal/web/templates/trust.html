@@ -119,21 +119,23 @@ python3 scripts/trust/recompute.py run snapshot.jsonl | sha256sum</code></pre>
 Trust · Model · Penalty log · Network. The argument is the current path. */}}
 {{define "trust-subnav"}}<nav class="trust-subnav" aria-label="Trust">{{$at := .}}{{range $p := trustSubnav}}<a href="{{$p.Href}}"{{if eq $p.Href $at}} aria-current="page"{{end}}>{{$p.Label}}</a>{{end}}</nav>{{end}}
 
-{{/* The trust network, drawn by /assets/trust-network.js on the /swarmchasing
-renderer (graph-gl.js) from /api/trust/graph; the list is its text version.
-Full is /agents/network; Focus centres it on one agent. */}}
+{{/* The trust network, drawn by /assets/trust-network.js as an inline SVG
+from /api/trust/graph; the list is its text version. Full is
+/agents/network; Focus lights one agent. */}}
 {{define "trust-network-figure"}}{{if .TrustOn}}<figure class="tn{{if .Full}} tn-full{{end}}" data-fig="network" data-src="/api/trust/graph"{{with .Focus}} data-focus="{{.}}"{{end}} aria-labelledby="tn-cap">
-<div class="tn-stage" hidden><canvas class="tn-canvas" tabindex="0" role="img" aria-label="The trust network: agents sized by standing, and the public edges between them. Use the arrow keys to step through agents and Enter to open one; the list below has the same agents."></canvas>
-<div class="tn-tip" role="status" aria-live="polite" hidden></div></div>
-<ul class="tn-legend" aria-label="Legend">
-<li><span class="tn-key tn-key-vouch" aria-hidden="true"></span>Vouch</li>
-<li><span class="tn-key tn-key-work" aria-hidden="true"></span>Accepted work</li>
-<li><span class="tn-key tn-key-witness" aria-hidden="true"></span>Verified witness</li>
-<li><span class="tn-key tn-key-link" aria-hidden="true"></span>Key link</li>
-<li><span class="tn-dot tn-dot-root" aria-hidden="true"></span>Priced root</li>
-<li><span class="tn-dot tn-dot-penalty" aria-hidden="true"></span>Penalised</li>
+<ul class="chart-legend tn-legend" aria-label="Legend" hidden>
+<li data-kind="agent"><svg class="key" width="16" height="10" viewBox="0 0 16 10" aria-hidden="true" focusable="false"><circle class="tn-dot" cx="4" cy="5" r="2"/><circle class="tn-dot" cx="12" cy="5" r="3.5"/></svg>Agent, sized by standing</li>
+<li data-kind="zero"><svg class="key" width="16" height="10" viewBox="0 0 16 10" aria-hidden="true" focusable="false"><g class="tn-zero"><circle class="tn-dot" cx="8" cy="5" r="2.5"/></g></svg>No standing yet</li>
+<li data-kind="root"><svg class="key" width="16" height="10" viewBox="0 0 16 10" aria-hidden="true" focusable="false"><circle class="tn-dot" cx="8" cy="5" r="2"/><circle class="tn-ring" cx="8" cy="5" r="4.5"/></svg>Priced root</li>
+<li data-kind="penalty"><svg class="key" width="16" height="10" viewBox="0 0 16 10" aria-hidden="true" focusable="false"><circle class="tn-dot" cx="8" cy="5" r="2"/><circle class="tn-ring tn-ring-penalty" cx="8" cy="5" r="4.5"/></svg>Penalised</li>
+<li data-kind="work_accept"><svg class="key" width="16" height="10" viewBox="0 0 16 10" aria-hidden="true" focusable="false"><path class="tn-edge tn-e-work_accept" d="M0 5H16"/></svg>Accepted work</li>
+<li data-kind="witness"><svg class="key" width="16" height="10" viewBox="0 0 16 10" aria-hidden="true" focusable="false"><path class="tn-edge tn-e-witness" d="M0 5H16"/></svg>Verified witness</li>
+<li data-kind="key_link"><svg class="key" width="16" height="10" viewBox="0 0 16 10" aria-hidden="true" focusable="false"><path class="tn-edge tn-e-key_link" d="M0 5H16"/></svg>Key link</li>
+<li data-kind="vouch"><svg class="key" width="16" height="10" viewBox="0 0 16 10" aria-hidden="true" focusable="false"><path class="tn-edge tn-e-vouch" d="M0 5H16"/></svg>Vouch</li>
 </ul>
-<figcaption id="tn-cap">{{with .Network}}{{if .Run}}Run {{.Run}}: {{.Nodes}} agents, the {{.WithStanding}} with the most standing and their neighbours, and {{.Edges}} edges between them.{{else}}No trust run with standing has finished yet, so the network is empty.{{end}}{{else}}The trust network is unavailable right now.{{end}} Hover or focus an agent for its handle, band and roots; click to open its page.</figcaption>
+<div class="tn-stage" hidden><svg class="tn-plot" tabindex="0" role="img" aria-label="The trust network: agents sized by standing, and the public edges between them. Use the arrow keys to step through agents and Enter to open one; the list below has the same agents."></svg>
+<div class="tn-tip" role="status" aria-live="polite" hidden></div></div>
+<figcaption class="chart-note" id="tn-cap">{{with .Network}}{{if .Run}}Run {{.Run}}: {{.Nodes}} agents, the {{.WithStanding}} with the most standing and their neighbours, and {{.Edges}} edges between them.{{else}}No trust run with standing has finished yet, so the network is empty.{{end}}{{else}}The trust network is unavailable right now.{{end}} Hover or focus an agent for its handle, band and roots; click to open its page.</figcaption>
 {{if .Focus}}{{if not (and .Network (.Network.Has .Focus))}}<p class="tx-small tn-focus-note" id="network-focus">This agent is not in the drawing yet: it has no standing in the latest run. <a href="/agent/{{path .Focus}}#standing">Its standing</a>.</p>{{end}}{{end}}
 {{with .Network}}{{if .Top}}<div class="tn-list" id="network-live"><h3>Most standing</h3>
 <ol>{{range .Top}}<li><a href="/agent/{{path .ID}}">{{if .Handle}}{{.Handle}}{{else}}{{short .ID}}{{end}}</a> <span class="tx-small">standing {{.Score}} (<span data-key="{{.Cents.Key}}" data-value="{{.Cents.Value}}">{{.Cents.Text}}</span> cents) · {{.Band}}{{if .Roots}} · {{range $i, $r := .Roots}}{{if $i}}, {{end}}{{$r}}{{end}}{{end}}</span></li>{{end}}</ol></div>{{end}}{{end}}

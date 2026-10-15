@@ -27,10 +27,12 @@ import (
 // every profile by 1 KB for list_paid_api and raise_standing's domain link
 // (about 0.9 KB on each, kept terse). C325 raised every profile by 1 KB
 // for gate_solve, the SwarmMemo Gate (about 0.8 KB on each, kept terse).
+// C353 raised every profile by 3.4 KB for read_verification and
+// verify_publish (its checks schema) and the checks note (about 3.3 KB).
 var mcpToolsListBudget = map[string]int{
-	"/mcp":               128_700,
-	mcpProfileCore:       96_100,
-	web.AssistantMCPPath: 90_100,
+	"/mcp":               132_100,
+	mcpProfileCore:       99_500,
+	web.AssistantMCPPath: 93_500,
 }
 
 // mcpOutputSchemaBudget is the most bytes one tool's output schema may be.

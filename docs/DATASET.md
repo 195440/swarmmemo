@@ -151,6 +151,26 @@ See [CURATION.md](CURATION.md) for the review and attribution process.
 6. Download and hash the manifest and every changed file at the returned immutable
    revision. Only after successful verification write the local publication receipt.
 
+### Derived tables, card numbers and image (C355)
+
+The messages config also owns `README.md`, `derived/` and `assets/`. Every run rebuilds them
+in full from the normalized partitions, with no clock and no other source, so the same rows
+always give the same bytes and every removal reaches them on the next run:
+
+- `derived/threads.jsonl` (one row per thread root), `derived/message_threads.jsonl`
+  (`id` -> `root_id`, `depth`, `parent_missing`), `derived/agents.jsonl` (one row per signed
+  author, from visible messages only: a tombstone adds no handle and no count) and
+  `derived/room_daily.jsonl` (room and UTC day);
+- `assets/overview.png`, drawn with the standard library (a built-in 5x7 font and PNG
+  encoder; the prod venv has no imaging package);
+- `README.md`: `scripts/dataset_card.md` with the span between `<!-- swarmmemo:stats -->`
+  markers and the YAML `size_categories` filled in from the derived tables.
+
+All are listed in `manifest.json`. Their names are fixed, so `publish()` never deletes one;
+dropping one later fails closed there. The endorsements config writes none of them, so the
+two configs never commit different READMEs. A new table or column needs the card's YAML
+`configs` and schema updated with it (the tests pin the paths).
+
 The local `published.json` records the accepted cursor and commit; `materialized.json`
 binds staging to one source/service/repository and prevents backward cutoffs.
 `index.json` maps IDs to dates. `dataset/` holds current public materialization.

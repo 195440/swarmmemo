@@ -69,6 +69,8 @@ type page struct {
 	// SubjectView, SubjectSearch and RubricView are /s/ID, /s and
 	// /rubrics/ID (subjects.go, RFC 0019).
 	SubjectView   *subjectPage
+	// VerifyView is /v/ID, a signed verification (verify.go, C353).
+	VerifyView *verifyPage
 	SubjectSearch *subjectSearch
 	RubricView    *rubricPage
 	// FindView is /find (find.go).
@@ -457,6 +459,7 @@ var templates = template.Must(template.New("page.html").Funcs(template.FuncMap{
 	"canvas": canvasClass,
 	// A review's verdict, dimensions and evidence states (subjects.go).
 	"reviewFacts": reviewFactsOf,
+	"checkState":  verifyStateLabel,
 	// A Find result's type badge (find.go).
 	"findType": findTypeLabel,
 	// A Find result's sign-up door: its provenance word and what it means (find.go).
@@ -629,6 +632,16 @@ func Handler(service board.Service) http.Handler {
 			serveSwarmchasingData(w, r, f)
 			return
 		}
+		// /favicon.ico is the raster logo: directories and link previews that
+		// skip <link rel=icon> ask for it, and without one some fall back to
+		// the repository owner's avatar.
+		if r.URL.Path == "/favicon.ico" {
+			w.Header().Set("Cache-Control", "public, max-age=86400")
+			r2 := r.Clone(r.Context())
+			r2.URL.Path = "/assets/logo-400.png"
+			static.ServeHTTP(w, r2)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/assets/") {
 			if r.URL.Query().Get("v") == assetVersion {
 				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
@@ -650,6 +663,13 @@ func Handler(service board.Service) http.Handler {
 		if ServiceFeatures(service).Reviews && (rubricRoute(w, r) || badgeRoute(w, r, func(c board.Command) (board.Result, error) {
 			return service.Execute(r.Context(), c, "web-public-read")
 		})) {
+			return
+		}
+		// Verified by SwarmMemo (verify.go, C353): badges, the card and the
+		// subject's newest record; the page is the view below.
+		if verifyRoute(w, r, func(c board.Command) (board.Result, error) {
+			return service.Execute(r.Context(), c, "web-public-read")
+		}) {
 			return
 		}
 		if pl, asJSON := platformRoute(r); asJSON {
@@ -873,6 +893,8 @@ func Handler(service board.Service) http.Handler {
 			}
 		case ServiceFeatures(service).Reviews && strings.HasPrefix(r.URL.Path, "/s/"):
 			status = loadSubject(r, &p, execute)
+		case strings.HasPrefix(r.URL.Path, board.VerificationPath):
+			status = loadVerification(r, &p, execute)
 		case ServiceFeatures(service).Reviews && r.URL.Path == "/s":
 			status = loadSubjectSearch(r, &p, execute)
 		case ServiceFeatures(service).Reviews && strings.HasPrefix(r.URL.Path, "/rubrics/"):
@@ -1206,6 +1228,10 @@ func Handler(service board.Service) http.Handler {
 			applyRoomStyle(w, r, service, &p)
 		}
 		finishMetadata(&p, status)
+		if status == 200 && p.View == "verification" {
+			// A record never changes; only its verifier's standing moves.
+			w.Header().Set("Cache-Control", VerifyPageCacheControl)
+		}
 		if p.NoIndex {
 			w.Header().Set("X-Robots-Tag", "noindex, follow")
 			if status >= 400 {

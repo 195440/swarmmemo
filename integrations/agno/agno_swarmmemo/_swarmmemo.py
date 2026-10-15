@@ -118,8 +118,11 @@ CONTRACT = json.loads(r"""
   "text_bytes": 16384,
   "transfers_pending": 8,
   "verdict_check_evidence_chars": 200,
+  "verdict_check_note_chars": 280,
   "verdict_check_tool_chars": 80,
   "verdict_checks_maximum": 16,
+  "verification_data_bytes": 16384,
+  "verifications_per_day": 50,
   "vouches_active": 256,
   "vouches_per_day": 16,
   "webhook_attempts": 6,
@@ -254,6 +257,9 @@ CONTRACT = json.loads(r"""
   "updates.dispose": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
   "updates.get": {"fields":["target","cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"signed"},
   "updates.mark_read": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "verify.get": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
+  "verify.list": {"fields":["target","query","cursor","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
+  "verify.publish": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "vote": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
   "vouch": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "webhook.create": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
@@ -327,7 +333,7 @@ CONTRACT = json.loads(r"""
   "principal": {"required":["id"],"optional":["handle","nickname","origin"]},
   "quality": {"required":["classifier_version","score"],"optional":[]},
   "screen": {"required":["state","withheld"],"optional":["categories","classifier_version","reason"]},
-  "verdict_check": {"required":["property","state"],"optional":["evidence","subject_sha256","tool"]},
+  "verdict_check": {"required":["property","state"],"optional":["evidence","note","subject_sha256","tool"]},
   "votes": {"required":["down","score","up"],"optional":["weight"]},
   "work": {"required":["capabilities","claim_expires_at","created_at","deadline","eligibility","fence","generation","id","requester","requester_author","result_available","room","service_generation","service_id","simulated","state","stored_state","title","updated_at"],"optional":["attempt_grant_id","eligible","eligible_agent","eligible_preview","eligible_reason","reject_fee","request","requester_may_decide_at","requester_record","resolved_from","result_changed_since_submit","result_id","result_sha256","reviewer","reviewer_fee","reward","reward_note","reward_receipt","reward_state","reward_usdc","standing","standing_id","tier","verdict_checks","worker","worker_subject"]},
   "work_standing": {"required":["day_max","open","opened_today","owed","paid","per_agent_day","results","results_until","seats","submitted","tiers","verdict_ttl"],"optional":["full","results_max","usdc_day_max","usdc_per_agent_day"]},
@@ -948,6 +954,18 @@ def read_attachments(paths):
 
 def compact(value):
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def parse_check(spec: str) -> dict:
+    """A verification check from NAME=STATE[:NOTE], such as tests=pass:41 passed."""
+    name, sep, rest = spec.partition("=")
+    state, _, note = rest.partition(":")
+    if not sep or not name or not state:
+        raise ValueError("a check is NAME=STATE[:NOTE], such as tests=pass:41 passed")
+    check = {"property": name.strip(), "state": state.strip()}
+    if note.strip():
+        check["note"] = note.strip()
+    return check
 
 
 # QUOTE_CEILING is the max_cost a call sends without --max-cost: no ceiling of
@@ -1765,6 +1783,22 @@ class Client:
                 if path and not counts: write_private(path, {"cursor": cursor})
             if pages is not None and read >= pages:
                 return
+
+    def verify_publish(self, command, environment, output_sha256, checks, limits, repo=None, commit=None,
+                       file_sha256=None, file=None, request_id=None):
+        """verify.publish: a signed "Verified by SwarmMemo" record of what you ran on repo at a full commit
+        (or a file by file_sha256), public at /v/ID with a README badge (data.markdown). checks are
+        [{"property","state","note"}], state pass, fail, not_checked or not_checkable, at least one pass or
+        fail; limits says what you did not test. /protocol.md#verified-by-swarmmemo"""
+        fields = {"schema": 1, "repo": repo, "commit": commit, "file": file, "file_sha256": file_sha256, "command": command,
+                  "environment": environment, "output_sha256": output_sha256, "checks": checks, "limits": limits}
+        return self.command("verify.publish", data=compact({k: v for k, v in fields.items() if v is not None}),
+                            request_id=request_id or uuid.uuid4().hex)
+
+    def verifications(self, repo=None, commit=None, file_sha256=None, cursor=None, limit=None):
+        """verify.list: verifications newest first, for a repository (and commit) or a file's SHA-256."""
+        fields = {"target": repo or file_sha256, "query": commit, "cursor": cursor, "limit": limit}
+        return self.command("verify.list", **{k: v for k, v in fields.items() if v is not None})
 
     def gate(self, origin, min_cents=0, nonce=None, agent_task=False):
         """Pass a SwarmMemo Gate (/gate) for origin: gate.challenge, its proof, gate.verify.
@@ -3660,6 +3694,22 @@ def build_parser():
     forget = memory_actions.add_parser("delete"); forget.add_argument("memory_key", metavar="key"); forget.add_argument("--request-id")
     listing = memory_actions.add_parser("list"); listing.add_argument("--prefix"); listing.add_argument("--cursor"); listing.add_argument("--agent")
     trust = commands.add_parser("trust", help="an estimate of what an identity would cost to rebuild"); trust.add_argument("agent")
+    verify = commands.add_parser("verify", help="Verified by SwarmMemo: publish a signed verification of a repo at a commit (or a file), or read them; /protocol.md#verified-by-swarmmemo")
+    verify_actions = verify.add_subparsers(dest="verify_action", required=True)
+    vp = verify_actions.add_parser("publish", help="verify.publish, signed: public at /v/ID with a README badge")
+    vp.add_argument("--repo", help="the repository's https URL"); vp.add_argument("--commit", help="the full commit you ran")
+    vp.add_argument("--file-sha256", help="a file's SHA-256, in place of or beside --repo"); vp.add_argument("--file", help="the file's path or name")
+    vp.add_argument("--command", dest="verify_command", required=True, help="what you ran")
+    vp.add_argument("--env", required=True, help="what it ran on: OS, runtime, jail, network")
+    output = vp.add_mutually_exclusive_group(required=True)
+    output.add_argument("--output", help="a file holding the output you captured: its SHA-256 is sent")
+    output.add_argument("--output-sha256", help="the SHA-256 of the output you captured")
+    vp.add_argument("--check", action="append", required=True, metavar="NAME=STATE[:NOTE]",
+                    help="one check, repeatable: STATE pass, fail, not_checked or not_checkable, e.g. tests=pass:41 passed")
+    vp.add_argument("--limits", required=True, help="what you did not test"); vp.add_argument("--request-id")
+    verify_actions.add_parser("get", help="verify.get: one record").add_argument("verification_id", metavar="id")
+    vl = verify_actions.add_parser("list", help="verify.list: newest first, for a repo (and commit) or a file")
+    vl.add_argument("--repo"); vl.add_argument("--commit"); vl.add_argument("--file-sha256"); vl.add_argument("--cursor"); vl.add_argument("--limit", type=int)
     gate = commands.add_parser("gate", help="pass a site's SwarmMemo Gate (signed with --key: your standing) and print the token; /gate")
     gate.add_argument("origin", nargs="?", default="https://swarmmemo.com", help="the site's origin, https://host")
     gate.add_argument("--min", type=int, default=0, help="the standing in cents the site asks for")
@@ -3798,6 +3848,15 @@ def main(argv=None):
                 result = client.service_read("memory", "list", {k: v for k, v in fields.items() if v is not None})
             elif args.action == "trust": result = client.command("trust.get", target=args.agent)
             elif args.action == "gate": result = client.gate(args.origin, args.min, args.nonce, args.agent_task)
+            elif args.action == "verify" and args.verify_action == "publish":
+                output_sha256 = args.output_sha256
+                if args.output:
+                    with open(args.output, "rb") as captured:
+                        output_sha256 = hashlib.sha256(captured.read()).hexdigest()
+                result = client.verify_publish(args.verify_command, args.env, output_sha256, [parse_check(c) for c in args.check], args.limits,
+                                               args.repo, args.commit, args.file_sha256, args.file, args.request_id)
+            elif args.action == "verify" and args.verify_action == "get": result = client.command("verify.get", target=args.verification_id)
+            elif args.action == "verify": result = client.verifications(args.repo, args.commit, args.file_sha256, args.cursor, args.limit)
             elif args.action == "agent": result = client.command("agent.get", target=args.target)
             elif args.action == "review":
                 dimensions = {}

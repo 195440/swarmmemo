@@ -31,6 +31,8 @@ const (
 	// characters.
 	VerdictCheckToolMax     = 80
 	VerdictCheckEvidenceMax = 200
+	// VerdictCheckNoteMax bounds a check's note, in characters (C353).
+	VerdictCheckNoteMax = 280
 )
 
 // VerdictCheckStates is every state a check may report.
@@ -53,10 +55,12 @@ type VerdictCheck struct {
 	SubjectSHA256 string `json:"subject_sha256,omitempty"`
 	Tool          string `json:"tool,omitempty"`
 	Evidence      string `json:"evidence,omitempty"`
+	// Note is the verifier's one line on the check (C353): what it showed.
+	Note string `json:"note,omitempty"`
 }
 
 // VerdictChecksRule is the whole rule, the tail of every checks refusal.
-var VerdictChecksRule = fmt.Sprintf(`checks is an optional list of 1 to %d objects {"property","state","subject_sha256","tool","evidence"}: property a token matching ^[a-z0-9_.-]{1,40}$ (e.g. integrity, signature, issuer_auth, anchor, conformance), state pass, fail, not_checkable or not_checked, and optionally subject_sha256 (64 lowercase hex), tool (name@version, at most %d characters) and evidence (a message ID, URL or SHA-256, at most %d characters); no control characters, no other fields.`, VerdictChecksMax, VerdictCheckToolMax, VerdictCheckEvidenceMax)
+var VerdictChecksRule = fmt.Sprintf(`checks is an optional list of 1 to %d objects {"property","state","subject_sha256","tool","evidence","note"}: property a token matching ^[a-z0-9_.-]{1,40}$ (e.g. integrity, signature, issuer_auth, anchor, conformance, tests), state pass, fail, not_checkable or not_checked, and optionally subject_sha256 (64 lowercase hex), tool (name@version, at most %d characters), evidence (a message ID, URL or SHA-256, at most %d characters) and note (one line, at most %d characters); no control characters, no other fields.`, VerdictChecksMax, VerdictCheckToolMax, VerdictCheckEvidenceMax, VerdictCheckNoteMax)
 
 // checkText is a short display string: valid UTF-8, 1 to max characters, no
 // control characters, no leading or trailing space.
@@ -117,6 +121,8 @@ func parseVerdictChecks(raw json.RawMessage) ([]VerdictCheck, string) {
 				dest = &c.Tool
 			case "evidence":
 				dest = &c.Evidence
+			case "note":
+				dest = &c.Note
 			default:
 				if !services.EchoesArg(name) {
 					return nil, at + " has a field a check does not take."
@@ -139,6 +145,8 @@ func parseVerdictChecks(raw json.RawMessage) ([]VerdictCheck, string) {
 				ok2 = checkText(c.Tool, VerdictCheckToolMax)
 			case "evidence":
 				ok2 = checkText(c.Evidence, VerdictCheckEvidenceMax)
+			case "note":
+				ok2 = checkText(c.Note, VerdictCheckNoteMax)
 			}
 			if !ok2 {
 				return nil, at + "." + name + " is not valid."

@@ -217,7 +217,8 @@ def _valid_checks(checks):
                 or check.get("state") not in CHECK_STATES
                 or ("subject_sha256" in check and (not isinstance(check["subject_sha256"], str) or not re.fullmatch(HEX64, check["subject_sha256"])))
                 or ("tool" in check and not text(check["tool"], LIMITS["verdict_check_tool_chars"]))
-                or ("evidence" in check and not text(check["evidence"], LIMITS["verdict_check_evidence_chars"]))):
+                or ("evidence" in check and not text(check["evidence"], LIMITS["verdict_check_evidence_chars"]))
+                or ("note" in check and not text(check["note"], LIMITS["verdict_check_note_chars"]))):
             return False
     return True
 

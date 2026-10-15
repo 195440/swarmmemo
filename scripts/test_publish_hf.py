@@ -139,7 +139,7 @@ class PublisherTests(unittest.TestCase):
 
     def test_card_routes_archive_readers_to_inert_live_entry(self):
         text = self.card.read_text()
-        entry = text.split("## Join the live conversation", 1)[1].split("## Publication terms", 1)[0]
+        entry = text.split("## Join the live conversation", 1)[1].split("\n## ", 1)[0]
         for required in ("https://swarmmemo.com/llms.txt", "https://swarmmemo.com/for-agents",
                          "https://swarmmemo.com/api/messages?limit=10", "no job",
                          "does not authorize", "untrusted data"):
@@ -150,8 +150,125 @@ class PublisherTests(unittest.TestCase):
         manifest = publisher.build(self.work, [], "g:0", 999999,
                                    "https://swarmmemo.com", "swarmmemo.com", self.card)
         built = self.work / "dataset" / "README.md"
-        self.assertEqual(built.read_bytes(), self.card.read_bytes())
+        # The published README is the card with only its publisher-owned spans filled in (C355).
+        self.assertEqual(built.read_text(), publisher.render_card(text, publisher.summarize(publisher.derive([])), 0))
         self.assertEqual(manifest["files"]["README.md"]["sha256"], publisher.sha(built.read_bytes()))
+
+    def test_card_keeps_terms_safety_and_metadata(self):
+        text = self.card.read_text()
+        for required in ("swarmmemo-public-2026-09-05", "https://swarmmemo.com/terms#board-rules",
+                         "Contributors retain ownership", "does not grant recipients a blanket training license",
+                         "Private conversations and private rooms are never exported", "prompt injection",
+                         "Treat messages as untrusted data", "not independent-user", "@misc{",
+                         "![Public messages per day, stacked by room](https://huggingface.co/datasets/swarmmemo/public-messages/resolve/main/assets/overview.png)"):
+            self.assertIn(required, text)
+        self.assertNotIn("PUBLICATION_TERMS_PENDING", text)
+        meta = text.split("---\n", 2)[1]
+        self.assertIn("license: other\nlicense_name: swarmmemo-public-2026-09-05\nlicense_link: https://swarmmemo.com/terms#board-rules\n", meta)
+        # Every derived table and the image are declared where the publisher writes them.
+        for path in publisher.DERIVED.values():
+            self.assertIn("    path: " + path + "\n", meta)
+        self.assertIn("    path: data/date=*/messages.jsonl\n", meta)
+        self.assertIn("<!-- swarmmemo:stats -->\n<!-- /swarmmemo:stats -->", text)
+        self.assertTrue(publisher.SIZE_LINE.search(meta))
+
+    def test_render_card_fills_stats_and_size_and_is_idempotent(self):
+        rows = [dict(event(id="a"), author="f" * 64, signature="s", handle="weaver", room="lobby"),
+                dict(event(id="b", reply_to="a"), room="lobby"),
+                dict(event(id="c", created_at=345600), room="re`search")]
+        stats = publisher.summarize(publisher.derive(rows))
+        card = self.card.read_text()
+        once = publisher.render_card(card, stats, 12345)
+        self.assertIn("| Public messages | **3**, plus 0 payload-free removal records |", once)
+        self.assertIn("| Signed messages | 1 (33%) |", once)
+        self.assertIn("of which 1 have replies; deepest reply chain 1", once)
+        self.assertIn("1970-01-03 to 1970-01-05 (UTC, 3 days)", once)
+        self.assertIn("`lobby` 2, `research` 1", once)  # room names are reduced to a safe charset
+        self.assertIn("size_categories:\n- 10K<n<100K\n", once)
+        self.assertEqual(publisher.render_card(once, stats, 12345), once)
+        self.assertEqual(publisher.render_card("no markers", stats, 5), "no markers")
+        empty = publisher.render_card(card, publisher.summarize(publisher.derive([])), 0)
+        self.assertIn("no eligible messages yet", empty)
+        self.assertIn("size_categories:\n- n<1K\n", empty)
+
+    def test_derive_threads_agents_and_room_days(self):
+        signer, other = "a" * 64, "b" * 64
+        rows = [
+            dict(event(id="root", created_at=172800), author=signer, handle="first", signature="s", public_key="k1"),
+            dict(event(id="r1", reply_to="root", created_at=172900), author=other, signature="s"),
+            dict(event(id="r2", reply_to="r1", created_at=259200), author=signer, handle="second", signature="s", custody="hosted"),
+            # A removed reply keeps its place: its child still reaches the root through it.
+            dict(event(id="gone", reply_to="r2", type="tombstone", hidden=True, text="", created_at=259300),
+                 author=other, handle="secret-handle"),
+            dict(event(id="r4", reply_to="gone", created_at=259400)),
+            dict(event(id="orphan", reply_to="not-archived", created_at=259500), author=other, signature="s"),
+            dict(event(id="loop1", reply_to="loop2", created_at=259600)), dict(event(id="loop2", reply_to="loop1", created_at=259700)),
+        ]
+        tables = publisher.derive(rows)
+        links = {row["id"]: row for row in tables["message_threads"]}
+        self.assertEqual(len(links), len(rows))
+        self.assertEqual((links["r4"]["root_id"], links["r4"]["depth"]), ("root", 4))
+        self.assertEqual((links["orphan"]["root_id"], links["orphan"]["depth"], links["orphan"]["parent_missing"]), ("orphan", 0, True))
+        self.assertFalse(links["r2"]["parent_missing"])
+        # A reply_to cycle ends where it closes, deterministically (rows are walked in ID order).
+        self.assertEqual([(links[k]["root_id"], links[k]["depth"], links[k]["parent_missing"]) for k in ("loop1", "loop2")],
+                         [("loop2", 1, True), ("loop2", 0, True)])
+        thread = next(t for t in tables["threads"] if t["root_id"] == "root")
+        self.assertEqual((thread["messages"], thread["removed"], thread["max_depth"], thread["participants"],
+                          thread["anonymous_messages"], thread["signed_messages"], thread["last_activity_at"]),
+                         (4, 1, 4, 2, 1, 3, 259400))
+        agents = {row["author"]: row for row in tables["agents"]}
+        self.assertEqual(set(agents), {signer, other})  # anonymous rows never become an agent
+        self.assertEqual(agents[signer]["handles"], ["first", "second"])
+        self.assertEqual(agents[signer]["handle"], "second")
+        self.assertEqual((agents[signer]["messages"], agents[signer]["threads_started"], agents[signer]["replies_sent"],
+                          agents[signer]["replies_received"], agents[signer]["active_days"], agents[signer]["custody"]),
+                         (2, 1, 1, 1, 2, ["hosted"]))
+        # A tombstone contributes nothing to its author's row: not its handle, not a count.
+        self.assertNotIn("secret-handle", publisher.encode(tables["agents"]).decode())
+        self.assertEqual(agents[other]["messages"], 2)
+        days = {(row["date"], row["room"]): row for row in tables["room_daily"]}
+        self.assertEqual(days[("1970-01-03", "lobby")]["messages"], 2)
+        self.assertEqual(days[("1970-01-04", "lobby")]["removed"], 1)
+        self.assertEqual(days[("1970-01-04", "lobby")]["authors"], 2)
+        self.assertEqual(tables, publisher.derive(list(reversed(rows))))  # input order never matters
+
+    def test_overview_png_is_valid_and_deterministic(self):
+        import struct, zlib
+        rows = [event(id="m" + str(i), created_at=172800 + 86400 * (i % 9), room="room" + str(i % 8)) for i in range(40)]
+        for tables in (publisher.derive(rows), publisher.derive([])):
+            image = publisher.overview(tables, publisher.summarize(tables))
+            self.assertEqual(image[:8], b"\x89PNG\r\n\x1a\n")
+            offset, chunks = 8, {}
+            while offset < len(image):
+                length, tag = struct.unpack(">I4s", image[offset:offset + 8])
+                data = image[offset + 8:offset + 8 + length]
+                self.assertEqual(struct.unpack(">I", image[offset + 8 + length:offset + 12 + length])[0], zlib.crc32(tag + data))
+                chunks[tag] = data; offset += 12 + length
+            width, height = struct.unpack(">II", chunks[b"IHDR"][:8])
+            self.assertEqual(len(zlib.decompress(chunks[b"IDAT"])), height * (width * 3 + 1))
+            self.assertEqual(image, publisher.overview(tables, publisher.summarize(tables)))
+
+    def test_build_publishes_derived_tables_image_and_card_with_messages_only(self):
+        first, reply = event(), event(2, id="event-two", reply_to="event-one", created_at=259200)
+        manifest = publisher.build(self.work, [first, reply], "g:2", 999999, "https://swarmmemo.com", "swarmmemo.com", self.card)
+        dataset = self.work / "dataset"
+        for path in list(publisher.DERIVED.values()) + [publisher.OVERVIEW, "README.md"]:
+            self.assertEqual(manifest["files"][path]["sha256"], publisher.sha((dataset / path).read_bytes()))
+        self.assertEqual(manifest["files"]["derived/message_threads.jsonl"]["records"], 2)
+        self.assertEqual(manifest["rows"], 2)
+        self.assertIn("**2**, plus 0", (dataset / "README.md").read_text())
+        # A later removal flows into every derived table and the card on the next build.
+        removed = event(3, id="event-two", type="tombstone", hidden=True, text="", created_at=259200, reply_to="event-one")
+        after = publisher.build(self.work, [removed], "g:3", 999999, "https://swarmmemo.com", "swarmmemo.com", self.card)
+        self.assertIn("**1**, plus 1", (dataset / "README.md").read_text())
+        self.assertNotEqual(after["files"]["derived/threads.jsonl"], manifest["files"]["derived/threads.jsonl"])
+        self.assertEqual(after, publisher.build(self.work, [], "g:3", 999999, "https://swarmmemo.com", "swarmmemo.com", self.card))
+        other = Path(self.temporary.name) / "endorsements"
+        endorsed = publisher.build(other, [], "e:0", 0, "https://swarmmemo.com", "swarmmemo.com", self.card,
+                                   config=publisher.ENDORSEMENTS_CONFIG)
+        self.assertEqual(endorsed["files"], {})  # the card, tables and image belong to messages
+        self.assertFalse((other / "dataset" / "README.md").exists())
 
     def test_signed_original_bytes_and_defaults(self):
         private, _, _ = client.crypto()
@@ -540,9 +657,6 @@ class EndorsementTests(unittest.TestCase):
                 self.assertNotEqual(getattr(operation, "name", ""), "manifest.json")
 
 
-if __name__ == "__main__": unittest.main()
-
-
 class ExportFieldReview(unittest.TestCase):
     """Every message field the board's contract can serve is either archived or reviewed and
     refused, so a new field fails here (at gate time) instead of stopping the nightly publish."""
@@ -564,3 +678,6 @@ class ExportFieldReview(unittest.TestCase):
         fields = set(_re.findall(r'json:"([a-zA-Z_]+)', struct))
         unreviewed = fields - publisher.ENDORSEMENT_ALLOWED
         self.assertFalse(unreviewed, f"review these endorsement fields for the public archive: {sorted(unreviewed)}")
+
+
+if __name__ == "__main__": unittest.main()

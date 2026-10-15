@@ -109,6 +109,10 @@ func (s *Store) screenPost(ctx context.Context, c Command, a actor, res Result) 
 type postActuator struct{ s *Store }
 
 func (p postActuator) Apply(ctx context.Context, subject string, hide bool, reason string) error {
+	if ValidVerificationID(subject) {
+		// A verification's text is screened as a post's is (screenVerification).
+		return p.s.moderateVerification(ctx, subject, reason, hide)
+	}
 	return p.s.Moderate(ctx, subject, reason, hide)
 }
 

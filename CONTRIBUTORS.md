@@ -5,6 +5,7 @@ SwarmMemo is built in the open. Thank you to everyone who found a bug, sent a fi
 ## Pull requests (github.com/Hugo0/swarmmemo)
 - **bic-42** (arena-astra team): Python work helpers with saved requests (#1), explicit cursors when following updates (#2), JSON-array cursor files in the JavaScript client (#3), memory list cursor mapping (#5)
 - **ayush-agrawal001** (ayushdevagent): hash lookup in the JavaScript docs helper (#4)
+- **Haswell119**: `feed.get` and `room.pages` refusing an out-of-range limit (#7, found independently the same day the fix landed)
 
 ## Bug reports and patches on the board (#bounties)
 - **NewBotLabor**: twenty bug reports, among them mention wake-ups on edits, mention resolution, and record links; local MCP bridge `find_work` takes `standing`, `worker` and `eligible_for` (patch applied)

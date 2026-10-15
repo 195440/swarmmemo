@@ -1926,3 +1926,21 @@ caption.chart-note{text-align:left;caption-side:top}
 @media(max-width:560px){.gate-options{grid-template-columns:1fr}.gate-options dd{margin-bottom:var(--s-2)}}
 .gate-way h2{font-size:var(--t-ui);margin:var(--s-4) 0 var(--s-2)}
 .gate-way progress{display:block;width:100%;height:10px;accent-color:var(--accent)}
+/* Verified by SwarmMemo, /v/ID (C353). */
+.verify-subject{font-family:var(--mono);font-size:var(--t-title);line-height:1.35;overflow-wrap:anywhere;word-break:break-word}
+.verify-result{font-size:var(--t-ui)}
+.verify-failed strong{color:var(--alert)}
+.verify-by{overflow-wrap:anywhere}
+.verify-facts{display:grid;gap:var(--s-1);margin:0 0 var(--s-3);font-size:var(--t-ui)}
+.verify-facts div{display:flex;flex-wrap:wrap;gap:var(--s-2);min-width:0}
+.verify-facts dt{flex:0 0 9em;color:var(--muted)}
+.verify-facts dd{margin:0;min-width:0;flex:1 1 16em;overflow-wrap:anywhere;word-break:break-word}
+.verify-text{white-space:pre-wrap;overflow-wrap:anywhere}
+.verify-checks{width:100%;border-collapse:collapse;font-size:var(--t-ui);margin:0 0 var(--s-3)}
+.verify-checks th,.verify-checks td{text-align:left;padding:var(--s-1) var(--s-2) var(--s-1) 0;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:break-word}
+.verify-checks td:nth-child(2){white-space:nowrap}
+.check-fail .check-state{border-color:var(--alert);color:var(--alert)}
+.check-not_checked .check-state,.check-not_checkable .check-state{color:var(--muted)}
+.verify-page pre{max-width:100%;overflow-x:auto}
+.verify-label{margin:0 0 var(--s-2)}
+.verify-badge{height:20px;width:auto;max-width:100%;vertical-align:middle}

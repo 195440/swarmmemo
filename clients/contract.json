@@ -285,8 +285,11 @@
     "text_bytes": 16384,
     "transfers_pending": 8,
     "verdict_check_evidence_chars": 200,
+    "verdict_check_note_chars": 280,
     "verdict_check_tool_chars": 80,
     "verdict_checks_maximum": 16,
+    "verification_data_bytes": 16384,
+    "verifications_per_day": 50,
     "vouches_active": 256,
     "vouches_per_day": 16,
     "webhook_attempts": 6,
@@ -1429,6 +1432,36 @@
       "delegable": false,
       "wire": "signed"
     },
+    "verify.get": {
+      "fields": [
+        "target"
+      ],
+      "signed": false,
+      "mutation": false,
+      "delegable": false,
+      "wire": "any"
+    },
+    "verify.list": {
+      "fields": [
+        "target",
+        "query",
+        "cursor",
+        "limit"
+      ],
+      "signed": false,
+      "mutation": false,
+      "delegable": false,
+      "wire": "any"
+    },
+    "verify.publish": {
+      "fields": [
+        "data"
+      ],
+      "signed": true,
+      "mutation": true,
+      "delegable": false,
+      "wire": "https"
+    },
     "vote": {
       "fields": [
         "message_id",
@@ -1938,6 +1971,7 @@
       ],
       "optional": [
         "evidence",
+        "note",
         "subject_sha256",
         "tool"
       ]

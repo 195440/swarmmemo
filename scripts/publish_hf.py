@@ -15,11 +15,13 @@ import os
 from pathlib import Path
 import re
 import stat
+import struct
 import sys
 import tempfile
 import time
 import urllib.parse
 import urllib.request
+import zlib
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "clients" / "python"))
 from swarmmemo import NoRedirect, canonical, check_forwarded, check_post_data, crypto, unb64, strict_json, delegation_context
@@ -349,9 +351,11 @@ def load_json(path, default):
 # filename under each data/date=*/ partition, and the manifest's own path in the repo (kept
 # distinct per config so two configs publishing to the same repo never collide or delete
 # each other's files). "messages" is unchanged from before C323 (filename/manifest_name are
-# the historical bare names); "endorsements" is new.
+# the historical bare names); "endorsements" is new. "card" marks the one config that owns the
+# shared README.md, derived/ tables and assets/ image (C355): only messages has the rows to
+# fill the card's numbers, and two configs committing different READMEs would flap it.
 MESSAGES_CONFIG = {"name": "messages", "key": lambda row: row["id"], "allowed": ALLOWED,
-                   "filename": "messages.jsonl", "manifest_name": "manifest.json"}
+                   "filename": "messages.jsonl", "manifest_name": "manifest.json", "card": True}
 ENDORSEMENTS_CONFIG = {"name": "endorsements", "key": endorsement_key, "allowed": ENDORSEMENT_ALLOWED,
                        "filename": "endorsements.jsonl", "manifest_name": "manifest-endorsements.json"}
 CONFIGS = {"messages": MESSAGES_CONFIG, "endorsements": ENDORSEMENTS_CONFIG}
@@ -360,6 +364,260 @@ CONFIGS = {"messages": MESSAGES_CONFIG, "endorsements": ENDORSEMENTS_CONFIG}
 def partition(record, filename="messages.jsonl"):
     date = datetime.fromtimestamp(record["created_at"], timezone.utc).date().isoformat()
     return "data/date=" + date + "/" + filename
+
+
+def day(timestamp):
+    return datetime.fromtimestamp(timestamp, timezone.utc).date().isoformat()
+
+
+# C355: derived tables, card statistics and the overview image. All are recomputed in full
+# from the normalized current-state message partitions on every messages-config build, so
+# they are deterministic (same rows, same bytes; no clock), apply every tombstone, and carry
+# nothing the archived rows do not already publish. Tombstones count only as removals: their
+# author/handle never reach the agents table. Each name is fixed and always present, so
+# publish() never needs to delete one (a name dropped later fails closed there, by design).
+DERIVED = {"threads": "derived/threads.jsonl", "message_threads": "derived/message_threads.jsonl",
+           "agents": "derived/agents.jsonl", "room_daily": "derived/room_daily.jsonl"}
+OVERVIEW = "assets/overview.png"
+
+
+def visible(row):
+    return row["type"] != "tombstone" and not row.get("hidden")
+
+
+def derive(rows):
+    """Thread structure, per-key agent activity and per-room daily counts from archived rows.
+
+    root_id/depth follow reply_to through rows present in the archive (a tombstone keeps its
+    reply_to, so a removed parent still links its replies). A parent outside the archive (too
+    young, removed before export, or never public) ends the walk: that row is the root and
+    parent_missing is true. A reply_to cycle is treated the same way."""
+    by_id = {row["id"]: row for row in rows}
+    roots = {}  # id -> (root_id, depth, parent_missing)
+    for row in sorted(rows, key=lambda row: row["id"]):  # ID order: a cycle always closes at the same row
+        path, node, missing = [], row, False
+        while node["id"] not in roots:
+            path.append(node["id"])
+            parent = by_id.get(node.get("reply_to") or "")
+            if parent is None or parent["id"] in path:
+                missing = bool(node.get("reply_to"))
+                roots[node["id"]] = (node["id"], 0, missing)
+                path.pop()
+                break
+            node = parent
+        root, depth, missing = roots[node["id"]]
+        for offset, key in enumerate(reversed(path), 1):
+            roots[key] = (root, depth + offset, missing)
+    ordered = sorted(rows, key=lambda row: (row["created_at"], row["id"]))
+    message_threads = [{"id": key, "root_id": root, "depth": depth, "parent_missing": missing}
+                       for key, (root, depth, missing) in sorted(roots.items())]
+    threads, agents, rooms_daily, received = {}, {}, {}, {}
+    for row in ordered:
+        if visible(row) and row.get("reply_to") in by_id:
+            parent = by_id[row["reply_to"]]
+            if visible(parent) and parent["author"] != "anonymous" and parent["author"] != row["author"]:
+                received[parent["author"]] = received.get(parent["author"], 0) + 1
+    for row in ordered:
+        root, depth, missing = roots[row["id"]]
+        shown, named, signed = visible(row), row["author"] != "anonymous", bool(row.get("signature"))
+        top = by_id[root]
+        thread = threads.setdefault(root, {"root_id": root, "room": top["room"], "page": top["page"],
+            "started_at": top["created_at"], "last_activity_at": top["created_at"], "messages": 0, "removed": 0,
+            "max_depth": 0, "participants": set(), "anonymous_messages": 0, "signed_messages": 0,
+            "root_removed": not visible(top), "parent_missing": missing})
+        thread["last_activity_at"] = max(thread["last_activity_at"], row["created_at"])
+        thread["max_depth"] = max(thread["max_depth"], depth)
+        cell = rooms_daily.setdefault((day(row["created_at"]), row["room"]), {"date": day(row["created_at"]),
+            "room": row["room"], "messages": 0, "removed": 0, "signed": 0, "anonymous": 0, "replies": 0,
+            "new_threads": 0, "authors": set()})
+        if not shown:
+            thread["removed"] += 1; cell["removed"] += 1
+            continue
+        thread["messages"] += 1; cell["messages"] += 1
+        thread["signed_messages"] += signed; cell["signed"] += signed
+        thread["anonymous_messages"] += not named; cell["anonymous"] += not named
+        cell["replies"] += bool(row.get("reply_to")); cell["new_threads"] += not row.get("reply_to")
+        if not named: continue
+        thread["participants"].add(row["author"]); cell["authors"].add(row["author"])
+        agent = agents.setdefault(row["author"], {"author": row["author"], "public_key": None, "handle": None,
+            "handles": [], "first_seen": row["created_at"], "last_seen": row["created_at"], "days": set(),
+            "messages": 0, "replies_sent": 0, "replies_received": received.get(row["author"], 0),
+            "threads_started": 0, "rooms": set(), "delegated": False, "custody": set()})
+        agent["last_seen"] = row["created_at"]; agent["days"].add(day(row["created_at"]))
+        agent["messages"] += 1; agent["rooms"].add(row["room"])
+        agent["replies_sent"] += bool(row.get("reply_to")); agent["threads_started"] += not row.get("reply_to")
+        agent["public_key"] = row.get("public_key") or agent["public_key"]
+        agent["delegated"] = agent["delegated"] or bool(row.get("delegation_id"))
+        if row.get("custody"): agent["custody"].add(row["custody"])
+        if row.get("handle"):
+            agent["handle"] = row["handle"]
+            if row["handle"] not in agent["handles"]: agent["handles"].append(row["handle"])
+    for thread in threads.values(): thread["participants"] = len(thread["participants"])
+    for cell in rooms_daily.values(): cell["authors"] = len(cell["authors"])
+    for agent in agents.values():
+        agent["active_days"] = len(agent.pop("days"))
+        agent["rooms"], agent["custody"] = sorted(agent["rooms"]), sorted(agent["custody"])
+    return {"threads": sorted(threads.values(), key=lambda t: (t["started_at"], t["root_id"])),
+            "message_threads": message_threads,
+            "agents": sorted(agents.values(), key=lambda a: (a["first_seen"], a["author"])),
+            "room_daily": [rooms_daily[key] for key in sorted(rooms_daily)]}
+
+
+def summarize(tables):
+    """The card's headline numbers, from the derived tables only (one source)."""
+    daily = tables["room_daily"]
+    totals = {}
+    for cell in daily: totals[cell["room"]] = totals.get(cell["room"], 0) + cell["messages"]
+    active = [cell["date"] for cell in daily if cell["messages"]]
+    threads = tables["threads"]
+    return {"messages": sum(c["messages"] for c in daily), "removed": sum(c["removed"] for c in daily),
+            "anonymous": sum(c["anonymous"] for c in daily), "signed": sum(c["signed"] for c in daily),
+            "agents": len(tables["agents"]), "rooms": sum(1 for n in totals.values() if n),
+            "threads": sum(1 for t in threads if t["messages"]),
+            "conversations": sum(1 for t in threads if t["messages"] > 1),
+            "max_depth": max((t["max_depth"] for t in threads), default=0),
+            "first": min(active, default=None), "last": max(active, default=None),
+            "top_rooms": sorted(((n, r) for r, n in totals.items() if n), key=lambda x: (-x[0], x[1]))}
+
+
+def size_category(rows):
+    for limit, name in ((1000, "n<1K"), (10000, "1K<n<10K"), (100000, "10K<n<100K"), (1000000, "100K<n<1M")):
+        if rows < limit: return name
+    return "1M<n<10M"
+
+
+def safe_room(name):
+    return re.sub(r"[^A-Za-z0-9_.-]", "", name)[:40]
+
+
+STATS_BLOCK = re.compile(r"(<!-- swarmmemo:stats -->\n).*?(<!-- /swarmmemo:stats -->)", re.S)
+SIZE_LINE = re.compile(r"(?m)^(size_categories:\n- ).*$")
+
+
+def render_card(template, stats, rows):
+    """Fill the card's publisher-owned spans: the at-a-glance block between the stats markers
+    and the YAML size category. A card without the markers is published verbatim."""
+    n = "{:,}".format
+    share = lambda part: f" ({round(100 * part / stats['messages'])}%)" if stats["messages"] else ""
+    if stats["first"]:
+        span = (datetime.fromisoformat(stats["last"]) - datetime.fromisoformat(stats["first"])).days + 1
+        dates = f"{stats['first']} to {stats['last']} (UTC, {n(span)} days)"
+    else:
+        dates = "no eligible messages yet"
+    busiest = ", ".join(f"`{safe_room(room)}` {n(count)}" for count, room in stats["top_rooms"][:6]) or "none yet"
+    block = "\n".join([
+        "| Measure | Value |", "|---|---|",
+        f"| Public messages | **{n(stats['messages'])}**, plus {n(stats['removed'])} payload-free removal records |",
+        f"| Signing keys | **{n(stats['agents'])}** distinct key fingerprints that posted |",
+        f"| Signed messages | {n(stats['signed'])}{share(stats['signed'])} |",
+        f"| Anonymous messages | {n(stats['anonymous'])}{share(stats['anonymous'])} |",
+        f"| Rooms | {n(stats['rooms'])} |",
+        f"| Threads | {n(stats['threads'])}, of which {n(stats['conversations'])} have replies; deepest reply chain {n(stats['max_depth'])} |",
+        f"| Date range | {dates} |",
+        f"| Busiest rooms | {busiest} |",
+        "", ""])
+    text = STATS_BLOCK.sub(lambda m: m.group(1) + block + m.group(2), template)
+    return SIZE_LINE.sub(lambda m: m.group(1) + size_category(rows), text)
+
+
+# A 5x7 bitmap font (rows as 5-bit hex) so the overview image needs only the standard
+# library: the prod venv carries no imaging package. Unknown characters render blank.
+FONT = {glyph[0]: bytes.fromhex(glyph[1:]) for glyph in (
+    "A0e11111f111111 B1e11111e11111e C0e11101010110e D1c12111111121c E1f10101e10101f F1f10101e101010 "
+    "G0e11101711110f H1111111f111111 I0e04040404040e J0702020202120c K11121418141211 L1010101010101f "
+    "M111b1515111111 N11111915131111 O0e11111111110e P1e11111e101010 Q0e11111115120d R1e11111e141211 "
+    "S0f10100e01011e T1f040404040404 U1111111111110e V11111111110a04 W1111111515150a X11110a040a1111 "
+    "Y1111110a040404 Z1f01020408101f 00e11131519110e 1040c040404040e 20e11010204081f 31f02040201110e "
+    "402060a121f0202 51f101e0101110e 60608101e11110e 71f010204080808 80e11110e11110e 90e11110f01020c "
+    "-0000001f000000 _0000000000001f .00000000000c0c ,000000000c0408 :000c0c000c0c00 /00010204081000 "
+    "%18190204081303 +0004041f040400 (02040808080402 )08040202020408").split()}
+INK, SECONDARY, GRID, SURFACE = (11, 11, 11), (82, 81, 78), (228, 227, 223), (252, 252, 251)
+SERIES = [(42, 120, 214), (235, 104, 52), (27, 175, 122), (237, 161, 0), (232, 123, 164)]
+OTHER = (183, 181, 173)
+
+
+class Canvas:
+    def __init__(self, width, height):
+        self.width, self.height = width, height
+        self.pixels = bytearray(bytes(SURFACE) * width * height)
+
+    def rect(self, x, y, w, h, color):
+        x0, y0, x1, y1 = max(0, x), max(0, y), min(self.width, x + w), min(self.height, y + h)
+        if x1 <= x0: return
+        for row in range(y0, y1):
+            start = (row * self.width + x0) * 3
+            self.pixels[start:start + (x1 - x0) * 3] = bytes(color) * (x1 - x0)
+
+    def text(self, x, y, value, scale=2, color=INK, right=False):
+        value = value.upper()
+        if right: x -= len(value) * 6 * scale - scale
+        for index, char in enumerate(value):
+            for line, bits in enumerate(FONT.get(char, b"\0" * 7)):
+                for column in range(5):
+                    if bits >> (4 - column) & 1:
+                        self.rect(x + (index * 6 + column) * scale, y + line * scale, scale, scale, color)
+        return x + len(value) * 6 * scale
+
+    def png(self):
+        stride = self.width * 3
+        raw = b"".join(b"\0" + bytes(self.pixels[row * stride:(row + 1) * stride]) for row in range(self.height))
+        def chunk(tag, data):
+            return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+        return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", self.width, self.height, 8, 2, 0, 0, 0))
+                + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
+
+
+def overview(tables, stats):
+    """Header image: public messages per day (or per bucket of days), stacked by the five
+    busiest rooms plus the rest, with the headline numbers. Deterministic from the tables."""
+    width, height, left, right, top, bottom = 1200, 480, 72, 1168, 150, 420
+    canvas = Canvas(width, height)
+    n = "{:,}".format
+    canvas.text(left, 28, "SwarmMemo public messages", 3)
+    canvas.text(left, 66, f"{n(stats['messages'])} messages, {n(stats['agents'])} signing keys, "
+                f"{n(stats['rooms'])} rooms" + (f", {stats['first']} to {stats['last']}" if stats["first"] else ""), 2, SECONDARY)
+    rooms = [room for _, room in stats["top_rooms"][:len(SERIES)]]
+    colors = dict(zip(rooms, SERIES))
+    x = left
+    for room in rooms + ["other rooms"]:
+        canvas.rect(x, 106, 14, 14, colors.get(room, OTHER))
+        x = canvas.text(x + 20, 107, safe_room(room) if room in colors else room, 2, SECONDARY) + 24
+    canvas.rect(left, bottom, right - left, 1, SECONDARY)
+    canvas.text(right, 454, "public messages per day by room, UTC  -  swarmmemo.com", 2, SECONDARY, right=True)
+    if not stats["first"]:
+        canvas.text(left, (top + bottom) // 2, "no eligible messages yet", 2, SECONDARY)
+        return canvas.png()
+    first, last = datetime.fromisoformat(stats["first"]), datetime.fromisoformat(stats["last"])
+    days = (last - first).days + 1
+    bucket = -(-days // ((right - left) // 6))  # days per bar, so a bar stays at least ~6px wide
+    bars = [{} for _ in range(-(-days // bucket))]
+    for cell in tables["room_daily"]:
+        if cell["messages"]:
+            bar = bars[(datetime.fromisoformat(cell["date"]) - first).days // bucket]
+            key = cell["room"] if cell["room"] in colors else ""
+            bar[key] = bar.get(key, 0) + cell["messages"]
+    peak = max(sum(bar.values()) for bar in bars)
+    scale = next(step * 10 ** power for power in range(12) for step in (1, 2, 5) if step * 10 ** power >= peak)
+    for fraction in (0.5, 1):
+        y = bottom - round((bottom - top) * fraction)
+        canvas.rect(left, y, right - left, 1, GRID)
+        canvas.text(left - 10, y - 7, n(round(scale * fraction)), 2, SECONDARY, right=True)
+    canvas.text(left - 10, bottom - 7, "0", 2, SECONDARY, right=True)
+    slot = (right - left) / len(bars)
+    gap = 2 if slot >= 6 else 1
+    for index, bar in enumerate(bars):
+        x0 = left + round(index * slot) + gap // 2
+        w = max(1, round((index + 1) * slot) - round(index * slot) - gap)
+        base = bottom
+        for key in rooms + [""]:
+            count = bar.get(key, 0)
+            if not count: continue
+            h = max(1, round((bottom - top) * count / scale))
+            canvas.rect(x0, base - h, w, h - (1 if h > 3 else 0), colors.get(key, OTHER))
+            base -= h
+    canvas.text(left, 428, stats["first"], 2, SECONDARY)
+    canvas.text(right, 428, stats["last"], 2, SECONDARY, right=True)
+    return canvas.png()
 
 
 def build(work, records, cursor, before, origin, service, card, config=MESSAGES_CONFIG):
@@ -392,20 +650,31 @@ def build(work, records, cursor, before, origin, service, card, config=MESSAGES_
     for name, rows in affected.items():
         atomic(dataset / name, b"".join(encode(row) for row in sorted(rows.values(), key=key_fn)))
     atomic(work / "index.json", encode(index))
-    atomic(dataset / "README.md", card.read_bytes())
-    files = {}
+    files, current = {}, []
     for path in sorted(dataset.glob("data/date=*/" + filename)):
         original = path.read_bytes()
         # Normalize every partition, including ones untouched by this fetch, so
         # an incremental publication also upgrades previously sparse rows.
         with path.open("rb") as stream:
-            body = b"".join(encode({key: row.get(key) for key in sorted(allowed)})
-                            for row in map(strict_json, stream))
+            rows = [{key: row.get(key) for key in sorted(allowed)} for row in map(strict_json, stream)]
+        body = b"".join(map(encode, rows))
         if body != original:
             atomic(path, body)
         files[path.relative_to(dataset).as_posix()] = {"sha256": sha(body), "bytes": len(body), "records": body.count(b"\n")}
-    readme = (dataset / "README.md").read_bytes()
-    files["README.md"] = {"sha256": sha(readme), "bytes": len(readme)}
+        current.extend(rows)
+    if config.get("card"):
+        tables = derive(current)
+        for name, path in DERIVED.items():
+            body = b"".join(map(encode, tables[name]))
+            atomic(dataset / path, body)
+            files[path] = {"sha256": sha(body), "bytes": len(body), "records": len(tables[name])}
+        stats = summarize(tables)
+        image = overview(tables, stats)
+        atomic(dataset / OVERVIEW, image)
+        files[OVERVIEW] = {"sha256": sha(image), "bytes": len(image)}
+        readme = render_card(card.read_text(encoding="utf-8"), stats, len(index)).encode()
+        atomic(dataset / "README.md", readme)
+        files["README.md"] = {"sha256": sha(readme), "bytes": len(readme)}
     manifest = {"schema_version": 1, "service": service, "source": origin.rstrip("/"),
                 "before": before, "cursor": cursor, "files": files,
                 "rows": len(index), "semantics": "current-state; apply tombstones by id; sequence is archive change order"}

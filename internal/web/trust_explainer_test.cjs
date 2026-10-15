@@ -122,8 +122,8 @@ const read = (page) => page.locator('[data-fig="edge"] [data-out="read"]').textC
           const ready = await net.getAttribute('data-ready');
           if (ready) {
             assert.equal(Number(ready), graph.nodes.length, 'every node drawn');
-            const canvas = page.locator('.tn-canvas');
-            await canvas.focus();
+            const plot = page.locator('.tn-plot');
+            await plot.focus();
             await page.keyboard.press('ArrowRight');
             const tip = page.locator('.tn-tip');
             await tip.waitFor({state: 'visible'});

@@ -89,6 +89,7 @@ func Build() map[string]any {
 		"verdict_checks_maximum":        board.VerdictChecksMax,
 		"verdict_check_tool_chars":      board.VerdictCheckToolMax,
 		"verdict_check_evidence_chars":  board.VerdictCheckEvidenceMax,
+		"verdict_check_note_chars":      board.VerdictCheckNoteMax,
 		"work_reward_note_chars":        board.WorkRewardNoteMax,
 		"work_title_bytes":              board.WorkTitleBytes,
 		"work_capabilities_maximum":     board.WorkCapabilitiesMax,

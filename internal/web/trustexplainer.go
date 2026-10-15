@@ -15,8 +15,8 @@ import (
 // the share rule with today's numbers (it absorbed /limits and /stats'
 // Allowance section); #standing, with one small interactive
 // (assets/trust.js); #raise, the ways to raise it; #network, the public trust
-// network (assets/trust-network.js, on the /swarmchasing renderer
-// graph-gl.js), whose full view is /agents/network; #numbers, the charts
+// network (assets/trust-network.js, an inline SVG figure), whose full
+// view is /agents/network; #numbers, the charts
 // that were /stats' Trust section; #penalties, the latest entries of the
 // log; #check, how to check every number; #model, the paper. Every live
 // number is a cell (data-key, data-value) read through the function its JSON

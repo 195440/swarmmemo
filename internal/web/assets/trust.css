@@ -4,16 +4,15 @@
    follows docs/DESIGN_SYSTEM.md (hairlines, 2px radius, no shadows or
    gradients, the site's serif and sans stacks, no web fonts) and adds a dark
    theme scoped to html.tx-theme. One visual language: water (the day's
-   budget) is blue, standing is gold, a penalty is vermilion. Colours are
-   tokens; the network reads them through getComputedStyle, so a theme change
-   redraws it in the same colours. */
+   budget) is blue, standing is gold, a penalty is vermilion; the trust
+   network is the exception, a figure in ink and hairlines only. Colours are
+   tokens, so a theme change redraws every figure in its own colours. */
 
 html.tx-theme{
   --water:#2f6fd0;--water-soft:#dbe7f8;
   --trust:#c08400;--trust-ink:#8c6000;--trust-soft:#f4e6c4;
   --attack:#d4452c;
-  --witness:#2f8a5b;--keylink:#8f8e89;--node:#55544f;
-  --tx-bg:#ffffff;--tn-bg:#f7f6f2;
+  --tx-bg:#ffffff;
 }
 @media (prefers-color-scheme:dark){
   html.tx-theme:not([data-theme="light"]){
@@ -26,8 +25,7 @@ html.tx-theme{
     --water:#5b9cf0;--water-soft:#1a2c46;
     --trust:#e3aa2c;--trust-ink:#f0c25e;--trust-soft:#3a2e12;
     --attack:#f0674d;
-    --witness:#4cc28a;--keylink:#8f8e89;--node:#bdbbb4;
-    --tx-bg:#131312;--tn-bg:#0d0d0c;
+    --tx-bg:#131312;
   }
 }
 html.tx-theme[data-theme="dark"]{
@@ -40,8 +38,7 @@ html.tx-theme[data-theme="dark"]{
   --water:#5b9cf0;--water-soft:#1a2c46;
   --trust:#e3aa2c;--trust-ink:#f0c25e;--trust-soft:#3a2e12;
   --attack:#f0674d;
-  --witness:#4cc28a;--keylink:#8f8e89;--node:#bdbbb4;
-  --tx-bg:#131312;--tn-bg:#0d0d0c;
+  --tx-bg:#131312;
 }
 html.tx-theme body{background:var(--tx-bg);color:var(--ink)}
 html.tx-theme .brand-dot{color:inherit}
@@ -117,32 +114,50 @@ html.tx-theme .brand-dot{color:inherit}
 .tx-meter-gain{background:var(--trust-ink)}
 .tx-read{font:14px/1.55 var(--sans)!important;color:var(--ink-2)!important;margin:var(--s-3) 0 0!important;font-variant-numeric:tabular-nums}
 
-/* ---------- the trust network ---------- */
+/* ---------- the trust network ----------
+   A figure drawn on the page's own paper, no box, in ink and hairlines like
+   /stats' charts: dots by standing, edges told apart by dash (solid accepted
+   work, dotted witness, dashed key link, a heavier vouch), labels in the
+   site's mono on a halo of the paper. Lighting an agent brings it and its
+   neighbours to ink and fades the rest. Every colour is a token, so both
+   themes follow. The panel takes the shape of the drawing (wide on a
+   desktop, near square on a phone). */
 .tn{margin:var(--s-4) 0;font-family:var(--sans)}
-.tn-stage{position:relative;height:min(62vh,460px);background:var(--tn-bg);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
-.tn-full .tn-stage{height:min(78vh,760px)}
-.tn-canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
-.tn-canvas[hidden]{display:none}
-.tn-canvas:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
-.tn-tip{position:absolute;left:0;top:0;max-width:240px;padding:var(--s-2) var(--s-3);font:13px/1.45 var(--sans);color:var(--ink);background:var(--tx-bg);border:1px solid var(--line-strong);border-radius:var(--radius);pointer-events:none}
-.tn-tip b{display:block;font-weight:600;overflow-wrap:anywhere}
-.tn-label{position:absolute;left:0;top:0;padding:0 3px;font:600 12px/1.4 var(--sans);color:var(--ink);background:var(--tn-bg);border-radius:var(--radius);white-space:nowrap;pointer-events:none;opacity:.92}
+.tn-legend[hidden],.tn-legend li[hidden]{display:none}
+.tn-stage{position:relative;aspect-ratio:16/10;max-height:min(72vh,600px);min-height:300px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.tn-plot{display:block;width:100%;height:100%;overflow:visible;touch-action:manipulation;transition:opacity .4s ease}
+.tn-plot[hidden]{display:none}
+.tn-plot:focus{outline:none}
+.tn-plot:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:var(--radius)}
+.tn-arriving .tn-plot{opacity:0;transition:none}
+.tn-edge{fill:none;stroke:var(--line-strong);stroke-width:1;stroke-opacity:.6;transition:stroke-opacity .15s ease}
+.tn-e-witness{stroke-width:1.5;stroke-dasharray:0 3.5;stroke-linecap:round}
+.tn-e-key_link{stroke-dasharray:5 3}
+.tn-e-vouch{stroke-width:1.5;stroke:var(--ink-2);stroke-opacity:.8}
+.tn-dot{fill:var(--ink);stroke:var(--tx-bg);stroke-width:1.5;paint-order:stroke}
+.tn-zero .tn-dot{fill:var(--tx-bg);stroke:var(--muted);stroke-width:1}
+.tn-ring{fill:none;stroke:var(--ink-2);stroke-width:1}
+.tn-ring-penalty{stroke-dasharray:1.5 1.5}
+.tn-node{transition:opacity .15s ease}
+.tn-lit .tn-edge{stroke-opacity:.14}
+.tn-lit .tn-edge.on{stroke:var(--ink);stroke-opacity:1}
+.tn-lit .tn-node{opacity:.22}
+.tn-lit .tn-node.on{opacity:1}
+.tn-label{font:12px var(--mono);fill:var(--ink-2);stroke:var(--tx-bg);stroke-width:3px;stroke-linejoin:round;paint-order:stroke;pointer-events:none}
+.tn-label[hidden]{display:none}
+.tn-label-on{fill:var(--ink);font-weight:600}
+.tn-tip{position:absolute;left:0;top:0;z-index:2;max-width:240px;padding:var(--s-2) var(--s-3);font:var(--t-meta)/1.5 var(--sans);font-variant-numeric:tabular-nums;color:var(--ink-2);background:var(--tx-bg);border:1px solid var(--line-strong);border-radius:var(--radius);pointer-events:none}
+.tn-tip b{display:block;font:600 var(--t-ui)/1.4 var(--mono);color:var(--ink);overflow-wrap:anywhere}
 .tn-msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:var(--s-4);text-align:center;font:14px/1.5 var(--sans);color:var(--muted)}
-.tn-legend{list-style:none;display:flex;flex-wrap:wrap;gap:var(--s-1) var(--s-4);padding:0;margin:var(--s-2) 0 0;font:12.5px/1.6 var(--sans);color:var(--ink-2)}
-.tn-legend li{display:inline-flex;align-items:center;gap:6px}
-.tn-key{display:inline-block;width:22px;height:0;border-top:2px solid var(--line-strong)}
-.tn-key-vouch{border-top-color:var(--trust)}
-.tn-key-work{border-top-color:var(--water)}
-.tn-key-witness{border-top-color:var(--witness)}
-.tn-key-link{border-top:2px dashed var(--keylink)}
-.tn-dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--node)}
-.tn-dot-root{background:transparent;border:2px solid var(--trust)}
-.tn-dot-penalty{background:transparent;border:2px solid var(--attack)}
-.tn figcaption{font:13px/1.55 var(--sans);color:var(--muted);margin:var(--s-2) 0 0;max-width:var(--measure)}
+.tn .tn-loose{font:var(--t-meta)/1.6 var(--sans);color:var(--muted);margin:var(--s-2) 0 0;max-width:none}
+.tn-loose a{font-family:var(--mono);color:var(--ink-2)}
+.tn-loose a[aria-current]{color:var(--ink);font-weight:600}
+.tn figcaption{margin:var(--s-1) 0 0;max-width:var(--measure)}
 .tn-list h3{font:600 13px/1.4 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:var(--s-4) 0 var(--s-2)}
 .tn-list ol{margin:0;padding-left:var(--s-5);font:15px/1.6 var(--sans);columns:2 18em;column-gap:var(--s-6)}
 .tn-list li{break-inside:avoid}
 .tx-js .tn-full .tn-list ol{columns:3 14em}
+@media(prefers-reduced-motion:reduce){.tn-plot,.tn-edge,.tn-node{transition:none}}
 
 @media(max-width:640px){
   html.tx-theme .shell{padding-left:var(--s-4);padding-right:var(--s-4)}
@@ -152,10 +167,13 @@ html.tx-theme .brand-dot{color:inherit}
   .tx-seg label{padding:0 var(--s-2);font-size:12.5px;min-height:34px}
   .tx-range{flex-basis:140px}
   .tx-slices th,.tx-slices td{padding:var(--s-2) 4px}
-  .tn-stage{height:min(60vh,380px)}
+  .tn-stage{aspect-ratio:1/1.05;max-height:70vh}
 }
 @media(forced-colors:active){
-  .tx-meter-fill,.tn-dot{forced-color-adjust:none;background:CanvasText}
+  .tx-meter-fill{forced-color-adjust:none;background:CanvasText}
+  .tn-dot,.tn-edge,.tn-ring{forced-color-adjust:none;stroke:CanvasText}
+  .tn-dot{fill:CanvasText}
+  .tn-zero .tn-dot{fill:Canvas}
+  .tn-label{fill:CanvasText;stroke:Canvas}
   .tx-bar rect{forced-color-adjust:none;fill:CanvasText}
-  .tn-key{border-top-color:CanvasText}
 }

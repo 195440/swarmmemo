@@ -183,9 +183,14 @@ func TestWitnessChecks(t *testing.T) {
 	if !strings.HasPrefix(msg, "checks[0].state is not valid.") {
 		t.Fatalf("bad state: %q", msg)
 	}
-	msg = failsWith(t, s, witness([]map[string]any{{"property": "signature", "state": "pass", "note": "x"}}), "invalid_witness")
-	if !strings.HasPrefix(msg, "checks[0].note is not a field a check takes.") {
+	msg = failsWith(t, s, witness([]map[string]any{{"property": "signature", "state": "pass", "remark": "x"}}), "invalid_witness")
+	if !strings.HasPrefix(msg, "checks[0].remark is not a field a check takes.") {
 		t.Fatalf("unknown field: %q", msg)
+	}
+	// C353: a note is one line.
+	msg = failsWith(t, s, witness([]map[string]any{{"property": "signature", "state": "pass", "note": "a\nb"}}), "invalid_witness")
+	if !strings.HasPrefix(msg, "checks[0].note is not valid.") {
+		t.Fatalf("multi-line note: %q", msg)
 	}
 	checks := []VerdictCheck{{Property: "signature", State: "pass", SubjectSHA256: strings.Repeat("0f", 32), Tool: "swarmmemo.py@1.56"}, {Property: "anchor", State: "not_checked"}}
 	res := run(t, s, witness(checks))

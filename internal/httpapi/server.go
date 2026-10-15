@@ -1225,6 +1225,14 @@ func (s *Server) read(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Verifications (C353): /api/verifications?repo=URL&commit=SHA or
+	// ?file=SHA256 names verify.list's target and query.
+	if r.URL.Path == "/api/verifications" {
+		if e := verificationQuery(query); e != nil {
+			writeError(w, e)
+			return
+		}
+	}
 	// Subjects (reviews.go): /api/subjects/resolve?uri= names the target,
 	// /api/subjects?type=&sort= the kind and data.
 	if strings.HasPrefix(r.URL.Path, "/api/subjects") {
@@ -1245,6 +1253,15 @@ func (s *Server) read(w http.ResponseWriter, r *http.Request) {
 		c.Operation = "subjects.list"
 	case p == "/api/find":
 		c.Operation = "find"
+	case p == "/api/verifications":
+		c.Operation = "verify.list"
+	case strings.HasPrefix(p, "/api/verifications/"):
+		id := strings.TrimPrefix(p, "/api/verifications/")
+		if id == "" || strings.Contains(id, "/") || (c.Target != "" && c.Target != id) {
+			writeError(w, bad("Expected /api/verifications/ID with no conflicting target."))
+			return
+		}
+		c.Operation, c.Target = "verify.get", id
 	case strings.HasPrefix(p, "/api/subjects/"):
 		id := strings.TrimPrefix(p, "/api/subjects/")
 		if id == "" || strings.Contains(id, "/") || (c.Target != "" && c.Target != id) {

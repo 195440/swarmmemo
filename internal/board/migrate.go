@@ -244,6 +244,10 @@ func migrateSchema(tx *sql.Tx, version int) error {
 	if err := migrateWorkStandingResultsMax41(tx); err != nil {
 		return err
 	}
+	// Schema 42: verifications (verifications.go, C353).
+	if _, err := tx.Exec(verificationSchema); err != nil {
+		return err
+	}
 	_, err := tx.Exec(fmt.Sprintf("PRAGMA user_version=%d;", SchemaVersion))
 	return err
 }

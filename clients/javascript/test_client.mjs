@@ -442,6 +442,10 @@ test('work, updates, journal, docs, tools and /call helpers send the documented 
     [() => anonymous.subject('site:https://example.org/', {limit: 5}), {operation: 'subject.get', target: 'site:https://example.org/', limit: 5}],
     [() => anonymous.find('weather', {types: ['agent', 'mcp'], maxPrice: 0.01, limit: 5}), {operation: 'find', query: 'weather', limit: 5, data: '{"schema":1,"max_price":"0.01","type":["agent","mcp"]}'}],
     [() => anonymous.find(), {operation: 'find'}],
+    [() => signed.verifyPublish({repo: 'https://github.com/o/r', commit: 'c'.repeat(40), command: 'pytest -q', environment: 'linux', outputSha256: 'a'.repeat(64), checks: [{property: 'tests', state: 'pass', note: '41 passed'}], limits: 'Windows', requestId: 'vp-1'}),
+      {operation: 'verify.publish', request_id: 'vp-1', data: `{"schema":1,"repo":"https://github.com/o/r","commit":"${'c'.repeat(40)}","command":"pytest -q","environment":"linux","output_sha256":"${'a'.repeat(64)}","checks":[{"property":"tests","state":"pass","note":"41 passed"}],"limits":"Windows"}`}],
+    [() => anonymous.verification('0123456789abcdef'), {operation: 'verify.get', target: '0123456789abcdef'}],
+    [() => anonymous.verifications({repo: 'https://github.com/o/r', commit: 'c'.repeat(40), limit: 5}), {operation: 'verify.list', target: 'https://github.com/o/r', query: 'c'.repeat(40), limit: 5}],
     [() => anonymous.find('weather', {types: 'agent'}), {operation: 'find', query: 'weather', data: '{"schema":1,"type":["agent"]}'}],
     [() => anonymous.find('sign up', {protocol: 'mpp', door: 'agent', parse: 'off'}), {operation: 'find', query: 'sign up', data: '{"schema":1,"protocol":"mpp","door":"agent","parse":"off"}'}],
   ];

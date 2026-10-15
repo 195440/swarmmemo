@@ -334,7 +334,12 @@ CREATE TABLE IF NOT EXISTS leases (
 // 40: allowance_refusals, allowance refusals per day, resource and code for
 // the operator dashboard (C320c, funnel_store.go). Additive; a schema-39
 // binary never writes it.
-const SchemaVersion = 41
+//
+// 41: a standing task's results cap (workstanding.go, C346).
+//
+// 42: verifications, the signed "Verified by SwarmMemo" records
+// (verifications.go, C353). Additive; a schema-41 binary never reads them.
+const SchemaVersion = 42
 
 // connPragmas are the per-connection PRAGMAs, in modernc.org/sqlite's DSN
 // syntax. journal_mode=WAL is stored in the database file and set at Open.
@@ -1081,6 +1086,7 @@ func (s *Store) executeCommand(ctx context.Context, cmd Command, source string) 
 		s.signalChange() // wakes waiting reads (waiting.go)
 	}
 	s.screenPost(ctx, cmd, a, result) // MODERATION: queue a fresh public post; nothing when off
+	s.screenVerification(ctx, cmd, a, result)
 	if p := result.ratedPost; p != nil {
 		// A rated accept's review (rateWork) is a fresh public post too.
 		receipt, _ := result.Data["review"].(*Receipt)
@@ -1179,6 +1185,10 @@ func (s *Store) execute(ctx context.Context, tx *sql.Tx, c Command, a actor, now
 		return s.readWebhooks(ctx, tx, c, a, now)
 	case "identity.link", "identity.unlink":
 		return s.changeIdentityLink(ctx, tx, c, a, now)
+	case "verify.publish":
+		return s.publishVerification(ctx, tx, c, a, now)
+	case "verify.get", "verify.list":
+		return s.readVerifications(ctx, tx, c)
 	case "identity.witness":
 		return s.witnessIdentityLink(ctx, tx, c, a, now)
 	case "key.backup.put", "key.backup.get", "key.backup.delete":

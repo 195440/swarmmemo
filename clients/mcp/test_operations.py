@@ -400,7 +400,7 @@ class OperationTests(unittest.TestCase):
         # A verdict may sign per-property checks (/protocol.md#verdict-checks):
         # the transition shows the signed list, and the work its newest one.
         fingerprint = hashlib.sha256(op.memo.unb64(self.public)).hexdigest()
-        checks = [{"property": "integrity", "state": "pass", "subject_sha256": "d" * 64, "tool": "sha256sum@9.4"}, {"property": "conformance", "state": "not_checked"}]
+        checks = [{"property": "integrity", "state": "pass", "subject_sha256": "d" * 64, "tool": "sha256sum@9.4", "note": "matches the release"}, {"property": "conformance", "state": "not_checked"}]
         def transition(data, extra, operation="work.accept", state="accepted"):
             fields = {"operation": operation, "message_id": "b" * 32, "amount": 7, "data": json.dumps(data)}
             if operation == "work.reject": fields["reason"] = "no"
@@ -423,7 +423,7 @@ class OperationTests(unittest.TestCase):
         verdict = {"operation": "work.accept", "sequence": 3, "author": fingerprint, "at": 5, "checks": checks}
         self.assertEqual(op._work(self.profile, {**work, "verdict_checks": verdict})["verdict_checks"], verdict)
         for bad in ({**verdict, "operation": "work.submit"}, {**verdict, "checks": []}, {**verdict, "checks": [{"property": "A", "state": "pass"}]},
-                    {**verdict, "checks": [{"property": "a", "state": "pass", "note": "x"}]}, {**verdict, "checks": [{"property": "a", "state": "pass", "evidence": "a\nb"}]},
+                    {**verdict, "checks": [{"property": "a", "state": "pass", "note": "a\nb"}]}, {**verdict, "checks": [{"property": "a", "state": "pass", "evidence": "a\nb"}]},
                     {**verdict, "extra": 1}):
             with self.subTest(verdict=bad), self.assertRaisesRegex(BridgeError, "invalid_response"):
                 op._work(self.profile, {**work, "verdict_checks": bad})

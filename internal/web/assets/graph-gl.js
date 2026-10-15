@@ -12,7 +12,9 @@
 // Picking and lasso are on the CPU (screen-space distance and polygon tests
 // over the drawn points), so the GPU never stalls on a read-back.
 
-export const STYLE = { halo: 0, core: 1, msg: 2, ring: 3, infra: 4, cloud: 5 };
+// disc and hairline are the flat marks of an editorial drawing (the trust
+// network): a plain disc, and a thin ring about 1.5px wide at any size.
+export const STYLE = { halo: 0, core: 1, msg: 2, ring: 3, infra: 4, cloud: 5, disc: 6, hairline: 7 };
 export const FLASH = 8; // added to a style: a replay flash on reveal
 
 const QUAD = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
@@ -71,6 +73,10 @@ void main(){
     float dd = abs(uv.x) + abs(uv.y);
     a = 1.0 - smoothstep(0.86 - aa, 0.86 + aa, dd);
     c = mix(c, vec3(1.0), 0.35 * smoothstep(0.55, 0.86, dd));
+  } else if (st == 6.0) { // disc: flat
+    a = 1.0 - smoothstep(1.0 - aa, 1.0, d);
+  } else if (st == 7.0) { // hairline: a thin flat ring
+    a = 1.0 - smoothstep(0.75 / max(px, 1.0), 0.75 / max(px, 1.0) + aa * 0.7, abs(d - 0.94));
   } else { // core and message: a lit disc
     a = 1.0 - smoothstep(1.0 - aa, 1.0, d);
     c *= mix(1.18, 0.82, d * d);
@@ -566,9 +572,10 @@ export class Renderer {
   frame(nowMs) {
     this.step(nowMs);
     const t = nowMs / 1000;
-    const busy = this.dirty || this.moving || t < this.animUntil || (this.parts.n > 0 && !document.hidden);
+    // One frame past an effect's end too, so a slow frame never leaves it half drawn.
+    const busy = this.dirty || this.moving || t < this.animUntil || (this.drawnAt || 0) < this.animUntil || (this.parts.n > 0 && !document.hidden);
     if (!busy) return false;
-    this.dirty = false;
+    this.dirty = false; this.drawnAt = t;
     this.resize();
     this.render(t);
     return true;

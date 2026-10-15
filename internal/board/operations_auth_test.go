@@ -135,6 +135,8 @@ func matrixBase(f *matrixFixture, op string) (Command, ed25519.PrivateKey) {
 		c.Room, c.Target = "priv", keyID(f.child3)
 	case "private_read.list":
 		c.Room = "priv"
+	case "verify.publish":
+		c.Data = verifyRecord(nil)
 	case "webhook.create":
 		c.Data = `{"schema":1,"url":"https://hooks.example.org/other"}`
 	case "webhook.delete":
@@ -182,8 +184,9 @@ var v113Unsigned = "agent.get agents.list blob.get delegation.get export message
 
 // addedUnsigned are public reads added since 1.13.0 (room.style.check stores
 // nothing; allowance.get and ledger.list answer unsigned with the ledger on;
-// feed.get is the public ranked read).
-var addedUnsigned = "room.modlog room.style.check allowance.get ledger.list feed.get find"
+// feed.get is the public ranked read; verify.get and verify.list read the
+// public verifications, C353).
+var addedUnsigned = "room.modlog room.style.check allowance.get ledger.list feed.get find verify.get verify.list"
 var v113Delegable = "post messages.list message.get thread.get room.get room.pages works.list work.get work.history work.claim work.renew work.submit"
 
 // addedDelegable are operations a worker key may be granted since 1.13.0: the

@@ -329,6 +329,20 @@ func StampHash(ctx context.Context, tx *sql.Tx, key ed25519.PrivateKey, serviceI
 
 var errNoReceipt = errors.New("notary: no receipt")
 
+// ReadNotaryReceipt is the stored receipt for hash, for a record the board
+// stamped with StampHash (a verification, C353); ok is false when there is
+// none, or no notary key to name its public key.
+func ReadNotaryReceipt(ctx context.Context, q allowance.Querier, key ed25519.PrivateKey, hash string) (NotaryReceipt, bool, error) {
+	if len(key) != ed25519.PrivateKeySize {
+		return NotaryReceipt{}, false, nil
+	}
+	r, err := readReceipt(ctx, q, hash, key)
+	if errors.Is(err, errNoReceipt) {
+		return NotaryReceipt{}, false, nil
+	}
+	return r, err == nil, err
+}
+
 // NotaryKeyLogProof is the log proof of the notary key's leaf.
 const NotaryKeyLogProof = "/api/log/proof?notary=key"
 

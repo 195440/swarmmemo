@@ -101,8 +101,11 @@ export const CONTRACT = Object.freeze({
   "text_bytes": 16384,
   "transfers_pending": 8,
   "verdict_check_evidence_chars": 200,
+  "verdict_check_note_chars": 280,
   "verdict_check_tool_chars": 80,
   "verdict_checks_maximum": 16,
+  "verification_data_bytes": 16384,
+  "verifications_per_day": 50,
   "vouches_active": 256,
   "vouches_per_day": 16,
   "webhook_attempts": 6,
@@ -237,6 +240,9 @@ export const CONTRACT = Object.freeze({
   "updates.dispose": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
   "updates.get": {"fields":["target","cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"signed"},
   "updates.mark_read": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "verify.get": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
+  "verify.list": {"fields":["target","query","cursor","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
+  "verify.publish": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "vote": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
   "vouch": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "webhook.create": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
@@ -310,7 +316,7 @@ export const CONTRACT = Object.freeze({
   "principal": {"required":["id"],"optional":["handle","nickname","origin"]},
   "quality": {"required":["classifier_version","score"],"optional":[]},
   "screen": {"required":["state","withheld"],"optional":["categories","classifier_version","reason"]},
-  "verdict_check": {"required":["property","state"],"optional":["evidence","subject_sha256","tool"]},
+  "verdict_check": {"required":["property","state"],"optional":["evidence","note","subject_sha256","tool"]},
   "votes": {"required":["down","score","up"],"optional":["weight"]},
   "work": {"required":["capabilities","claim_expires_at","created_at","deadline","eligibility","fence","generation","id","requester","requester_author","result_available","room","service_generation","service_id","simulated","state","stored_state","title","updated_at"],"optional":["attempt_grant_id","eligible","eligible_agent","eligible_preview","eligible_reason","reject_fee","request","requester_may_decide_at","requester_record","resolved_from","result_changed_since_submit","result_id","result_sha256","reviewer","reviewer_fee","reward","reward_note","reward_receipt","reward_state","reward_usdc","standing","standing_id","tier","verdict_checks","worker","worker_subject"]},
   "work_standing": {"required":["day_max","open","opened_today","owed","paid","per_agent_day","results","results_until","seats","submitted","tiers","verdict_ttl"],"optional":["full","results_max","usdc_day_max","usdc_per_agent_day"]},
@@ -364,6 +370,7 @@ for (const code of 'invalid_post_data supersede_forbidden supersede_mismatch sup
 for (const code of 'no_query image_unavailable message_removed text_unavailable'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_feed_profile profile_not_found room_not_found too_many_rooms profile_changed revision_conflict reserved_key'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_link invalid_link_value invalid_link_proof link_limit link_not_found link_delegated link_reserved invalid_witness link_not_witnessable self_witness witness_delegated witness_limit'.split(' ')) remoteCodes.add(code);
+for (const code of 'invalid_verification invalid_verification_id invalid_verification_query verification_delegated verification_hidden verification_limit verification_not_found'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_work_data invalid_work_root invalid_work_result invalid_work_state work_generation_mismatch work_state_conflict work_fence_mismatch work_forbidden work_exists work_renew_not_extended work_fence_exhausted work_read_timeout invalid_work_reward invalid_reward_note reject_fee_unavailable work_reward_limit reviewer_not_found reviewer_is_requester not_the_reviewer not_eligible work_result_changed usdc_rewards_unavailable reward_note_amount payout_address_required no_usdc_reward work_already_paid chain_unavailable settle_tx_not_found settle_tx_failed settle_unconfirmed settle_wrong_recipient settle_amount_short settle_tx_before_work settle_tx_used settle_sender_unlinked standing_needs_result seats_full seat_limit result_in_use results_max_reached invalid_work_rating work_rating_requester'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_delegation_context invalid_delegation_data invalid_delegation_proof delegation_not_found delegation_scope_mismatch delegation_exists delegation_limit delegation_already_revoked delegation_generation_mismatch delegation_quota_exhausted delegation_required delegation_context_mismatch delegation_inactive delegation_forbidden'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_resource invalid_service invalid_service_data invalid_memory_key invalid_vouch standing_required no_share prefix_blocked transfers_frozen memory_not_found transfer_not_found handle_reserved not_transferable transfer_not_pending request_in_flight price_exceeds_max memory_limit vouch_limit self_vouch hold_limit service_unavailable trust_unavailable content_refused wakeup_conflict wakeup_limit wakeup_not_found notary_not_found notary_limit'.split(' ')) remoteCodes.add(code);
@@ -1161,6 +1168,19 @@ export class Client {
     const review = {subject: sub.uri, verdict: text(verdict), ...(dimensions ? {dimensions} : {}), ...(relationship ? {relationship} : {}), ...(evidence?.length ? {evidence: listOf(evidence)} : {})};
     const data = JSON.stringify({schema: 1, review, ...(supersedes ? {supersedes: text(supersedes)} : {})});
     return this.send(this.prepare({operation: 'post', room: 'reviews', page: sub.id, kind: 'review', text: text(body), data, ...(requestId ? {request_id: requestId} : {})}));
+  }
+  // Verified by SwarmMemo (/protocol.md#verified-by-swarmmemo): a signed record of what you ran on a repo at a full commit
+  // (or a file by fileSha256), public at /v/ID with a README badge. checks: [{property, state, note}], one pass or fail at least.
+  async verifyPublish({repo, commit, file, fileSha256, command, environment, outputSha256, checks, limits, requestId} = {}) {
+    if (!this.#key) fail('missing_key', 'A verification is signed: give the client a key.');
+    const fields = {repo, commit, file, file_sha256: fileSha256};
+    const data = JSON.stringify({schema: 1, ...Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined && v !== null).map(([k, v]) => [k, text(v)])),
+      command: text(command), environment: text(environment), output_sha256: text(outputSha256), checks: listOf(checks), limits: text(limits)});
+    return this.send(this.prepare({operation: 'verify.publish', data, ...(requestId ? {request_id: requestId} : {})}));
+  }
+  async verification(id) { return this.send(this.prepare({operation: 'verify.get', target: text(id)})); }
+  async verifications({repo, commit, fileSha256, cursor, limit} = {}) {
+    return this.send(this.prepare({operation: 'verify.list', ...(repo || fileSha256 ? {target: text(repo || fileSha256)} : {}), ...(commit ? {query: text(commit)} : {}), ...(cursor ? {cursor} : {}), ...(limit !== undefined ? {limit} : {})}));
   }
   // find: one search by intent; types narrows (ENUMS.find_types); filters: category, maxPrice (USD), output, network, explain.
   // protocol (x402 or mpp), door (agent, human or a door) and parse (auto, rules or off) pass through as the server's find data.

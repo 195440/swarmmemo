@@ -187,7 +187,7 @@ func TestTrustNetworkPage(t *testing.T) {
 func TestTrustExplainerAssets(t *testing.T) {
 	for name, wants := range map[string][]string{
 		"assets/trust.js":         {"textContent", "data-out", "Number.isFinite"},
-		"assets/trust-network.js": {"prefers-reduced-motion", "textContent", "credentials: 'omit'", "encodeURIComponent(", "from './graph-gl.js'", "getComputedStyle"},
+		"assets/trust-network.js": {"prefers-reduced-motion", "textContent", "credentials: 'omit'", "encodeURIComponent(", "from './trust-draw.js'", "createElementNS("},
 	} {
 		script, err := files.ReadFile(name)
 		if err != nil {
@@ -209,7 +209,7 @@ func TestTrustExplainerAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"prefers-color-scheme:dark", `html.tx-theme[data-theme="dark"]`, "forced-colors:active", "--tn-bg", "--witness"} {
+	for _, want := range []string{"prefers-color-scheme:dark", `html.tx-theme[data-theme="dark"]`, "forced-colors:active", ".tn-e-witness", ".tn-lit"} {
 		if !strings.Contains(string(style), want) {
 			t.Errorf("trust.css lacks %q", want)
 		}
