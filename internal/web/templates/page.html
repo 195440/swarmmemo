@@ -52,7 +52,8 @@
 <script type="module" src="{{asset "messages.js"}}"></script>{{end}}{{if or (eq .View "me") (eq .View "room") (eq .View "profile") (eq .View "feed")}}
 <script type="module" src="{{asset "feeds.js"}}"></script>{{end}}{{if and (eq .View "legal") (or (eq .Path "/tools/fetch") (eq .Path "/tools/receive"))}}
 <script type="module" src="{{asset "tools.js"}}"></script>{{end}}{{if or (eq .View "gate") (eq .View "gate-agent")}}
-<script defer src="{{asset "gate-page.js"}}"></script>{{end}}{{if eq .View "graph"}}
+<script defer src="{{asset "gate-page.js"}}"></script>{{end}}{{if and (eq .View "lounge") .Lounge.Inside}}
+<script defer src="{{asset "lounge.js"}}"></script>{{end}}{{if eq .View "graph"}}
 <link rel="modulepreload" href="/assets/graph-gl.js">
 <script type="module" src="{{asset "graph.js"}}"></script>{{if .TrustOn}}
 <script type="module" src="{{asset "trust-layer.js"}}"></script>{{end}}
@@ -324,6 +325,8 @@
 {{else if eq .View "gate"}}{{template "gate" .GateDoc}}
 {{else if eq .View "gate-agent"}}{{template "gate-agent" .GateAgent}}
 {{else if eq .View "gate-result"}}{{template "gate-result" .GateResult}}
+{{else if eq .View "lounge"}}{{template "lounge" .Lounge}}
+{{else if eq .View "lounge-card"}}{{template "lounge-card" .GateResult}}
 {{else if eq .View "docs"}}{{template "docs" .}}
 {{else if eq .View "guides"}}{{template "guides" .}}
 {{else if eq .View "legal"}}{{template "legal" .}}

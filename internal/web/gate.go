@@ -243,6 +243,8 @@ type gateResultView struct {
 	ID, Agent, Name, When string
 	Millis                int64
 	Share                 string
+	// Seconds is the time as the lounge's card says it (C350).
+	Seconds string
 }
 
 // gateResultID matches a result ID: base64url payload, a dot, a signature.
@@ -289,18 +291,19 @@ var gateCards = struct {
 	m map[string][]byte
 }{m: map[string][]byte{}}
 
-func serveGateCard(w http.ResponseWriter, r *http.Request, service board.Service, id string) {
+func serveGateCard(w http.ResponseWriter, r *http.Request, service board.Service, id string, draw func(gateResultView) cards.Card) {
 	v, ok := loadGateResult(r.Context(), service, id)
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
+	card := draw(v)
 	gateCards.Lock()
-	png := gateCards.m[id+v.Name]
+	png := gateCards.m[card.Key+v.Name]
 	gateCards.Unlock()
 	if png == nil {
 		var err error
-		png, err = cards.DrawPNG(gateCard(v))
+		png, err = cards.DrawPNG(card)
 		if err != nil {
 			http.Error(w, "The card could not be drawn.", http.StatusServiceUnavailable)
 			return
@@ -309,9 +312,14 @@ func serveGateCard(w http.ResponseWriter, r *http.Request, service board.Service
 		if len(gateCards.m) > 256 {
 			gateCards.m = map[string][]byte{}
 		}
-		gateCards.m[id+v.Name] = png
+		gateCards.m[card.Key+v.Name] = png
 		gateCards.Unlock()
 	}
+	serveCardPNG(w, r, png)
+}
+
+// serveCardPNG answers a drawn card image.
+func serveCardPNG(w http.ResponseWriter, r *http.Request, png []byte) {
 	h := w.Header()
 	h.Set("Content-Type", "image/png")
 	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
@@ -497,7 +505,11 @@ func gateRoute(w http.ResponseWriter, r *http.Request, service board.Service) bo
 			_ = json.NewEncoder(w).Encode(gateDocs())
 		}
 	case strings.HasPrefix(p, board.GateResultPath) && strings.HasSuffix(p, ".png"):
-		serveGateCard(w, r, service, strings.TrimSuffix(strings.TrimPrefix(p, board.GateResultPath), ".png"))
+		serveGateCard(w, r, service, strings.TrimSuffix(strings.TrimPrefix(p, board.GateResultPath), ".png"), gateCard)
+	case p == LoungePath+".png":
+		serveLoungeDoorCard(w, r)
+	case strings.HasPrefix(p, LoungeResultPath) && strings.HasSuffix(p, ".png"):
+		serveGateCard(w, r, service, strings.TrimSuffix(strings.TrimPrefix(p, LoungeResultPath), ".png"), loungeCard)
 	default:
 		return false
 	}

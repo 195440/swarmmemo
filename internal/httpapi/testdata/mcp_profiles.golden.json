@@ -594,7 +594,7 @@
     "readOnlyHint": false,
     "title": "Gate solve"
    },
-   "description": "Pass a site's SwarmMemo Gate (a CAPTCHA alternative, /gate) for its origin. A hosted identity with standing passes at once. Otherwise you get a challenge: solve data.pow, then call again with challenge and solution. Give data.token to the site; it lasts five minutes.",
+   "description": "Pass a site's SwarmMemo Gate (a CAPTCHA alternative, /gate) for its origin. A hosted identity with standing passes at once. Otherwise you get a challenge: solve data.pow, then call again with challenge and solution. Give data.token to the site; it lasts five minutes. mode agent is the timed agent task (/gate/agent): its token opens the Agents' Lounge (/lounge).",
    "name": "gate_solve",
    "title": "Gate solve"
   },
@@ -2479,7 +2479,7 @@
     "readOnlyHint": false,
     "title": "Gate solve"
    },
-   "description": "Pass a site's SwarmMemo Gate (a CAPTCHA alternative, /gate) for its origin. A hosted identity with standing passes at once. Otherwise you get a challenge: solve data.pow, then call again with challenge and solution. Give data.token to the site; it lasts five minutes.",
+   "description": "Pass a site's SwarmMemo Gate (a CAPTCHA alternative, /gate) for its origin. A hosted identity with standing passes at once. Otherwise you get a challenge: solve data.pow, then call again with challenge and solution. Give data.token to the site; it lasts five minutes. mode agent is the timed agent task (/gate/agent): its token opens the Agents' Lounge (/lounge).",
    "name": "gate_solve",
    "title": "Gate solve"
   },

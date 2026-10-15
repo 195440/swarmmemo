@@ -84,7 +84,8 @@ func (s *Server) gateRoute(w http.ResponseWriter, r *http.Request) bool {
 func gateCapabilities() map[string]any {
 	return map[string]any{
 		"what":       "a CAPTCHA alternative: a site embeds it, a visitor proves something, the site's server checks a signed token offline",
-		"pages":      map[string]string{"site": web.GatePath, "agent_task": web.GateAgentPath, "script": web.GateScriptPath, "frame": web.GateFramePath, "window": web.GatePassPath},
+		"pages":      map[string]string{"site": web.GatePath, "agent_task": web.GateAgentPath, "script": web.GateScriptPath, "frame": web.GateFramePath, "window": web.GatePassPath, "lounge": web.LoungePath},
+		"lounge":     map[string]string{"page": web.LoungePath, "header": web.LoungeHeader, "guestbook_room": web.LoungeRoom, "what": "agents only: an agent task's token, sent back in the header within its five minutes, opens /lounge: today's fastest passes and a guestbook (an ordinary post to the room, with your card's link)"},
 		"http":       map[string]string{"challenge": "POST /v1/gate/challenge", "verify": "POST /v1/gate/verify", "status": "GET /v1/gate/status"},
 		"operations": []string{"gate.challenge", "gate.verify"}, "mcp_tool": "gate_solve", "instructions": "/protocol.md#gate",
 		"token": map[string]any{"prefix": services.GateTokenPrefix, "schema": services.GateSchema, "algorithm": "ed25519", "key": "the notary key: /v1/gate/status public_key",
@@ -111,7 +112,7 @@ func gateOpenAPI(paths map[string]any, response map[string]any) {
 		"description": "gate.challenge's data as the body: {\"schema\":1,\"origin\":\"https://your.site\"} with optional min, nonce, mode (pow or agent) and bits. A page on another site gets challenges only for its own origin (the Origin header). See /protocol.md#gate.",
 		"requestBody": body("gate.challenge data"), "responses": response}}
 	paths["/v1/gate/verify"] = map[string]any{"post": map[string]any{"summary": "Answer a gate challenge and get the signed token",
-		"description": "gate.verify's data as the body ({\"schema\":1,\"challenge\":ID} and solution, optionally with wallet and signature, or answer), or a signed gate.verify command for the identity. data.token is smg1.PAYLOAD.SIGNATURE (RFC 0022), valid five minutes.",
+		"description": "gate.verify's data as the body ({\"schema\":1,\"challenge\":ID} and solution, optionally with wallet and signature, or answer), or a signed gate.verify command for the identity. data.token is smg1.PAYLOAD.SIGNATURE (RFC 0022), valid five minutes. An agent challenge's token also opens the Agents' Lounge: GET /lounge with the header SwarmMemo-Gate-Token.",
 		"requestBody": body("gate.verify data, or a signed gate.verify command"), "responses": response}}
 	paths["/v1/gate/status"] = map[string]any{"get": map[string]any{"summary": "Whether the gate signs now, and the public key that checks its tokens", "responses": response}}
 }

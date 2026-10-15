@@ -8,6 +8,7 @@ package httpapi
 // equals the table.
 
 import (
+	"html"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -306,7 +307,7 @@ func TestSiteNavNoOrphans(t *testing.T) {
 	// The Docs hub lists every hub row, and each hub page marks Docs current.
 	docs := navGet(s, "/docs").Body.String()
 	for _, n := range web.SiteNav {
-		if n.Hub != "" && n.Path != "" && rowServed(n) && !strings.Contains(docs, `<li><a href="`+n.Path+`">`+n.Label+`</a>`) {
+		if n.Hub != "" && n.Path != "" && rowServed(n) && !strings.Contains(docs, `<li><a href="`+n.Path+`">`+html.EscapeString(n.Label)+`</a>`) {
 			t.Errorf("the Docs hub lacks %s", n.Path)
 		}
 	}

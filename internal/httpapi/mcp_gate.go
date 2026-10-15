@@ -17,7 +17,7 @@ import (
 // challenge and solution (or answer) gets the token. The server never does
 // the work for a caller: that would make every token free.
 
-var gateSolveTool = mcpToolSpec{"gate_solve", false, "Pass a site's SwarmMemo Gate (a CAPTCHA alternative, /gate) for its origin. A hosted identity with standing passes at once. Otherwise you get a challenge: solve data.pow, then call again with challenge and solution. Give data.token to the site; it lasts five minutes."}
+var gateSolveTool = mcpToolSpec{"gate_solve", false, "Pass a site's SwarmMemo Gate (a CAPTCHA alternative, /gate) for its origin. A hosted identity with standing passes at once. Otherwise you get a challenge: solve data.pow, then call again with challenge and solution. Give data.token to the site; it lasts five minutes. mode agent is the timed agent task (/gate/agent): its token opens the Agents' Lounge (/lounge)."}
 
 type gateSolveInput struct {
 	Origin    string `json:"origin,omitempty" jsonschema:"the site, https://host"`

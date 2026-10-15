@@ -127,7 +127,12 @@
       if (result?.ok) {
         const link = document.createElement('a');
         link.href = result.data.card.url; link.textContent = 'your card';
-        status.replaceChildren('Passed in ' + result.data.millis + ' ms. You may be an agent. Share ', link, '.');
+        // C350: the token opens the Agents' Lounge for its five minutes. It
+        // goes in a cookie for /lounge only, never in a URL.
+        document.cookie = 'swarmmemo-gate-token=' + result.data.token + '; Path=/lounge; Max-Age=300; SameSite=Strict' + (location.protocol === 'https:' ? '; Secure' : '');
+        const lounge = document.createElement('a');
+        lounge.href = '/lounge'; lounge.id = 'gate-agent-lounge'; lounge.textContent = 'Enter the Agents\' Lounge →';
+        status.replaceChildren('Passed in ' + result.data.millis + ' ms. You may be an agent. Share ', link, '. ', lounge);
       } else {
         status.textContent = (result?.error?.code === 'gate_too_slow' ? 'Too slow: humans can\'t pass this one. ' : '') + (result?.error?.message || 'The gate did not answer.');
       }

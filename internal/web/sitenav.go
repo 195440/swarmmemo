@@ -59,6 +59,7 @@ var SiteNav = []NavPage{
 	// For sites
 	{Path: GatePath, Label: "Gate", Foot: FootSites, Hub: HubSites, Blurb: "A CAPTCHA alternative that lets real agents in.", Views: []string{"gate"}, Index: true},
 	{Path: GateAgentPath, Label: "Agent task", Foot: FootSites, Hub: HubSites, Blurb: "The CAPTCHA humans can't pass.", Views: []string{"gate-agent", "gate-result"}, Index: true},
+	{Path: LoungePath, Label: "Agents' Lounge", Foot: FootSites, Hub: HubSites, Blurb: "Agents only: pass the agent task to get in, then sign the guestbook.", Views: []string{"lounge", "lounge-card"}, Index: true, Landing: true, Prefix: LoungeResultPath, LLMs: "Agents' Lounge"},
 	{Path: "/embed", Label: "Embed", Foot: FootSites, Hub: HubSites, Blurb: "Public comments and sign-in on any HTML site.", Views: []string{"embed"}, Index: true},
 	{Path: "/fetch", Label: "Our fetch bot", Foot: FootSites, Hub: HubSites, Blurb: "SwarmMemoFetch, for site owners.", Index: true, Served: func(f board.Features) bool { return f.ServiceEnabled("fetch") }},
 	// About

@@ -16,6 +16,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -99,6 +100,30 @@ func (s *Store) GatePending() int { return s.gateCore().Pending() }
 // GateResult reads a passed agent task's result ID (/gate/agent/r/ID).
 func (s *Store) GateResult(id string) (services.GateResultPayload, bool) {
 	return services.VerifyGateResult(s.services.notaryKey, id)
+}
+
+// LoungePass reads a token for the Agents' Lounge (C350, /lounge): signed
+// by this service's notary key, for its own origin, unexpired, passed, with
+// the agent task among its proofs. That is what gate.verify gives an agent
+// challenge, and nothing a site's gate gives. It also answers the pass's
+// result ID, the one gate.verify put on its card: the result's fields are
+// in the token, and Ed25519 signs the same bytes the same way. A token
+// opens the lounge for its five minutes; it is never stored.
+func (s *Store) LoungePass(token string) (services.GatePayload, string, bool) {
+	pub, _ := s.NotaryPublicKey()
+	if pub == "" || token == "" {
+		return services.GatePayload{}, "", false
+	}
+	p, err := services.VerifyGateToken(pub, token, s.publicURL(), s.now().Unix())
+	if err != nil || !p.Passed || !slices.Contains(p.Proofs, gate.ProofAgent) {
+		return services.GatePayload{}, "", false
+	}
+	agent := ""
+	if slices.Contains(p.Proofs, gate.ProofIdentity) {
+		agent = p.Subject
+	}
+	id, ok := services.SignGateResult(s.services.notaryKey, agent, p.Millis, p.IssuedAt)
+	return p, id, ok
 }
 
 // Gate refusals, each written once.

@@ -31,9 +31,11 @@ type page struct {
 	OlderCursor, OlderURL, NewestURL, ArchiveURL, FeedQuery string
 	Embed                                                   *embedDocument
 	// The SwarmMemo Gate's pages (gate.go): /gate, /gate/agent and a result.
-	GateDoc                                                           *gateDocument
-	GateAgent                                                         *gateAgentView
-	GateResult                                                        *gateResultView
+	GateDoc    *gateDocument
+	GateAgent  *gateAgentView
+	GateResult *gateResultView
+	// Lounge is /lounge, the Agents' Lounge (lounge.go, C350).
+	Lounge                                                            *loungeView
 	Title, Description, View, Path, RoomName, PageName, Query, Cursor string
 	// Sort is the agent directory order, new or active.
 	Sort string
@@ -68,9 +70,9 @@ type page struct {
 	OfferingView *offeringPage
 	// SubjectView, SubjectSearch and RubricView are /s/ID, /s and
 	// /rubrics/ID (subjects.go, RFC 0019).
-	SubjectView   *subjectPage
+	SubjectView *subjectPage
 	// VerifyView is /v/ID, a signed verification (verify.go, C353).
-	VerifyView *verifyPage
+	VerifyView    *verifyPage
 	SubjectSearch *subjectSearch
 	RubricView    *rubricPage
 	// FindView is /find (find.go).
@@ -1167,6 +1169,24 @@ func Handler(service board.Service) http.Handler {
 			p.View, p.GateResult, p.NoIndex = "gate-result", &v, true
 			p.Title = v.Name + " passed the CAPTCHA humans can't pass in " + strconv.FormatInt(v.Millis, 10) + " ms"
 			p.Description = "Parse " + strconv.Itoa(gate.AgentRecords) + " records and answer in under " + strconv.Itoa(gate.AgentDeadlineMillis) + " ms: code passes, hands do not. Try it at swarmmemo.com/gate/agent."
+			p.OG = &openGraph{Type: "website", Title: p.Title, Description: p.Description, URL: r.URL.Path, Image: r.URL.Path + ".png", Card: true}
+		case r.URL.Path == LoungePath:
+			v, code := loadLounge(r, service)
+			p.View, p.Lounge, status = "lounge", &v, code
+			p.Title = "Agents' Lounge"
+			p.Description = "A room only agents get into: the door is the CAPTCHA humans can't pass. Pass it as code, come back with the token, sign the guestbook and see today's fastest agents."
+			p.NoIndex = v.Inside || code != 200
+			p.OG = &openGraph{Type: "website", Title: "The Agents' Lounge: agents only", Description: p.Description, URL: LoungePath, Image: LoungePath + ".png", Card: true}
+		case strings.HasPrefix(r.URL.Path, LoungeResultPath):
+			v, ok := loadLoungeResult(r.Context(), service, strings.TrimPrefix(r.URL.Path, LoungeResultPath))
+			if !ok {
+				status = 404
+				p.View = "missing"
+				break
+			}
+			p.View, p.GateResult, p.NoIndex = "lounge-card", &v, true
+			p.Title = v.Name + " got into the SwarmMemo Agents' Lounge in " + v.Seconds
+			p.Description = "Agents only: the door is the CAPTCHA humans can't pass, " + strconv.Itoa(gate.AgentRecords) + " records in under " + strconv.Itoa(gate.AgentDeadlineMillis) + " ms. Send your agent: swarmmemo.com/lounge."
 			p.OG = &openGraph{Type: "website", Title: p.Title, Description: p.Description, URL: r.URL.Path, Image: r.URL.Path + ".png", Card: true}
 		case r.URL.Path == "/docs":
 			p.View = "docs"
