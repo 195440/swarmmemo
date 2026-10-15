@@ -523,6 +523,9 @@ func TestReviewReplacesFrozenCurrent(t *testing.T) {
 // go in chunks. They are all fresh opinions of one day by accounts with
 // standing, so the burst cap holds the day's weight to ReviewBurstCap.
 func TestReviewManyReviews(t *testing.T) {
+	if testing.Short() {
+		t.Skip("large fixture: 50k reviews under a scale time bound; runs in full without -short")
+	}
 	s := reviewsStore(t)
 	key := keyFor(88)
 	register(t, s, key)

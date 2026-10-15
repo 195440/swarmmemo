@@ -273,6 +273,7 @@ func (s *Store) recordAct(ctx context.Context, a actor, cmd Command, res Result,
 func (s *Store) funnelFlushSoon(due bool) {
 	f := &s.funnel
 	if due && f.flushing.CompareAndSwap(false, true) {
+		now := s.now().Unix()
 		go func() {
 			defer f.flushing.Store(false)
 			defer func() {
@@ -280,7 +281,7 @@ func (s *Store) funnelFlushSoon(due bool) {
 					slog.Error("funnel flush panicked; its window is requeued", "panic", r)
 				}
 			}()
-			if err := s.FlushFunnel(context.Background()); err != nil && !strings.Contains(err.Error(), "database is closed") {
+			if err := s.flushFunnel(context.Background(), now); err != nil && !strings.Contains(err.Error(), "database is closed") {
 				slog.Warn("funnel flush failed; its window is requeued for the next one", "error", err)
 			}
 		}()
@@ -402,7 +403,15 @@ func (s *Store) accountOfKey(ctx context.Context, publicKey string) string {
 // (with their subject's holdout bit) and followed. Call it at shutdown too.
 // A flush that fails or panics puts its window back (requeueFunnel), so the
 // next one writes it; nothing is dropped but past the in-memory bounds.
-func (s *Store) FlushFunnel(ctx context.Context) (err error) {
+func (s *Store) FlushFunnel(ctx context.Context) error {
+	return s.flushFunnel(ctx, s.now().Unix())
+}
+
+// flushFunnel is FlushFunnel as of now. The background flush reads the clock
+// on the goroutine that recorded the act and passes it here, so it never
+// reads s.now while a caller sets it (C329: a data race under -race in every
+// test that moves the store's clock).
+func (s *Store) flushFunnel(ctx context.Context, now int64) (err error) {
 	f := &s.funnel
 	f.flushMu.Lock()
 	defer f.flushMu.Unlock()
@@ -424,7 +433,6 @@ func (s *Store) FlushFunnel(ctx context.Context) (err error) {
 			return err
 		}
 	}
-	now := s.now().Unix()
 	accounts := make([]string, 0, len(pending))
 	for a := range pending {
 		accounts = append(accounts, a)

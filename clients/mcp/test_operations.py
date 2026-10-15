@@ -151,6 +151,39 @@ class OperationTests(unittest.TestCase):
         staged = op.dispatch(self.profile, "stage_work", {"intent_id": "alias", "action": "claim", "message_id": "b" * 32, "generation": "a" * 32, "ttl": 60})
         self.assertEqual(staged["work_id"], "b" * 32)
 
+    def test_read_work_takes_agent_eligible_preview(self):
+        # survivor 3028fa28: read_work's agent (a fingerprint) reaches GET /api/work/ID?agent=,
+        # as hosted read_work does; a plain read is unchanged.
+        self.assertEqual(op.tool_schemas(self.profile)["read_work"]["properties"]["agent"], {"type": "string", "pattern": op.HEX64})
+        agent = "c" * 64
+        paths = []
+        def request(_profile, path, body=None):
+            paths.append(path); raise BridgeError("transport_error")
+        with patch.object(op, "_request", side_effect=request), patch.object(op, "_public_room"):
+            for args in ({"work_id": "a" * 32, "agent": agent}, {"message_id": "a" * 32, "agent": agent}, {"work_id": "a" * 32}):
+                with self.subTest(args=args), self.assertRaisesRegex(BridgeError, "transport_error"):
+                    op.dispatch(self.profile, "read_work", args)
+        self.assertEqual(paths, ["/api/work/" + "a" * 32 + "?agent=" + agent] * 2 + ["/api/work/" + "a" * 32])
+        for bad in ("someone", "C" * 64, "c" * 63, 7):
+            with self.subTest(agent=bad), self.assertRaisesRegex(BridgeError, "invalid_arguments"):
+                op.dispatch(self.profile, "read_work", {"work_id": "a" * 32, "agent": bad})
+
+    def test_stage_work_signs_payout_address_on_claim_and_submit(self):
+        # survivor 886e8f56: stage_work takes payout_address (0x and 40 hex) on a claim or a
+        # submit, into the signed data as hosted claim_work/submit_work put it; never on renew.
+        payout = "0x" + "aB" * 20
+        base = {"work_id": "b" * 32, "generation": "a" * 32, "payout_address": payout}
+        for action, fields in (("claim", {"ttl": 60}), ("submit", {"fence": 1, "result_id": "c" * 32})):
+            op.dispatch(self.profile, "stage_work", {"intent_id": "paid-" + action, "action": action, **base, **fields})
+            stored = op._queue(self.profile).inspect("paid-" + action, sensitive=True)["intent"]
+            self.assertEqual(json.loads(stored["data"]), {"schema": 1, "generation": "a" * 32, "payout_address": payout})
+        for action, fields, address in (("renew", {"ttl": 60, "fence": 1}, payout), ("claim", {"ttl": 60}, "0x" + "a" * 39), ("claim", {"ttl": 60}, "a" * 42),
+                                        ("submit", {"fence": 1, "result_id": "c" * 32}, "0x" + "g" * 40), ("claim", {"ttl": 60}, "0x" + "a" * 40 + "\n")):
+            with self.subTest(action=action, address=address), self.assertRaisesRegex(BridgeError, "invalid_arguments"):
+                op.dispatch(self.profile, "stage_work", {"intent_id": "bad", "action": action, **base, "payout_address": address, **fields})
+        op.dispatch(self.profile, "stage_work", {"intent_id": "plain", "action": "claim", "work_id": "b" * 32, "generation": "a" * 32, "ttl": 60})
+        self.assertEqual(json.loads(op._queue(self.profile).inspect("plain", sensitive=True)["intent"]["data"]), {"schema": 1, "generation": "a" * 32})
+
     def test_private_thread_and_untrusted_extras_never_return_body(self):
         room = {"ok": True, "room": {"name": "lab", "visibility": "public"}}
         for visibility, scope in (("private", "lab"), ("public", "other")):

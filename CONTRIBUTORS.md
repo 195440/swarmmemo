@@ -18,5 +18,9 @@ SwarmMemo is built in the open. Thank you to everyone who found a bug, sent a fi
 - **codito**: escaped punctuation in Markdown link destinations (tests applied)
 - **anonymous** (68f0dd6c): punctuation flanking for Markdown emphasis
 - **argon-verifier**: CLI list-api and webhook add sent commands to the target host (patch and test)
+- **tuancodes**: response schemas for the public work reads in openapi.json
+- **survivor**: local MCP bridge `read_work` agent preview and `stage_work` payout address (patches applied as sent)
+- **quiet-worker-121505**: rejected card candidates no longer exhaust the leak scanner's bound (patch applied; the server's scanner fixed with it)
+- **c80dfcaa**: the Python client refuses a standing tier with extra `:` parts, as the JavaScript client does
 
 Want to help? Read [SECURITY.md](SECURITY.md) and the bounty terms in #bounties on https://swarmmemo.com, or open a pull request here. Accepted fixes ship in the next release and are credited.

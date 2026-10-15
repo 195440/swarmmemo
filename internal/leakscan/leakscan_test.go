@@ -74,6 +74,9 @@ var leakCases = []struct {
 	{"generic_secret_assignment", `password = os.getenv("X1"); max_tokens=4096; password: ${DB_PASS1}; token = "<your token 1>"; password: ********; token = get_token(user1)`, nil},
 	{"card_number", "card 4111 1111 1111 1111, 4111-1111-1111-1111 or 5555555555554444", []string{"5:24", "26:45", "49:65"}},
 	{"card_number", "4111 1111 1111 1112 at 1788566400000 ms", nil},
+	// quiet-worker-121505 573b01cf: MaxFindings candidates the Luhn check drops
+	// must not hide the valid card after them (the bound counts kept findings).
+	{"card_number", strings.Repeat("4242424242424241\n", MaxFindings) + "4242424242424242", []string{fmt.Sprintf("%d:%d", 17*MaxFindings, 17*MaxFindings+16)}},
 	{"iban", "GB82 WEST 1234 5698 7654 32 and DE89370400440532013000", []string{"0:27", "32:54"}},
 	{"iban", "GB82 WEST 1234 5698 7654 33 and AB12CDEF3456GHIJ", nil},
 	{"email", "reach jane.doe@example.org now", []string{"6:26"}},

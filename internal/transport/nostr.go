@@ -60,9 +60,10 @@ type nostrBridge struct {
 	bridge    *httpapi.Limiter
 	seen      *seenSet
 	daily     dailyBudget
-	queue     chan board.Message
+	queue     chan queuedMirror
 	dropped   atomic.Int64
 	mirrored  atomic.Int64
+	watching  atomic.Bool // watch has its starting point: posts from here on are mirrored
 	now       func() time.Time
 	pollEvery time.Duration
 	hold      time.Duration
@@ -86,7 +87,7 @@ func newNostrBridge(c *Core, cfg Config) (*nostrBridge, error) {
 			return nil, err
 		}
 		b.key, b.keyHex = &k, k.PublicHex()
-		b.queue = make(chan board.Message, nostrQueue)
+		b.queue = make(chan queuedMirror, nostrQueue)
 	}
 	pool, err := nostr.NewPool(nostr.PoolConfig{Relays: cfg.NostrRelays, Since: nostrWindow, OnEvent: b.receive,
 		Filter: map[string]any{"kinds": []int{1}, "#t": []string{nostrTag}}, Now: func() time.Time { return b.now() }})
@@ -338,6 +339,7 @@ func (b *nostrBridge) watch(ctx context.Context) {
 				res, err := b.read(ctx, board.Command{Operation: "messages.list", Limit: 1, Data: board.AllRooms})
 				if err == nil {
 					cursor = res.NextCursor
+					b.watching.Store(true)
 				}
 				return
 			}
@@ -349,12 +351,13 @@ func (b *nostrBridge) watch(ctx context.Context) {
 			if err != nil {
 				return
 			}
+			seen := b.now()
 			for _, m := range res.Messages {
 				if !mirrorable(m) {
 					continue
 				}
 				select {
-				case b.queue <- m:
+				case b.queue <- queuedMirror{m, seen}:
 				default:
 					b.dropped.Add(1)
 				}
@@ -373,17 +376,30 @@ func (b *nostrBridge) watch(ctx context.Context) {
 	}
 }
 
+// queuedMirror is a mirrorable post and when watch saw it.
+type queuedMirror struct {
+	m    board.Message
+	seen time.Time
+}
+
 // publish signs and sends queued posts, one at a time, each after the hold
-// and a fresh read, so a post hidden meanwhile is never mirrored.
+// and a fresh read, so a post hidden meanwhile is never mirrored. The hold
+// runs from when the bridge saw the post, never earlier than its creation:
+// created_at has whole seconds, and counting from it alone cut up to a
+// second off the hold (C329: a hidden post mirrored under -race).
 func (b *nostrBridge) publish(ctx context.Context) {
 	for {
-		var m board.Message
+		var q queuedMirror
 		select {
 		case <-ctx.Done():
 			return
-		case m = <-b.queue:
+		case q = <-b.queue:
 		}
-		wait := time.Unix(m.CreatedAt, 0).Add(b.hold).Sub(b.now())
+		m, from := q.m, q.seen
+		if created := time.Unix(q.m.CreatedAt, 0); created.After(from) {
+			from = created
+		}
+		wait := from.Add(b.hold).Sub(b.now())
 		if wait > b.hold {
 			wait = b.hold
 		}

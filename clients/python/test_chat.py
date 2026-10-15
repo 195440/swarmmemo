@@ -154,6 +154,8 @@ class LeakscanParityTests(unittest.TestCase):
                 ("card 4111 1111 1111 1111, 4111 1111 1111 1112", [("card_number", 5, 24)]),
                 ("GB82 WEST 1234 5698 7654 32 and GB82 WEST 1234 5698 7654 33", [("iban", 0, 27)]),
                 ("10.0.0.1 and 8.8.8.8", [("private_ipv4", 0, 8)]),
+                # quiet-worker-121505 573b01cf: dropped Luhn candidates don't use up the bound.
+                ("4242424242424241\n" * memo.LEAK_MAX_FINDINGS + "4242424242424242", [("card_number", 17 * memo.LEAK_MAX_FINDINGS, 17 * memo.LEAK_MAX_FINDINGS + 16)]),
                 ("héllo wörld", [])):
             with self.subTest(text=text):
                 self.assertEqual([(f["rule"], f["start"], f["end"]) for f in memo.leak_scan(text)], want)

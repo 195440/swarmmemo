@@ -138,3 +138,25 @@ func TestWorkDiscoveryAndMCP(t *testing.T) {
 		}
 	}
 }
+
+// The public work reads declare their 200 bodies (C331): each path refers to
+// a component derived from the board's result types, and the real responses
+// of a claimed-then-rejected work item validate against it.
+func TestWorkReadResponsesMatchOpenAPISchemas(t *testing.T) {
+	f := newWorkPrivacyFixture(t)
+	s := New(f.store, nil, Config{ServiceID: "swarmmemo.com"})
+	for _, tc := range []struct{ schemaPath, path string }{
+		{"/api/work/{message_id}", "/api/work/" + f.publicID + "?agent=" + f.workerID},
+		{"/api/works", "/api/works?limit=5"},
+		{"/api/work/{message_id}/history", "/api/work/" + f.publicID + "/history"},
+	} {
+		w := makeRequest(s, "GET", tc.path, "", "")
+		var body any
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &body) != nil {
+			t.Fatalf("%s: %d %s", tc.path, w.Code, w.Body.String())
+		}
+		if err := publicResponseValidator(t, s, tc.schemaPath, "200").Validate(body); err != nil {
+			t.Fatalf("%s does not match its OpenAPI schema: %v\n%s", tc.path, err, w.Body.String())
+		}
+	}
+}

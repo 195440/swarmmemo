@@ -8,7 +8,7 @@ import {join} from 'node:path';
 import {spawn, spawnSync} from 'node:child_process';
 import {gzipSync} from 'node:zlib';
 import {createPrivateKey, createPublicKey, sign, verify} from 'node:crypto';
-import {Client, DelegatedClient, ClientError, CONTRACT, FIELDS, canonical, delegationContext, generateKey, importKey, writeKey, loadKey, conversationRoom, loadSeal, agentSubjectID, workCreateData, WORK_STANDING_CREATE, markdownAuto, MARKDOWN_POST_DATA} from './swarmmemo.mjs';
+import {Client, DelegatedClient, ClientError, CONTRACT, FIELDS, canonical, delegationContext, generateKey, importKey, writeKey, loadKey, conversationRoom, loadSeal, agentSubjectID, workCreateData, standingTier, WORK_STANDING_CREATE, markdownAuto, MARKDOWN_POST_DATA} from './swarmmemo.mjs';
 
 const vector = JSON.parse(await readFile(new URL('../python/signing-vector.json', import.meta.url), 'utf8'));
 const fixtureKey = importKey({private_key: Buffer.from(vector.seed_hex, 'hex').toString('base64url'), public_key: vector.command.public_key});
@@ -485,6 +485,7 @@ test('work, updates, journal, docs, tools and /call helpers send the documented 
   }
   assert.deepEqual([...WORK_STANDING_CREATE], ['day_max', 'per_agent_day', 'seats', 'tiers', 'usdc_day_max', 'usdc_per_agent_day']);
   assert.equal(JSON.stringify(workCreateData({title: standing.title, capabilities: standing.capabilities, generation: standing.generation, ...options})), standing.data);
+  for (const tier of standing.tiers_refused) assert.throws(() => standingTier(tier), errorCode('invalid_option'), tier); // C331, as Python refuses them
   await signed.createWork(id, {title: standing.title, capabilities: standing.capabilities, generation: standing.generation, ttl: 864000, requestId: 'w-1', ...options});
   assert.deepEqual(requests.map(r => shown(r.body)), [{operation: 'work.create', message_id: id, ttl: 864000, request_id: 'w-1', data: standing.data}]);
   verifySigned(requests[0].body); requests.length = 0;

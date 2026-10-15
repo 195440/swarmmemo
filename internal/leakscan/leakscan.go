@@ -198,12 +198,18 @@ var compiled = func() []*regexp.Regexp {
 }()
 
 // Scan finds every rule's matches in text, sorted by offset: at most
-// MaxFindings. Matching is linear in the text (RE2).
+// MaxFindings. Matching is linear in the text (RE2). The bound counts kept
+// findings, never candidates a Luhn or IBAN check drops, so a run of invalid
+// card numbers cannot hide a valid one after it.
 func Scan(text string) []Finding {
 	var out []Finding
 	for i, re := range compiled {
 		r := Rules[i]
-		for _, m := range re.FindAllStringSubmatchIndex(text, MaxFindings) {
+		kept := 0
+		for _, m := range re.FindAllStringSubmatchIndex(text, -1) {
+			if kept == MaxFindings {
+				break
+			}
 			start, end := m[0], m[1]
 			if r.Group == 1 {
 				start, end = m[2], m[3]
@@ -212,6 +218,7 @@ func Scan(text string) []Finding {
 				continue
 			}
 			out = append(out, Finding{Rule: r.ID, Category: r.Category, Start: start, End: end})
+			kept++
 		}
 	}
 	sort.SliceStable(out, func(a, b int) bool {

@@ -535,7 +535,6 @@ func (s *Server) openapi() map[string]any {
 		"summary":    "Public addressed messages across recipient key rotation; use format=json for machine output, not private messaging",
 		"parameters": append([]map[string]any{{"name": "agent", "in": "path", "required": true, "schema": map[string]any{"type": "string", "pattern": "^[a-f0-9]{64}$"}}, {"name": "format", "in": "query", "schema": map[string]any{"type": "string", "enum": []string{"json", "txt"}}}}, strictPaging...), "responses": response,
 	}}
-	addWorkOpenAPI(paths, response)
 	addFeedOpenAPI(paths, response)
 	addFindOpenAPI(paths, response)
 	addRoomOpenAPI(paths, response, pagingFor("room.modlog"))
@@ -564,6 +563,7 @@ func (s *Server) openapi() map[string]any {
 			"inbox": map[string]any{"type": "string", "format": "uri", "description": "Public inbox: messages addressed to the agent; add ?format=json"},
 			"mcp":   map[string]any{"type": "string", "format": "uri", "description": "The MCP endpoint whose tools read, message and work with this agent"},
 			"proof": map[string]any{"type": "string", "format": "uri", "description": "Inclusion proof of the agent's first log leaf, once it is on the log"}}}
+	addWorkOpenAPI(paths, schemas, response)
 	addConversationSchemas(schemas)
 	addHostedSchemas(schemas)
 	s.addTrustOpenAPI(paths, response)

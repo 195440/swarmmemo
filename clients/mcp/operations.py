@@ -26,6 +26,8 @@ HEX32 = PATTERNS["message_id"]
 HEX64 = PATTERNS["fingerprint"]
 SLUG = PATTERNS["slug"]
 INTENT = r"^[A-Za-z0-9._:-]{1,128}$"
+# A USDC reward's payout address (RFC 0016), as work.claim and work.submit data sign it.
+PAYOUT_ADDRESS = r"^0x[0-9a-fA-F]{40}$"
 STATES = ENUMS["work_states"]
 # find_work also takes the discovery kinds the server lists (rewarded: open work with
 # a reward held; earn: the same, smallest effort first). They are filters, never states.
@@ -95,14 +97,14 @@ def _own_schemas(profile):
     schemas = {
         "local_status": object_schema({"intent_id": string(INTENT)}),
         "find_work": object_schema({"query": string(maximum=160), "state": {"type": "string", "enum": WORK_KINDS}, **page}),
-        "read_work": object_schema({"work_id": string(HEX32), "history": {"type": "boolean", "default": False}, **page}, ("work_id",)),
+        "read_work": object_schema({"work_id": string(HEX32), "history": {"type": "boolean", "default": False}, "agent": string(HEX64), **page}, ("work_id",)),
         "read_thread": object_schema({"message_id": string(HEX32), "include_provenance": {"type": "boolean", "default": False}, **page}, ("message_id",)),
     }
     if "post" in profile.operations:
         schemas["stage_post"] = object_schema({"intent_id": string(INTENT), "text": {"type": "string", "minLength": 1, "maxLength": LIMITS["text_bytes"]}, "page": string(SLUG), "kind": string(SLUG), "reply_to": string(HEX32), "to": string(HEX64)}, ("intent_id", "text"))
     actions = [op.removeprefix("work.") for op in profile.operations if op.startswith("work.")]
     if actions:
-        schemas["stage_work"] = object_schema({"intent_id": string(INTENT), "action": {"type": "string", "enum": actions}, "work_id": string(HEX32), "generation": string(HEX32), "ttl": {"type": "integer", "minimum": LIMITS["work_claim_ttl_minimum"], "maximum": LIMITS["work_claim_ttl_maximum"]}, "fence": {"type": "integer", "minimum": 1, "maximum": 2**63 - 1}, "result_id": string(HEX32)}, ("intent_id", "action", "work_id", "generation"))
+        schemas["stage_work"] = object_schema({"intent_id": string(INTENT), "action": {"type": "string", "enum": actions}, "work_id": string(HEX32), "generation": string(HEX32), "ttl": {"type": "integer", "minimum": LIMITS["work_claim_ttl_minimum"], "maximum": LIMITS["work_claim_ttl_maximum"]}, "fence": {"type": "integer", "minimum": 1, "maximum": 2**63 - 1}, "result_id": string(HEX32), "payout_address": string(PAYOUT_ADDRESS)}, ("intent_id", "action", "work_id", "generation"))
         schemas["stage_work"]["allOf"] = [
             {"if": {"properties": {"action": {"const": "claim"}}}, "then": {"required": ["ttl"], "not": {"anyOf": [{"required": ["fence"]}, {"required": ["result_id"]}]}}},
             {"if": {"properties": {"action": {"const": "renew"}}}, "then": {"required": ["ttl", "fence"], "not": {"required": ["result_id"]}}},
@@ -135,7 +137,10 @@ def arguments_checked(profile, action, args):
         elif type(value) is not bool: raise BridgeError("invalid_arguments")
     if action == "stage_work":
         operation_fields = {"claim": {"ttl"}, "renew": {"ttl", "fence"}, "submit": {"fence", "result_id"}}
-        if set(args) != {"intent_id", "action", "work_id", "generation"} | operation_fields[args["action"]]: raise BridgeError("invalid_arguments")
+        allowed = {"intent_id", "action", "work_id", "generation"} | operation_fields[args["action"]]
+        # A claim or submit may name where a USDC reward is paid (PROTOCOL.md; hosted claim_work/submit_work).
+        if "payout_address" in args and args["action"] in ("claim", "submit"): allowed |= {"payout_address"}
+        if set(args) != allowed: raise BridgeError("invalid_arguments")
         if args["generation"] != profile.generation: raise BridgeError("generation_mismatch")
     if action == "read_work" and "cursor" in args and not args.get("history", False): raise BridgeError("invalid_arguments")
     return copy.deepcopy(args)
@@ -481,7 +486,7 @@ def _transition(profile, item, work_id):
         # A USDC reward (RFC 0016): a claim or submit may sign the payout address;
         # a settle signs the paying transaction.
         if isinstance(data, dict) and "payout_address" in data and item["operation"] in ("work.claim", "work.submit"):
-            if not isinstance(data["payout_address"], str) or not re.fullmatch(r"0x[0-9a-fA-F]{40}", data["payout_address"]): raise ValueError()
+            if not isinstance(data["payout_address"], str) or not re.fullmatch(PAYOUT_ADDRESS, data["payout_address"]): raise ValueError()
             data_fields = data_fields | {"payout_address"}
         if item["operation"] == "work.settle":
             if not isinstance(data, dict) or not isinstance(data.get("tx_hash"), str) or not re.fullmatch(r"0x[0-9a-f]{64}", data["tx_hash"]): raise ValueError()
@@ -529,7 +534,9 @@ def _dispatch(profile, action, a):
             for field in ("reply_to", "to"):
                 if field in a: command[field] = a[field]
         else:
-            command = {"operation": "work." + a["action"], "message_id": a["work_id"], "data": json.dumps({"schema": 1, "generation": a["generation"]}, separators=(",", ":")), "delegation": profile.delegation}
+            data = {"schema": 1, "generation": a["generation"]}
+            if "payout_address" in a: data["payout_address"] = a["payout_address"]
+            command = {"operation": "work." + a["action"], "message_id": a["work_id"], "data": json.dumps(data, separators=(",", ":")), "delegation": profile.delegation}
             if "ttl" in a: command["ttl"] = a["ttl"]
             if "fence" in a: command["amount"] = a["fence"]
             if "result_id" in a: command["target"] = a["result_id"]
@@ -571,7 +578,8 @@ def _dispatch(profile, action, a):
         if not isinstance(works, list) or len(works) > limit or type(data.get("has_more")) is not bool: raise BridgeError("invalid_response")
         return {**common, "works": [_work(profile, work) for work in works], "has_more": data["has_more"], "next_cursor": _cursor(result.get("next_cursor", ""))}
     if action == "read_work":
-        result = _request(profile, "/api/work/" + a["work_id"])
+        # agent: the fingerprint an eligibility preview is for (GET /api/work/ID?agent=).
+        result = _request(profile, "/api/work/" + a["work_id"] + ("?" + urllib.parse.urlencode({"agent": a["agent"]}) if "agent" in a else ""))
         work = _work(profile, result.get("data", {}).get("work"), a["work_id"])
         output = {**common, "work": work}
         if a.get("history", False):

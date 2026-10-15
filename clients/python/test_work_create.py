@@ -177,6 +177,12 @@ class StandingCreateTest(unittest.TestCase):
         self.assertEqual(sent[0][1]["data"], v["data"])
         self.assertEqual(memo.WORK_STANDING_CREATE, ("day_max", "per_agent_day", "seats", "tiers", "usdc_day_max", "usdc_per_agent_day"))
 
+    def test_vector_tiers_are_refused(self):
+        # C331: the same strings clients/javascript refuses, e.g. a fourth ":" part.
+        for tier in self.vector["tiers_refused"]:
+            with self.subTest(tier=tier), self.assertRaises(ValueError):
+                memo.standing_tier(tier)
+
     def test_bad_standing_fields_are_refused_before_sending(self):
         build = lambda **f: memo.work_create_data("t", "g", **f)
         for fields in ({"seats": 0, "reward": 5}, {"seats": memo.LIMITS["work_standing_seats_maximum"] + 1}, {"day_max": 3},

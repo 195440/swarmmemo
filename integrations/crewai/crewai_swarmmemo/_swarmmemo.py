@@ -6,7 +6,6 @@ import argparse
 import base64
 import bisect
 import hashlib
-import itertools
 import json
 import mimetypes
 import os
@@ -596,9 +595,9 @@ def standing_tier(value):
     """One reward tier of a standing task, as work.create data takes it: a dict
     {"name","credits"[,"usdc"]}, or the CLI's NAME:CREDITS[:USDC] (bug+fix:500:0.40)."""
     if isinstance(value, str):
-        name, _, rest = value.partition(":")
-        credits, _, usdc = rest.partition(":")
-        if not credits.isdigit(): raise ValueError("a tier is NAME:CREDITS[:USDC], e.g. bug:500:0.20")
+        parts = value.split(":")
+        if len(parts) not in (2, 3) or not parts[1].isdigit(): raise ValueError("a tier is NAME:CREDITS[:USDC], e.g. bug:500:0.20")
+        name, credits, usdc = (parts + [""])[:3]
         value = {"name": name, "credits": int(credits), **({"usdc": usdc} if usdc else {})}
     if not isinstance(value, dict) or not set(WORK_STANDING_TIER["required"]) <= value.keys() <= struct_fields("work_standing_tier"):
         raise ValueError("a tier is {name, credits[, usdc]}")
@@ -1773,15 +1772,19 @@ def _mod97(value):
 
 def leak_spans(text):
     """Every leak rule's matches in text as (rule, start, end) character
-    offsets, sorted and bounded as internal/leakscan's Scan sorts them."""
+    offsets, sorted and bounded as internal/leakscan's Scan sorts them: the
+    bound counts kept findings, not candidates the Luhn or IBAN check drops."""
     found = []
     for rule, rx in LEAK_RULES:
-        for m in itertools.islice(rx.finditer(text), LEAK_MAX_FINDINGS):
+        kept = 0
+        for m in rx.finditer(text):
+            if kept == LEAK_MAX_FINDINGS: break
             start, end = m.span(rule.get("group", 0))
             value = text[start:end]
             if start < 0 or start == end or (rule.get("luhn") and not _luhn(value)) or (rule.get("mod97") and not _mod97(value)):
                 continue
             found.append((rule, start, end))
+            kept += 1
     found.sort(key=lambda f: (f[1], -f[2]))
     return found[:LEAK_MAX_FINDINGS]
 

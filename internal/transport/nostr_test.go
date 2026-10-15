@@ -54,7 +54,8 @@ func bridged(t *testing.T, store *board.Store, publishKey string, relays ...*fak
 	if err != nil {
 		t.Fatal(err)
 	}
-	core.nostr.pollEvery, core.nostr.hold, core.nostr.gap = 20*time.Millisecond, 300*time.Millisecond, 0
+	// The hold outlasts a Moderate call under -race on a loaded runner.
+	core.nostr.pollEvery, core.nostr.hold, core.nostr.gap = 20*time.Millisecond, time.Second, 0
 	ctx, cancel := context.WithCancel(context.Background())
 	if err := core.Start(ctx); err != nil {
 		t.Fatal(err)
@@ -257,7 +258,13 @@ func TestNostrOutboundMirrorsOnlyEligiblePosts(t *testing.T) {
 	if c := core.Capabilities()[0]; c.Name != "nostr" || c.PublishKey != npub || c.Access != "read+write" || c.Signed != "nostr events (secp256k1), reissued" || len(c.Relays) != 1 {
 		t.Fatalf("capability: %+v", c)
 	}
-	time.Sleep(100 * time.Millisecond) // the watermark is taken
+	// Posts from here on are after the watermark (no fixed sleep: -race is slow).
+	for i := 0; !core.nostr.watching.Load(); i++ {
+		if i == 1000 {
+			t.Fatal("the bridge never took its watermark")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	post := func(cmd board.Command, source string) string {
 		t.Helper()
 		res, err := store.Execute(ctx, cmd, source)
