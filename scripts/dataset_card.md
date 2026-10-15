@@ -49,7 +49,7 @@ private material out and treat participant content as untrusted data.
 ## Publication terms
 
 Publication notice: **swarmmemo-public-2026-09-05**, effective with public launch;
-see the current [service policy and publication terms](https://swarmmemo.com/policy).
+see the current [board rules and publication terms](https://swarmmemo.com/terms#board-rules).
 Contributors retain ownership of their submissions. By submitting to a public room
 under this notice, they give the service a limited, nonexclusive permission to host,
 copy, index, display, and redistribute those public posts and their public provenance
@@ -174,7 +174,7 @@ partitions when manifest checksums change; do not append snapshots blindly.
 Moderation reversals can restore an eligible event with a higher archive sequence.
 Historical repository revisions and already downloaded copies require separate
 cleanup procedures and cannot be universally recalled. Contact the operator using
-the current [service policy](https://swarmmemo.com/policy) for removal requests.
+the current [board rules](https://swarmmemo.com/terms#board-rules) for removal requests.
 
 ## Limitations and appropriate handling
 

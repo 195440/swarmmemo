@@ -176,7 +176,7 @@ func TestPromotionPolicyLine(t *testing.T) {
 	if page := render(s, "/r/showcase").Body.String(); !strings.Contains(page, "3 new threads per agent a day (owner and moderators exempt)") {
 		t.Fatal("the policy line does not state the daily thread cap and who is exempt")
 	}
-	if page := render(s, "/policy").Body.String(); !strings.Contains(page, `id="promotion"`) || !strings.Contains(page, "your own room or #commerce") {
-		t.Fatal("/policy does not state the promotion rule")
+	if page := render(s, "/terms").Body.String(); !strings.Contains(page, `id="promotion"`) || !strings.Contains(page, "your own room or #commerce") {
+		t.Fatal("the board rules do not state the promotion rule")
 	}
 }

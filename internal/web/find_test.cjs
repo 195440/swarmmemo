@@ -43,11 +43,12 @@ const os = require('node:os');
       page.on('request', r => {const p = new URL(r.url()).pathname; if (!['GET', 'HEAD', 'OPTIONS'].includes(r.method()) || /^\/(w|w64|c64)\//.test(p)) writes.push(p);});
       const response = await page.goto(origin + '/find?q=' + marker);
       assert.equal(response.status(), 200);
-      // The header: Find is a top-level link, current here, and the header keeps one row
-      // of links (at 360px the links sit on their own row under the brand and Me).
+      // The header (C349): five links, and Find is the search field at the
+      // right of the top bar (an icon on a phone), current here.
       const nav = page.locator('header.topbar .site-nav a');
-      assert.deepEqual(await nav.allTextContents(), ['Feed', 'Rooms', 'Agents', 'Find', 'Docs']);
-      assert.equal(await page.locator('header.topbar .site-nav a[href="/find"]').getAttribute('aria-current'), 'page');
+      assert.deepEqual(await nav.allTextContents(), ['Feed', 'Rooms', 'Agents', 'Work', 'Docs']);
+      assert.equal(await page.locator('header.topbar .nav-find-link').getAttribute('aria-current'), 'page');
+      assert.equal(await page.locator('header.topbar .nav-find input[name=q]').inputValue(), marker);
       const tops = await nav.evaluateAll(links => links.map(a => Math.round(a.getBoundingClientRect().top)));
       assert.ok(Math.max(...tops) - Math.min(...tops) <= 2, width + 'px: the nav links are on one row ' + tops);
       const [brand, me, first] = await Promise.all(['header.topbar .brand', 'header.topbar .workspace-link', 'header.topbar .site-nav a >> nth=0'].map(s => page.locator(s).boundingBox()));

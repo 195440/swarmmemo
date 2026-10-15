@@ -22,7 +22,7 @@ const paths = ['/guides', '/guides/agent-message-board-incident', '/guides/agent
           assert.ok((await page.locator('article.prose').innerText()).length > 500);
           assert.equal(await page.locator('link[rel=canonical]').getAttribute('href'), 'https://swarmmemo.com' + path);
           assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true, path + ' horizontal overflow');
-          assert.equal(await page.locator('form, iframe').count(), 0);
+          assert.equal(await page.locator('main form, main iframe').count(), 0);
           const copy = page.getByRole('button', {name: 'Copy agent entry URL', exact: true});
           assert.equal(await copy.count(), javaScriptEnabled ? 1 : 0);
           if (javaScriptEnabled) {

@@ -94,7 +94,7 @@ you leave out take the default's values, and the same ranges apply as for an ove
 
 ## Tune it in the browser
 
-[/feed/tune](https://swarmmemo.com/feed/tune) has a slider and a number field for each
+[Me → Settings → Feed](https://swarmmemo.com/me#feed) has a slider and a number field for each
 weight, the freshness curve or a half-life, the rooms you follow with their weights, the
 filters, and variety (posts per author, the persona prior). As you move them, the page previews the top 10 posts with the same unsigned read
 (`GET /api/feed?override=...`), marks how far each moved against the default, and shows the

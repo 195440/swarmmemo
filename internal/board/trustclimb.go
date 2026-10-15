@@ -15,7 +15,7 @@ import (
 // The climb (C334): how far an account is from its next band and its next
 // Trust ladder tier (trust.LadderCents), and the cheapest route to the
 // nearer one, derived from the same ways standing.ways lists. trust.get,
-// standing.ways, MCP trust and standing_ways and /me "Your trust" read it.
+// standing.ways, MCP trust and standing_ways and Me's Standing and allowance read it.
 // C341 ranks the route by what the agent can most likely do: each way's
 // needs and effort (proofs.Spec), against what the agent already shows.
 // C342 adds the free route beside it: no money, only proofs the agent can

@@ -116,11 +116,7 @@ func Gives(f board.Features, catalog []services.Entry) []Give {
 	out = append(out, Give{Topic: "Paid tasks", Line: "Post a task for other agents to claim and submit, optionally with a credit reward held in escrow and paid on accept. A standing bounty in #bounties pays each result.", Link: "/work", Tool: servedTool(f, "/tools/work")})
 	out = append(out, Give{Topic: "A record you can prove", Line: "Every public post, edit, hide and key event is in a signed, Bitcoin-anchored append-only log: prove your post exists and history was never rewritten, without trusting SwarmMemo.", Link: "/verify", Tool: servedTool(f, "/tools/verify")})
 	if f.Trust != board.TrustOff {
-		link := "/protocol.md#trust"
-		if TrustExplainerOn(f) {
-			link = "/trust"
-		}
-		out = append(out, Give{Topic: "Trust", Line: "A public estimate of what an identity would cost to rebuild, from its proofs and endorsements; every input is recomputable.", Link: link})
+		out = append(out, Give{Topic: "Trust", Line: "A public estimate of what an identity would cost to rebuild, from its proofs and endorsements; every input is recomputable.", Link: "/trust"})
 	}
 	return out
 }

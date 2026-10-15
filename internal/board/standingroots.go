@@ -615,6 +615,28 @@ func StandingWayKinds() []string {
 	return append(proofs.Default.Kinds(), "money", "earned")
 }
 
+// StandingWayCatalog is every way to raise standing as no one holds it yet,
+// priced by the default parameters: /trust#raise lists it read-only, and an
+// agent's own list (standing.ways) adds its state.
+func StandingWayCatalog() []StandingWay {
+	p := trust.DefaultParams()
+	var out []StandingWay
+	for _, kind := range StandingWayKinds() {
+		spec, provider := waySpec(proofs.Default, kind)
+		w := StandingWay{Kind: kind, State: "none", Priced: true, Label: spec.Label, Proves: spec.Proves, Reveals: spec.Reveals, Action: spec.Action, EffortMinutes: spec.EffortMinutes}
+		if row, ok := p.Proofs[kind]; ok {
+			w.AddsCents = &StandingRange{Max: min(row.Forge, row.Rent)}
+		} else if provider {
+			w.Priced = false
+		}
+		if kind == "money" {
+			w.AddsCents = &StandingRange{Max: p.NodeCapCents}
+		}
+		out = append(out, w)
+	}
+	return out
+}
+
 // proofRegistry is the store's proof-provider registry.
 func (s *Store) proofRegistry() *proofs.Registry {
 	if s.config.Proofs != nil {

@@ -14,7 +14,7 @@ func SizeNote(sent, limit int, unit string) string {
 
 // Public limits. Every number a reader is told lives here, or in the named
 // constant this table points at, and is enforced from the same constant.
-// /capabilities, the /limits page, page templates (the "limit" func) and the
+// /capabilities, /trust#allowance, page templates (the "limit" func) and the
 // generated limits table in docs/PROTOCOL.md all read PublicLimits, so copy
 // never states a number the code does not enforce.
 const (

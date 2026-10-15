@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -52,12 +53,21 @@ func getFrom(s *Server, path, accept, addr string) *httptest.ResponseRecorder {
 
 // servedSurfaces is every page and document an agent or a person is sent to.
 func servedSurfaces() []string {
-	pages := []string{"/", "/for-agents", "/docs", "/policy", "/limits", "/agents", "/me", "/rooms", "/migration", "/swarmchasing",
+	pages := []string{"/", "/for-agents", "/docs", "/agents", "/me", "/rooms", "/swarmchasing",
 		"/privacy", "/terms", "/privacy.md", "/terms.md", "/messages", "/messages.md", "/verify", "/verify.md", "/glossary", "/glossary.md", "/trust-model", "/trust-model.md",
 		"/llms.txt", "/llms-full.txt", "/skill.md", "/protocol.md",
 		"/docs/INBOX.md", "/docs/OUTBOX.md", "/docs/DATASET.md", "/docs/CURATION.md", "/docs/SOURCE_SYNC.md",
 		"/clients/python/README.md", "/clients/python/PRIVATE_INBOX.md", "/clients/python/FIRST_PUBLIC_WORK.md",
 		"/clients/javascript/README.md", "/clients/mcp/README.md", "/clients/mcp/BOOTSTRAP.md"}
+	// Every page of the one table of pages (C349), so no page of the nav,
+	// the footer or the Docs hub links a moved or missing address.
+	for _, n := range web.SiteNav {
+		// Pages whose links follow feature flags this default server leaves
+		// off are covered by TestSiteNavNoStrayLinks with every flag on.
+		if n.Path != "" && !n.API && !slices.Contains(pages, n.Path) && !slices.Contains([]string{"/s", "/trust/penalties", "/tools", "/faq", "/trust", web.AgentsNetworkPath}, n.Path) {
+			pages = append(pages, n.Path)
+		}
+	}
 	return append(append(pages, web.PublicGuidePaths()...), append(web.PlatformPaths(), web.FrameworkPaths()...)...)
 }
 
@@ -128,6 +138,9 @@ func TestServedLinksResolve(t *testing.T) {
 				continue
 			}
 			path := ref.Path
+			if path == "" {
+				path = "/"
+			}
 			// Write URLs are commands, not links; message, room and agent
 			// pages depend on data this empty store does not have.
 			if strings.HasPrefix(path, "/w/") || strings.HasPrefix(path, "/w64/") || strings.HasPrefix(path, "/c64/") ||
@@ -148,6 +161,11 @@ func TestServedLinksResolve(t *testing.T) {
 				continue // optional feature off in tests; a POST-only endpoint
 			case status >= 400:
 				t.Errorf("%s links to %s, which answers %d", page, target, status)
+				continue
+			case status == http.StatusMovedPermanently && ref.Path != "/cases":
+				// C349: a page that moved keeps its old address working for
+				// links elsewhere, but our own copy links the new home.
+				t.Errorf("%s links to %s, which moved (301)", page, target)
 				continue
 			}
 			if ref.Fragment == "" {
@@ -385,8 +403,14 @@ func TestCopyNamesOnlyRealOperations(t *testing.T) {
 	}
 	unknown, seen := map[string][]string{}, 0
 	for source, text := range publicCopy(t) {
-		if source == "/migration" || source == "/openapi.json" || source == "/capabilities" {
-			continue // the rename table on purpose; JSON keys, not prose
+		if source == "/openapi.json" || source == "/capabilities" {
+			continue // JSON keys, not prose
+		}
+		if source == "/glossary" {
+			// The 1.0 rename table (#renamed) names the old operations on purpose.
+			if i := strings.Index(text, `id="renamed"`); i >= 0 {
+				text = text[:i]
+			}
 		}
 		for _, m := range name.FindAllStringSubmatch(text, -1) {
 			seen++

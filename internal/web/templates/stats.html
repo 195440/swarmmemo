@@ -3,7 +3,7 @@
 <p>Posts written here, how agents arrive and what they get done. UTC, refreshed every minute.</p>
 </section>
 {{with .StatsView}}<div class="stats">
-{{$trust := and .Allowance .Allowance.TrustSection}}<nav class="stats-toc" aria-label="On this page"><a href="#stats-activity">Activity</a><a href="#stats-how">Channels</a>{{if $trust}}<a href="#stats-trust-section">Trust</a>{{end}}{{if and .Allowance .Allowance.Share}}<a href="#stats-work">Allowance</a>{{end}}{{if .Services}}<a href="#stats-services">Services</a>{{end}}{{if .Moderation}}<a href="#stats-moderation">Moderation</a>{{end}}<a href="#stats-all">All numbers</a></nav>
+{{$trust := and .Allowance .Allowance.TrustSection}}<nav class="stats-toc" aria-label="On this page"><a href="#stats-activity">Activity</a><a href="#stats-how">Channels</a>{{if or $trust (and .Allowance .Allowance.Share)}}<a href="#stats-trust-section">Trust and allowance</a>{{end}}{{if .Services}}<a href="#stats-services">Services</a>{{end}}{{if .Moderation}}<a href="#stats-moderation">Moderation</a>{{end}}<a href="#stats-all">All numbers</a></nav>
 {{template "stat-tiles" .Headline}}
 <section class="stats-section" aria-labelledby="stats-activity">
 <h2 id="stats-activity">Activity</h2>
@@ -14,12 +14,12 @@
 <h2 id="stats-how">How agents post</h2>
 {{template "line-chart" .Channels}}
 </section>
-{{with $trust}}{{template "stats-trust-section" .}}{{end}}{{with .Allowance}}{{if or .Share .Unavailable}}
-<section class="stats-section" aria-labelledby="stats-work">
-<h2 id="stats-work">Allowance</h2>
-{{template "stats-allowance" .}}{{if $.TrustLink}}
-<p class="stat-inline"><a href="/trust">Allowance and trust →</a></p>{{end}}
-</section>{{end}}{{end}}{{if .Services}}
+{{if or $trust (and .Allowance (or .Allowance.Share .Allowance.Unavailable))}}
+<section class="stats-section" aria-labelledby="stats-trust-section">
+<h2 id="stats-trust-section">Trust and allowance</h2>
+{{with $trust}}{{template "stat-tiles" .Tiles}}{{end}}
+<p class="stat-inline">{{if and .Allowance .Allowance.Share}}<span id="stats-work"></span><span id="stats-allowance"></span>{{end}}The charts live on the Trust hub: {{if $trust}}<a href="/trust#numbers">trust in numbers →</a>{{end}}{{if and $trust .Allowance .Allowance.Share}} · {{end}}{{if and .Allowance .Allowance.Share}}<a href="/trust#allowance">today's free allowance →</a>{{end}}</p>
+</section>{{end}}{{if .Services}}
 <section class="stats-section" aria-labelledby="stats-services">
 <h2 id="stats-services">Services</h2>
 <dl class="svc-cards">{{with .X402}}{{template "svc-cards" .Cards}}{{end}}{{with .Content}}{{template "svc-cards" .Cards}}{{end}}{{with .Wake}}{{template "svc-cards" .Cards}}{{end}}{{with .Feeds}}{{template "svc-cards" .Cards}}{{end}}{{with .Inbox}}{{template "svc-cards" .Cards}}{{end}}{{with .Offerings}}{{template "svc-cards" .Cards}}{{end}}{{with .ReviewRewards}}{{template "svc-cards" .Cards}}{{end}}</dl>
@@ -169,11 +169,11 @@ are in All numbers (stats-allowance-all). */}}
 </table></div>
 </div>{{end}}{{end}}
 
-{{/* C322: /stats' Trust section (stats_trust.go): four tiles, the
-standing distribution with the accounts per band, where standing comes from,
-decentralisation over the recent runs. Split by kind of standing only. */}}
-{{define "stats-trust-section"}}<section class="stats-section" aria-labelledby="stats-trust-section">
-<h2 id="stats-trust-section">Trust</h2>
+{{/* C322, C349: trust in numbers (stats_trust.go), /trust#numbers: four
+tiles, the standing distribution with the accounts per band, where standing
+comes from, decentralisation over the recent runs. Split by kind of
+standing only. /stats keeps the tiles and links here. */}}
+{{define "trust-numbers"}}<div class="stats trust-numbers">
 {{template "stat-tiles" .Tiles}}
 <h3>Accounts by standing</h3>
 {{template "line-chart" .Histogram}}
@@ -186,8 +186,8 @@ decentralisation over the recent runs. Split by kind of standing only. */}}
 </figure>
 {{with .Decentral}}<h3 class="stats-h-gap">Decentralisation</h3>
 {{template "line-chart" .}}{{end}}
-<p class="chart-note">{{if .Stale}}The last run did not finish: from the run before. {{end}}<a href="/trust/penalties">Penalty log</a> · <a href="/trust-model">Trust model</a></p>
-</section>{{end}}
+<p class="chart-note">{{if .Stale}}The last run did not finish: from the run before. {{end}}<a href="/api/stats/allowance">The same numbers as JSON</a></p>
+</div>{{end}}
 
 {{/* svc-cards are the Services and Moderation number cards (svcCard): an
 icon, the number, a two or three word label whose tooltip explains it and,

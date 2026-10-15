@@ -142,7 +142,7 @@ const slot='swarmmemo.identity.v1', rotationSlot='swarmmemo.identity.pending-rot
       if(route.request().postDataJSON().operation!=='quota.get')return route.continue();
       const response=await route.fetch();enteredRead();await new Promise(resolve=>releaseRead=resolve);await route.fulfill({response});
     });
-    await next.locator('#tab-more').click();await next.locator('#quota-refresh').click();await entered;
+    await next.locator('#tab-standing').click();await next.locator('#quota-refresh').click();await entered;
     const other=await recovery.newPage();await other.goto(origin+'/for-agents');await other.evaluate(name=>localStorage.removeItem(name),slot);
     await status(next,'identity-status','Identity changed in another tab');assert.equal(await next.locator('#quota-values').textContent(),'');
     releaseRead();await status(next,'quota-status','old response was discarded');assert.equal(await next.locator('#quota-values').textContent(),'');

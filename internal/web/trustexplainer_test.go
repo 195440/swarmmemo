@@ -57,25 +57,29 @@ func getTrustPage(t *testing.T, s board.Service, path string) *httptest.Response
 	return w
 }
 
-func TestTrustExplainerOffIsNotFound(t *testing.T) {
-	// Today's 404 for any unknown address: the same page as /trusted, but for its path.
+// C349: /trust is the Trust hub, served with every flag off (it absorbed
+// /limits): the allowance's floor-only rule and how to get more, without the
+// trust sections. Its old network page moved to /agents/network.
+func TestTrustHubServedWithEveryFlagOff(t *testing.T) {
 	off := getTrustPage(t, &testService{}, "/trust")
-	other := getTrustPage(t, &testService{}, "/trusted")
-	if off.Code != 404 || off.Body.String() != strings.ReplaceAll(other.Body.String(), "/trusted", "/trust") {
-		t.Fatalf("/trust with every flag off is not the ordinary 404: %d", off.Code)
+	body := off.Body.String()
+	if off.Code != 200 {
+		t.Fatalf("/trust with every flag off: %d", off.Code)
 	}
-	for _, unwanted := range []string{"tx-theme", "trust.css", "trust.js", "light dark"} {
-		if strings.Contains(off.Body.String(), unwanted) {
-			t.Errorf("flags-off 404 carries %q", unwanted)
+	for _, want := range []string{`id="allowance"`, "allowance ledger is off on this server", `id="retries"`, `id="read-incrementally"`, `id="check"`, `id="model"`, `href="/trust-model"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("flags-off /trust lacks %q", want)
 		}
 	}
-	if TrustExplainerOn(board.Features{}) || !TrustExplainerOn(board.Features{Ledger: board.LedgerShadow}) || !TrustExplainerOn(board.Features{Trust: board.TrustOn}) {
-		t.Fatal("TrustExplainerOn does not follow the ledger and trust flags")
+	for _, unwanted := range []string{`id="network"`, `id="raise"`, `id="numbers"`, `id="penalties"`, "trust-network.js", `data-fig="pour"`} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("flags-off /trust carries %q", unwanted)
+		}
 	}
-	// The network needs trust: with the ledger alone it is a 404 too.
-	for _, s := range []board.Service{&testService{}, &explainerService{features: board.Features{Ledger: board.LedgerOn}}} {
-		if w := getTrustPage(t, s, "/trust/network"); w.Code != 404 {
-			t.Errorf("/trust/network without trust: %d", w.Code)
+	for _, s := range []board.Service{&testService{}, &explainerService{features: board.Features{Trust: board.TrustOn}}} {
+		w := getTrustPage(t, s, "/trust/network?focus=x")
+		if w.Code != 301 || w.Header().Get("Location") != "/agents/network?focus=x" {
+			t.Errorf("/trust/network: %d %q", w.Code, w.Header().Get("Location"))
 		}
 	}
 }
@@ -106,7 +110,10 @@ func TestTrustExplainerRenders(t *testing.T) {
 		"A rated accept at 80 is a 120¢ edge. You keep your own costs first, up to 750¢, and pass on what you hold above that or 25% of what you keep, whichever is more; of your 1,000¢, 120¢ can pass along it. Your vote weighs 1.00.",
 		// The network's text list, in the API's order, links each agent.
 		`href="/agent/aa11">atlas</a>`, `data-key="nodes.0.standing_cents" data-value="512"`, "proven · domain, github", "Run 2: 3 agents, the 2 with the most standing",
-		`href="/trust/network"`, `href="/api/trust/graph"`, `<script type="module" src="/assets/trust-network.js?v=`,
+		`href="/agents/network"`, `href="/api/trust/graph"`,
+		// The hub's sections, and what it absorbed: /stats' trust numbers, the
+		// ways to raise standing, the latest penalties, /limits' advice.
+		`id="raise"`, `id="numbers"`, `id="penalties"`, `id="model"`, `id="retries"`, `href="/trust/penalties"`, `data-kind="money"`, `class="trust-subnav"`, `<script type="module" src="/assets/trust-network.js?v=`,
 		`href="/api/trust/runs/2"`, `/api/trust/runs/2/snapshot`, `href="/trust-model"`, ShareRuleSentence} {
 		if !strings.Contains(body, want) {
 			t.Errorf("/trust lacks %q", want)
@@ -121,8 +128,8 @@ func TestTrustExplainerRenders(t *testing.T) {
 	}
 	// Short: the whole article reads in about three screens.
 	text := regexp.MustCompile(`<[^>]+>`).ReplaceAllString(article(t, body), " ")
-	if words := len(strings.Fields(text)); words > 900 {
-		t.Errorf("/trust is %d words; it should stay under 900", words)
+	if words := len(strings.Fields(text)); words > 2200 {
+		t.Errorf("/trust is %d words; the hub should stay under 2200", words)
 	}
 	// The nine-chapter storyboard is gone.
 	for _, gone := range []string{`data-fig="million"`, `data-fig="rings"`, `data-fig="levers"`, `class="tx-step"`, "tx-toc", `id="tx-agent"`} {
@@ -133,28 +140,42 @@ func TestTrustExplainerRenders(t *testing.T) {
 	// With the ledger alone the page renders without the trust blocks.
 	ledgerOnly := getTrustPage(t, &explainerService{features: board.Features{Ledger: board.LedgerOn}}, "/trust").Body.String()
 	if strings.Contains(ledgerOnly, `data-fig="network"`) || strings.Contains(ledgerOnly, `id="run-live"`) || strings.Contains(ledgerOnly, "trust-network.js") ||
-		!strings.Contains(ledgerOnly, "Standing is not published on this server yet.") {
+		strings.Contains(ledgerOnly, `id="network"`) || !strings.Contains(ledgerOnly, `data-fig="pour"`) {
 		t.Error("ledger-only /trust offers trust blocks")
 	}
 }
 
+// /agents/network (C349, once /trust/network): the Network view of the
+// agent directory, the trust network full size; ?focus=ID centres it on one
+// agent, and says so when that agent is not drawn.
 func TestTrustNetworkPage(t *testing.T) {
 	s := &explainerService{features: board.Features{Trust: board.TrustOn}}
-	w := getTrustPage(t, s, "/trust/network")
+	w := getTrustPage(t, s, "/agents/network")
 	body := w.Body.String()
 	if w.Code != 200 {
-		t.Fatalf("/trust/network: %d", w.Code)
+		t.Fatalf("/agents/network: %d", w.Code)
 	}
-	for _, want := range []string{"<h1>The trust network</h1>", `class="tn tn-full"`, `data-fig="network"`, `href="/agent/aa11">atlas</a>`,
-		`<script type="module" src="/assets/trust-network.js?v=`, `class="tx-theme"`, `href="/trust#standing"`, "up to 250"} {
+	for _, want := range []string{"<h1>Agent network</h1>", `class="tn tn-full"`, `data-fig="network"`, `href="/agent/aa11">atlas</a>`,
+		`<script type="module" src="/assets/trust-network.js?v=`, `class="tx-theme"`, `href="/trust#standing"`, "up to 250",
+		`<a href="/agents/network" aria-current="page">`, `<a href="/agents">`, `aria-current="location">Agents</a>`, `href="/swarmchasing?layer=trust#figure-1"`} {
 		if !strings.Contains(body, want) {
-			t.Errorf("/trust/network lacks %q", want)
+			t.Errorf("/agents/network lacks %q", want)
 		}
 	}
-	for _, unwanted := range []string{`data-fig="edge"`, `data-fig="pour"`, "/assets/trust.js"} {
+	for _, unwanted := range []string{`data-fig="edge"`, `data-fig="pour"`, "/assets/trust.js", "data-focus"} {
 		if strings.Contains(body, unwanted) {
-			t.Errorf("/trust/network carries %q", unwanted)
+			t.Errorf("/agents/network carries %q", unwanted)
 		}
+	}
+	missing := strings.Repeat("d", 64)
+	for focus, note := range map[string]bool{strings.Repeat("a", 64): true, missing: true} {
+		body := getTrustPage(t, s, "/agents/network?focus="+focus).Body.String()
+		if !strings.Contains(body, `data-focus="`+focus+`"`) || strings.Contains(body, `id="network-focus"`) != note {
+			t.Errorf("focus %s: data-focus or note wrong", focus[:4])
+		}
+	}
+	if body := getTrustPage(t, s, "/agents/network?focus=nothex").Body.String(); strings.Contains(body, "data-focus") {
+		t.Error("an invalid focus reached the page")
 	}
 	if regexp.MustCompile(`\sstyle=`).MatchString(body) {
 		t.Error("inline style attribute")

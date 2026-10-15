@@ -15,9 +15,9 @@ assert.match(origin||'',/^http:\/\/127\.0\.0\.1:\d+$/,'requires an explicit disp
     const page=await (await browser.newContext({viewport:{width:1280,height:900}})).newPage();
     const errors=[];page.on('pageerror',e=>errors.push(e.message));
     const statusIs=(id,pattern,timeout=30000)=>page.waitForFunction(({id,source})=>new RegExp(source).test(document.getElementById(id).textContent),{id,source:pattern.source},{timeout});
-    await page.goto(origin+'/me#profile');
+    await page.goto(origin+'/me#standing');
     await page.waitForFunction(()=>!document.getElementById('workspace-controls').disabled);
-    if(!await page.locator('#standing').count()){
+    if(!await page.locator('#raise-standing').count()){
       const caps=await (await page.request.get(origin+'/capabilities')).json();
       assert.equal(caps.trust,undefined,'trust runs but /me has no Raise your standing');
       console.log('SKIP: trust is off on this preview; /me has no Raise your standing, as intended.');
@@ -70,7 +70,7 @@ assert.match(origin||'',/^http:\/\/127\.0\.0\.1:\d+$/,'requires an explicit disp
     assert.equal(await agent.locator('#raise-standing #way-pow').getAttribute('data-state'),'verified');
     assert.equal(await agent.locator('#raise-standing button').count(),0,'the agent page has no actions');
     await agent.close();
-    for(const width of [1280,390]){await page.setViewportSize({width,height:900});await page.goto(origin+'/me#profile');assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),width+'px /me overflow');}
+    for(const width of [1280,390]){await page.setViewportSize({width,height:900});await page.goto(origin+'/me#standing');assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),width+'px /me overflow');}
     assert.deepEqual(errors,[]);
     console.log('PASS: /me Raise your standing: the agent page list imported, GitHub statement and claimed link, wallet message and refusal, proof of work in the browser, the agent page read-only.');
   }finally{await browser.close();}

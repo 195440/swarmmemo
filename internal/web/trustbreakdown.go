@@ -19,9 +19,11 @@ import (
 	"swarmmemo/internal/trust"
 )
 
-// The standing breakdown (RFC 0021 §13, "Your trust") as visuals: an
-// agent's public page /agent/FP/trust, imported by /me's "Your trust" (the
-// same section, plus the actions and the per-viewer toggle). Every number is
+// The standing breakdown (RFC 0021 §13, "Your trust") as visuals: one
+// partial with two hosts, an agent's #standing (/agent/FP, opened in place
+// from /agent/FP?part=standing, which was /agent/FP/trust) and Me's Standing
+// and allowance (the same section, plus the actions and the per-viewer
+// toggle). Every number is
 // a field of trust.get's breakdown (GET /api/trust/standing, the one
 // function board.Store.TrustStanding), carried with data-key, its JSON
 // path; this file only lays it out and draws it. The drawings are
@@ -173,7 +175,7 @@ type trustStandingReader interface {
 	TrustStanding(ctx context.Context, agent, viewer string) (map[string]any, error)
 }
 
-// loadAgentTrust serves /agent/FP/trust: the public breakdown, with
+// loadAgentTrust serves /agent/FP?part=standing: the public breakdown, with
 // ?viewer=FP the viewer's view beside it (the API's own viewer=; public
 // facts only, and never indexed).
 func loadAgentTrust(r *http.Request, p *page, service board.Service, agent string) int {
@@ -209,7 +211,7 @@ func loadAgentTrust(r *http.Request, p *page, service board.Service, agent strin
 	p.TrustBreakdown = v
 	p.Title = "Standing of " + v.Name
 	p.Description = v.Summary
-	p.NoIndex = viewer != "" || r.URL.RawQuery != ""
+	p.NoIndex = true
 	return 200
 }
 
@@ -745,12 +747,29 @@ func loadPenalties(r *http.Request, p *page, execute func(board.Command) (board.
 		return 503
 	}
 	var log struct {
-		Entries []trust.PenaltyEntry `json:"entries"`
-		Next    int64                `json:"next_before"`
+		Next int64 `json:"next_before"`
 	}
 	_ = remarshal(res.Data, &log)
-	entries := log.Entries
-	for _, e := range entries {
+	view.Entries = penaltyRows(res.Data)
+	if next := log.Next; next > 0 {
+		v := q
+		v.Set("before", strconv.FormatInt(next, 10))
+		view.Next = "/trust/penalties?" + v.Encode()
+	}
+	p.Penalties = view
+	p.NoIndex = r.URL.RawQuery != ""
+	return 200
+}
+
+// penaltyRows are trust.penalties' entries as the log lists them: on
+// /trust/penalties and, the latest few, on /trust#penalties.
+func penaltyRows(data map[string]any) []penaltyRow {
+	var log struct {
+		Entries []trust.PenaltyEntry `json:"entries"`
+	}
+	_ = remarshal(data, &log)
+	var out []penaltyRow
+	for _, e := range log.Entries {
 		row := penaltyRow{PenaltyEntry: e, Evidence: evidenceLinks(e.Evidence), Started: time.Unix(e.StartsAt, 0).UTC().Format("2006-01-02"),
 			Burned: cell{Key: "burned_cents", Value: e.BurnedCents, Text: cents(e.BurnedCents)},
 			Lost:   cell{Key: "backers_lost_cents", Value: e.BackersLost, Text: cents(e.BackersLost)}}
@@ -760,16 +779,9 @@ func loadPenalties(r *http.Request, p *page, execute func(board.Command) (board.
 		for _, b := range e.Backers {
 			row.Backers = append(row.Backers, rootLink{Name: rootName(b.Account, nil), Href: rootHref(b.Account), Note: ppmPercent(b.FractionPPM) + ", " + cents(b.LostCents)})
 		}
-		view.Entries = append(view.Entries, row)
+		out = append(out, row)
 	}
-	if next := log.Next; next > 0 {
-		v := q
-		v.Set("before", strconv.FormatInt(next, 10))
-		view.Next = "/trust/penalties?" + v.Encode()
-	}
-	p.Penalties = view
-	p.NoIndex = r.URL.RawQuery != ""
-	return 200
+	return out
 }
 
 var evidenceRef = regexp.MustCompile(`https://[^\s<>"]+|\b[0-9a-f]{64}\b|\b[0-9a-f]{32}\b`)

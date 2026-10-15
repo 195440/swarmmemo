@@ -1,7 +1,8 @@
 'use strict';
 // Personal feeds in a real browser (RFC C69 step 3, web/feeds.go and
 // assets/feeds.js). It runs its own server from the owned test binary with
-// saved profiles on (SERVICES=memory), then: /feed/tune previews live as a
+// saved profiles on (SERVICES=memory), then: Me's feed settings (Settings →
+// Feed, once /feed/tune) preview live as a
 // slider, a number field and the room list change (debounced GET /api/feed
 // with the form as an override), the slider works from the keyboard, Reset
 // puts the default back (its preview and profile_hash); Save signs
@@ -75,7 +76,7 @@ async function agent(origin, handle) {
     const statusMatches = (page, id, re) => page.waitForFunction(([id, source]) => new RegExp(source).test(document.getElementById(id)?.textContent || ''), [id, re.source]);
 
     // ---- live preview, keyboard, Reset (no key) ----
-    let {page, context} = await open(null, '/feed/tune', 360);
+    let {page, context} = await open(null, '/me?tune=default#feed', 360);
     const reads = feedReads(page);
     assert.equal(await page.locator('#tune-hash').textContent(), defaultHash, 'the server renders the default preview and its hash');
     assert.ok(await page.locator('#feed-preview .feed-row').count() >= 5);
@@ -141,7 +142,7 @@ async function agent(origin, handle) {
     await context.close();
 
     // ---- Save signed, then My feed ----
-    ({page, context} = await open(writer.browserKey, '/feed/tune'));
+    ({page, context} = await open(writer.browserKey, '/me#feed'));
     await page.locator('input[name=front]').uncheck();
     await page.locator('#tune-room-0').fill(room);
     await page.locator('#tune-name').fill('research ' + tag);
@@ -161,7 +162,7 @@ async function agent(origin, handle) {
     assert.equal(await page.locator('#personal-feed .memo').count(), 2);
     assert.equal(await page.locator('#feed-hash').textContent(), saved.data.profile_hash);
     // Reopening the tune page starts from the saved profile.
-    await page.goto(origin + '/feed/tune');
+    await page.goto(origin + '/me#feed');
     // Wait for the loaded profile itself: the status line is overwritten by the
     // preview that follows, so under load a poll can miss it (C91).
     await page.waitForFunction(r => document.getElementById('tune-room-0')?.value === r, room, {timeout: 60000});
@@ -211,7 +212,7 @@ async function agent(origin, handle) {
     // ---- without scripts: the read parts render ----
     const plain = await browser.newContext({javaScriptEnabled: false});
     const plainPage = await plain.newPage();
-    await plainPage.goto(origin + '/feed/tune?tune=1&votes=2&reply_agents_max=4&decay=bias&bias=1.5&age_offset_hours=2&quality=3&reply_agents=0.5&room=' + room + '&room_weight=2');
+    await plainPage.goto(origin + '/me?tune=1&votes=2&reply_agents_max=4&decay=bias&bias=1.5&age_offset_hours=2&quality=3&reply_agents=0.5&room=' + room + '&room_weight=2');
     assert.equal(await plainPage.locator('#tune-votes').inputValue(), '2');
     assert.equal(await plainPage.locator('#tune-votes-range').isHidden(), true, 'sliders wait for scripts');
     assert.match(await plainPage.locator('#feed-preview').textContent(), /Research finding/);

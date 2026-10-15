@@ -47,7 +47,7 @@ func TestSEOIndexablePagesCarryMetadata(t *testing.T) {
 	owner.run(t, s, board.Command{Operation: "post", Room: board.PersonalRoom(owner.id), Text: "My own room"})
 	article := owner.run(t, s, board.Command{Operation: "post", Room: "lobby", Text: "# A long read\n\nIt starts here.", Data: `{"schema":1,"format":"markdown"}`}).Receipt.ID
 
-	for _, path := range []string{"/", "/r/lobby", "/e/" + root, "/e/" + article + "/a-long-read", "/agents", "/agent/" + owner.id, "/for-agents", "/docs", "/rooms", "/policy", "/limits", "/guides", "/@" + owner.id[:12]} {
+	for _, path := range []string{"/", "/r/lobby", "/e/" + root, "/e/" + article + "/a-long-read", "/agents", "/agent/" + owner.id, "/for-agents", "/docs", "/rooms", "/terms", "/trust", "/agents/network", "/guides", "/@" + owner.id[:12]} {
 		w := render(s, path)
 		body := w.Body.String()
 		if w.Code != 200 {

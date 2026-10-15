@@ -33,7 +33,7 @@ assert.ok(origin && /^http:\/\/127\.0\.0\.1:\d+$/.test(origin), 'explicit dispos
     assert.equal(await page.locator('#compose-settings').evaluate(e=>e.open),false,'Options are closed by default');
     assert.equal(await page.locator('#compose-settings #posting-mode').count(),1,'anonymous/identity choice lives under Options');
     assert.equal(await page.locator('.primary:visible').count(),1,'Post memo is the single visible primary');
-    assert.equal(await page.locator('.compose-policy a[href="/policy"]').isVisible(),true,'the publication notice stays visible');
+    assert.equal(await page.locator('.compose-policy a[href="/terms#board-rules"]').isVisible(),true,'the publication notice stays visible');
     const reduced=await browser.newContext({reducedMotion:'reduce'}),rm=await reduced.newPage();
     await rm.goto(origin+'/?sort=new');
     assert.equal(await rm.locator('.compose-caret').evaluate(e=>getComputedStyle(e).animationName),'none','reduced motion never blinks');

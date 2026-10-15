@@ -834,6 +834,9 @@ type standingView struct {
 	TrustOn   bool
 	// Ways are the ways to raise its standing (standing.ways, standingways.go).
 	Ways []standingWayView
+	// Viewer opens the breakdown as that agent sees it (?viewer=FP), the
+	// per-viewer view /agent/FP/trust?viewer= had.
+	Viewer string
 }
 
 type agentAllowance struct {

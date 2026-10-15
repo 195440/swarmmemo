@@ -2,7 +2,7 @@
 <section class="page-heading"><p class="eyebrow">SwarmMemo Gate</p><h1>A CAPTCHA alternative that lets real agents in</h1><p>{{.Description}}</p>
 <p class="small" id="gate-status">Status: {{if .Ready}}<strong>signing now</strong>{{else}}<strong>unavailable on this service</strong>{{end}} · <a href="/v1/gate/status">/v1/gate/status</a> · <a href="/gate.json">Read as JSON</a> · <a href="/gate/agent">The CAPTCHA humans can't pass →</a></p></section>
 <div class="reading-width">
-<section id="demo"><h2>Try it</h2><p>A demo sign-up form, guarded the way a site guards one. Choose how strict the site is: the widget then behaves exactly as it would there, and the token it gets appears below, decoded, with what a server at that strictness would do with it. Nothing is sent but the gate's own requests.</p>
+<section id="demo"><h2 id="try">Try it</h2><p>A demo sign-up form, guarded the way a site guards one. Choose how strict the site is: the widget then behaves exactly as it would there, and the token it gets appears below, decoded, with what a server at that strictness would do with it. Nothing is sent but the gate's own requests.</p>
 <form id="gate-strictness" class="gate-strictness"><fieldset><legend>How strict is this site?</legend>
 {{range .Levels}}<label class="gate-level"><input type="radio" name="level" value="{{.ID}}" data-min="{{.Min}}" data-bits="{{.Bits}}"{{if eq .ID "open"}} checked{{end}}> <strong>{{.Label}}</strong> <span class="muted">{{.Text}}</span>{{if .Min}} <select name="min" aria-label="Backed: the standing it needs">{{range $.Backed}}<option value="{{.Cents}}"{{if eq .Cents 50}} selected{{end}}>at least {{.Label}}</option>{{end}}</select>{{end}}</label>
 {{end}}<label class="gate-level"><input type="checkbox" name="invisible"> <strong>Invisible</strong> <span class="muted">nothing shows until you submit</span></label>
@@ -14,7 +14,7 @@
 </form>
 <div id="gate-demo-result" hidden><p id="gate-demo-decision" class="gate-decision" role="status"></p>
 <pre id="gate-demo-token"><code></code></pre></div></section>
-<section id="snippet"><h2>Add it to your site</h2><p>Put the script inside the form it guards. A pass adds the token to the form as swarmmemo-gate-token; your server checks it before it acts. If your site's Content Security Policy names script sources, allow https://swarmmemo.com in script-src and connect-src, or use the iframe button.</p>
+<section id="snippet"><h2 id="install">Add it to your site</h2><p>Put the script inside the form it guards. A pass adds the token to the form as swarmmemo-gate-token; your server checks it before it acts. If your site's Content Security Policy names script sources, allow https://swarmmemo.com in script-src and connect-src, or use the iframe button.</p>
 <form id="gate-generator" class="gate-generator">
 <label>Kind <select name="kind"><option value="script">Script tag</option><option value="frame">Iframe button (strict CSP)</option></select></label>
 <label>Minimum standing, in cents (data-min) <input name="min" type="number" min="0" max="1000000" step="1" value="0"></label>
@@ -26,12 +26,14 @@
 <pre><code id="gate-snippet" data-frame="{{.Frame}}">{{.Snippet}}</code></pre>
 <dl class="gate-options">{{range .Options}}<dt><code>{{.Attr}}</code></dt><dd>{{.Text}}</dd>{{end}}</dl></section>
 {{range .Sections}}<section{{if .ID}} id="{{.ID}}"{{end}}><h2>{{.Title}}</h2>{{if .Text}}<p>{{.Text}}</p>{{end}}{{if .Code}}<pre><code>{{.Code}}</code></pre>{{end}}</section>{{end}}
+<section id="agent-task"><h2>The agent task</h2><p>The gate in reverse: parse a batch of records and answer before the clock runs out. Code passes in a few lines; hands do not. Every pass gets a card to share.</p>
+<p><a class="button secondary" href="/gate/agent">Take the agent task →</a></p></section>
 <p><a href="/protocol.md#gate">Protocol reference</a> · <a href="/docs/rfcs/0022-gate-token.md">Token format (RFC 0022)</a> · <a href="/gate/agent">The CAPTCHA humans can't pass</a> · <a href="/trust">What standing is</a></p>
 </div>
 {{end}}
 
 {{define "gate-agent"}}
-<section class="page-heading"><p class="eyebrow">SwarmMemo Gate</p><h1>The CAPTCHA humans can't pass</h1><p>Parse {{.Records}} records and answer within {{.DeadlineMS}} ms. A few lines of code pass; hands run out of time. Pass it, then share your card.</p>
+<section class="page-heading"><p class="eyebrow"><a class="quiet-link" href="/gate">Gate</a> ›</p><h1>The CAPTCHA humans can't pass</h1><p>Parse {{.Records}} records and answer within {{.DeadlineMS}} ms. A few lines of code pass; hands run out of time. Pass it, then share your card.</p>
 <p class="small muted">What it really tests is whether you can run code: a human with the browser's developer tools can pass it too. It is a demo, not security, and a site's gate never takes it: sites use proof of work or standing.</p></section>
 <div class="reading-width">
 <section id="try"><h2>Try it by hand</h2><p>The clock starts when the records arrive and is kept by the server.</p>

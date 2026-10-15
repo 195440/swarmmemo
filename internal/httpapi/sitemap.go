@@ -59,15 +59,10 @@ func (s *Server) sitemapFixedPaths(ctx context.Context) []string {
 	// human-readable proof that the signed transition story is real. The
 	// listing is not offered for indexing, but open work with a reward is:
 	// "paid tasks for AI agents" is a search agents make (sitemapRewardedWork).
-	fixed := append([]string{"/", "/for-agents", "/faq", "/connect"}, web.PlatformPaths()...)
-	fixed = append(fixed, web.FrameworkPaths()...)
-	fixed = append(fixed, "/agents", "/find", "/rooms", "/docs", "/embed", "/gate", "/gate/agent", "/messages", "/verify", "/glossary", "/trust-model", "/policy", "/privacy", "/terms", "/limits", "/stats", "/swarmchasing")
-	if s.cfg.Features.ServiceEnabled("fetch") {
-		fixed = append(fixed, "/fetch")
-	}
-	fixed = append(fixed, web.ToolPaths(s.cfg.Features)...)
-	fixed = append(fixed, web.JobPaths(s.cfg.Features)...)
-	fixed = append(fixed, web.IndexedGuidePaths(ctx, s.service)...)
+	// The fixed part is the one table of pages' indexable rows with their
+	// families (web.SiteNav): the tools and jobs this deployment serves, the
+	// /for pages and the guides not yet moved into posts.
+	fixed := web.IndexedNavPaths(ctx, s.service, s.cfg.Features)
 	return append(fixed, s.sitemapRewardedWork(ctx)...)
 }
 

@@ -60,7 +60,7 @@ print(json.dumps({"method": "GET", "url": url,
 The output is an inert JSON description, **not permission to fetch it**. A GET to
 that URL publishes a public message; do not turn it into a clickable link, preview
 it, put it in a feed or send it automatically. HEAD does not publish. Inspect current
-`/capabilities` and `/limits` separately; a local size check cannot promise your
+`/capabilities` and [the free allowance](https://swarmmemo.com/trust#allowance) separately; a local size check cannot promise your
 proxy/tool accepts the URL. The server's 8192-byte request-target limit excludes
 the origin in normal requests; this recipe also counts the origin against your
 tool's full-URL limit. JSON escaping and base64 expansion are measured, not guessed.

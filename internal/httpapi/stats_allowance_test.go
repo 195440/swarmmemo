@@ -280,32 +280,43 @@ func TestAllowanceStatsPageMatchesAPI(t *testing.T) {
 	api := getJSON(t, s, "GET", "/api/stats/allowance", "")
 	data := api["data"]
 	page := getHTML(t, s, "/stats")
-	// Today's numbers sit in Work and credits (each resource's spent and
-	// budget beside its share bar, the transfers, accounts per band), the
-	// slice, service, history and standing tables in All numbers; each part
-	// holds every cell to the API, in the API's order, and together they
-	// cover the page's cells.
-	start, all := strings.Index(page, `id="stats-allowance"`), strings.Index(page, `id="all-allowance"`)
-	if start < 0 || all < start {
-		t.Fatal("/stats has no allowance section with the ledger on")
+	hub := getHTML(t, s, "/trust")
+	// C349: today's numbers (each resource's spent and budget beside its
+	// share bar, the transfers) are the Trust hub's #allowance, and the
+	// trust charts with the accounts per band its #numbers; /stats keeps the
+	// trust tiles, links both, and keeps the slice, service, history and
+	// standing tables in All numbers. Each part holds every cell to the API,
+	// in the API's order.
+	all := strings.Index(page, `id="all-allowance"`)
+	if all < 0 || !strings.Contains(page[:all], `href="/trust#allowance"`) || !strings.Contains(page[:all], `href="/trust#numbers"`) {
+		t.Fatal("/stats has no allowance tables, or no link to the Trust hub, with the ledger on")
 	}
-	// The Trust section (C322) comes first, with its accounts per band.
 	trustAt := strings.Index(page, `id="stats-trust-section"`)
-	if trustAt < 0 || trustAt > start {
-		t.Fatal("/stats has no Trust section before the allowance")
+	if trustAt < 0 || trustAt > all {
+		t.Fatal("/stats has no Trust and allowance section")
 	}
-	bands, today, tables := pageCells(t, page[trustAt:start]), pageCells(t, page[start:all]), pageCells(t, page[all:])
-	holdToAPI(t, "/stats Trust", bands, data)
-	holdToAPI(t, "/stats", today, data)
+	start, end := strings.Index(hub, `id="stats-allowance"`), strings.Index(hub, `id="more-allowance"`)
+	numbersAt, penaltiesAt := strings.Index(hub, `id="numbers"`), strings.Index(hub, `id="penalties"`)
+	if start < 0 || end < start || numbersAt < end || penaltiesAt < numbersAt {
+		t.Fatal("/trust lacks today's allowance or the numbers")
+	}
+	bands, today, tables := pageCells(t, hub[numbersAt:penaltiesAt]), pageCells(t, hub[start:end]), pageCells(t, page[all:])
+	holdToAPI(t, "/trust#numbers", bands, data)
+	holdToAPI(t, "/trust#allowance", today, data)
 	holdToAPI(t, "/stats All numbers", tables, data)
-	if n := len(pageCells(t, page)); n != len(bands)+len(today)+len(tables) || len(today) != 2*2+2 || len(bands) != 3 {
-		t.Fatalf("/stats shows %d API cells, %d bands, %d of them today's (want 6) and %d in All numbers", n, len(bands), len(today), len(tables))
+	if n := len(pageCells(t, page)); n != len(tables) || len(today) != 2*2+2 || len(bands) != 3 {
+		t.Fatalf("/stats shows %d API cells, %d in All numbers; /trust %d bands, %d of today's (want 6)", n, len(tables), len(bands), len(today))
 	}
-	// The Trust section's visuals: tiles, the distribution, where standing
-	// comes from, decentralisation over the runs.
-	for _, want := range []string{">Top-5 share</span>", ">85%</dd>", "Accounts by standing", ">Priced proofs</span>", "Decentralisation", ">Penalties in force</span>"} {
-		if !strings.Contains(page, want) {
-			t.Errorf("/stats Trust lacks %q", want)
+	// The trust tiles stay on /stats; the charts are the hub's: the
+	// distribution, where standing comes from, decentralisation over the runs.
+	for _, want := range []string{">Top-5 share</span>", ">85%</dd>", ">Penalties in force</span>"} {
+		if !strings.Contains(page[trustAt:all], want) {
+			t.Errorf("/stats Trust tiles lack %q", want)
+		}
+	}
+	for _, want := range []string{">Top-5 share</span>", "Accounts by standing", ">Priced proofs</span>", "Decentralisation", ">Penalties in force</span>"} {
+		if !strings.Contains(hub[numbersAt:penaltiesAt], want) {
+			t.Errorf("/trust#numbers lacks %q", want)
 		}
 	}
 	// The one sentence, the slices in order, and the numbers the API derives.
@@ -356,12 +367,13 @@ func TestAllowanceStatsTrustOnly(t *testing.T) {
 	if strings.Contains(page, `id="stats-allowance"`) || !strings.Contains(page, `id="stats-trust"`) {
 		t.Fatal("trust-only /stats shows the wrong sections")
 	}
-	// Accounts per band in Work and credits, the standing tables in All numbers.
-	all := strings.Index(page, `id="stats-trust"`)
-	if !strings.Contains(page[:all], `id="stats-standing"`) {
-		t.Fatal("trust-only /stats lacks the accounts per band row")
+	// The accounts per band on the Trust hub, the standing tables in All numbers.
+	hub := getHTML(t, s, "/trust")
+	if !strings.Contains(hub, `id="stats-standing"`) || strings.Contains(hub, `id="stats-allowance"`) {
+		t.Fatal("trust-only /trust lacks the accounts per band row, or shows an allowance")
 	}
-	holdToAPI(t, "/stats", pageCells(t, page[:all]), api["data"])
+	all := strings.Index(page, `id="stats-trust"`)
+	holdToAPI(t, "/trust#numbers", pageCells(t, hub[strings.Index(hub, `id="numbers"`):strings.Index(hub, `id="penalties"`)]), api["data"])
 	holdToAPI(t, "/stats All numbers", pageCells(t, page[all:]), api["data"])
 }
 
@@ -370,9 +382,9 @@ func TestAllowanceStatsTrustOnly(t *testing.T) {
 func TestAgentPageMatchesAllowanceAndTrustAPI(t *testing.T) {
 	s, _ := rfc0012Server(allOn)
 	page := getHTML(t, s, "/agent/"+parityAgent)
-	// The trust part starts at the standing line above the trust section.
-	allowanceAt, trustAt := strings.Index(page, `id="allowance"`), strings.Index(page, `id="standing"`)
-	if allowanceAt < 0 || trustAt < allowanceAt {
+	// C349: one #standing section, the allowance first, then the trust part.
+	standingAt, allowanceAt, trustAt := strings.Index(page, `id="standing"`), strings.Index(page, `id="allowance"`), strings.Index(page, `id="trust"`)
+	if standingAt < 0 || allowanceAt < standingAt || trustAt < allowanceAt || !strings.Contains(page, `href="/agents/network?focus=`+parityAgent+`"`) || !strings.Contains(page, `data-standing-src="/agent/`+parityAgent+`?part=standing"`) {
 		t.Fatal("agent page lacks the allowance and trust sections")
 	}
 	allowance := getJSON(t, s, "POST", "/v1/command", `{"operation":"allowance.get","target":"`+parityAgent+`"}`)

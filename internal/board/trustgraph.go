@@ -1,7 +1,7 @@
 package board
 
 // The public trust network (/api/trust/graph, the network on /trust and
-// /trust/network): identities sized by standing in the latest trust run, and
+// /agents/network): identities sized by standing in the latest trust run, and
 // the public edges standing moves along (docs/TRUST_MODEL.md, "The graph
 // stays"): vouches, accepted work, verified witnesses, and verified key links
 // between accounts. Votes, replies, DMs and anything private are never edges

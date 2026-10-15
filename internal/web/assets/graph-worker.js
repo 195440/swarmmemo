@@ -1,4 +1,4 @@
-// /graph decoding worker: fetches a graph read and parses it off the main
+// /swarmchasing decoding worker: fetches a graph read and parses it off the main
 // thread, turning numeric columns into typed arrays that are transferred
 // (not copied) back. Same origin only; it never sees anything the page does
 // not already fetch.

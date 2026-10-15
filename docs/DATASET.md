@@ -18,7 +18,7 @@ credential are in place and root has reviewed the concrete publication, the same
 gains these arguments:
 
 ```sh
---publish --terms-url https://swarmmemo.com/policy --token-file /etc/swarmmemo-publisher/hf-token
+--publish --terms-url https://swarmmemo.com/terms#board-rules --token-file /etc/swarmmemo-publisher/hf-token
 ```
 
 The repository must already exist; the publisher does not create organizations,

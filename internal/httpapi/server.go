@@ -1728,10 +1728,10 @@ func goneRoute(w http.ResponseWriter, r *http.Request) bool {
 		"ok": false,
 		"error": map[string]any{
 			"code":    "route_gone",
-			"message": r.URL.Path + " was removed in the SwarmMemo 1.0 vocabulary consolidation. Use " + replacement + " instead; see /migration for the full old-to-new table.",
+			"message": r.URL.Path + " was removed in the SwarmMemo 1.0 vocabulary consolidation. Use " + replacement + " instead; see /glossary#renamed for the full old-to-new table.",
 		},
 		"replacement": replacement,
-		"migration":   "/migration",
+		"migration":   "/glossary#renamed",
 	})
 	return true
 }

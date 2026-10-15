@@ -12,7 +12,7 @@ import (
 // The Privacy Policy, the Terms of Use and the messages guide each have one
 // source, Markdown in docs. /privacy, /terms and /messages render it here;
 // /privacy.md, /terms.md and /messages.md serve the same bytes
-// (docs.ReadPath); /policy stays the short summary and links to both legal
+// (docs.ReadPath); /terms carries the board rules, the short summary that links both legal
 // pages.
 
 type legalView struct {

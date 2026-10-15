@@ -98,7 +98,8 @@ func TestTrustExplainerMatchesAPI(t *testing.T) {
 	hash, _ := lookup(run, "output_sha256")
 	for _, want := range []string{hash.(string), `href="/api/trust/runs/812"`, web.ShareRuleSentence,
 		"recompute.py verify endorsements.jsonl", "recompute.py run snapshot.jsonl | sha256sum", "/api/trust/standing?agent=AGENT", "/api/trust/runs/812/snapshot",
-		`id="allowance"`, `id="standing"`, `id="network"`, `id="check"`, `data-fig="edge"`, `data-fig="network"`, `href="/trust/network"`,
+		`id="allowance"`, `id="standing"`, `id="network"`, `id="check"`, `data-fig="edge"`, `data-fig="network"`, `href="/agents/network"`,
+		`id="raise"`, `id="numbers"`, `id="penalties"`, `id="model"`, `href="/trust/penalties"`,
 		`href="/agent/` + parityAgent + `">khepri</a>`, `href="/trust-model"`,
 		`<script defer src="/assets/trust.js?v=`, `<script type="module" src="/assets/trust-network.js?v=`,
 		`<link rel="stylesheet" href="/assets/trust.css?v=`, `content="light dark"`, `class="tx-theme"`} {
@@ -135,38 +136,31 @@ func TestTrustExplainerTrustOnly(t *testing.T) {
 	if !strings.Contains(page, "The endorsement export is not switched on") {
 		t.Error("/trust does not say the export is off")
 	}
-	// /trust/network: the same network, alone, held to the same API.
-	net := getHTML(t, s, "/trust/network")
-	holdToAPI(t, "/trust/network", pageCells(t, section(t, net, "network-live")), getJSON(t, s, "GET", "/api/trust/graph", "")["data"])
-	if !strings.Contains(net, "<h1>The trust network</h1>") || strings.Contains(net, `data-fig="edge"`) {
-		t.Error("/trust/network is not the network alone")
+	// /agents/network (once /trust/network): the same network, alone, held
+	// to the same API.
+	net := getHTML(t, s, "/agents/network")
+	holdToAPI(t, "/agents/network", pageCells(t, section(t, net, "network-live")), getJSON(t, s, "GET", "/api/trust/graph", "")["data"])
+	if !strings.Contains(net, "<h1>Agent network</h1>") || strings.Contains(net, `data-fig="edge"`) {
+		t.Error("/agents/network is not the network alone")
 	}
 }
 
-// Flags off: /trust and /trust/network are today's 404, byte for byte, and
-// nothing links to them.
+// Flags off (C349): /trust is the Trust hub all the same, since it absorbed
+// /limits, with the floor-only allowance and no trust sections; its old
+// network address and /limits move for good.
 func TestTrustExplainerOffIsToday(t *testing.T) {
 	s, _ := rfc0012Server(board.Features{})
-	plain := New(&fakeService{}, web.Handler(&fakeService{}), Config{})
-	for _, path := range []string{"/trust", "/trust/network", "/stats", "/for-agents", "/llms.txt", "/llms-full.txt"} {
-		r, p := htmlRequest(s, path), htmlRequest(plain, path)
-		// The plain fake store cannot read activity, so /stats is only checked for links.
-		if path != "/stats" && (r.Code != p.Code || r.Body.String() != p.Body.String()) {
-			t.Errorf("%s differs from a server without RFC0012 flags (%d, %d)", path, r.Code, p.Code)
-		}
-		if strings.Contains(r.Body.String(), `href="/trust"`) || strings.Contains(r.Body.String(), ": /trust.") {
-			t.Errorf("%s links to /trust with every flag off", path)
+	page := htmlRequest(s, "/trust")
+	if page.Code != 200 || !strings.Contains(page.Body.String(), "The allowance ledger is off on this server") || strings.Contains(page.Body.String(), `id="network"`) {
+		t.Fatalf("/trust with every flag off: %d", page.Code)
+	}
+	for from, to := range map[string]string{"/trust/network": "/agents/network", "/limits": "/trust#allowance"} {
+		if w := htmlRequest(s, from); w.Code != 301 || w.Header().Get("Location") != to {
+			t.Errorf("%s: %d %q, want 301 %s", from, w.Code, w.Header().Get("Location"), to)
 		}
 	}
-	for _, path := range []string{"/trust", "/trust/network"} {
-		if code := htmlRequest(s, path).Code; code != 404 {
-			t.Fatalf("%s with every flag off: %d", path, code)
-		}
-	}
-	// The ledger alone serves /trust but not the network.
-	ledger, _ := rfc0012Server(board.Features{Ledger: board.LedgerShadow})
-	if htmlRequest(ledger, "/trust").Code != 200 || htmlRequest(ledger, "/trust/network").Code != 404 {
-		t.Error("/trust/network is served without trust")
+	if w := htmlRequest(s, "/agents/network"); w.Code != 200 || !strings.Contains(w.Body.String(), "Standing is not published on this server yet.") {
+		t.Errorf("/agents/network with trust off: %d", w.Code)
 	}
 }
 

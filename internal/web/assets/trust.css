@@ -1,5 +1,5 @@
 @charset "UTF-8";
-/* /trust and /trust/network: the short guide to the allowance and trust
+/* /trust and /agents/network: the Trust hub on the allowance and trust
    model, and the trust network (RFC0012). Loaded only on those pages. It
    follows docs/DESIGN_SYSTEM.md (hairlines, 2px radius, no shadows or
    gradients, the site's serif and sans stacks, no web fonts) and adds a dark
@@ -50,7 +50,7 @@ html.tx-theme .brand-dot{color:inherit}
 .tx{--measure:36em;--text:18px;font-family:var(--serif);color:var(--ink);padding-bottom:var(--s-7)}
 .tx p{font-size:var(--text);line-height:1.6;max-width:var(--measure)}
 .tx a{color:inherit;text-decoration-thickness:1px;text-underline-offset:.16em}
-.tx code{font-size:.82em}
+.tx code{font-size:max(12px,.82em)}
 .tx-hero{padding:var(--s-7) 0 var(--s-5)}
 .tx-kicker{font:600 12px/1.4 var(--sans)!important;letter-spacing:.12em;text-transform:uppercase;color:var(--trust-ink);margin:0 0 var(--s-3)}
 .tx-kicker a{text-decoration:none}
@@ -62,6 +62,17 @@ html.tx-theme .brand-dot{color:inherit}
 .tx-sec h2{font:400 clamp(26px,3vw,34px)/1.15 var(--serif);letter-spacing:-.015em;margin:0 0 var(--s-4);text-wrap:balance}
 .tx-sec h3{font:600 15px/1.35 var(--sans);margin:var(--s-4) 0 var(--s-2)}
 .tx-sec>p{margin:0 0 var(--s-3)}
+.tx-jump{display:flex;flex-wrap:wrap;gap:var(--s-1) var(--s-4);margin:var(--s-4) 0 0;font:14px/1.6 var(--sans)}
+.tx-jump a{color:var(--muted);text-decoration:none}
+.tx-jump a:hover{color:var(--ink);text-decoration:underline}
+.tx .tx-h3{font:600 15px/1.35 var(--sans);margin:var(--s-5) 0 var(--s-2)}
+.tx-resources{font-family:var(--sans);margin:var(--s-4) 0;max-width:44em}
+.tx-ways{list-style:none;padding:0;margin:var(--s-3) 0;display:grid;grid-template-columns:repeat(auto-fill,minmax(15em,1fr));gap:var(--s-2) var(--s-5);font:14px/1.5 var(--sans);max-width:52em}
+.tx-ways li{border-top:1px solid var(--line);padding-top:var(--s-2)}
+.tx-way-adds{display:block;color:var(--muted);font-size:13px}
+.tx .trust-numbers{font-family:var(--sans);max-width:52em}
+.tx .agents-views{font-family:var(--sans)}
+.tx .penalty-log{font-family:var(--sans)}
 .tx-small,.tx .tx-small{font:14px/1.6 var(--sans)!important;color:var(--muted)}
 .tx pre{max-width:100%;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}
 .tx p code,.tx li code{overflow-wrap:anywhere;word-break:break-word}

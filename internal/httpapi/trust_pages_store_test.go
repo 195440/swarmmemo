@@ -39,7 +39,7 @@ func TestTrustPagesOverAStore(t *testing.T) {
 	if !strings.HasPrefix(summary, "Standing 0¢, signed (own costs 0¢, no backers yet).") || data["history"] == nil || data["names"] == nil {
 		t.Fatalf("breakdown: summary %q, history %v, names %v", summary, data["history"], data["names"])
 	}
-	page := getHTML(t, s, "/agent/"+fp+"/trust")
+	page := getHTML(t, s, "/agent/"+fp+"?part=standing")
 	if !strings.Contains(page, `id="trust-breakdown"`) || !strings.Contains(page, summary[:20]) {
 		t.Fatal("the breakdown page does not render the breakdown")
 	}
@@ -61,7 +61,7 @@ func TestTrustPagesOverAStore(t *testing.T) {
 	if !strings.Contains(getHTML(t, s, "/trust/penalties?agent="+fp), "phishing link in a public room") {
 		t.Error("the agent's own log lacks its entry")
 	}
-	if !strings.Contains(getHTML(t, s, "/agent/"+fp+"/trust"), `href="/trust/penalties?agent=`+fp+`"`) {
+	if !strings.Contains(getHTML(t, s, "/agent/"+fp+"?part=standing"), `href="/trust/penalties?agent=`+fp+`"`) {
 		t.Error("the breakdown does not link the agent's log entries")
 	}
 	// /stats carries the Trust section from the same run.

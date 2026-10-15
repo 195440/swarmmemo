@@ -1,5 +1,5 @@
 // Isolated local-server browser regression for the trust pages (C320b,
-// C322): an agent's standing breakdown /agent/FP/trust, the public penalty
+// C322): an agent's standing breakdown /agent/FP?part=standing, the public penalty
 // log /trust/penalties, /stats with its Trust section, /trust-model with its
 // diagram, and Me's "Your trust" section. Same environment as
 // browser_test.cjs. Against a server with TRUST off the suite checks the
@@ -59,9 +59,9 @@ const pageChecks = async (page, where) => {
     }
     const paths = ['/trust/penalties', '/stats', '/trust-model', '/me'];
     if (agent) {
-      paths.push('/agent/' + agent + '/trust', '/agent/' + agent + '/trust?viewer=' + agent);
+      paths.push('/agent/' + agent + '?part=standing', '/agent/' + agent + '?part=standing&viewer=' + agent);
       const api = (await (await request.get(origin + '/api/trust/standing?agent=' + agent)).json()).data;
-      const html = await (await request.get(origin + '/agent/' + agent + '/trust', {headers: {Accept: 'text/html'}})).text();
+      const html = await (await request.get(origin + '/agent/' + agent + '?part=standing', {headers: {Accept: 'text/html'}})).text();
       assert.ok(html.includes(api.summary.replace(/&/g, '&amp;').slice(0, 30)), 'the page leads with the API summary');
     }
     for (const scheme of ['light', 'dark']) {
@@ -72,7 +72,7 @@ const pageChecks = async (page, where) => {
           const response = await page.goto(origin + path, {waitUntil: 'load'});
           assert.equal(response.status(), 200, path);
           await pageChecks(page, `${path} ${scheme} ${width}px`);
-          if (path.includes('/trust') && path.startsWith('/agent/')) {
+          if (path.includes('part=standing') && path.startsWith('/agent/')) {
             for (const cls of ['band-meter', 'costs-bar', 'acc-scale']) assert.equal(await page.locator('svg.' + cls).count(), 1, cls);
             assert.ok(await page.locator('#tb-summary').innerText(), 'summary line');
             assert.equal(await page.locator('#tb-viewer').count(), path.includes('viewer=') ? 1 : 0, 'viewer view only when asked');
@@ -80,7 +80,7 @@ const pageChecks = async (page, where) => {
           if (path === '/stats') {
             const main = await page.locator('main').innerText();
             for (const word of ['Operator', 'Our agents', 'ommunity']) assert.ok(!main.includes(word), '/stats sets participants apart: ' + word);
-            if (await page.locator('#stats-trust-section').count()) assert.ok(await page.locator('#stats-trust-section .stat-tile').count() >= 4, 'trust tiles');
+            { const tiles = await page.locator('section:has(> #stats-trust-section) .stat-tile').count(); assert.ok(tiles === 0 || tiles >= 4, 'trust tiles'); }
           }
           if (path === '/trust-model') assert.equal(await page.locator('figure.trust-model-figure svg[role="img"]').count(), 1, 'the one diagram');
           if (path === '/me') assert.equal(await page.locator('#your-trust').count(), 1, 'Your trust');

@@ -140,9 +140,9 @@ const privateFrom=raw=>crypto.createPrivateKey({key:Buffer.concat([Buffer.from('
     assert.equal(await row.locator('.identity-links li').count(),8);
     assert.equal(await row.locator('.domain-handle').count(),0,'an unverified domain is not a handle');
     assert.match(await row.locator('.peer-meta').textContent(),/Renewed today/);
-    assert.equal(await page.locator('.sort-tabs a[aria-current]').textContent(),'Hot','the directory opens on its hot page');
+    assert.equal(await page.locator('nav[aria-label="Order agents"] a[aria-current]').textContent(),'Hot','the directory opens on its hot page');
     await page.locator('.sort-tabs a',{hasText:'Recently active'}).click();await page.waitForURL(/sort=active/);
-    assert.equal(await page.locator('.sort-tabs a[aria-current]').textContent(),'Recently active');
+    assert.equal(await page.locator('nav[aria-label="Order agents"] a[aria-current]').textContent(),'Recently active');
     assert.equal(await row.count(),1,'the recently active order still lists the agent');
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
     if(shots){for(const width of [1280,390]){await page.setViewportSize({width,height:900});await row.scrollIntoViewIfNeeded();await page.screenshot({path:shots+'/ui-agents-'+width+'.png'});}await page.setViewportSize({width:1280,height:900});}

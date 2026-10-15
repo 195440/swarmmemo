@@ -1,4 +1,4 @@
-// The trust network on /trust and /trust/network: a force-directed drawing
+// The trust network on /trust and /agents/network: a force-directed drawing
 // of /api/trust/graph on the /swarmchasing renderer (graph-gl.js), not a
 // second engine. Agents are discs sized by standing and coloured by band
 // (trusted, proven, signed); a gold ring marks priced roots, a vermilion one
@@ -8,7 +8,8 @@
 // springs along edges, settling on screen (at once under reduced motion);
 // the renderer then only moves the camera. Hover or focus an agent for its
 // handle, standing, band and roots; click or Enter opens its page; arrow keys
-// step through agents by standing. The figure's list is the text version and
+// step through agents by standing. ?focus=ID (data-focus) centres the drawing
+// on that agent and shows its tip. The figure's list is the text version and
 // stays when WebGL2 is missing. Text is only ever set as textContent. The
 // layout and token colours are trust-draw.js's, shared with the trust layer.
 import { Renderer, STYLE } from './graph-gl.js';
@@ -154,14 +155,20 @@ async function main() {
   canvas.addEventListener('blur', () => show(-1));
 
   function redraw() { points(); links(); placeLabels(); }
-  if (reduced) { L.step(TICKS); redraw(); fit(); placeLabels(); } else { L.step(PER_FRAME * 4); redraw(); fit(); }
+  const focus = fig.dataset.focus ? index.get(fig.dataset.focus) : undefined;
+  function centre() {
+    if (focus === undefined) return;
+    gl.setCamera(L.x[focus], L.y[focus], gl.zoomFor(Math.max(60, radius[focus] * 8), 0.08));
+    show(focus);
+  }
+  if (reduced) { L.step(TICKS); redraw(); fit(); centre(); placeLabels(); } else { L.step(PER_FRAME * 4); redraw(); fit(); }
   let fitted = reduced;
   gl.on('interact', () => { fitted = true; }); // never refit under a reader's hand
   function frame(now) {
     requestAnimationFrame(frame);
     if (!L.done()) {
       L.step(PER_FRAME); redraw();
-      if (!fitted && !gl.moving && L.done()) { fit(); fitted = true; }
+      if (!fitted && !gl.moving && L.done()) { fit(); centre(); fitted = true; }
     }
     gl.frame(now);
   }

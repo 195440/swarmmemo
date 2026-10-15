@@ -105,7 +105,7 @@ func TestPrivateAndMissingRoomsSharePublicResponse(t *testing.T) {
 }
 
 func TestSSRRoutesAndMethods(t *testing.T) {
-	for _, path := range []string{"/", "/rooms", "/agents", "/me", "/for-agents", "/docs", "/policy", "/limits"} {
+	for _, path := range []string{"/", "/rooms", "/agents", "/agents/network", "/me", "/for-agents", "/docs", "/trust", "/terms"} {
 		w := httptest.NewRecorder()
 		Handler(&testService{}).ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 		if w.Code != 200 || !strings.Contains(w.Body.String(), "</html>") {
@@ -130,8 +130,8 @@ func TestSSRRoutesAndMethods(t *testing.T) {
 		if w.Code != 410 || w.Header().Get("Location") != "" {
 			t.Errorf("%s answered %d %q, want 410 with no Location", tc.from, w.Code, w.Header().Get("Location"))
 		}
-		if !strings.Contains(body, `href="`+tc.to+`"`) || !strings.Contains(body, `href="/migration"`) || !strings.Contains(body, "</html>") {
-			t.Errorf("%s must name %s and link /migration on a complete page", tc.from, tc.to)
+		if !strings.Contains(body, `href="`+tc.to+`"`) || !strings.Contains(body, `href="/glossary#renamed"`) || !strings.Contains(body, "</html>") {
+			t.Errorf("%s must name %s and link /glossary#renamed on a complete page", tc.from, tc.to)
 		}
 		if len(s.calls) != 0 {
 			t.Errorf("%s queried the board for a removed address: %+v", tc.from, s.calls)
@@ -143,16 +143,22 @@ func TestSSRRoutesAndMethods(t *testing.T) {
 	if w.Code != 200 {
 		t.Errorf("/for-agents must keep working unchanged: %d", w.Code)
 	}
-	// The published map is a real page listing every rename.
+	// The published map lists every rename, on the glossary (C349: once
+	// /migration, which 301s there).
 	w = httptest.NewRecorder()
 	Handler(&testService{}).ServeHTTP(w, httptest.NewRequest("GET", "/migration", nil))
+	if w.Code != 301 || w.Header().Get("Location") != "/glossary#renamed" {
+		t.Fatalf("/migration: %d %q", w.Code, w.Header().Get("Location"))
+	}
+	w = httptest.NewRecorder()
+	Handler(&testService{}).ServeHTTP(w, httptest.NewRequest("GET", "/glossary", nil))
 	body := w.Body.String()
-	if w.Code != 200 {
-		t.Fatalf("/migration must render: %d", w.Code)
+	if w.Code != 200 || !strings.Contains(body, `id="renamed"`) {
+		t.Fatalf("/glossary must carry the renames: %d", w.Code)
 	}
 	for _, name := range []string{"/api/events", "/api/messages", "peer.publish", "agent.profile.publish", "identities.list", "agents.list", "/workspace", "/me"} {
 		if !strings.Contains(body, name) {
-			t.Errorf("/migration omits %s", name)
+			t.Errorf("/glossary#renamed omits %s", name)
 		}
 	}
 	s := &testService{}
@@ -309,12 +315,12 @@ func TestAgentOnboardingStartsWithFreeConversation(t *testing.T) {
 }
 
 func TestWorkspaceAndSiteWideAgentDiscovery(t *testing.T) {
-	for _, path := range []string{"/", "/rooms", "/agents", "/me", "/for-agents", "/docs", "/policy", "/limits"} {
+	for _, path := range []string{"/", "/rooms", "/agents", "/me", "/for-agents", "/docs", "/trust", "/terms"} {
 		s := &testService{}
 		w := httptest.NewRecorder()
 		Handler(s).ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 		body := w.Body.String()
-		for _, want := range []string{`rel="help" href="/llms.txt"`, `rel="service-desc" href="/openapi.json"`, `rel="describedby" href="/capabilities"`, `href="/for-agents"`, `<a href="/docs" `} {
+		for _, want := range []string{`rel="help" href="/llms.txt"`, `rel="service-desc" href="/openapi.json"`, `rel="describedby" href="/capabilities"`, `href="/for-agents"`, `<a href="/docs"`} {
 			if !strings.Contains(body, want) {
 				t.Errorf("route %s missing discovery %q", path, want)
 			}

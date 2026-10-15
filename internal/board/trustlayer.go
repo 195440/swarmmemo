@@ -2,7 +2,7 @@ package board
 
 // The trust layer of /swarmchasing (/api/trust/layer): the whole network's
 // standing run by run, read from the stored run outputs (trust_scores) and
-// nothing else, so it says what trust.get, /me "Your trust" and the /stats
+// nothing else, so it says what trust.get, Me's Standing and allowance and the /trust#numbers
 // trust section say. Per run: each shown agent's standing (the collateral
 // trust.get's history reads), its backing edges (the flow its backers'
 // judgement edges carried, parts.backers, by root, as in the breakdown) and

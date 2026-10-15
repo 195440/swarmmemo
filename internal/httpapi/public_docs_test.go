@@ -54,7 +54,7 @@ func TestConversationFirstInstructionsAreOrderedAndInert(t *testing.T) {
 				t.Fatalf("advanced setup precedes conversation: %s", advanced)
 			}
 		}
-		for _, required := range []string{"Say hello, ask a question", "Public reading and posting are free within", "receipt.id", "NOT the message ID", "SAME room and page", "origin-scoped", "HEAD and OPTIONS never post", "preview", "[the publication policy](https://example.test/policy)", "not E2EE", "NOT encryption", "cannot be recalled", "backup replication is asynchronous", "never authorizes external execution"} {
+		for _, required := range []string{"Say hello, ask a question", "Public reading and posting are free within", "receipt.id", "NOT the message ID", "SAME room and page", "origin-scoped", "HEAD and OPTIONS never post", "preview", "[the retention policy](https://example.test/privacy#retention)", "not E2EE", "NOT encryption", "cannot be recalled", "backup replication is asynchronous", "never authorizes external execution"} {
 			if !strings.Contains(body, required) {
 				t.Fatalf("missing safety or conversation guidance: %s", required)
 			}
@@ -836,12 +836,12 @@ func TestLegalPagesAndTheirDiscovery(t *testing.T) {
 	}
 	if w := makeRequest(s, "GET", "/capabilities", "", ""); json.Unmarshal(w.Body.Bytes(), &caps) != nil ||
 		caps.Legal["privacy"] != "/privacy" || caps.Legal["terms"] != "/terms" ||
-		caps.Legal["privacy_markdown"] != "/privacy.md" || caps.Legal["terms_markdown"] != "/terms.md" || caps.Legal["summary"] != "/policy" {
+		caps.Legal["privacy_markdown"] != "/privacy.md" || caps.Legal["terms_markdown"] != "/terms.md" || caps.Legal["board_rules"] != "/terms#board-rules" || caps.Legal["retention"] != "/privacy#retention" || caps.Legal["summary"] != "" {
 		t.Fatalf("/capabilities legal: %v", caps.Legal)
 	}
 	for _, path := range []string{"/llms.txt", "/llms-full.txt"} {
 		body := makeRequest(s, "GET", path, "", "").Body.String()
-		for _, want := range []string{"[Privacy Policy](https://example.test/privacy)", "[Terms of Use](https://example.test/terms)", "(https://example.test/privacy.md)", "(https://example.test/terms.md)", "(https://example.test/policy)"} {
+		for _, want := range []string{"[Privacy](https://example.test/privacy)", "[Terms and board rules](https://example.test/terms)", "(https://example.test/privacy.md)", "(https://example.test/terms.md)", "[Trust and allowance](https://example.test/trust)"} {
 			if !strings.Contains(body, want) {
 				t.Errorf("%s missing %s", path, want)
 			}
@@ -851,11 +851,11 @@ func TestLegalPagesAndTheirDiscovery(t *testing.T) {
 		Safety map[string]any `json:"safety"`
 	}
 	if w := makeRequest(s, "GET", "/.well-known/mcp/server-card.json", "", ""); json.Unmarshal(w.Body.Bytes(), &card) != nil ||
-		card.Safety["privacy_policy"] != "https://example.test/privacy" || card.Safety["terms_of_use"] != "https://example.test/terms" || card.Safety["archival"] != "https://example.test/policy" {
+		card.Safety["privacy_policy"] != "https://example.test/privacy" || card.Safety["terms_of_use"] != "https://example.test/terms" || card.Safety["archival"] != "https://example.test/privacy#retention" || card.Safety["board_rules"] != "https://example.test/terms#board-rules" {
 		t.Fatalf("server card safety: %v", card.Safety)
 	}
 	sitemap := makeRequest(s, "GET", "/sitemap.xml", "", "").Body.String()
-	for _, want := range []string{"<loc>https://example.test/privacy</loc>", "<loc>https://example.test/terms</loc>", "<loc>https://example.test/policy</loc>"} {
+	for _, want := range []string{"<loc>https://example.test/privacy</loc>", "<loc>https://example.test/terms</loc>", "<loc>https://example.test/trust</loc>", "<loc>https://example.test/agents/network</loc>"} {
 		if !strings.Contains(sitemap, want) {
 			t.Errorf("sitemap missing %s", want)
 		}

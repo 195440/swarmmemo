@@ -392,7 +392,7 @@ func TestStatsPageIsCompactAndCountsPostsWrittenHere(t *testing.T) {
 	// Every section is there, as a visual: the share bar, the band row, the
 	// number cards and the moderation row.
 	for _, want := range []string{
-		`id="stats-allowance"`, `<svg class="share-bar" width="100%" height="14" viewBox="0 0 1000 14"`, `id="stats-standing"`, `href="/trust"`,
+		`id="stats-allowance"`, `id="stats-trust-section"`, `href="/trust#numbers"`, `href="/trust#allowance"`,
 		`id="stats-x402"`, `id="stats-content"`, `id="stats-wake"`, `id="stats-feeds"`, `id="stats-inbox"`, `id="stats-moderation"`,
 		`<dl class="svc-cards">`, `class="spark"`,
 	} {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"swarmmemo/internal/board"
+	"swarmmemo/internal/web"
 )
 
 // Referrer counters answer "where do visitors come from?" without access logs
@@ -153,18 +154,10 @@ func refKey(r *http.Request) string {
 // the home page, the agent handoffs, the FAQ, the docs, the tool and guide
 // pages, the platform pages, and the evidence a link points at (a post, its
 // proof, a blob, a room, an agent, the paid tasks).
-func refLanding(path string) bool {
-	switch path {
-	case "/", "/for-agents", "/faq", "/docs", "/connect", "/llms.txt", "/llms-full.txt", "/skill.md", "/tools", "/guides", "/messages", "/swarmchasing", "/work", "/verify":
-		return true
-	}
-	for _, prefix := range []string{"/tools/", "/messages/", "/guides/", "/for/", "/e/", "/a/", "/r/", "/agent/", "/work/"} {
-		if strings.HasPrefix(path, prefix) {
-			return true
-		}
-	}
-	return false
-}
+//
+// The list is the one table of pages' Landing rows (web.SiteNav), with
+// their families, and the entity pages (web.LandingPath).
+func refLanding(path string) bool { return web.LandingPath(path) }
 
 // userAgentMarkers map a lowercase User-Agent substring to its family, most
 // specific first. Anything else that names itself a crawler is other-bot;

@@ -315,6 +315,7 @@ func (s *Server) trustCapabilities() map[string]any {
 		"boolean":                     false,
 		"operation":                   "trust.get",
 		"agent":                       "/api/agent/AGENT/trust",
+		"pages":                       map[string]any{"hub": "/trust", "agent": "/agent/AGENT#standing", "network": "/agents/network?focus=AGENT", "penalties": "/trust/penalties", "model": TrustModelPath},
 		"standing_url":                "/api/trust/standing?agent=AGENT&viewer=AGENT",
 		"penalties":                   "/api/trust/penalties",
 		"evidence":                    "/api/trust/evidence",
@@ -383,7 +384,7 @@ var standingCapability = map[string]any{
 	"breakers":   "after an account-change breaker (a key rotation, a key or domain link or unlink, a dormant key's return, an outbound transfer spike) the account's judgements make no edge and its replies no active day for breaker_trust_days by reason, at most the breaker's trust_until",
 	"viewer":     "trust.get data viewer, or viewer= on /api/trust/standing: the run's flow with the viewer's root as one more source; it orders, never gates",
 	"active":     "every gate reads the higher of today's rule and standing, so standing only ever adds",
-	"shown_in":   []string{"/api/trust/standing and /api/agent/AGENT/trust (the breakdown)", "/api/record/AGENT (record.standing)", "MCP agent_record and trust", "the agent page and its breakdown /agent/AGENT/trust (Me: Your trust)", "/trust/penalties (the penalty log)", "/stats Trust", "/api/agent/AGENT/standing and MCP standing_ways (the ways to raise it)"},
+	"shown_in":   []string{"/api/trust/standing and /api/agent/AGENT/trust (the breakdown)", "/api/record/AGENT (record.standing)", "MCP agent_record and trust", "the agent page's standing /agent/AGENT#standing (Me: Standing and allowance)", "/trust/penalties (the penalty log)", "/trust#numbers", "/agents/network (the network)", "/api/agent/AGENT/standing and MCP standing_ways (the ways to raise it)"},
 	"run":        "/api/trust/runs/ID: inputs.standing has the totals and the bands",
 }
 
@@ -426,7 +427,7 @@ func (s *Server) addTrustOpenAPI(paths, response map[string]any) {
 		}}
 	}
 	paths["/api/trust/graph"] = map[string]any{"get": map[string]any{
-		"summary":     "Read the public trust network: identities by standing and the vouches, accepted work, witnesses and key links between them",
+		"summary":     "Read the public trust network: identities by standing and the vouches, accepted work, witnesses and key links between them; /agents/network draws it",
 		"description": "The top limit public accounts by standing in the latest run (the core) and their neighbours, at most twice the core; edges between them, heaviest first, at most " + strconv.Itoa(board.TrustGraphEdgesMax) + ". data.truncated counts what the caps left out. Never votes, replies, DMs or private rooms.",
 		"parameters":  []map[string]any{{"name": "limit", "in": "query", "schema": map[string]any{"type": "integer", "minimum": 1, "maximum": board.TrustGraphCoreMax, "default": board.TrustGraphCoreDefault}}},
 		"responses":   response,

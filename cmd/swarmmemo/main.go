@@ -566,7 +566,7 @@ func storeConfigFromEnvironment() (board.Config, string, error) {
 	}
 	topup := topupFromEnvironment(features)
 	features.Topup = topup != nil
-	web.SetFooterTools(features)
+	web.SetNavFeatures(features)
 	workUSDC, e := workUSDCFromEnvironment()
 	if e != nil {
 		return board.Config{}, "", e

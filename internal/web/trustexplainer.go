@@ -10,25 +10,21 @@ import (
 	"swarmmemo/internal/trust"
 )
 
-// /trust is the short guide to the allowance and trust model
-// (docs/TRUST_MODEL.md is the paper): the problem, the share rule with
-// today's posting slices, what standing is with one small interactive (assets/trust.js),
-// the public trust network (assets/trust-network.js, on the /swarmchasing
-// renderer graph-gl.js), and how to check every number. /trust/network is the
-// network alone. Every live number is a cell (data-key, data-value) read
-// through the function its JSON API serves (invariant 9): the share rule is
-// ReadAllowanceStats (/api/stats/allowance), the network's list is the
-// store's TrustGraph (/api/trust/graph) and the latest run is TrustRun
-// (/api/trust/runs/ID). The page exists only while the ledger or trust is on;
-// otherwise /trust stays today's 404, byte for byte. /trust/network needs
-// trust on.
-
-// TrustExplainerOn reports whether /trust is served: while the allowance
-// ledger or the trust module is on, the flags that gate the surfaces it
-// explains. Links to it follow the same rule.
-func TrustExplainerOn(f board.Features) bool {
-	return f.Ledger != board.LedgerOff || f.Trust != board.TrustOff
-}
+// /trust is the Trust hub (C349), the one place trust and the allowance are
+// explained (docs/TRUST_MODEL.md is the paper): #how, the problem; #allowance,
+// the share rule with today's numbers (it absorbed /limits and /stats'
+// Allowance section); #standing, with one small interactive
+// (assets/trust.js); #raise, the ways to raise it; #network, the public trust
+// network (assets/trust-network.js, on the /swarmchasing renderer
+// graph-gl.js), whose full view is /agents/network; #numbers, the charts
+// that were /stats' Trust section; #penalties, the latest entries of the
+// log; #check, how to check every number; #model, the paper. Every live
+// number is a cell (data-key, data-value) read through the function its JSON
+// API serves (invariant 9): the share rule is ReadAllowanceStats
+// (/api/stats/allowance), the network's list is the store's TrustGraph
+// (/api/trust/graph) and the latest run is TrustRun (/api/trust/runs/ID).
+// The page is always served: with the ledger off it states the floor-only
+// rule, and the trust sections appear while trust is on.
 
 // trustRunSource is the part of the store behind /api/trust/runs and
 // /api/trust/runs/ID.
@@ -49,6 +45,10 @@ const trustRunsScanned = 10
 // trustNetworkListed is how many identities the network's text list shows;
 // the JSON has the rest.
 const trustNetworkListed = 8
+
+// trustPenaltiesListed is how many penalty entries /trust#penalties shows;
+// /trust/penalties has the whole log.
+const trustPenaltiesListed = 10
 
 // TrustRunView is the part of /api/trust/runs/ID the page shows.
 type TrustRunView struct {
@@ -92,19 +92,29 @@ func ReadLatestTrustRun(ctx context.Context, service board.Service) (*TrustRunVi
 	return nil, nil
 }
 
-// trustExplainerView is what /trust and /trust/network render from live state.
+// trustExplainerView is what /trust and /agents/network render from live state.
 type trustExplainerView struct {
 	LedgerOn, TrustOn, ExportOn bool
-	NetworkOnly                 bool // /trust/network: the network alone
-	Unavailable                 bool
-	Share                       *explainerShare
-	Run                         *explainerRun
-	RunUnavailable              bool
-	Network                     *explainerNetwork
-	NetworkUnavailable          bool
-	Edge                        edgeDefaults
-	Generated                   string
-	Sentence                    string
+	// Full is /agents/network: the network alone, full size; Focus the agent
+	// it centres on (?focus=ID).
+	Full        bool
+	Focus       string
+	Unavailable bool
+	// Stats are /stats' allowance and trust numbers (#allowance, #numbers).
+	Stats *allowanceSection
+	// Ways are the ways to raise standing (#raise), as no one holds them.
+	Ways []standingWayView
+	// Penalties are the latest entries of the penalty log (#penalties).
+	Penalties            []penaltyRow
+	PenaltiesUnavailable bool
+	Share                *explainerShare
+	Run                  *explainerRun
+	RunUnavailable       bool
+	Network              *explainerNetwork
+	NetworkUnavailable   bool
+	Edge                 edgeDefaults
+	Generated            string
+	Sentence             string
 }
 
 // explainerShare is today's posting budget by slice of the share rule.
@@ -137,7 +147,11 @@ type explainerNetwork struct {
 	Nodes, Edges int
 	WithStanding int
 	Top          []networkRow
+	ids          map[string]bool
 }
+
+// Has reports whether the agent is drawn in the network.
+func (n *explainerNetwork) Has(id string) bool { return n.ids[id] }
 
 type networkRow struct {
 	ID, Handle, Band string
@@ -204,15 +218,27 @@ func buildTrustExplainer(ctx context.Context, service board.Service, now time.Ti
 	f := ServiceFeatures(service)
 	v := &trustExplainerView{LedgerOn: f.Ledger != board.LedgerOff, TrustOn: f.Trust != board.TrustOff, ExportOn: f.ExportEndorsements,
 		Generated: now.UTC().Format("2006-01-02 15:04 UTC"), Sentence: ShareRuleSentence, Edge: defaultEdge()}
-	if v.LedgerOn {
+	if v.LedgerOn || v.TrustOn {
 		stats, err := ReadAllowanceStats(ctx, service, f, AllowanceStatsDaysDefault, now)
-		if err != nil || stats == nil {
+		switch {
+		case err != nil:
 			v.Unavailable = true
-		} else {
+			v.Stats = &allowanceSection{Unavailable: true}
+		case stats != nil:
 			v.Share = explainerShareFrom(stats.Allowance)
+			v.Stats = allowanceSectionFrom(stats)
+		default:
+			v.Unavailable = v.LedgerOn
 		}
 	}
 	if v.TrustOn {
+		v.Ways = standingWaysFrom(map[string]any{"ways": board.StandingWayCatalog()})
+		res, err := service.Execute(ctx, board.Command{Operation: "trust.penalties", Limit: trustPenaltiesListed}, "web-public-read")
+		if err != nil {
+			v.PenaltiesUnavailable = true
+		} else {
+			v.Penalties = penaltyRows(res.Data)
+		}
 		run, err := ReadLatestTrustRun(ctx, service)
 		switch {
 		case err != nil:
@@ -236,8 +262,9 @@ func buildTrustNetwork(ctx context.Context, service board.Service) (*explainerNe
 	if err != nil || g == nil {
 		return nil, true
 	}
-	n := &explainerNetwork{Run: g.Run, Nodes: len(g.Nodes), Edges: len(g.Edges)}
+	n := &explainerNetwork{Run: g.Run, Nodes: len(g.Nodes), Edges: len(g.Edges), ids: map[string]bool{}}
 	for i, node := range g.Nodes {
+		n.ids[node.ID] = true
 		if !node.Core {
 			continue
 		}

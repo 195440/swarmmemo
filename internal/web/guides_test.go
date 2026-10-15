@@ -44,7 +44,7 @@ func TestGuidesAreCompleteReadOnlySSR(t *testing.T) {
 				t.Fatalf("guide was not a static indexable read: %d, calls %d", w.Code, len(s.calls))
 			}
 			// Examples must not become write links, embedded remote content or forms.
-			if regexp.MustCompile(`(?:href|src|action)="(?:https://swarmmemo.com)?/(?:w/|w64/|c64/|v1/)`).MatchString(body) || strings.Contains(body, "<form") || strings.Contains(body, "<iframe") {
+			if regexp.MustCompile(`(?:href|src|action)="(?:https://swarmmemo.com)?/(?:w/|w64/|c64/|v1/)`).MatchString(body) || strings.Contains(strings.Replace(body, `<form class="nav-find" action="/find" method="get" role="search">`, "", 1), "<form") || strings.Contains(body, "<iframe") {
 				t.Fatal("editorial page contains active write affordance or embed")
 			}
 			for _, method := range []string{"HEAD", "POST", "PUT", "DELETE"} {

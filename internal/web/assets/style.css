@@ -256,6 +256,15 @@ td code{font-size:var(--t-meta);white-space:normal;overflow-wrap:anywhere}
 .topbar nav a:hover{color:var(--ink)}
 .topbar nav a[aria-current]{color:var(--ink);text-decoration:underline;text-underline-offset:7px}
 .workspace-link{display:flex;align-items:center;gap:7px;font-size:var(--t-meta);text-decoration:none;white-space:nowrap}
+/* Find: the one search box, as a field at the right of the top bar
+   (sitenav.go); on a phone, an icon that opens /find. */
+.nav-find{position:relative;display:flex;align-items:center}
+.nav-find input{width:7.5em;height:32px;padding:0 var(--s-2) 0 30px;font:inherit;font-size:16px;color:var(--ink);background:var(--surface);border:1px solid var(--field-border);border-radius:var(--radius)}
+.nav-find input:focus{width:11em}
+.nav-find-button{position:absolute;left:1px;top:1px;bottom:1px;width:28px;display:flex;align-items:center;justify-content:center;padding:0;border:0;background:none;color:var(--muted);cursor:pointer}
+.nav-find-button .icon{width:15px;height:15px}
+.nav-find-link{display:none;align-items:center;justify-content:center;min-width:36px;min-height:36px;color:var(--muted)}
+.nav-find-link[aria-current]{color:var(--ink)}
 .workspace-link[aria-current="page"] #nav-identity{text-decoration:underline;text-underline-offset:7px}
 .shell{max-width:1080px;margin:auto;padding:0 var(--s-5) var(--s-8)}
 .hero{padding:var(--s-7) 0 var(--s-6)}
@@ -299,7 +308,8 @@ td code{font-size:var(--t-meta);white-space:normal;overflow-wrap:anywhere}
 .pagination{display:flex;justify-content:space-between;gap:var(--s-4);padding:var(--s-4) 0;font-size:var(--t-ui);color:var(--muted)}
 .footer{max-width:1080px;margin:auto;border-top:1px solid var(--line);padding:var(--s-6) var(--s-5) var(--s-7);display:flex;gap:var(--s-6);justify-content:space-between;font-size:var(--t-ui);color:var(--muted)}
 /* Three labelled columns, then the brand and the operator's credit. */
-.footer nav{display:grid;grid-template-columns:repeat(4,minmax(0,max-content));gap:var(--s-5) var(--s-7)}
+.footer nav{display:grid;grid-template-columns:repeat(6,minmax(0,max-content));gap:var(--s-5) var(--s-6)}
+@media(max-width:1020px){.footer{flex-wrap:wrap}.footer nav{grid-template-columns:repeat(3,minmax(0,max-content))}}
 .footer-col{display:flex;flex-direction:column;gap:var(--s-1)}
 .footer-heading{font:var(--t-meta)/1.6 var(--mono);letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:var(--s-1)}
 .footer nav a{display:inline-flex;align-items:center;min-height:var(--quiet-h);text-decoration:none;color:var(--ink-2)}
@@ -1151,7 +1161,10 @@ code.link-value{font-size:var(--t-meta)}
   :root{--t-display:29px;--t-title:19px}
   .topbar{flex-wrap:wrap;padding:var(--s-4) var(--s-4) var(--s-3);gap:var(--s-4) var(--s-3)}
   .topbar nav{order:3;width:100%;justify-content:flex-start;gap:var(--s-5)}
-  .workspace-link{margin-left:auto;max-width:150px}
+  .nav-find{margin-left:auto}
+  .nav-find input,.nav-find-button{display:none}
+  .nav-find-link{display:inline-flex}
+  .workspace-link{max-width:150px}
   .workspace-link #nav-identity{overflow:hidden;text-overflow:ellipsis}
   .workspace-link{max-width:170px;min-height:36px}
   .brand{font-size:20px}
@@ -1589,6 +1602,26 @@ caption.chart-note{text-align:left;caption-side:top}
 .sort-tabs a:hover{color:var(--ink);text-decoration:underline}
 .sort-tabs a[aria-current]{color:var(--ink);font-weight:600;text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:6px}
 .sort-tabs .sort-customize{margin-left:auto;font-weight:400}
+/* The Trust strip (Trust · Model · Penalty log · Network) on the Trust hub
+   and the pages under it; the agent directory's List · Network switch. */
+.trust-subnav{display:flex;flex-wrap:wrap;gap:var(--s-1) var(--s-4);margin:0 0 var(--s-4);font:var(--t-meta)/1.6 var(--sans)}
+.trust-subnav a{color:var(--muted);text-decoration:none}
+.trust-subnav a:hover{color:var(--ink);text-decoration:underline}
+.trust-subnav a[aria-current]{color:var(--ink);font-weight:600;text-decoration:underline;text-underline-offset:5px}
+.agents-views .icon{width:16px;height:16px}
+.standing-breakdown{margin:var(--s-3) 0}
+.standing-breakdown>summary{cursor:pointer;font-size:var(--t-ui)}
+/* The Docs hub (sitenav.go): one card per section. */
+.docs-hub{display:grid;grid-template-columns:repeat(auto-fill,minmax(17em,1fr));gap:var(--s-5) var(--s-6);margin:var(--s-5) 0 var(--s-7)}
+.hub-sec h2{font:var(--t-meta)/1.6 var(--mono);letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:0 0 var(--s-2);padding-top:var(--s-2);border-top:1px solid var(--line)}
+.hub-list{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:var(--s-2)}
+.hub-list a{font-weight:600}
+.hub-list .muted{display:block}
+.hub-tools,.hub-sec .assistant-links{margin-top:var(--s-2);color:var(--muted)}
+.docs-http-title{margin:var(--s-6) 0 var(--s-4)}
+.board-rules{margin-bottom:var(--s-6)}
+.feed-tune-panel>summary{cursor:pointer}
+.feed-tune-panel .tune-grid{margin-top:var(--s-4)}
 .sort-customize .icon{width:14px;height:14px}
 .agent-directory~.pagination,.reading-width.sort-tabs{border-bottom:1px solid var(--line);padding-bottom:var(--s-2)}
 /* A post in a listing reads like a Hacker News comment: ▲▼ in a narrow column at the

@@ -68,7 +68,8 @@ assert.match(origin||'',/^http:\/\/127\.0\.0\.1:\d+$/);
     await page.locator('#compose-settings>summary').click();
     assert.equal(await page.locator('#compose-form').count(),1);
     assert.match(await page.locator('#compose-destination').textContent(),/#lobby \/main/);
-    assert.equal(await page.locator('nav[aria-label="Main navigation"] a[href="/work"]').count(),0);
+    // C349: paid tasks are a core loop, so Work is one of the five top items.
+    assert.equal(await page.locator('nav[aria-label="Main navigation"] a[href="/work"]').count(),1);
     // Deliberate reversal of the earlier footer-discoverability decision: work is
     // a specialised layer, not something every page advertises. The routes stay.
     assert.equal(await page.getByRole('link',{name:'Advanced work',exact:true}).count(),0);
@@ -119,7 +120,7 @@ assert.match(origin||'',/^http:\/\/127\.0\.0\.1:\d+$/);
     const beforeFiles=writes.length;await page.locator('#compose-form input[type=file]').setInputFiles([]);assert.equal(await page.locator('#compose-context').isVisible(),false);assert.equal(writes.length,beforeFiles,'selecting files never uploads');
     // Retired addresses are gone, not redirected: the browser stays on the old
     // URL and is told once, in plain words, where the one remaining name is.
-    const retired=await page.goto(origin+'/peers');assert.equal(retired.status(),410,'the retired peer directory must answer 410');assert.equal(new URL(page.url()).pathname,'/peers','a retired address must not redirect');assert.equal(await page.locator('a[href="/agents"]').count()>0,true,'the 410 page must name /agents');assert.equal(await page.locator('a[href="/migration"]').count()>0,true,'the 410 page must link the migration map');
+    const retired=await page.goto(origin+'/peers');assert.equal(retired.status(),410,'the retired peer directory must answer 410');assert.equal(new URL(page.url()).pathname,'/peers','a retired address must not redirect');assert.equal(await page.locator('a[href="/agents"]').count()>0,true,'the 410 page must name /agents');assert.equal(await page.locator('a[href="/glossary#renamed"]').count()>0,true,'the 410 page must link the migration map');
     await page.goto(origin+'/agents');assert.equal(await page.locator('form.peer-search').getAttribute('action'),'/agents');assert.equal(await page.locator('nav[aria-label="Main navigation"] a[href="/peers"]').count(),0);assert.equal(await page.locator('nav[aria-label="Main navigation"] a[href="/identities"]').count(),0);
     for(const mode of ['disabled','blocked']){
       const plain=await browser.newContext({javaScriptEnabled:mode!=='disabled',viewport:{width:320,height:900}}),p=await plain.newPage(),requests=[];

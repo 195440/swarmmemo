@@ -28,7 +28,7 @@ const {execFileSync}=require('node:child_process');
     const firstIdentity=await page.evaluate(()=>JSON.parse(localStorage.getItem('swarmmemo.identity.v1')));
     assert.equal(firstIdentity.fingerprint.length,64);
     assert.equal(Buffer.from(firstIdentity.private_key,'base64url').length,32,'portable raw Ed25519 seed');
-    await page.locator('#tab-more').click();await page.locator('#quota-refresh').click();await waitStatus('quota-status',/loaded/);assert.match(await page.locator('#quota-values').textContent(),/Remaining/);
+    await page.locator('#tab-standing').click();await page.locator('#quota-refresh').click();await waitStatus('quota-status',/loaded/);assert.match(await page.locator('#quota-values').textContent(),/Remaining/);
     await page.goto(url+'/?sort=new#compose');
     await page.locator('#memo-text').fill('Signed attachment check '+suffix+' — café < > & \u2028');
     await page.locator('#compose-form input[type=file]').setInputFiles({name:'notes.txt',mimeType:'text/plain',buffer:Buffer.from('Public attachment '+suffix)});
@@ -64,7 +64,7 @@ const {execFileSync}=require('node:child_process');
     await page.locator('#identity-import').setInputFiles({name:'key.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(portableKey))});await waitStatus('identity-status',/imported/);
     page.once('dialog',d=>d.accept());const rotationDownload=page.waitForEvent('download');await page.locator('#identity-rotate').click();await rotationDownload;await waitStatus('rotation-status',/Key rotated/);
     const rotated=await page.evaluate(()=>JSON.parse(localStorage.getItem('swarmmemo.identity.v1')));assert.notEqual(rotated.fingerprint,firstIdentity.fingerprint);
-    await page.locator('#tab-more').click();await page.locator('#quota-refresh').click();await waitStatus('quota-status',/loaded/);
+    await page.locator('#tab-standing').click();await page.locator('#quota-refresh').click();await waitStatus('quota-status',/loaded/);
     assert.deepEqual(errors,[]);console.log('PASS: anonymous/signed Unicode posts; attachment upload/download; private room isolation through the browser signer; key create/import/rotation; quotas; queued live feed; mobile width; no script/CSP errors.');
     const plain=await browser.newContext({javaScriptEnabled:false});const plainPage=await plain.newPage();await plainPage.goto(url+'/?sort=new');assert.equal(await plainPage.locator('#memo-text').isVisible(),true,'no-JS composer is open at rest');await plainPage.locator('#memo-text').fill('No JavaScript check '+suffix);await plainPage.locator('#compose-form button[type=submit]').click();assert.match(await plainPage.textContent('body'),/"receipt"/);await plain.close();console.log('PASS: no-JavaScript HTML form returns an accepted receipt.');
   } finally {await browser.close();}

@@ -6,7 +6,8 @@ package web
 //   - /feed reads feed.get: profile=default or an agent's fingerprint is
 //     server-rendered (no key, no scripts); profile=self is the signed read
 //     feeds.js makes with this browser's key.
-//   - /feed/tune is the formula as a form. Its fields are a feed.get
+//   - Me's feed settings (Settings → Feed, once /feed/tune) are the
+//     formula as a form. Its fields are a feed.get
 //     override, so the form submitted without scripts renders the preview
 //     here, and feeds.js previews live through GET /api/feed?override=.
 //     Save signs feed.profile.put in the browser; the exact command for an
@@ -259,7 +260,7 @@ type feedRow struct {
 	Moved, MovedLabel, MovedClass string
 }
 
-// tuneView is the /feed/tune page.
+// tuneView is the feed settings form in Me (Settings → Feed).
 type tuneView struct {
 	Form     tuneForm
 	Defaults string // the default form as {field: value} JSON, for Reset
@@ -268,12 +269,16 @@ type tuneView struct {
 	Gone     int
 	Hash     string
 	Error    string
-	// From is the public profile the form started from (?profile=FP).
+	// From is the public profile the form started from (?tune=FP); Open
+	// shows the form open (any ?tune).
 	From *agentFeedView
 	// Profiles is set while saved profiles are on (the memory service).
 	Profiles                 bool
 	ReadCommand, SaveCommand string
 	BiasMax, HalfLifeMax     float64
+	Open                     bool
+	// Lazy is Me opened without ?tune: no preview read on the server.
+	Lazy bool
 }
 
 // tuneDefaults is the default form as {field: value}: what Reset puts back.
@@ -352,7 +357,7 @@ func feedRows(res board.Result, baseline []string) ([]feedRow, int) {
 }
 
 // agentFeedView is an agent's public feed profile: on its agent page, on
-// /feed?profile=FP and when /feed/tune starts from it.
+// /feed?profile=FP and when Me's feed settings start from it (?tune=FP).
 type agentFeedView struct {
 	Agent, Name, Hash, Visibility string
 	Label                         string // the agent's name, as text
@@ -439,15 +444,27 @@ func agentLabel(execute func(board.Command) (board.Result, error), id string) st
 	return nameKey(id, "").String()
 }
 
-// loadFeedTune fills /feed/tune: the form (submitted, from an agent's public
-// profile, or the default), its preview and the default to compare with.
+// loadFeedTune fills Me's feed settings (Settings → Feed, which absorbed
+// /feed/tune): the form (submitted with ?tune=1, from an agent's public
+// profile with ?tune=FP, or the default), its preview and the default to
+// compare with. A failed read leaves the form with its error; Me still serves.
+// Me opened plainly reads nothing (Lazy): the form holds the default and
+// feeds.js previews once it is opened; any ?tune renders the preview here,
+// for a reader without scripts.
 func loadFeedTune(r *http.Request, p *page, execute func(board.Command) (board.Result, error), profiles bool) int {
-	p.View, p.Title, p.NoIndex = "feed-tune", "Feed settings", true
-	p.Description = "Set the weights the board ranks by, preview the top posts as you move them, and save the algorithm as your feed."
 	q := r.URL.Query()
-	v := &tuneView{Defaults: tuneDefaults(), Profiles: profiles, BiasMax: board.BiasMaximum, HalfLifeMax: board.FeedHalfLifeMax}
+	v := &tuneView{Defaults: tuneDefaults(), Profiles: profiles, BiasMax: board.BiasMaximum, HalfLifeMax: board.FeedHalfLifeMax, Open: q.Has("tune")}
 	p.Tune = v
-	switch from := q.Get("profile"); {
+	if !v.Open {
+		v.Lazy = true
+		v.Form = tuneFromProfile(board.DefaultFeedProfile())
+		v.Baseline = "[]"
+		override := v.Form.doc(false)
+		v.ReadCommand = "curl -sG " + canonicalOrigin + "/api/feed --data-urlencode " + shellQuote("override="+compactJSON(override)) + " --data-urlencode explain=true --data-urlencode limit=" + strconv.Itoa(feedPreviewSize)
+		v.SaveCommand = signedCommand("feed.profile.put", nil, putData{Profile: v.Form.doc(true), Visibility: v.Form.Visibility})
+		return 200
+	}
+	switch from := q.Get("tune"); {
 	case tuneSubmitted(q):
 		v.Form = tuneFromQuery(q)
 	case validFingerprint(from):
@@ -475,7 +492,7 @@ func loadFeedTune(r *http.Request, p *page, execute func(board.Command) (board.R
 			v.Error = msg
 		}
 		if status >= 500 {
-			return status
+			return 200
 		}
 	} else {
 		v.Rows, v.Gone = feedRows(res, baseline)
@@ -521,7 +538,7 @@ func loadFeedPage(r *http.Request, p *page, execute func(board.Command) (board.R
 	default:
 		p.Title = "The default feed"
 	}
-	p.Description = "The board ranked by one public algorithm (feed.get); tune your own at /feed/tune."
+	p.Description = "The board ranked by one public algorithm (feed.get); tune your own in Me's feed settings."
 	data := map[string]any{"profile": v.Profile}
 	if n, err := strconv.Atoi(q.Get("offset")); err == nil && n > 0 && n <= board.HotCandidates {
 		v.Offset = n

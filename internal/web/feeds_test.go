@@ -34,10 +34,10 @@ func feedWebStore(t *testing.T, services ...string) (*board.Store, *webKey, *web
 // form submitted without scripts is previewed here as a feed.get override.
 func TestFeedTunePageRendersWithoutScripts(t *testing.T) {
 	s, _, _ := feedWebStore(t, "memory")
-	w := render(s, "/feed/tune")
+	w := render(s, "/me?tune=default")
 	body := w.Body.String()
 	if w.Code != 200 || !strings.Contains(w.Header().Get("X-Robots-Tag"), "noindex") {
-		t.Fatalf("/feed/tune: %d %v", w.Code, w.Header())
+		t.Fatalf("/me feed settings: %d %v", w.Code, w.Header())
 	}
 	for _, name := range []string{"quality", "votes", "trusted_votes", "reply_agents", "reply_agents_max", "back_and_forth", "question", "per_author", "window", "persona_weight", "persona_older", "bias", "age_offset_hours", "half_life_hours", "min_quality"} {
 		for _, want := range []string{
@@ -55,7 +55,7 @@ func TestFeedTunePageRendersWithoutScripts(t *testing.T) {
 	for _, want := range []string{
 		`name="decay" value="bias" checked`, `name="decay" value="half_life">`, `name="front" value="1" checked`,
 		`name="room"`, `name="room_weight"`, `name="signed_only"`, `name="muted_rooms"`, `name="muted_authors"`,
-		`<a class="button secondary" href="/feed/tune" id="tune-reset">Reset to default</a>`,
+		`<a class="button secondary" href="/me?tune=default#feed" id="tune-reset">Reset to default</a>`, `action="/me#feed"`, `id="feed-tune-panel" open`,
 		`id="tune-save" hidden>Save as my feed</button>`, `name="visibility" value="public" checked`,
 		`id="tune-hash" data-copy="` + defaultHash + `"`, `A research finding`, `Lobby hello from the curator`,
 		`feed-moved-same`, `tune_feed`, `/assets/feeds.js`,
@@ -63,7 +63,7 @@ func TestFeedTunePageRendersWithoutScripts(t *testing.T) {
 		`name="per_author" min="0" max="25" step="1" value="2" placeholder="default 2"`, `name="persona_weight" min="0" max="1" step="0.05" value="0.5" placeholder="default 0.5"`,
 	} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("/feed/tune lacks %q", want)
+			t.Fatalf("Me's feed settings lack %q", want)
 		}
 	}
 	save := html.UnescapeString(between(body, `id="tune-save-command" data-copy-label="Copy save command">`, "</code>"))
@@ -74,7 +74,7 @@ func TestFeedTunePageRendersWithoutScripts(t *testing.T) {
 	// Submitted without scripts: the preview is the override's.
 	q := url.Values{"tune": {"1"}, "front": {"1"}, "quality": {"0"}, "votes": {"2"}, "reply_agents": {"0.5"}, "reply_agents_max": {"4"},
 		"decay": {"half_life"}, "half_life_hours": {"12"}, "room": {"research", ""}, "room_weight": {"2", "1"}, "name": {"it's mine"}}
-	body = render(s, "/feed/tune?"+q.Encode()).Body.String()
+	body = render(s, "/me?"+q.Encode()).Body.String()
 	for _, want := range []string{`name="decay" value="half_life" checked`, `id="tune-votes" name="votes" min="0" max="10" step="0.25" value="2"`,
 		`id="tune-room-0" name="room" value="research"`, `id="tune-room-weight-0" name="room_weight" min="0.25" max="3" step="0.25" value="2"`} {
 		if !strings.Contains(body, want) {
@@ -96,13 +96,13 @@ func TestFeedTunePageRendersWithoutScripts(t *testing.T) {
 		t.Fatalf("save command does not quote the name for the shell: %s", save)
 	}
 	// Out of range: the board's own message, naming the field.
-	body = render(s, "/feed/tune?tune=1&front=1&votes=11").Body.String()
+	body = render(s, "/me?tune=1&front=1&votes=11").Body.String()
 	if !strings.Contains(body, "override.weights.votes") || !strings.Contains(body, `id="feed-tune-error"`) {
 		t.Fatal("an invalid weight does not say which field")
 	}
 	// Without saved profiles the page still previews, and offers no Save.
 	plain, _, _ := feedWebStore(t)
-	body = render(plain, "/feed/tune").Body.String()
+	body = render(plain, "/me?tune=default").Body.String()
 	if strings.Contains(body, `id="tune-save"`) || !strings.Contains(body, "does not save feed profiles") || !strings.Contains(body, "A research finding") {
 		t.Fatal("tune page without the memory service")
 	}
@@ -138,7 +138,7 @@ func TestAgentPageFeedLinkAndFork(t *testing.T) {
 	hash := put.Data["profile_hash"].(string)
 	body := render(s, "/agent/"+writer.id).Body.String()
 	for _, want := range []string{`id="feed-profile"`, `id="feed-eyes-link" href="/feed?profile=` + writer.id + `">See the board through curator`,
-		`href="/feed/tune?profile=` + writer.id + `"`, `data-fork-agent="` + writer.id + `" data-fork-hash="` + hash + `"`, "research first", "#research 2×",
+		`href="/me?tune=` + writer.id + `#feed"`, `data-fork-agent="` + writer.id + `" data-fork-hash="` + hash + `"`, "research first", "#research 2×",
 		`class="button feed-fork-button" hidden>Fork into my feed</button>`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("agent page lacks %q", want)
@@ -160,7 +160,7 @@ func TestAgentPageFeedLinkAndFork(t *testing.T) {
 		t.Fatalf("/feed for an agent without a profile: %d", w.Code)
 	}
 	// Tuning from it starts the form at its weights.
-	body = render(s, "/feed/tune?profile="+writer.id).Body.String()
+	body = render(s, "/me?tune="+writer.id).Body.String()
 	if !strings.Contains(body, `id="feed-tune-from"`) || !strings.Contains(body, `id="tune-room-0" name="room" value="research"`) || !strings.Contains(body, `name="votes" min="0" max="10" step="0.25" value="2"`) {
 		t.Fatal("tune page does not start from the agent's profile")
 	}
@@ -170,12 +170,19 @@ func TestAgentPageFeedLinkAndFork(t *testing.T) {
 		t.Fatal("/feed?profile=self")
 	}
 	// Customizing is a setting: the home page links to Me's Feed section,
-	// which links to the editor and, once saved, to the feed itself.
+	// which holds the editor (C349: /feed/tune moved there) and, once
+	// saved, links the feed itself. The old address and its ?profile=
+	// keep working.
 	if !strings.Contains(render(s, "/").Body.String(), `href="/me#feed" id="feed-customize"`) {
 		t.Fatal("home page lacks the Customize link")
 	}
-	if me := render(s, "/me").Body.String(); !strings.Contains(me, `id="feed"`) || !strings.Contains(me, `href="/feed/tune" id="me-feed-tune"`) || !strings.Contains(me, `href="/feed?profile=self" id="me-feed-read" hidden`) || !strings.Contains(me, `/assets/feeds.js`) {
+	if me := render(s, "/me").Body.String(); !strings.Contains(me, `id="feed"`) || !strings.Contains(me, `id="feed-tune-panel">`) || !strings.Contains(me, `id="feed-tune-form" action="/me#feed"`) || !strings.Contains(me, `href="/feed?profile=self" id="me-feed-read" hidden`) || !strings.Contains(me, `/assets/feeds.js`) {
 		t.Fatal("Me lacks the Feed settings section")
+	}
+	for from, to := range map[string]string{"/feed/tune": "/me#feed", "/feed/tune?profile=" + writer.id: "/me?tune=" + writer.id + "#feed", "/feed/tune?tune=1&votes=2": "/me?tune=1&votes=2#feed"} {
+		if w := render(s, from); w.Code != 301 || w.Header().Get("Location") != to {
+			t.Errorf("%s: %d %q, want 301 %q", from, w.Code, w.Header().Get("Location"), to)
+		}
 	}
 }
 

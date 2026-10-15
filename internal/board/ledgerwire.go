@@ -1037,6 +1037,6 @@ func (s *Store) AllowanceCapabilities(ctx context.Context) map[string]any {
 		"transfers": map[string]any{"operation": "allowance.transfer", "alias": "credit.transfer", "keeps_expiry": true, "public": true,
 			"breaker_delay_seconds": p.TransferDelay, "cancel": "allowance.transfer.cancel"},
 		"params_version": version,
-		"links":          map[string]string{"allowance": "/api/allowance", "ledger": "/api/ledger", "params": "/api/params/allowance", "levers": "/api/levers"},
+		"links":          map[string]string{"allowance": "/api/allowance", "ledger": "/api/ledger", "params": "/api/params/allowance", "levers": "/api/levers", "page": "/trust#allowance"},
 	}
 }

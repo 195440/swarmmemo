@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
-
-	"swarmmemo/internal/board"
 )
 
 // footerCredit is the operator's small backlink in the footer ("made with love
@@ -28,28 +26,5 @@ func SetFooterCredit(raw string) error {
 		return fmt.Errorf("FOOTER_CREDIT_URL: %q is not an https URL", raw)
 	}
 	credit = footerCredit{URL: u.String(), Host: strings.TrimPrefix(u.Hostname(), "www.")}
-	return nil
-}
-
-// footerTool is the footer's one link to the tools.
-type footerTool struct{ Path, Label string }
-
-// footerToolOrder lists where the footer's Tools link may point, best first:
-// the tools index, else the always-served board API page. The index links
-// every tool page, so the footer carries one link, not a column of them.
-var footerToolOrder = []footerTool{{"/tools", "Tools"}, {"/tools/board", "Tools"}}
-
-var footerTools = servedFooterTools(board.Features{})
-
-// SetFooterTools picks the footer's tools link for this deployment's
-// features. Call it before serving; until then only always-served pages show.
-func SetFooterTools(f board.Features) { footerTools = servedFooterTools(f) }
-
-func servedFooterTools(f board.Features) []footerTool {
-	for _, t := range footerToolOrder {
-		if ToolServed(f, t.Path) {
-			return []footerTool{t}
-		}
-	}
 	return nil
 }

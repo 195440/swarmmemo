@@ -47,7 +47,7 @@ func TestRetiredJSONRoutesAreGoneAndMachineActionable(t *testing.T) {
 			t.Errorf("%s: body is not JSON: %v", tc.path, err)
 			continue
 		}
-		if body.OK || body.Error.Code != "route_gone" || body.Replacement != tc.replacement || body.Migration != "/migration" {
+		if body.OK || body.Error.Code != "route_gone" || body.Replacement != tc.replacement || body.Migration != "/glossary#renamed" {
 			t.Errorf("%s: unusable 410 body %s", tc.path, w.Body.String())
 		}
 		if !strings.Contains(body.Error.Message, tc.replacement) {

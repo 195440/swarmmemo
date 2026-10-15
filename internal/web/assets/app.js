@@ -214,6 +214,7 @@
       $('me-short-fp').title = identity ? 'Fingerprint ' + identity.fingerprint + ': your permanent ID here. Compare it, not the handle.' : '';
       $('me-sigil').replaceChildren(...(identity ? [avatar(identity)] : []));
       if (identity) $('me-profile-link').href = '/agent/' + path(identity.fingerprint);
+      if (identity && $('me-network-link')) $('me-network-link').href = '/agents/network?focus=' + path(identity.fingerprint);
     }
     drawSwitcher();
     if ($('profile-form')) void loadSelf();
@@ -1250,16 +1251,17 @@
     host.replaceChildren(items);
   }
   // ---- your trust (/me) ---------------------------------------------------
-  // The public breakdown (/agent/FP/trust, server-rendered from trust.get),
-  // imported like the ways; "As seen by me" reads it with ?viewer=FP, the
-  // API's own viewer. Its ways link to the forms below.
+  // The public breakdown (the agent page's, server-rendered from trust.get
+  // at /agent/FP?part=standing), imported like the ways; "As seen by me"
+  // reads it with &viewer=FP, the API's own viewer. Its ways link to the
+  // forms below.
   let trustMine = false, trustEpoch = 0;
   async function loadTrust(fp) {
     const host = $('trust-host'); if (!host || !fp) return;
     const epoch = ++trustEpoch;
     let section = null;
     try {
-      const html = await fetch('/agent/' + path(fp) + '/trust' + (trustMine ? '?viewer=' + path(fp) : ''), {credentials: 'omit', cache: 'no-store'}).then(r => r.ok ? r.text() : '');
+      const html = await fetch('/agent/' + path(fp) + '?part=standing' + (trustMine ? '&viewer=' + path(fp) : ''), {credentials: 'omit', cache: 'no-store'}).then(r => r.ok ? r.text() : '');
       section = html ? new DOMParser().parseFromString(html, 'text/html').querySelector('#trust-breakdown') : null;
     } catch (_) { if (epoch === trustEpoch) status('trust-status', 'Could not read your standing. Reload to try again.', true); return; }
     if (epoch !== trustEpoch || identity?.fingerprint !== fp || !section) return;
@@ -1290,6 +1292,8 @@
         const d = $(target); if (!d) return;
         d.open = true;
         if (target === 'link-add') { const form = $('link-form'); form.elements.kind.value = 'domain'; updateLinkHelp(); }
+        // A form in another Me section (the domain link is Profile's) opens its tab.
+        if (d.closest('.me-panel')?.hidden) location.hash = target;
         d.scrollIntoView({block: 'nearest'}); d.querySelector('input,select')?.focus();
       });
       row.querySelector('.settings-body')?.append(button);
@@ -2342,6 +2346,24 @@
     }
   }
   enableWorkspace();
+
+  // ---- an agent's standing breakdown (/agent/FP#standing) ----------------------
+  // The full breakdown opens in place, read once from /agent/FP?part=standing:
+  // the same partial Me shows. Without scripts its link opens it as a page.
+  for (const d of document.querySelectorAll('details[data-standing-src]')) {
+    const load = async () => {
+      if (d.dataset.loaded) return;
+      d.dataset.loaded = '1';
+      try {
+        const html = await fetch(d.dataset.standingSrc, {credentials: 'omit', cache: 'no-store'}).then(r => r.ok ? r.text() : '');
+        const section = html ? new DOMParser().parseFromString(html, 'text/html').querySelector('#trust-breakdown') : null;
+        if (section) d.querySelector('.standing-breakdown-body')?.replaceChildren(document.importNode(section, true));
+        else delete d.dataset.loaded;
+      } catch (_) { delete d.dataset.loaded; }
+    };
+    d.addEventListener('toggle', () => { if (d.open) void load(); });
+    if (d.open) void load();
+  }
 
   // ---- Me: tabs ---------------------------------------------------------------
   // Server-rendered, the tab bar is a row of jump links over five stacked

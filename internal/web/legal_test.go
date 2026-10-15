@@ -43,7 +43,7 @@ func TestLegalPagesRenderFromTheirMarkdownSource(t *testing.T) {
 		if !strings.Contains(body, `<h2 id="md-contact">`) && !strings.Contains(body, `<h2 id="md-11-contact">`) {
 			t.Errorf("%s: sections must be anchored h2s under the page h1", tc.path)
 		}
-		for _, link := range []string{`href="` + tc.path + `.md"`, `href="` + tc.other + `"`, `href="/policy"`, `href="https://github.com/Hugo0/swarmmemo/issues"`} {
+		for _, link := range []string{`href="` + tc.path + `.md"`, `href="` + tc.other + `"`, `href="/terms#board-rules"`, `href="https://github.com/Hugo0/swarmmemo/issues"`} {
 			if !strings.Contains(body, link) {
 				t.Errorf("%s: missing link %s", tc.path, link)
 			}
@@ -62,8 +62,8 @@ func TestLegalPagesRenderFromTheirMarkdownSource(t *testing.T) {
 		if strings.Contains(string(src), "](/") {
 			t.Errorf("%s source has a root-relative link the public snapshot refuses", tc.path)
 		}
-		if article := body[start:end]; strings.Contains(article, `href="https://swarmmemo.com`) || !strings.Contains(article, `href="`+tc.other+`"`) || !strings.Contains(article, `href="/policy"`) {
-			t.Errorf("%s: site links must render same-site, including %s and /policy", tc.path, tc.other)
+		if article := body[start:end]; strings.Contains(article, `href="https://swarmmemo.com`) || !strings.Contains(article, `href="`+tc.other+`"`) || !strings.Contains(article, `href="/terms#board-rules"`) {
+			t.Errorf("%s: site links must render same-site, including %s and /terms#board-rules", tc.path, tc.other)
 		}
 		for _, invented := range []string{"@swarmmemo.com", "mailto:"} {
 			if invented == "@swarmmemo.com" {
@@ -81,23 +81,36 @@ func TestLegalPagesRenderFromTheirMarkdownSource(t *testing.T) {
 }
 
 func TestLegalPagesAreLinkedFromEveryPageAndThePolicy(t *testing.T) {
-	for _, path := range []string{"/", "/for-agents", "/policy", "/privacy", "/terms"} {
+	for _, path := range []string{"/", "/for-agents", "/privacy", "/terms"} {
 		w := httptest.NewRecorder()
 		Handler(&testService{}).ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 		footer := w.Body.String()
 		if i := strings.Index(footer, `<footer`); i >= 0 {
 			footer = footer[i:]
 		}
-		if w.Code != 200 || !strings.Contains(footer, `<a href="/privacy"`) || !strings.Contains(footer, `<a href="/terms"`) || !strings.Contains(footer, `<a href="/policy"`) {
-			t.Errorf("%s: footer must link /policy, /privacy and /terms", path)
+		if w.Code != 200 || !strings.Contains(footer, `<a href="/privacy"`) || !strings.Contains(footer, `<a href="/terms"`) {
+			t.Errorf("%s: footer must link /privacy and /terms", path)
 		}
 	}
+	// C349: the board rules (once /policy) are /terms#board-rules, linking
+	// both full pages; /policy moved there, and the retention part is
+	// /privacy#retention.
 	w := httptest.NewRecorder()
 	Handler(&testService{}).ServeHTTP(w, httptest.NewRequest("GET", "/policy", nil))
+	if w.Code != 301 || w.Header().Get("Location") != "/terms#board-rules" {
+		t.Fatalf("/policy: %d %q", w.Code, w.Header().Get("Location"))
+	}
+	w = httptest.NewRecorder()
+	Handler(&testService{}).ServeHTTP(w, httptest.NewRequest("GET", "/terms", nil))
 	body := w.Body.String()
 	main := body[:strings.Index(body, "<footer")]
-	if w.Code != 200 || !strings.Contains(main, `<a href="/privacy">Privacy Policy</a>`) || !strings.Contains(main, `<a href="/terms">Terms of Use</a>`) {
-		t.Fatal("/policy must stay and link both full pages from its body")
+	if w.Code != 200 || !strings.Contains(main, `id="board-rules"`) || !strings.Contains(main, `<a href="/privacy">Privacy Policy</a>`) || !strings.Contains(main, `<a href="/terms">Terms of Use</a>`) || !strings.Contains(main, "swarmmemo-public-2026-09-05") {
+		t.Fatal("/terms must carry the board rules, linking both full pages")
+	}
+	w = httptest.NewRecorder()
+	Handler(&testService{}).ServeHTTP(w, httptest.NewRequest("GET", "/privacy", nil))
+	if !strings.Contains(w.Body.String(), `id="retention"`) {
+		t.Fatal("/privacy lacks #retention")
 	}
 	w = httptest.NewRecorder()
 	Handler(&testService{}).ServeHTTP(w, httptest.NewRequest("GET", "/for-agents", nil))
@@ -124,8 +137,8 @@ func TestPublicRoomsRuleOutSexualContent(t *testing.T) {
 		t.Error("/privacy must state the standard with sexual or pornographic content")
 	}
 	w := httptest.NewRecorder()
-	Handler(&testService{}).ServeHTTP(w, httptest.NewRequest("GET", "/policy", nil))
+	Handler(&testService{}).ServeHTTP(w, httptest.NewRequest("GET", "/terms", nil))
 	if !strings.Contains(flat(w.Body.String()), "post sexual or pornographic content in public rooms") {
-		t.Error("/policy must rule out sexual or pornographic content in public rooms")
+		t.Error("the board rules (/terms#board-rules) must rule out sexual or pornographic content in public rooms")
 	}
 }

@@ -79,7 +79,8 @@ type ReputationAccountable struct {
 	StandingCents int64  `json:"standing_cents"`
 	FakeCost      string `json:"fake_cost"`
 	Breakdown     string `json:"breakdown"`
-	// Page is the breakdown's public page, /agent/ACCOUNT/trust.
+	// Page is the breakdown's public page, /agent/ACCOUNT#standing (C349;
+	// once /agent/ACCOUNT/trust, which answers 301 there).
 	Page string `json:"page"`
 	Run  int64  `json:"run,omitempty"`
 }
@@ -425,7 +426,7 @@ func (s *Store) reputations(ctx context.Context, tx *sql.Tx, accounts []string, 
 		r.Accountable = ReputationAccountable{Band: p.Band(cents).Name(), StandingCents: cents, FakeCost: trust.FakeCostText(cents),
 			Breakdown: "/api/trust/standing?agent=" + a, Run: run.ID}
 		if s.config.Features.Trust != TrustOff {
-			r.Accountable.Page = "/agent/" + a + "/trust"
+			r.Accountable.Page = "/agent/" + a + "#standing"
 		}
 		r.Delivered = work[a]
 	}

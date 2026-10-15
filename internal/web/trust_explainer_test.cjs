@@ -1,5 +1,6 @@
 // Isolated local-server browser regression for /trust, the short guide to the
-// allowance and trust model, and /trust/network. Same environment as
+// allowance and trust model (the Trust hub), and /agents/network (once
+// /trust/network). Same environment as
 // browser_test.cjs. /trust is served only while ALLOWANCE_LEDGER or TRUST is
 // on; against a server with both off the suite checks the 404 and stops.
 //
@@ -45,7 +46,7 @@ const read = (page) => page.locator('[data-fig="edge"] [data-out="read"]').textC
     const graphResponse = await request.get(origin + '/api/trust/graph');
     const trustOn = graphResponse.status() === 200;
     const graph = trustOn ? (await graphResponse.json()).data : null;
-    assert.equal((await request.get(origin + '/trust/network', {headers: {Accept: 'text/html'}})).status(), trustOn ? 200 : 404, '/trust/network follows trust');
+    assert.equal((await request.get(origin + '/agents/network', {headers: {Accept: 'text/html'}})).status(), 200, '/agents/network is served');
     if (graph) {
       // Public only and capped, whatever the server holds.
       assert.ok(graph.nodes.length <= graph.limits.nodes && graph.edges.length <= graph.limits.edges, 'the graph keeps its caps');
@@ -75,10 +76,12 @@ const read = (page) => page.locator('[data-fig="edge"] [data-out="read"]').textC
       }
       const background = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
       assert.equal(background === 'rgb(255, 255, 255)', scheme === 'light', `body background ${background} (${tag})`);
-      // Short: about three screens of reading at desktop width.
+      // Short for a hub (C349: it absorbed /limits, /stats' trust charts and
+      // the ways to raise standing): a few screens with trust off, at most
+      // a dozen with every section.
       if (width >= 1280) {
         const screens = await page.evaluate(() => document.getElementById('tx').getBoundingClientRect().height / innerHeight);
-        assert.ok(screens < 5, `/trust is ${screens.toFixed(1)} screens tall`);
+        assert.ok(screens < (trustOn ? 12 : 5), `/trust is ${screens.toFixed(1)} screens tall`);
       }
       const unnamed = await page.evaluate(() => [...document.querySelectorAll('#tx button, #tx input')].filter(n => {
         const label = n.labels && n.labels.length ? n.labels[0].textContent.trim() : '';
@@ -134,7 +137,9 @@ const read = (page) => page.locator('[data-fig="edge"] [data-out="read"]').textC
           assert.match(await net.textContent(), /No trust run with standing has finished yet|network is empty/);
         }
       } else {
-        assert.match(await page.locator('#tx').textContent(), /Standing is not published on this server yet/);
+        // Trust off: the hub keeps the allowance and the model, without the trust sections.
+        assert.equal(await page.locator('#network, #raise, #numbers, #penalties').count(), 0, 'trust sections while trust is off');
+        assert.equal(await page.locator('#model').count(), 1, '#model');
       }
 
       // A click-fuzz on the judgement figure.
@@ -158,14 +163,13 @@ const read = (page) => page.locator('[data-fig="edge"] [data-out="read"]').textC
         assert.ok(presses > 10, 'the fuzz pressed controls');
       }
 
-      // /trust/network: the network alone.
-      if (graph) {
-        await page.goto(origin + '/trust/network');
-        await page.waitForLoadState('networkidle');
-        assert.equal(await page.locator('h1').textContent(), 'The trust network');
-        assert.equal(await page.locator('[data-fig="edge"]').count(), 0);
-        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `/trust/network overflows (${tag})`);
-      }
+      // /agents/network: the network alone, the agent directory's Network view.
+      await page.goto(origin + '/agents/network');
+      await page.waitForLoadState('networkidle');
+      assert.equal(await page.locator('h1').textContent(), 'Agent network');
+      assert.equal(await page.locator('[data-fig="edge"]').count(), 0);
+      assert.equal(await page.locator('.agents-views a[aria-current="page"]').textContent(), 'Network');
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `/agents/network overflows (${tag})`);
 
       for (const [method, url] of requests) {
         assert.equal(url.origin, new URL(origin).origin, 'the page requests only its own origin');

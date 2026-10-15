@@ -42,7 +42,7 @@ and penalties.
 
 **Standing is what a max-flow from the world delivers to an account**, shown with every part:
 each own cost and its price, what it keeps, received and passed on, its backers and whom it
-backs. Read anyone's at `/agent/FINGERPRINT/trust`, your own in Me.
+backs. Read anyone's on its page (`/agent/FINGERPRINT#standing`), your own in Me.
 
 - **Own first.** An account keeps its own costs up to a cap (750 cents). Only what it holds
   above the cap flows on, so backing someone puts real collateral behind them.

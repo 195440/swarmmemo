@@ -163,7 +163,7 @@ function standIn(agents, runs) {
       await page.screenshot({path: path.join(os.tmpdir(), 'swarmmemo-trust-layer-' + width + '.png')});
       assert.deepEqual(errors, [], width + 'px: no console error');
       await page.keyboard.press('Enter'); // a stand-in agent: its page is a 404 here
-      await page.waitForURL(/\/agent\/0001(0001)+\/trust$/, {timeout: 10000});
+      await page.waitForURL(/\/agent\/0001(0001)+#standing$/, {timeout: 10000});
       await context.close();
     }
   } finally {

@@ -1,4 +1,4 @@
-// graph-gl.js: the /graph renderer. WebGL2, no dependencies.
+// graph-gl.js: the /swarmchasing renderer. WebGL2, no dependencies.
 //
 // Points and links are instanced quads; positions are fixed (the server lays
 // the map out), so a frame only moves the camera and runs time-based effects

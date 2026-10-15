@@ -73,11 +73,18 @@ path in GET /api/trust/standing's data. */}}
 {{/* /trust/penalties: the public penalty log, newest first, a page at a
 time; ?agent=FP keeps one agent's entries (as member or backer). */}}
 {{define "penalties"}}{{with .Penalties}}<section class="page-heading reading-width">
+{{template "trust-subnav" "/trust/penalties"}}
 <h1>{{if .Agent}}Penalty log: {{.AgentName}}{{else}}Penalty log{{end}}</h1>
 <p>Every {{template "term" (term "g:penalty" "penalty")}} in the open: what triggered it, its evidence, what {{template "term" (term "g:burn" "burned")}}, its level and duration, and every lift or override with its author and reason. <a href="/trust-model#md-penalties">How penalties work</a></p>
 {{if .Agent}}<p class="small"><a class="text-link" href="/agent/{{path .Agent}}">← {{.AgentName}}</a> · <a href="/trust/penalties">The whole log</a></p>{{end}}
 </section>
-<div class="reading-width penalty-log">{{if .Entries}}<ol class="penalty-list">{{range .Entries}}<li class="penalty-entry" id="{{.ID}}" data-trigger="{{.Trigger}}">
+<div class="reading-width penalty-log">{{if .Entries}}{{template "penalty-list" .Entries}}{{else}}<p class="empty-state">{{if .First}}No penalties{{if .Agent}} name this agent{{end}} yet.{{else}}No older entries.{{end}}</p>{{end}}
+<p class="small">{{with .Next}}<a href="{{.}}">Older entries →</a> · {{end}}<a href="/api/trust/penalties{{if .Agent}}?agent={{.Agent}}{{end}}">Penalty log JSON</a></p>
+</div>{{end}}{{end}}
+
+
+{{/* The penalty entries, newest first: the log above, and the latest few on /trust#penalties. */}}
+{{define "penalty-list"}}<ol class="penalty-list">{{range .}}<li class="penalty-entry" id="{{.ID}}" data-trigger="{{.Trigger}}">
 <div class="penalty-head"><span class="badge">{{triggerLabel .Trigger}}</span>{{if .Active}} <span class="badge status-badge status-busy">in force</span>{{else if .LiftedBy}} <span class="badge">lifted</span>{{else if eq .State "pending"}} <span class="badge">pending the next run</span>{{end}} <span class="small muted">{{.Started}}{{if .DurationDays}} · {{.DurationDays}} days{{end}}{{if .Level}} · level {{.Level}}{{end}}{{if .DetectorVersion}} · detector v{{.DetectorVersion}}{{end}}</span></div>
 {{if .Lifts}}<p>Lifts <a href="#{{.Lifts}}"><code>{{.Lifts}}</code></a>.</p>{{end}}
 {{with .Members}}<p class="small">Members: {{range $i, $m := .}}{{if $i}}, {{end}}{{if $m.Href}}<a href="{{$m.Href}}">{{$m.Name}}</a>{{else}}{{$m.Name}}{{end}}{{end}}</p>{{end}}
@@ -86,6 +93,4 @@ time; ?agent=FP keeps one agent's entries (as member or backer). */}}
 {{if or .BurnedCents .PenaltyEntry.Burned .BackersLost}}<p class="small">Burned <b data-key="{{.Burned.Key}}" data-value="{{.Burned.Value}}">{{.Burned.Text}}</b>{{with .PenaltyEntry.Burned}}, proof roots for good: {{range $i, $r := .}}{{if $i}}, {{end}}<code>{{$r}}</code>{{end}}{{end}}{{if .BackersLost}}; backers lost <b data-key="{{.Lost.Key}}" data-value="{{.Lost.Value}}">{{.Lost.Text}}</b>{{end}}.</p>{{end}}
 {{with .Backers}}<p class="small muted">Backers: {{range $i, $b := .}}{{if $i}}, {{end}}{{if $b.Href}}<a href="{{$b.Href}}">{{$b.Name}}</a>{{else}}{{$b.Name}}{{end}} ({{$b.Note}}){{end}}</p>{{end}}
 <p class="small muted">{{with .Author}}By {{.}} · {{end}}{{if .LiftedBy}}lifted by <a href="#{{.LiftedBy}}"><code>{{.LiftedBy}}</code></a> · {{end}}<code>{{.ID}}</code></p>
-</li>{{end}}</ol>{{else}}<p class="empty-state">{{if .First}}No penalties{{if .Agent}} name this agent{{end}} yet.{{else}}No older entries.{{end}}</p>{{end}}
-<p class="small">{{with .Next}}<a href="{{.}}">Older entries →</a> · {{end}}<a href="/api/trust/penalties{{if .Agent}}?agent={{.Agent}}{{end}}">Penalty log JSON</a></p>
-</div>{{end}}{{end}}
+</li>{{end}}</ol>{{end}}

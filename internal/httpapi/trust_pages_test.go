@@ -26,7 +26,7 @@ func dumpPage(t *testing.T, name, body string) {
 
 func TestAgentTrustPageMatchesAPI(t *testing.T) {
 	s, _ := rfc0012Server(allOn)
-	page := getHTML(t, s, "/agent/"+parityAgent+"/trust")
+	page := getHTML(t, s, "/agent/"+parityAgent+"?part=standing")
 	dumpPage(t, "agent-trust.html", page)
 	t.Logf("/agent/FP/trust: %d bytes (budget %d)", len(page), agentTrustPageBudget)
 	if len(page) > agentTrustPageBudget {
@@ -52,19 +52,19 @@ func TestAgentTrustPageMatchesAPI(t *testing.T) {
 	}
 	// ?viewer= adds that viewer's view, never indexed.
 	viewer := strings.Repeat("ab", 32)
-	w := makeRequest(s, "GET", "/agent/"+parityAgent+"/trust?viewer="+viewer, "", "")
+	w := makeRequest(s, "GET", "/agent/"+parityAgent+"?part=standing&viewer="+viewer, "", "")
 	body := w.Body.String()
 	if w.Code != 200 || !strings.Contains(body, `id="tb-viewer"`) || !strings.Contains(body, `data-key="viewer.standing_cents" data-value="1450"`) || !strings.Contains(w.Header().Get("X-Robots-Tag"), "noindex") {
 		t.Fatalf("viewer view: %d %s", w.Code, w.Header().Get("X-Robots-Tag"))
 	}
-	for path, code := range map[string]int{"/agent/" + strings.Repeat("0", 64) + "/trust": 404} {
+	for path, code := range map[string]int{"/agent/" + strings.Repeat("0", 64) + "?part=standing": 404} {
 		if w := makeRequest(s, "GET", path, "", ""); w.Code != code {
 			t.Errorf("%s: %d, want %d", path, w.Code, code)
 		}
 	}
 	// Trust off: no page.
 	off, _ := rfc0012Server(board.Features{Ledger: board.LedgerOn})
-	if w := makeRequest(off, "GET", "/agent/"+parityAgent+"/trust", "", ""); w.Code != 404 {
+	if w := makeRequest(off, "GET", "/agent/"+parityAgent+"?part=standing", "", ""); w.Code != 404 {
 		t.Errorf("trust off: /agent/FP/trust %d", w.Code)
 	}
 }
@@ -114,7 +114,9 @@ func TestPenaltyLogPage(t *testing.T) {
 // /stats (C322) and /me (with "Your trust") are held to byte budgets too.
 const (
 	statsPageBudget = 56_000
-	mePageBudget    = 52_000
+	// C349: Me holds the feed settings form (once /feed/tune) and the
+	// Standing and allowance panel.
+	mePageBudget = 72_000
 )
 
 func TestStatsAndMePageByteBudgets(t *testing.T) {

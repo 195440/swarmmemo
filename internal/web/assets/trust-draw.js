@@ -1,5 +1,5 @@
 // trust-draw.js: what the trust drawings share on the graph-gl.js renderer,
-// the network on /trust and /trust/network (trust-network.js) and the trust
+// the network on /trust and /agents/network (trust-network.js) and the trust
 // layer of /swarmchasing (trust-layer.js): CSS tokens to RGB and one
 // force-directed layout. One copy each; no second graph engine.
 

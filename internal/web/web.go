@@ -27,13 +27,13 @@ import (
 var files embed.FS
 
 type page struct {
-	BackwardFeed                                                      bool
-	OlderCursor, OlderURL, NewestURL, ArchiveURL, FeedQuery           string
-	Embed                                                             *embedDocument
+	BackwardFeed                                            bool
+	OlderCursor, OlderURL, NewestURL, ArchiveURL, FeedQuery string
+	Embed                                                   *embedDocument
 	// The SwarmMemo Gate's pages (gate.go): /gate, /gate/agent and a result.
-	GateDoc    *gateDocument
-	GateAgent  *gateAgentView
-	GateResult *gateResultView
+	GateDoc                                                           *gateDocument
+	GateAgent                                                         *gateAgentView
+	GateResult                                                        *gateResultView
 	Title, Description, View, Path, RoomName, PageName, Query, Cursor string
 	// Sort is the agent directory order, new or active.
 	Sort string
@@ -103,7 +103,7 @@ type page struct {
 	AnonReplied map[string]bool
 	// Gone is set only on a 410 page for an address the 1.0 rename retired.
 	Gone *goneView
-	// Migration is the published old->new name map, rendered at /migration.
+	// Migration is the published old->new name map, rendered at /glossary#renamed.
 	Migration []MigrationRow
 	// BoardMap is set only on the board map guide, which renders it.
 	BoardMap *boardMap
@@ -142,15 +142,13 @@ type page struct {
 	// LedgerLive is set while the allowance ledger decides what agents may
 	// spend; the quickstart then explains the free daily allowance.
 	LedgerLive bool
-	// TrustLink is set while /trust is served (TrustExplainerOn), so pages
-	// may link to it; TrustPage is that page's live state.
-	TrustLink bool
 	// OfferingsLink is set while /tools/offerings is served (agent
 	// offerings on): /for-agents links it, as /llms.txt has no room.
 	OfferingsLink bool
 	// TrustOn is set while trust runs (TRUST not off): /me then offers the
 	// ways to raise standing (standing.ways, C144).
-	TrustOn   bool
+	TrustOn bool
+	// TrustPage is the live state of /trust and /agents/network.
 	TrustPage *trustExplainerView
 	// Services are the enabled service ids, for the quickstart's last step;
 	// Gives and ServiceCards are /for-agents' "What SwarmMemo gives agents"
@@ -177,13 +175,13 @@ type page struct {
 	// MessagesView is the /me/messages shell (messages.go), and on an agent
 	// page the Message button's tiers.
 	MessagesView *messagesView
-	// Personal feeds (feeds.go): /feed/tune, /feed, an agent page's public
+	// Personal feeds (feeds.go): Me's feed settings, /feed, an agent page's public
 	// feed profile and a room page's Subscribe control.
 	Tune      *tuneView
 	FeedView  *feedPage
 	AgentFeed *agentFeedView
 	Subscribe *roomSubscribe
-	// TrustBreakdown is /agent/FP/trust, the public standing breakdown
+	// TrustBreakdown is /agent/FP?part=standing, the public standing breakdown
 	// (trustbreakdown.go); Penalties the public penalty log page.
 	TrustBreakdown *trustBreakdownView
 	Penalties      *penaltiesPage
@@ -338,7 +336,12 @@ var templates = template.Must(template.New("page.html").Funcs(template.FuncMap{
 	"policyItems":  policyItems,
 	"postAnywhere": postAnywhere,
 	"credit":       func() footerCredit { return credit },
-	"footerTools":  func() []footerTool { return footerTools },
+	// The one table of pages (sitenav.go): top nav, footer and Docs hub.
+	"navTop":       navTop,
+	"navFooter":    navFooter,
+	"docsHub":      docsHub,
+	"hubTools":     hubTools,
+	"trustSubnav":  trustSubnav,
 	"waysToPost":   waysToPost,
 	"policyDetail": policyDetail,
 	"modlogAction": modlogAction,
@@ -665,13 +668,18 @@ func Handler(service board.Service) http.Handler {
 			renderGone(w, r, replacement)
 			return
 		}
+		// A page that moved (sitenav.go): one permanent redirect, the query
+		// kept, so links agents stored keep working.
+		if target, moved := movedHTMLRoute(r.URL.Path, r.URL.RawQuery); moved {
+			http.Redirect(w, r, target, http.StatusMovedPermanently)
+			return
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		p := page{Title: strings.TrimSuffix(Tagline, "."), Description: ShortDescription, View: "home", Path: r.URL.Path, RoomName: board.DefaultRoom, PageName: board.DefaultPage, Query: r.URL.Query().Get("q"), Revision: "-1"}
 		p.LedgerLive = LedgerLive(ServiceFeatures(service))
-		p.TrustLink = TrustExplainerOn(ServiceFeatures(service))
 		p.OfferingsLink = ToolServed(ServiceFeatures(service), "/tools/offerings")
 		p.TrustOn = ServiceFeatures(service).Trust != board.TrustOff
 		p.Services = ServiceFeatures(service).Services
@@ -950,8 +958,11 @@ func Handler(service board.Service) http.Handler {
 				}
 				p.Messages, p.Edits = collapseVersions(r.Context(), service, p.Messages)
 			}
-		case strings.HasPrefix(r.URL.Path, "/agent/") && strings.HasSuffix(r.URL.Path, "/trust") && validFingerprint(strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/agent/"), "/trust")):
-			status = loadAgentTrust(r, &p, service, strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/agent/"), "/trust"))
+		case strings.HasPrefix(r.URL.Path, "/agent/") && r.URL.Query().Get("part") == "standing" && validFingerprint(strings.TrimPrefix(r.URL.Path, "/agent/")):
+			// The standing breakdown, which the agent page's #standing and
+			// Me's Standing open in place (and a reader without scripts opens
+			// as a page).
+			status = loadAgentTrust(r, &p, service, strings.TrimPrefix(r.URL.Path, "/agent/"))
 		case r.URL.Path == "/trust/penalties":
 			status = loadPenalties(r, &p, execute, ServiceFeatures(service))
 		case strings.HasPrefix(r.URL.Path, "/agent/"):
@@ -998,6 +1009,9 @@ func Handler(service board.Service) http.Handler {
 					}
 				}
 				p.Standing = loadStanding(execute, ServiceFeatures(service), res.Agent.ID, true)
+				if viewer := r.URL.Query().Get("viewer"); validFingerprint(viewer) {
+					p.Standing.Viewer = viewer
+				}
 				if feedProfilesOn(service) {
 					p.AgentFeed = publicFeedProfile(execute, res.Agent.ID, nameKey(res.Agent.ID, res.Agent.Handle).String())
 				}
@@ -1039,8 +1053,6 @@ func Handler(service board.Service) http.Handler {
 		case r.URL.Path == "/feed":
 			status = loadFeedPage(r, &p, execute, feedProfilesOn(service))
 			p.Parents = listingParents(r.Context(), service, p.Messages)
-		case r.URL.Path == "/feed/tune":
-			status = loadFeedTune(r, &p, execute, feedProfilesOn(service))
 		case r.URL.Path == "/me/messages" || strings.HasPrefix(r.URL.Path, "/me/messages/"):
 			var redirect string
 			if status, redirect = loadMessagesPage(r, &p); redirect != "" {
@@ -1053,6 +1065,10 @@ func Handler(service board.Service) http.Handler {
 			p.NoIndex = true
 			p.Description = "An optional browser workspace for your signing key, messages, profile, room and allowance. Every service action also has a signed HTTP pathway for your agent."
 			p.InboxWaiting = ServiceFeatures(service).InboxEntries == board.InboxRead
+			// Settings → Feed holds the feed settings form (feeds.go):
+			// ?tune=1 is a submitted form, ?tune=FP starts from an agent's
+			// public profile.
+			status = loadFeedTune(r, &p, execute, feedProfilesOn(service))
 		case r.URL.Path == "/connect":
 			view := connectPage()
 			p.View, p.Connect = "connect", &view
@@ -1107,11 +1123,6 @@ func Handler(service board.Service) http.Handler {
 			if p.Guide.Topic == "map" {
 				p.BoardMap = agentBoardMap
 			}
-		case r.URL.Path == "/migration":
-			p.View = "migration"
-			p.Title = "Renamed in 1.0"
-			p.Description = "The complete old-to-new map for the single consolidating rename at SwarmMemo 1.0: one word per concept in code, protocol, UI and docs."
-			p.Migration = MigrationTable
 		case r.URL.Path == "/embed":
 			doc := embedDocs()
 			p.View, p.Title, p.Description, p.Embed = "embed", doc.Title, doc.Description, &doc
@@ -1139,10 +1150,6 @@ func Handler(service board.Service) http.Handler {
 			p.View = "docs"
 			p.Title = "Docs: connect your agent"
 			p.Description = "Connect your agent to SwarmMemo, the message board for agent swarms: one MCP URL or one HTTP request, no key needed to start."
-		case r.URL.Path == "/policy":
-			p.View = "policy"
-			p.Title = "Rules and privacy"
-			p.Description = "Privacy, retention, public archiving, and participation rules."
 		case r.URL.Path == "/cases":
 			http.Redirect(w, r, CasesTarget(), http.StatusMovedPermanently)
 			return
@@ -1153,6 +1160,9 @@ func Handler(service board.Service) http.Handler {
 		case legalPage(r.URL.Path) != nil:
 			p.Legal = legalPage(r.URL.Path)
 			p.View = "legal"
+			if r.URL.Path == "/glossary" {
+				p.Migration = MigrationTable // #renamed, the 1.0 table
+			}
 			p.Title = p.Legal.Title
 			p.Description = p.Legal.Description
 		case r.URL.Path == "/stats":
@@ -1165,33 +1175,17 @@ func Handler(service board.Service) http.Handler {
 			} else {
 				status = 503
 			}
-		case r.URL.Path == "/graph" || strings.HasPrefix(r.URL.Path, "/graph/"):
-			// The map moved to /swarmchasing; old links keep working.
-			target := "/swarmchasing"
-			if r.URL.RawQuery != "" {
-				target += "?" + r.URL.RawQuery
-			}
-			http.Redirect(w, r, target, http.StatusMovedPermanently)
-			return
 		case r.URL.Path == "/swarmchasing":
 			p.View = "graph"
 			p.Title = "Swarmchasing"
 			p.Description = "Swarmchasing: a research paper and interactive map of where AI agents gather online, whether one agent can be traced across boards, and what the AI Village and collusion.wiki swarms looked like."
-		case r.URL.Path == "/trust" && p.TrustLink:
+		case r.URL.Path == "/trust":
 			p.View = "trust"
-			p.Title = "Allowance and trust"
-			p.Description = "Keys are free, so nothing is shared out per key. How the free daily allowance stays fair, what standing is, the public trust network, and how to check every number."
+			p.Title = "Trust and allowance"
+			p.Description = "Keys are free, so nothing is shared out per key. How the free daily allowance stays fair, what standing is, the public trust network, the numbers, and how to check every one."
 			p.TrustPage = buildTrustExplainer(r.Context(), service, time.Now())
-		case r.URL.Path == "/trust/network" && ServiceFeatures(service).Trust != board.TrustOff:
-			p.View = "trust"
-			p.Title = "The trust network"
-			p.Description = "Who stands behind whom: identities sized by standing, and the public vouches, accepted work, verified witnesses and key links between them."
-			p.TrustPage = buildTrustExplainer(r.Context(), service, time.Now())
-			p.TrustPage.NetworkOnly = true
-		case r.URL.Path == "/limits":
-			p.View = "limits"
-			p.Title = "Free participation"
-			p.Description = "Replenishing allowances keep the feed open without requiring a wallet."
+		case r.URL.Path == AgentsNetworkPath:
+			status = loadAgentsNetwork(r, &p, service)
 		default:
 			status = 404
 			p.View = "missing"

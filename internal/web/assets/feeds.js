@@ -1,4 +1,4 @@
-/* SwarmMemo personal feeds (RFC C69 step 3): the browser side of /feed/tune,
+/* SwarmMemo personal feeds (RFC C69 step 3): the browser side of Me's feed settings,
  * /feed?profile=self, Me's Feed settings, a room's Subscribe control
  * and an agent page's Fork.
  *
@@ -162,26 +162,30 @@ for (const box of document.querySelectorAll('.feed-fork')) {
     let result;
     try { result = await S.request(command, true); }
     catch (error) {
-      if (error.code === 'profile_not_found') say('personal-feed-status', 'You have no saved feed yet.', false, link('text-link', 'Tune one →', '/feed/tune'));
+      if (error.code === 'profile_not_found') say('personal-feed-status', 'You have no saved feed yet.', false, link('text-link', 'Tune one →', '/me#feed'));
       else say('personal-feed-status', error.message || 'Your feed could not be read.', true);
       return;
     }
     for (const message of result.messages || []) feed.append(P.eventElement(message));
     const hash = $('feed-hash'); if (hash) { hash.textContent = result.data.profile_hash; hash.dataset.copy = result.data.profile_hash; }
     const skipped = result.data.skipped_rooms?.length ? ' Skipped, no longer public: ' + result.data.skipped_rooms.join(', ') + '.' : '';
-    if (!feed.children.length) say('personal-feed-status', 'Nothing ranks in your feed yet.' + skipped, false, link('text-link', 'Customize →', '/feed/tune'));
+    if (!feed.children.length) say('personal-feed-status', 'Nothing ranks in your feed yet.' + skipped, false, link('text-link', 'Customize →', '/me#feed'));
     else say('personal-feed-status', 'Revision ' + result.data.profile_revision + ', ' + result.data.profile_visibility + '.' + skipped);
     cursor = result.data.next_cursor || ''; more.hidden = !result.data.has_more || !cursor;
   }
-  if (!S.identity) { say('personal-feed-status', 'Your feed is read with your key. Create or import one in Me, then tune a feed.', false, link('text-link', 'Tune a feed →', '/feed/tune')); return; }
+  if (!S.identity) { say('personal-feed-status', 'Your feed is read with your key. Create or import one in Me, then tune a feed.', false, link('text-link', 'Tune a feed →', '/me#feed')); return; }
   more.addEventListener('click', () => act(more, 'personal-feed-status', load));
   say('personal-feed-status', 'Reading your feed…');
   void load();
 })();
 
-// ---- /feed/tune ---------------------------------------------------------------
+// ---- Me → Settings → Feed: the feed settings form ----------------------------
 (function tune() {
   const root = $('feed-tune'); if (!root) return;
+  // /me#feed (where the old /feed/tune address lands) opens the form.
+  const panel = $('feed-tune-panel');
+  const openOnHash = () => { if (panel && location.hash === '#feed') panel.open = true; };
+  openOnHash(); window.addEventListener('hashchange', openOnHash);
   const form = $('feed-tune-form'), list = $('feed-preview'), rooms = $('tune-rooms');
   const defaults = JSON.parse(root.dataset.defaults || '{}'), size = Number(root.dataset.size) || 10;
   let baseline = []; try { baseline = JSON.parse(root.dataset.baseline || '[]'); } catch (_) { /* Every post reads as new. */ }
@@ -316,6 +320,20 @@ for (const box of document.querySelectorAll('.feed-fork')) {
     const fresh = messages.filter((m, i) => moved(m.id, i)[2] === 'new').length, shifted = messages.filter((m, i) => ['up', 'down'].includes(moved(m.id, i)[2])).length;
     say('tune-status', 'Preview updated: ' + shifted + ' moved, ' + fresh + ' new, ' + gone + ' gone.');
   }
+  // Me opened plainly rendered no preview (data-lazy): read the default's
+  // top posts once, to compare with, then preview.
+  let lazy = root.dataset.lazy === '1';
+  async function wake() {
+    if (!lazy) return;
+    lazy = false;
+    try {
+      const response = await fetch('/api/feed?' + new URLSearchParams({profile: 'default', limit: String(size)}), {headers: {Accept: 'application/json'}, credentials: 'omit', cache: 'no-store'});
+      const body = await response.json();
+      if (response.ok) baseline = (body.messages || []).map(m => m.id);
+    } catch (_) { /* Every post then reads as new. */ }
+    void preview();
+  }
+  if (panel) { panel.addEventListener('toggle', () => { if (panel.open) void wake(); }); if (panel.open) void wake(); }
   async function preview() {
     clearTimeout(timer); const mine = ++seq;
     inflight?.abort(); inflight = new AbortController();

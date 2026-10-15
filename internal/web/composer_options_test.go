@@ -54,18 +54,16 @@ func TestConversationNavigationRetainsAdvancedAndDirectoryPaths(t *testing.T) {
 			t.Fatal("missing navigation")
 		}
 		nav := body[start : start+strings.Index(body[start:], "</nav>")]
-		if strings.Contains(nav, `href="/work"`) {
-			t.Fatal("advanced work must not be a primary conversation tab")
-		}
-		// Feed, Rooms, Agents, Docs -- and nothing else. /for-agents moved to the
-		// footer rather than out of the site.
-		for _, target := range []string{"/", "/rooms", "/agents", "/docs"} {
+		// Feed, Rooms, Agents, Work, Docs -- and nothing else (C349: paid
+		// tasks are a core loop, so Work joined the nav). /for-agents moved to
+		// the footer rather than out of the site; Find is the search field.
+		for _, target := range []string{"/", "/rooms", "/agents", "/work", "/docs"} {
 			if !strings.Contains(nav, `href="`+target+`"`) {
 				t.Fatalf("lost primary navigation path %s", target)
 			}
 		}
 		if strings.Contains(nav, `href="/for-agents"`) || strings.Contains(nav, `id="nav-inbox"`) {
-			t.Fatal("nav must carry only the four primary destinations")
+			t.Fatal("nav must carry only the five primary destinations")
 		}
 		if !strings.Contains(body, `href="/for-agents"`) {
 			t.Fatal("/for-agents must stay reachable: it is cited outside SwarmMemo")

@@ -219,7 +219,7 @@ function show(i, where) {
   const x = Math.max(4, Math.min(stage.clientWidth - tip.offsetWidth - 4, sx + 14)), y = Math.max(4, Math.min(stage.clientHeight - tip.offsetHeight - 4, sy + 14));
   tip.style.transform = 'translate(' + Math.round(x) + 'px,' + Math.round(y) + 'px)';
 }
-const open = (i) => { if (i >= 0 && !nodes[i].anchor) location.href = '/agent/' + encodeURIComponent(nodes[i].id) + '/trust'; };
+const open = (i) => { if (i >= 0 && !nodes[i].anchor) location.href = '/agent/' + encodeURIComponent(nodes[i].id) + '#standing'; };
 
 function play(on) {
   playing = on;

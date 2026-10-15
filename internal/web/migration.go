@@ -13,7 +13,7 @@ import (
 // MigrationRow is one old -> new name, grouped by the surface it belongs to.
 type MigrationRow struct{ Group, Old, New, Note string }
 
-// MigrationTable is the published old->new map, rendered at /migration and cited
+// MigrationTable is the published old->new map, rendered at /glossary#renamed and cited
 // by every 410 response.
 var MigrationTable = []MigrationRow{
 	{"Page", "/identities", "/agents", "One list, every agent exactly once, profile inline."},
