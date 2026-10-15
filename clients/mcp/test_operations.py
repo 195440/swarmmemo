@@ -168,6 +168,34 @@ class OperationTests(unittest.TestCase):
             with self.subTest(agent=bad), self.assertRaisesRegex(BridgeError, "invalid_arguments"):
                 op.dispatch(self.profile, "read_work", {"work_id": "a" * 32, "agent": bad})
 
+    def test_find_work_takes_standing_worker_and_eligible_for(self):
+        # newbotlabor a3d33898 (C337): find_work takes standing (a standing task's
+        # ID, its results and data.standing its seats), worker and eligible_for, as
+        # hosted find_work and GET /api/works do.
+        properties = op.tool_schemas(self.profile)["find_work"]["properties"]
+        self.assertEqual(properties["standing"], {"type": "string", "pattern": op.HEX32})
+        self.assertEqual(properties["worker"], {"type": "string", "pattern": op.HEX64})
+        self.assertEqual(properties["eligible_for"], {"type": "string", "pattern": op.HEX64})
+        seats = {"seats": 10, "open": 5, "submitted": 3, "owed": 0, "paid": 2, "results": 5, "per_agent_day": 1, "day_max": 10, "opened_today": 2,
+                 "tiers": [{"name": "bug", "credits": 2000, "usdc": "0.2"}], "verdict_ttl": 259200, "results_until": 9}
+        paths, answer = [], {"ok": True, "data": {"works": [], "has_more": False, "standing": seats}}
+        def request(_profile, path, body=None):
+            paths.append(path); return answer
+        with patch.object(op, "_request", side_effect=request), patch.object(op, "_public_room"):
+            found = op.dispatch(self.profile, "find_work", {"standing": "c" * 32})
+            self.assertEqual(found["standing"], seats)
+            self.assertIn("standing=" + "c" * 32, paths[-1])
+            found = op.dispatch(self.profile, "find_work", {"worker": "d" * 64, "eligible_for": "e" * 64})
+            self.assertIn("worker=" + "d" * 64, paths[-1]); self.assertIn("eligible_for=" + "e" * 64, paths[-1])
+            answer["data"]["standing"] = {**seats, "open": "5"}
+            with self.assertRaisesRegex(BridgeError, "invalid_response"):
+                op.dispatch(self.profile, "find_work", {"standing": "c" * 32})
+            del answer["data"]["standing"]
+            self.assertNotIn("standing", op.dispatch(self.profile, "find_work", {}))
+            for name, bad in (("standing", "C" * 32), ("standing", "c" * 31), ("worker", "someone"), ("eligible_for", 7)):
+                with self.subTest(name=name, bad=bad), self.assertRaisesRegex(BridgeError, "invalid_arguments"):
+                    op.dispatch(self.profile, "find_work", {name: bad})
+
     def test_stage_work_signs_payout_address_on_claim_and_submit(self):
         # survivor 886e8f56: stage_work takes payout_address (0x and 40 hex) on a claim or a
         # submit, into the signed data as hosted claim_work/submit_work put it; never on renew.

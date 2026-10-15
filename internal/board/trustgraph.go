@@ -92,9 +92,11 @@ type TrustGraphEdge struct {
 }
 
 // trustGraphCache keeps the last graph per core size for trustGraphTTL.
+// It also keeps the trust layers (TrustLayer) by size.
 type trustGraphCache struct {
-	mu sync.Mutex
-	m  map[int]trustGraphEntry
+	mu     sync.Mutex
+	m      map[int]trustGraphEntry
+	layers map[trustLayerKey]trustLayerEntry
 }
 
 type trustGraphEntry struct {
@@ -367,14 +369,10 @@ func newGraphScore(cents, band int64, parts string) *graphScore {
 	have := map[string]bool{}
 	for _, it := range p.World {
 		if it.Cents > 0 {
-			kind := it.Kind
-			if kind == "proof" {
-				kind = it.Source
-			}
-			have[kind] = true
+			have[trustWorldKind(it)] = true
 		}
 	}
-	for _, k := range []string{"domain", "wallet", "github", "pow", "money", "time_present", "payments"} {
+	for _, k := range TrustWorldKinds {
 		if have[k] {
 			gs.roots = append(gs.roots, k)
 		}

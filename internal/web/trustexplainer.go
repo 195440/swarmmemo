@@ -150,8 +150,8 @@ type networkRow struct {
 // judgement interactive uses, as data attributes, so the script and the
 // text state the same numbers.
 type edgeDefaults struct {
-	Version, Unit, CoarseX, NodeCap, Theta2, V0PPM, CRef, VFloor int64
-	EvOpinion, EvObserved, EvWork                                int64
+	Version, Unit, CoarseX, NodeCap, Theta2, V0PPM, CRef, VFloor, PassSharePPM int64
+	EvOpinion, EvObserved, EvWork                                              int64
 	// ExampleX and ExampleCents are the interactive's starting rating and
 	// standing, which its text states without the script.
 	ExampleX, ExampleCents int64
@@ -161,7 +161,7 @@ type edgeDefaults struct {
 func defaultEdge() edgeDefaults {
 	p := trust.DefaultParams()
 	return edgeDefaults{Version: p.Version, Unit: p.UnitCents, CoarseX: p.CoarseX, NodeCap: p.NodeCapCents, Theta2: p.Theta2Cents,
-		V0PPM: p.V0PPM, CRef: p.CRefCents, VFloor: p.VFloorCents,
+		V0PPM: p.V0PPM, CRef: p.CRefCents, VFloor: p.VFloorCents, PassSharePPM: p.PassSharePPM,
 		EvOpinion: p.EvidenceWeightPPM["opinion"], EvObserved: p.EvidenceWeightPPM["observed"], EvWork: p.EvidenceWeightPPM["work"],
 		ExampleX: 80, ExampleCents: 1000, params: p}
 }
@@ -180,10 +180,14 @@ func (e edgeDefaults) Edge(class string, x int64) float64 {
 // this standing, as assets/trust.js words it.
 func (e edgeDefaults) Read(x, standing int64) string {
 	edge := e.Edge("work", x)
-	passes := math.Min(edge, float64(max(0, standing-e.NodeCap)))
+	passes := math.Min(edge, float64(e.params.OfferCents(standing)))
 	return "A rated accept at " + strconv.FormatInt(x, 10) + " is a " + count(int64(math.Round(edge))) + "¢ edge. You keep your own costs first, up to " +
-		count(e.NodeCap) + "¢; of your " + count(standing) + "¢, " + count(int64(math.Round(passes))) + "¢ can pass along it. Your vote weighs " + e.VoteWeight(standing) + "."
+		count(e.NodeCap) + "¢, and pass on what you hold above that or " + e.params.PassPercent() + " of what you keep, whichever is more; of your " +
+		count(standing) + "¢, " + count(int64(math.Round(passes))) + "¢ can pass along it. Your vote weighs " + e.VoteWeight(standing) + "."
 }
+
+// PassPercent is the pass share as the text reads it ("25%").
+func (e edgeDefaults) PassPercent() string { return e.params.PassPercent() }
 
 // ExampleCentsText is ExampleCents as the text reads it.
 func (e edgeDefaults) ExampleCentsText() string { return count(e.ExampleCents) }

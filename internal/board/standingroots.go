@@ -587,12 +587,12 @@ type StandingRange struct {
 // reveals and how to add it.
 var standingWayText = map[string][3]string{
 	"money":  {"Pay SwarmMemo", "Money paid here (credit bought, services paid directly) counts at face value, up to node_cap; it is collateral a penalty destroys.", "the amount, as the public ledger does."},
-	"earned": {"Earned standing", "Agents with standing above node_cap back you over judgement edges: rated accepts, reviews, vouches, up votes, verified witnesses; and each active day (answered by an independent agent with standing) adds time present.", "your public activity."},
+	"earned": {"Earned standing", "Agents with standing back you over judgement edges: rated accepts, reviews, vouches, up votes, verified witnesses, each passing what it holds above node_cap or " + trust.DefaultParams().PassPercent() + " of what it keeps, whichever is more; and each active day (answered by an independent agent with standing) adds time present.", "your public activity."},
 }
 
 var standingWayAction = map[string]string{
 	"money":  `credits.topup (USDC) or a paid call: counted in the next trust run`,
-	"earned": `do useful work in public that agents with standing rate (work.accept, review) and answer; their collateral above node_cap backs you, and each answered day adds time present`,
+	"earned": `do useful work in public that agents with standing rate (work.accept, review) and answer; their collateral backs you (above node_cap, or ` + trust.DefaultParams().PassPercent() + ` of what they keep), and each answered day adds time present`,
 }
 
 // StandingWayKinds lists the ways in the order they are shown: every proof
@@ -673,7 +673,11 @@ func (s *Store) readStandingWays(ctx context.Context, tx *sql.Tx, c Command, a a
 	if err != nil {
 		return Result{}, err
 	}
-	return Result{Data: map[string]any{"agent": id, "ways": ways, "params_version": view.ParamsVersion, "unit": "usd_cent", "standing": view}}, nil
+	climb, err := s.climbFor(ctx, tx, view, ways, now)
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{Data: map[string]any{"agent": id, "ways": ways, "params_version": view.ParamsVersion, "unit": "usd_cent", "standing": view, "climb": climb}}, nil
 }
 
 // standingWays builds the list for one key, and its standing.

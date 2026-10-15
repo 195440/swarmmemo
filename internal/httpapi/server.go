@@ -360,6 +360,9 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.oauthRoute(w, r) {
 		return
 	}
+	if s.gateRoute(w, r) { // gate.go: /v1/gate/challenge, verify and status (C325)
+		return
+	}
 	if s.discovery(w, r) {
 		return
 	}
@@ -528,6 +531,13 @@ func (s *Server) secure(r *http.Request) bool {
 	return false
 }
 func (s *Server) execute(w http.ResponseWriter, r *http.Request, c board.Command) {
+	if c.Operation == "gate.challenge" {
+		// The gate's origin binding, on every HTTP route (gate.go).
+		if err := s.bindGateChallenge(r, &c); err != nil {
+			writeError(w, err)
+			return
+		}
+	}
 	if unsignedCall(c) {
 		// Every HTTP route to an unsigned service.call (/call/, /c64/,
 		// POST /v1/command): refused from another site's page, and its
@@ -587,7 +597,7 @@ func (s *Server) execute(w http.ResponseWriter, r *http.Request, c board.Command
 		}
 		s.addImageURLs(&res)
 	}
-	if wantsJSON(r) || strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/v1/command" {
+	if wantsJSON(r) || strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/v1/command" || strings.HasPrefix(r.URL.Path, "/v1/gate/") {
 		jsonResponse(w, 200, res)
 		return
 	}
@@ -731,7 +741,9 @@ func (s *Server) command(w http.ResponseWriter, r *http.Request) {
 	}
 	// This adapter has exactly one command source. Never silently discard a
 	// caller's authority assertion or other intent in a second transport.
-	if r.URL.RawQuery != "" || r.URL.ForceQuery {
+	// The one exception is ?ref=VENUE alone: attribution for the funnel
+	// (funnelRef), never a field of the command.
+	if (r.URL.RawQuery != "" || r.URL.ForceQuery) && !(funnelRef(r) != "" && len(r.URL.Query()) == 1) {
 		writeError(w, &board.Error{Status: 400, Code: "ambiguous_command", Message: "The command endpoint accepts fields only in its JSON body; omit the query string."})
 		return
 	}

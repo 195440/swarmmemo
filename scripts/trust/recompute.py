@@ -1593,6 +1593,7 @@ def sponsor(p, snap, as_of, service, first_seen, reset, index, own_avg, root_of,
 MC = 1000
 SNAPSHOT_SCHEMA_V2 = 2
 UNIFIED_VERSION = 8
+PASS_VERSION = 10
 
 RECORD_FIELDS_V2 = [
     ("type", ""), ("schema", 0), ("as_of", 0), ("pause_new_keys_since", 0), ("events_seq", 0), ("endorsements_seq", 0), ("ledger_seq", 0),
@@ -1670,8 +1671,11 @@ class SnapshotV2:
 def check_params_v2(body: dict, version: int) -> None:
     if version < UNIFIED_VERSION:
         raise InputError(f"params: version {version} is not a schema 2 version")
-    if not isinstance(body, dict) or set(body) != PARAM_KEYS_V2:
-        raise InputError(f"params body: fields must be exactly {sorted(PARAM_KEYS_V2)}")
+    # pass_share_ppm is version 10's (C336), omitted when 0.
+    if not isinstance(body, dict) or set(body) - {"pass_share_ppm"} != PARAM_KEYS_V2:
+        raise InputError(f"params body: fields must be exactly {sorted(PARAM_KEYS_V2)}, and pass_share_ppm from version {PASS_VERSION}")
+    if "pass_share_ppm" in body and (version < PASS_VERSION or not 0 < body["pass_share_ppm"] <= PPM):
+        raise InputError(f"params: pass_share_ppm is version {PASS_VERSION}'s, 1–{PPM}")
     for section, keys in PARAM_SECTIONS_V2.items():
         if not isinstance(body[section], dict) or set(body[section]) != keys:
             raise InputError(f"params {section}: fields must be exactly {sorted(keys)}")
@@ -1848,6 +1852,19 @@ def flow_levels(U, node_cap):
     return out
 
 
+def pass_flow_levels(U, node_cap):
+    """Version 10's levels: U/64, U/32, U/16, then flow_levels'."""
+    out = []
+    for lv in (U // 64, U // 32, U // 16):
+        lv = min(lv, node_cap)
+        if lv > 0 and (not out or lv > out[-1]):
+            out.append(lv)
+    for lv in flow_levels(U, node_cap):
+        if not out or lv > out[-1]:
+            out.append(lv)
+    return out
+
+
 def endorsement_key(r):
     return (r.seq, r.created_at, r.kind, r.voter, r.target, r.message_id, r.value)
 
@@ -1859,6 +1876,23 @@ class Graph:
         self.src, self.dst, self.edge_cap = [], [], []
         self.levels = []
         self.recent = []
+        self.pass_ = None  # version 10: each node's pass share
+
+
+def set_pass(g: Graph, pass_share_ppm: int) -> None:
+    """Each node's pass share (version 10): its surplus above its cap topped
+    up to pass_share_ppm of what it keeps, never beyond its edges' capacity."""
+    g.pass_ = None
+    if pass_share_ppm <= 0:
+        return
+    out = [0] * len(g.labels)
+    for k in range(len(g.src)):
+        out[g.src[k]] = min(out[g.src[k]] + g.edge_cap[k], 1 << 60)
+    g.pass_ = []
+    for i in range(len(g.labels)):
+        keep = min(g.world[i], g.cap[i])
+        surplus = g.world[i] - keep
+        g.pass_.append(min(max(0, mul_div(keep, pass_share_ppm, PPM) - surplus), max(0, out[i] - surplus)))
 
 
 def graph_flow(g: Graph, max_work: int, work: int):
@@ -1872,6 +1906,8 @@ def graph_flow(g: Graph, max_work: int, work: int):
     for i in range(n):
         w = g.world[i]
         own[i] = min(w, g.cap[i])
+        if g.pass_ is not None:
+            own[i] -= g.pass_[i]
         if w - own[i] > 0:
             inn[i] = net.add(S, i, w - own[i])
     ids = [net.add(g.src[k], g.dst[k], g.edge_cap[k]) for k in range(len(g.src))]
@@ -1884,9 +1920,14 @@ def graph_flow(g: Graph, max_work: int, work: int):
             have[i] = want
         net.maxflow(S, T)
     for i in range(n):
-        standing[i] = own[i] + net.flow_on(sink[i])
+        got = net.flow_on(sink[i])
+        standing[i] = own[i] + got
         if inn[i] >= 0:
             passed[i] = net.flow_on(inn[i])
+        if g.pass_ is not None and g.pass_[i] > 0:
+            kept = min(passed[i], got, g.pass_[i])
+            own[i] += kept
+            passed[i] -= kept
     for k, e in enumerate(ids):
         edge[k] = net.flow_on(e)
     return standing, own, passed, edge, net.work
@@ -2405,7 +2446,7 @@ def compute_unified(snap: SnapshotV2) -> dict:
                 w, c = mul_div(w, PPM - fr, PPM), mul_div(c, PPM - fr, PPM)
             g.world.append(w)
             g.cap.append(c)
-        g.levels = flow_levels(U, node_cap)
+        g.levels = pass_flow_levels(U, node_cap) if p.get("pass_share_ppm", 0) > 0 else flow_levels(U, node_cap)
         return g
 
     def set_edges(g, acc):
@@ -2460,6 +2501,7 @@ def compute_unified(snap: SnapshotV2) -> dict:
             g.src.append(s_)
             g.dst.append(d_)
             g.edge_cap.append(c)
+        set_pass(g, p.get("pass_share_ppm", 0))
 
     g = new_graph()
     set_edges(g, lambda a: PPM)

@@ -1874,3 +1874,9 @@ caption.chart-note{text-align:left;caption-side:top}
   .rubric-checks tr{display:block;border-bottom:1px solid var(--line);padding:var(--s-2) 0}
   .rubric-checks th,.rubric-checks td{display:block;border:0;padding:2px 0}
 }
+/* The SwarmMemo Gate (gate.html, C325): the generator, the agent task by hand, the result card. */
+.gate-generator{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:var(--s-3);margin:var(--s-3) 0}
+.gate-demo{margin:var(--s-3) 0}
+.gate-agent-records{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:2px var(--s-3);max-height:320px;overflow:auto;padding:var(--s-2);border:1px solid var(--line);border-radius:var(--radius);font-family:var(--mono);font-size:var(--t-meta)}
+.gate-agent-form{display:flex;gap:var(--s-2);align-items:end;margin-top:var(--s-3)}
+.gate-card{display:block;max-width:100%;height:auto;border:1px solid var(--line);border-radius:var(--radius)}

@@ -662,6 +662,24 @@
       "delegable": false,
       "wire": "https"
     },
+    "gate.challenge": {
+      "fields": [
+        "data"
+      ],
+      "signed": false,
+      "mutation": false,
+      "delegable": false,
+      "wire": "any"
+    },
+    "gate.verify": {
+      "fields": [
+        "data"
+      ],
+      "signed": false,
+      "mutation": false,
+      "delegable": false,
+      "wire": "https"
+    },
     "home": {
       "fields": [
         "target"

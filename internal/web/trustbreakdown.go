@@ -65,6 +65,7 @@ type breakdownAnswer struct {
 	Penalties []trust.PenaltyEntry `json:"penalties"`
 	Burn      trust.BurnPreview    `json:"burn"`
 	NextSteps []board.StandingWay  `json:"next_steps"`
+	Climb     board.Climb          `json:"climb"`
 	Bands     struct {
 		Proven    int64 `json:"proven_cents"`
 		Trusted   int64 `json:"trusted_cents"`
@@ -101,6 +102,18 @@ type trustBreakdownView struct {
 	Flow                     template.HTML
 	FlowTip                  string
 	BackersTotal, BacksTotal cell
+	// LowBackers: backers whose edges carried nothing yet, the plain
+	// reason rated work from low-standing backers adds little (C334): a
+	// backer passes on what it holds above node_cap or its pass share of
+	// what it keeps (C336, trust.Params.OfferCents), shared by all it backs.
+	LowBackers   bool
+	NodeCapCents string
+	PassPercent  string
+	// Climb: the next band and Trust ladder tier, and the cheapest route
+	// to the nearer (board.Climb).
+	Climb []cell
+	Route []climbStep
+	Pay   cell
 	// Accuracy as a judge, with its trend when the runs moved it.
 	Accuracy                cell
 	AccuracyScale, AccTrend template.HTML
@@ -128,6 +141,10 @@ type costKey struct {
 	Key                 template.HTML
 	Label, Source, Note string
 	Cents, Price        cell
+}
+
+type climbStep struct {
+	Kind, Label, Href, Adds string
 }
 
 type wayBar struct {
@@ -246,6 +263,28 @@ func buildTrustBreakdown(a *breakdownAnswer, now time.Time) *trustBreakdownView 
 	v.Flow, v.FlowTip = flowDiagram(a, name)
 	v.BackersTotal = cell{Key: "backers_total", Value: a.BackersTotal, Text: count(a.BackersTotal)}
 	v.BacksTotal = cell{Key: "backs_total", Value: a.BacksTotal, Text: count(a.BacksTotal)}
+	v.LowBackers, v.NodeCapCents, v.PassPercent = a.BackersTotal > 0 && a.ReceivedCents == 0, cents(a.NodeCapCents), trust.DefaultParams().PassPercent()
+
+	// The climb: what is next, how far, and the cheapest route there.
+	for _, m := range []struct {
+		label, key string
+		at         *trust.Milestone
+	}{{"Next band", "climb.next_band", a.Climb.NextBand}, {"Next Trust ladder tier", "climb.next_tier", a.Climb.NextTier}} {
+		if m.at != nil {
+			v.Climb = append(v.Climb, cell{Label: m.label, Note: m.at.Name + " at " + cents(m.at.Cents), Key: m.key + ".gap_cents", Value: m.at.GapCents, Text: cents(m.at.GapCents) + " away"})
+		}
+	}
+	for _, st := range a.Climb.Route {
+		adds := "up to +" + cents(st.AddsCents)
+		if st.CostCents > 0 {
+			adds = "+" + cents(st.AddsCents) + ", costs " + cents(st.CostCents)
+		}
+		v.Route = append(v.Route, climbStep{Kind: st.Kind, Label: st.Label, Href: wayHref(st.Kind), Adds: adds})
+	}
+	// The sure route beside free proofs: paying the whole gap.
+	if a.Climb.PayCents > 0 && len(a.Climb.Route) > 0 && a.Climb.Route[0].CostCents == 0 {
+		v.Pay = cell{Key: "climb.pay_cents", Value: a.Climb.PayCents, Text: cents(a.Climb.PayCents)}
+	}
 
 	// Accuracy.
 	acc := a.Accuracy

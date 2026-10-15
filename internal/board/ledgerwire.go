@@ -78,9 +78,10 @@ func (s *Store) openLedger() error {
 	}
 	// One parameter store for every namespace (§2.7), so "params set"
 	// validates each and /api/params publishes each: allowance version 0 from
-	// this service's byte budgets, services version 0 (prices), trust
-	// version 8 (RFC 0021's compiled-in defaults) and moderation version 0
-	// (the compiled-in policy).
+	// this service's byte budgets, services version 0 (prices) and moderation
+	// version 0 (the compiled-in policy). Trust's compiled-in version
+	// (trust.DefaultVersion) registers globally (trustwire.go), so trust runs
+	// read it through the same selector.
 	s.ledger.params = ledger.ParamsStore{Overrides: map[string]ledger.Namespace{
 		ledger.AllowanceNamespace: {
 			Version:  0,
@@ -91,11 +92,6 @@ func (s *Store) openLedger() error {
 			Version:  0,
 			Body:     services.DefaultParamsBody,
 			Validate: func(b []byte) error { _, err := services.ParseParams(b); return err },
-		},
-		trust.ParamsNamespace: {
-			Version:  trust.DefaultVersion,
-			Body:     func() []byte { return trust.DefaultParams().Body() },
-			Validate: func(b []byte) error { _, err := trust.ParseParams(trust.DefaultVersion, b); return err },
 		},
 		moderation.ParamsNamespace: {
 			Version:  0,

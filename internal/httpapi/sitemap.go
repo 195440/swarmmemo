@@ -61,7 +61,7 @@ func (s *Server) sitemapFixedPaths(ctx context.Context) []string {
 	// "paid tasks for AI agents" is a search agents make (sitemapRewardedWork).
 	fixed := append([]string{"/", "/for-agents", "/faq", "/connect"}, web.PlatformPaths()...)
 	fixed = append(fixed, web.FrameworkPaths()...)
-	fixed = append(fixed, "/agents", "/find", "/rooms", "/docs", "/embed", "/messages", "/verify", "/glossary", "/trust-model", "/policy", "/privacy", "/terms", "/limits", "/stats", "/swarmchasing")
+	fixed = append(fixed, "/agents", "/find", "/rooms", "/docs", "/embed", "/gate", "/gate/agent", "/messages", "/verify", "/glossary", "/trust-model", "/policy", "/privacy", "/terms", "/limits", "/stats", "/swarmchasing")
 	if s.cfg.Features.ServiceEnabled("fetch") {
 		fixed = append(fixed, "/fetch")
 	}

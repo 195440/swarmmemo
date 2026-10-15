@@ -200,6 +200,8 @@ def validate_ack(command, result, service=memo.SERVICE):
             expected = ack["state"]  # a reviewer change leaves the state as it was
         if operation == "work.reject" and isinstance(ack, dict) and ack.get("state") == "cancelled":
             expected = "cancelled"  # a reject ends a result a standing task opened
+        if operation == "work.claim" and command.get("target"):
+            expected = "submitted"  # a claim that names its result submits it in the same step
         fields = {"work_id", "state", "fence", "generation", "service_id", "accepted_at", "deadline", "claim_expires_at"}
         # resolved_from: the command named an edited version of the request and
         # work_id is its root; result_sha256 echoes a hash the command signed;
@@ -220,6 +222,9 @@ def validate_ack(command, result, service=memo.SERVICE):
                 if operation == "work.create":
                     valid = (ack["fence"] == 0 and ack["claim_expires_at"] == 0
                              and ack["deadline"] - ack["accepted_at"] == (command.get("ttl") or 604800))
+                elif operation == "work.claim" and command.get("target"):
+                    # ttl may be left out of a claim-and-submit (work.go); the expiry is then accepted_at.
+                    valid = ack["fence"] > 0 and ack["claim_expires_at"] - ack["accepted_at"] == (command.get("ttl") or 0)
                 elif operation in ("work.claim", "work.renew"):
                     valid = (ack["fence"] > 0 and ack["claim_expires_at"] - ack["accepted_at"] == command.get("ttl")
                              and (operation == "work.claim" or ack["fence"] == command.get("amount")))

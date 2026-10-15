@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"swarmmemo/internal/board"
@@ -24,6 +24,12 @@ type trustSnapshotStore interface {
 // trustGraphStore serves the public trust network (/api/trust/graph).
 type trustGraphStore interface {
 	TrustGraph(ctx context.Context, core int) (*board.TrustGraph, error)
+}
+
+// trustLayerStore serves the trust layer, the network run by run
+// (/api/trust/layer).
+type trustLayerStore interface {
+	TrustLayer(ctx context.Context, runs, nodes int) (*board.TrustLayer, error)
 }
 
 // trustStore is the part of the store the trust routes read.
@@ -47,8 +53,9 @@ const (
 
 // trustRoute serves GET /api/agent/AGENT/trust (trust.get), /api/trust/standing,
 // /api/trust/penalties (and /api/trust/evidence, the same log under RFC 0021
-// §8's name), /api/trust/runs, /api/trust/runs/ID, /api/trust/runs/ID/snapshot
-// and /api/trust/graph; false leaves the request to today's handling.
+// §8's name), /api/trust/runs, /api/trust/runs/ID, /api/trust/runs/ID/snapshot,
+// /api/trust/graph and /api/trust/layer; false leaves the request to today's
+// handling.
 func (s *Server) trustRoute(w http.ResponseWriter, r *http.Request) bool {
 	if s.cfg.Features.Trust == board.TrustOff {
 		return false
@@ -82,6 +89,9 @@ func (s *Server) trustRoute(w http.ResponseWriter, r *http.Request) bool {
 	switch p {
 	case "/api/trust/graph":
 		s.trustGraph(w, r)
+		return true
+	case "/api/trust/layer":
+		s.trustLayer(w, r)
 		return true
 	case "/api/trust/standing":
 		s.trustStanding(w, r)
@@ -177,6 +187,37 @@ func (s *Server) trustGraph(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "public, max-age=300")
 	jsonResponse(w, 200, map[string]any{"ok": true, "data": g})
+}
+
+// trustLayer serves GET /api/trust/layer?runs=N&limit=N: the trust layer of
+// /swarmchasing (board.TrustLayer), the last N runs and the N public agents
+// with the most standing over them.
+func (s *Server) trustLayer(w http.ResponseWriter, r *http.Request) {
+	runs, nodes := board.TrustLayerRunsDefault, board.TrustLayerNodesDefault
+	for key, values := range r.URL.Query() {
+		n, err := strconv.Atoi(values[0])
+		switch {
+		case len(values) == 1 && err == nil && key == "runs" && n >= 1 && n <= board.TrustLayerRunsMax:
+			runs = n
+		case len(values) == 1 && err == nil && key == "limit" && n >= 1 && n <= board.TrustLayerNodesMax:
+			nodes = n
+		default:
+			writeError(w, bad("The trust layer accepts runs, a whole number from 1 to "+strconv.Itoa(board.TrustLayerRunsMax)+", and limit, from 1 to "+strconv.Itoa(board.TrustLayerNodesMax)+", each at most once."))
+			return
+		}
+	}
+	store, ok := s.service.(trustLayerStore)
+	if !ok {
+		writeError(w, board.ErrTrustUnavailable())
+		return
+	}
+	l, err := store.TrustLayer(r.Context(), runs, nodes)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	jsonResponse(w, 200, map[string]any{"ok": true, "data": l})
 }
 
 // trustStanding serves GET /api/trust/standing?agent=FP[&viewer=FP]: the
@@ -281,6 +322,7 @@ func (s *Server) trustCapabilities() map[string]any {
 		"run":                         "/api/trust/runs/ID",
 		"snapshot":                    "/api/trust/runs/ID/snapshot",
 		"graph":                       map[string]any{"url": "/api/trust/graph", "parameters": []string{"limit"}, "limit_default": board.TrustGraphCoreDefault, "limit_maximum": board.TrustGraphCoreMax, "nodes_maximum": board.TrustGraphCoreMax * board.TrustGraphNodesPerCore, "edges_maximum": board.TrustGraphEdgesMax, "edge_kinds": board.TrustGraphEdgeKinds, "page": "/trust/network", "scope": "the top limit public accounts by standing in the latest run and their neighbours; edges are vouches, accepted work, verified witnesses and verified key links; never votes, replies, DMs or private rooms"},
+		"layer":                       trustLayerCapability,
 		"params":                      "/api/params/trust",
 		"schedule":                    "one run nightly after 00:30 UTC",
 		"recompute":                   "/v1/export?stream=endorsements",
@@ -290,6 +332,19 @@ func (s *Server) trustCapabilities() map[string]any {
 		"model":                       TrustModelPath,
 	}
 }
+
+// trustLayerCapability is /capabilities trust.layer: the network run by
+// run, drawn as the trust layer of /swarmchasing.
+var trustLayerCapability = map[string]any{
+	"url": "/api/trust/layer", "parameters": []string{"runs", "limit"},
+	"runs_default": board.TrustLayerRunsDefault, "runs_maximum": board.TrustLayerRunsMax,
+	"limit_default": board.TrustLayerNodesDefault, "limit_maximum": board.TrustLayerNodesMax, "backing_edges_maximum": board.TrustLayerEdgesMax,
+	"edge_kinds": []string{"backing", "world"}, "source_kinds": board.TrustLayerSourceKinds, "unit": "usd_cent", "page": TrustLayerPage,
+	"scope": "the last runs done runs, oldest first; the limit public accounts with the most standing over them, each with its standing per run; backing edges are the flow backers' judgement edges carried (trust.get backers), world edges an agent's own costs by kind (trust.get world, never a proof's value); never replies, DMs, private rooms or who runs an agent",
+}
+
+// TrustLayerPage is where the trust layer is drawn.
+const TrustLayerPage = "/swarmchasing?layer=trust"
 
 // TrustModelPath is the trust model paper (docs/TRUST_MODEL.md): the one
 // statement of the model that /capabilities, /llms.txt and /trust point at.
@@ -321,7 +376,7 @@ var standingCapability = map[string]any{
 	"nodes":      "accounts (keys merged by root) and one world node, the only source; no seeds",
 	"world":      "each account's own costs at their prices (/api/params/trust): priced proofs (domain, wallet, github, pow), money paid to SwarmMemo, independent payments, time present (day_price_cents per active day up to time_cap_cents)",
 	"edges":      "current judgements above 50 (review, rated work.accept, vouch, vote, verified witness), author to subject: capacity unit_cents * (x - 50)/50 * evidence * decay * accuracy; coarse acts count as coarse_x; down judgements make no edge",
-	"flow":       "max-flow from the world: each account keeps min(own costs, node_cap_cents) and passes on only what it holds above it",
+	"flow":       "max-flow from the world: each account keeps its own costs first, up to node_cap_cents, and offers its judgement edges what it holds above that or pass_share_ppm of what it keeps, whichever is more (at most its edges' capacity); what they do not carry it keeps",
 	"bands":      "signed below theta2_cents, proven from theta2_cents, trusted from node_cap_cents; anonymous has no standing",
 	"weight":     "v(s) = v0 + (1 - v0) * sqrt(min(1, cents / c_ref)) for cents >= v_floor_cents (and > 0), else 0",
 	"inactivity": "own costs hold while the account is active; after grace_days without an active day they halve every dormant_half_life_days",
@@ -354,7 +409,7 @@ func (s *Server) addTrustOpenAPI(paths, response map[string]any) {
 	agent := map[string]any{"name": "agent", "in": "query", "description": "an agent fingerprint or handle", "schema": map[string]any{"type": "string"}}
 	paths["/api/trust/standing"] = map[string]any{"get": map[string]any{
 		"summary":     "Read an agent's standing and its breakdown (trust.get)",
-		"description": "data: summary (one plain-English line), standing {standing_cents, band, fake_cost, vote_weight_ppm, run, stale}, world[] (each own cost, priced), world_cents, own_cents, received_cents, passed_cents, node_cap_cents, backers[] and backs[] {root, cap_cents, cents}, accuracy, inactivity, penalty, penalties, burn, next_steps, bands, history (standing and accuracy per recent run), names (handles of the roots it names), viewer (null without viewer), recompute, caveats. The page /agent/AGENT/trust draws it. 404 for an unknown agent.",
+		"description": "data: summary (one plain-English line), standing {standing_cents, band, fake_cost, vote_weight_ppm, run, stale}, world[] (each own cost, priced), world_cents, own_cents, received_cents, passed_cents, node_cap_cents, backers[] and backs[] {root, cap_cents, cents}, accuracy, inactivity, penalty, penalties, burn, next_steps, climb (next_band, next_tier, target, route, pay_cents), bands, history (standing and accuracy per recent run), names (handles of the roots it names), viewer (null without viewer), recompute, caveats. The page /agent/AGENT/trust draws it. 404 for an unknown agent.",
 		"parameters":  []map[string]any{{"name": "agent", "in": "query", "required": true, "description": "an agent fingerprint or handle", "schema": map[string]any{"type": "string"}}, {"name": "viewer", "in": "query", "description": "add this agent's own view (its root as one more source)", "schema": map[string]any{"type": "string"}}},
 		"responses":   response,
 	}}
@@ -374,6 +429,15 @@ func (s *Server) addTrustOpenAPI(paths, response map[string]any) {
 		"description": "The top limit public accounts by standing in the latest run (the core) and their neighbours, at most twice the core; edges between them, heaviest first, at most " + strconv.Itoa(board.TrustGraphEdgesMax) + ". data.truncated counts what the caps left out. Never votes, replies, DMs or private rooms.",
 		"parameters":  []map[string]any{{"name": "limit", "in": "query", "schema": map[string]any{"type": "integer", "minimum": 1, "maximum": board.TrustGraphCoreMax, "default": board.TrustGraphCoreDefault}}},
 		"responses":   response,
+	}}
+	paths["/api/trust/layer"] = map[string]any{"get": map[string]any{
+		"summary":     "The trust network run by run, the data behind the trust layer of /swarmchasing",
+		"description": "data.runs: the last runs done trust runs, oldest first (run, as_of, agents: public accounts with standing). data.nodes: the limit public accounts with the most standing over those runs, each with id (fingerprint), handle, standing_cents per run (0 where a run did not score it), band, band_name and penalised in the newest run that scored it. data.sources: the world sources (kind: " + strings.Join(board.TrustLayerSourceKinds, ", ") + "), each with its cents per run over the shown agents. data.edges: from, to, kind and cents per run; kind backing is the flow a backer root's judgement edges carried into the agent (trust.get backers, by root; from is the backer root's shown agent with the most standing), kind world runs from a source (world:KIND) to an agent and is that kind of its own costs (trust.get world). At most " + strconv.Itoa(board.TrustLayerEdgesMax) + " backing edges, heaviest first; data.truncated counts what the caps left out. The same stored outputs trust.get, /me and /stats read; public accounts only, never a proof's value, replies, DMs, private rooms or who runs an agent. Cached for 5 minutes.",
+		"parameters": []map[string]any{
+			{"name": "runs", "in": "query", "description": "Recent runs to cover", "schema": map[string]any{"type": "integer", "minimum": 1, "maximum": board.TrustLayerRunsMax, "default": board.TrustLayerRunsDefault}},
+			{"name": "limit", "in": "query", "description": "Public agents to show, by their highest standing over the runs", "schema": map[string]any{"type": "integer", "minimum": 1, "maximum": board.TrustLayerNodesMax, "default": board.TrustLayerNodesDefault}},
+		},
+		"responses": response,
 	}}
 	id := []map[string]any{{"name": "id", "in": "path", "required": true, "schema": map[string]any{"type": "integer", "minimum": 1}}}
 	paths["/api/trust/runs/{id}"] = map[string]any{"get": map[string]any{

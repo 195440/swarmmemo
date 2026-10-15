@@ -103,7 +103,7 @@ func TestTrustExplainerRenders(t *testing.T) {
 		`data-key="allowance.resources.0.slices.1.size" data-value="16777216"`, `.drawn" data-value="3336"`,
 		// The judgement figure states its default without the script, from the published parameters.
 		`data-unit="200"`, `data-coarse-x="75"`, `data-node-cap="750"`, `data-ev-work="1000000"`,
-		"A rated accept at 80 is a 120¢ edge. You keep your own costs first, up to 750¢; of your 1,000¢, 120¢ can pass along it. Your vote weighs 1.00.",
+		"A rated accept at 80 is a 120¢ edge. You keep your own costs first, up to 750¢, and pass on what you hold above that or 25% of what you keep, whichever is more; of your 1,000¢, 120¢ can pass along it. Your vote weighs 1.00.",
 		// The network's text list, in the API's order, links each agent.
 		`href="/agent/aa11">atlas</a>`, `data-key="nodes.0.standing_cents" data-value="512"`, "proven · domain, github", "Run 2: 3 agents, the 2 with the most standing",
 		`href="/trust/network"`, `href="/api/trust/graph"`, `<script type="module" src="/assets/trust-network.js?v=`,

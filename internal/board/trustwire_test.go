@@ -238,13 +238,39 @@ func TestTrustParamsCompiledInWins(t *testing.T) {
 	if err != nil || p.Version != trust.DefaultVersion {
 		t.Fatalf("with a stored retired version: %d %v", p.Version, err)
 	}
+	assertTrustParamsCurrent(t, s, p, true)
+	list, err := s.AllowanceParamsList(testContext, trust.ParamsNamespace)
+	if err != nil || len(list) != 2 || !list[0].CompiledIn || list[0].Version != trust.DefaultVersion || list[1].Version != 7 {
+		t.Fatalf("the superseding compiled-in version lists first: %+v %v", list, err)
+	}
 	q := trust.DefaultParams()
 	q.GraceDays = 90
-	if _, err = s.db.Exec("INSERT INTO params VALUES('trust',9,?,'',0,0,'test','shorter grace')", string(q.Body())); err != nil {
+	if _, err = s.db.Exec("INSERT INTO params VALUES('trust',?,?,'',0,0,'test','shorter grace')", trust.DefaultVersion, string(q.Body())); err != nil {
 		t.Fatal(err)
 	}
-	if p, err = trustParams(testContext, s.db, s.now().Unix()); err != nil || p.Version != 9 || p.GraceDays != 90 {
+	if p, err = trustParams(testContext, s.db, s.now().Unix()); err != nil || p.Version != trust.DefaultVersion || p.GraceDays != 90 {
 		t.Fatalf("with a newer stored version: %d %d %v", p.Version, p.GraceDays, err)
+	}
+	assertTrustParamsCurrent(t, s, p, false)
+}
+
+// assertTrustParamsCurrent checks that /api/params/trust's "current" (Get
+// version -1) is the version a trust run uses (c80dfcaa, C337), and that a
+// run records it.
+func assertTrustParamsCurrent(t *testing.T, s *Store, p trust.Params, compiledIn bool) {
+	t.Helper()
+	cur, err := s.AllowanceParams(testContext, trust.ParamsNamespace, -1)
+	if err != nil || cur.Version != p.Version || cur.CompiledIn != compiledIn || string(cur.Body) != string(p.Body()) {
+		t.Fatalf("current %d compiled_in=%v %v, the run uses %d", cur.Version, cur.CompiledIn, err, p.Version)
+	}
+	s.trust.forgetParams()
+	sum, err := s.RunTrust(testContext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var version int64
+	if err = s.db.QueryRow("SELECT params_version FROM trust_runs WHERE id=?", sum.ID).Scan(&version); err != nil || version != cur.Version {
+		t.Fatalf("run params_version %d, current %d: %v", version, cur.Version, err)
 	}
 }
 
@@ -256,7 +282,7 @@ func TestTrustAbortKeepsPreviousRun(t *testing.T) {
 	}
 	p := trust.DefaultParams()
 	p.MaxWork = 1
-	if _, err = s.db.Exec("INSERT INTO params VALUES('trust',9,?,'',0,0,'test','tiny work bound')", string(p.Body())); err != nil {
+	if _, err = s.db.Exec("INSERT INTO params VALUES('trust',?,?,'',0,0,'test','tiny work bound')", trust.DefaultVersion, string(p.Body())); err != nil {
 		t.Fatal(err)
 	}
 	s.trust.forgetParams()

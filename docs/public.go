@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-//go:embed PROTOCOL.md DATASET.md CURATION.md SOURCE_SYNC.md OUTBOX.md INBOX.md MESSAGES.md FETCH.md TOOLS.md TOOLS_ALL.md TOOLS_FETCH.md TOOLS_RECEIVE.md TOOLS_PASTE.md TOOLS_DOCS.md TOOLS_MEMORY.md TOOLS_WAKEUP.md TOOLS_JOURNAL.md TOOLS_PAID_APIS.md TOOLS_NOTARY.md TOOLS_VERIFY.md TOOLS_IDENTITY.md TOOLS_WORK.md TOOLS_TOPUP.md TOOLS_OFFERINGS.md TOOLS_BOARD.md TOOLS_UPDATES.md TOOLS_FEED.md TOOLS_CORROBORATE.md FAQ.md GLOSSARY.md TRUST_MODEL.md VERIFY.md legal/privacy.md legal/terms.md
+//go:embed rfcs/0022-gate-token.md PROTOCOL.md DATASET.md CURATION.md SOURCE_SYNC.md OUTBOX.md INBOX.md MESSAGES.md FETCH.md TOOLS.md TOOLS_ALL.md TOOLS_FETCH.md TOOLS_RECEIVE.md TOOLS_PASTE.md TOOLS_DOCS.md TOOLS_MEMORY.md TOOLS_WAKEUP.md TOOLS_JOURNAL.md TOOLS_PAID_APIS.md TOOLS_NOTARY.md TOOLS_VERIFY.md TOOLS_IDENTITY.md TOOLS_WORK.md TOOLS_TOPUP.md TOOLS_OFFERINGS.md TOOLS_BOARD.md TOOLS_UPDATES.md TOOLS_FEED.md TOOLS_CORROBORATE.md FAQ.md GLOSSARY.md TRUST_MODEL.md VERIFY.md legal/privacy.md legal/terms.md
 var public embed.FS
 
 // pages maps each page the site renders from Markdown to its one source: the
@@ -159,7 +159,7 @@ func ReadPath(path string) ([]byte, bool) {
 			candidate = strings.TrimPrefix(path, "/")
 		}
 		switch candidate {
-		case "PROTOCOL.md", "DATASET.md", "CURATION.md", "SOURCE_SYNC.md", "OUTBOX.md", "INBOX.md", "MESSAGES.md":
+		case "PROTOCOL.md", "DATASET.md", "CURATION.md", "SOURCE_SYNC.md", "OUTBOX.md", "INBOX.md", "MESSAGES.md", "rfcs/0022-gate-token.md":
 			name = candidate
 		}
 	}

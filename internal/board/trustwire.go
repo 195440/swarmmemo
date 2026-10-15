@@ -22,6 +22,7 @@ import (
 
 	"swarmmemo/internal/allowance"
 	"swarmmemo/internal/judge"
+	"swarmmemo/internal/ledger"
 	"swarmmemo/internal/reviews"
 	"swarmmemo/internal/trust"
 )
@@ -129,25 +130,34 @@ func (d trustDB) Write(ctx context.Context, fn func(allowance.Querier) error) er
 	return tx.Commit()
 }
 
-// trustParams reads the trust parameters in effect: the newest stored
-// version whose effective time has passed, unless the compiled-in version
-// (trust.DefaultVersion) is newer, which then applies: deploying the binary
-// that ships a version activates it, with no parameter write (C320a). A
-// stored body that does not parse stops the run.
+// The trust namespace's compiled-in version, registered for every
+// ParamsStore so /api/params/trust and trust runs share one selector.
+func init() {
+	ledger.RegisterNamespace(trust.ParamsNamespace, ledger.Namespace{
+		Version:  trust.DefaultVersion,
+		Body:     func() []byte { return trust.DefaultParams().Body() },
+		Validate: func(b []byte) error { _, err := trust.ParseParams(trust.DefaultVersion, b); return err },
+	})
+}
+
+// trustParams reads the trust parameters in effect, chosen by the one
+// selector /api/params/trust reports as "current" (ledger.ParamsStore.Current):
+// the newest stored version whose effective time has passed, unless the
+// compiled-in version (trust.DefaultVersion) is newer, which then applies:
+// deploying the binary that ships a version activates it, with no parameter
+// write (C320a). A stored body that does not parse stops the run.
 func trustParams(ctx context.Context, q allowance.Querier, now int64) (trust.Params, error) {
 	if ok, err := tableExists(ctx, q, "params"); err != nil || !ok {
 		return trust.DefaultParams(), err
 	}
-	var version int64
-	var body string
-	err := q.QueryRowContext(ctx, "SELECT version,body FROM params WHERE namespace=? AND effective_at<=? ORDER BY version DESC LIMIT 1", trust.ParamsNamespace, now).Scan(&version, &body)
-	if errors.Is(err, sql.ErrNoRows) || err == nil && version < trust.DefaultVersion {
-		return trust.DefaultParams(), nil
-	}
+	v, err := ledger.ParamsStore{}.Current(ctx, q, trust.ParamsNamespace, now)
 	if err != nil {
 		return trust.Params{}, err
 	}
-	return trust.ParseParams(version, []byte(body))
+	if v.CompiledIn {
+		return trust.DefaultParams(), nil
+	}
+	return trust.ParseParams(v.Version, v.Body)
 }
 
 func tableExists(ctx context.Context, q allowance.Querier, name string) (bool, error) {

@@ -75,7 +75,7 @@ var connectEmbedPage = template.Must(template.New("connect-embed").Funcs(templat
 <div class="button-row"><button class="button primary" id="connect-embed-allow" type="button" disabled>{{if eq .Action "signout"}}Sign out{{else}}Allow{{end}}</button><button class="button secondary" id="connect-embed-cancel" type="button">Cancel</button></div>
 <p id="connect-embed-status" class="form-status" role="status">Checking your key…</p>{{end}}
 </main>
-<script src="{{asset "memo-core.js"}}"></script><script src="{{asset "connect-embed.js"}}"></script>
+<script src="{{asset "memo-core.js"}}"></script><script src="{{asset "browser-key.js"}}"></script><script src="{{asset "connect-embed.js"}}"></script>
 </body></html>
 `))
 

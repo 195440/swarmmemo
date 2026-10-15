@@ -565,25 +565,52 @@ func (p ParamsStore) namespace(name string) (Namespace, bool) {
 	return ns, ok
 }
 
-// Params is the version in effect at now: the newest stored version whose
-// effective_at has passed, else the compiled-in one. A namespace nobody
-// registered reads as version 0 with an empty body, so its owner falls back
-// on its own compiled-in defaults.
+// Params is the version in effect at now (Current). A namespace nobody
+// registered reads as version 0 with an empty body when nothing is stored,
+// so its owner falls back on its own compiled-in defaults.
 func (p ParamsStore) Params(ctx context.Context, q allowance.Querier, namespace string, now int64) (int64, []byte, error) {
-	ns, ok := p.namespace(namespace)
-	var version int64
-	var body string
-	err := q.QueryRowContext(ctx, "SELECT version,body FROM params WHERE namespace=? AND effective_at<=? ORDER BY version DESC LIMIT 1", namespace, now).Scan(&version, &body)
-	if errors.Is(err, sql.ErrNoRows) {
-		if !ok {
-			return 0, nil, nil
-		}
-		return ns.Version, ns.Body(), nil
-	}
+	v, err := p.Current(ctx, q, namespace, now)
 	if err != nil {
 		return 0, nil, err
 	}
-	return version, []byte(body), nil
+	return v.Version, v.Body, nil
+}
+
+// Current is the one selector of the version in effect at now, shared by
+// Params, Get(-1) (/api/params "current") and trust runs: the newest stored
+// version whose effective_at has passed, unless the compiled-in version is
+// newer. Deploying a binary that ships a newer compiled-in version activates
+// it with no parameter write (C320a), so an older stored row is superseded,
+// never "current". Set numbers stored versions above the compiled-in one, so
+// only a compiled-in bump (trust 7 → 10) supersedes a stored row.
+func (p ParamsStore) Current(ctx context.Context, q allowance.Querier, namespace string, now int64) (ParamsVersion, error) {
+	ns, registered := p.namespace(namespace)
+	var v ParamsVersion
+	var body string
+	err := q.QueryRowContext(ctx, "SELECT version,body,sha256,effective_at,created_at,reason FROM params WHERE namespace=? AND effective_at<=? ORDER BY version DESC LIMIT 1", namespace, now).Scan(&v.Version, &body, &v.SHA256, &v.EffectiveAt, &v.CreatedAt, &v.Reason)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && registered && v.Version < ns.Version {
+		if !registered {
+			return ParamsVersion{Namespace: namespace}, nil
+		}
+		return compiledIn(namespace, ns, true), nil
+	}
+	if err != nil {
+		return ParamsVersion{}, err
+	}
+	v.Namespace, v.Body = namespace, json.RawMessage(body)
+	return v, nil
+}
+
+// compiledIn is the namespace's compiled-in version, with its body when
+// withBody (List leaves it out).
+func compiledIn(namespace string, ns Namespace, withBody bool) ParamsVersion {
+	b := ns.Body()
+	sum := sha256.Sum256(b)
+	v := ParamsVersion{Namespace: namespace, Version: ns.Version, SHA256: hex.EncodeToString(sum[:]), Reason: "compiled-in defaults", CompiledIn: true}
+	if withBody {
+		v.Body = b
+	}
+	return v
 }
 
 // ParamsVersion is one stored or compiled-in version, as /api/params shows it.
@@ -598,24 +625,20 @@ type ParamsVersion struct {
 	CompiledIn  bool            `json:"compiled_in"`
 }
 
-// Get reads one version (-1: the one in effect at now).
+// Get reads one version (-1: the one in effect at now, Current).
 func (p ParamsStore) Get(ctx context.Context, q allowance.Querier, namespace string, version, now int64) (ParamsVersion, error) {
 	ns, ok := p.namespace(namespace)
 	if !ok {
 		return ParamsVersion{}, &allowance.Err{Code: "invalid_resource"}
 	}
+	if version < 0 {
+		return p.Current(ctx, q, namespace, now)
+	}
 	var v ParamsVersion
 	var body string
-	var err error
-	if version < 0 {
-		err = q.QueryRowContext(ctx, "SELECT version,body,sha256,effective_at,created_at,reason FROM params WHERE namespace=? AND effective_at<=? ORDER BY version DESC LIMIT 1", namespace, now).Scan(&v.Version, &body, &v.SHA256, &v.EffectiveAt, &v.CreatedAt, &v.Reason)
-	} else {
-		err = q.QueryRowContext(ctx, "SELECT version,body,sha256,effective_at,created_at,reason FROM params WHERE namespace=? AND version=?", namespace, version).Scan(&v.Version, &body, &v.SHA256, &v.EffectiveAt, &v.CreatedAt, &v.Reason)
-	}
-	if errors.Is(err, sql.ErrNoRows) && (version < 0 || version == ns.Version) {
-		b := ns.Body()
-		sum := sha256.Sum256(b)
-		return ParamsVersion{Namespace: namespace, Version: ns.Version, Body: b, SHA256: hex.EncodeToString(sum[:]), Reason: "compiled-in defaults", CompiledIn: true}, nil
+	err := q.QueryRowContext(ctx, "SELECT version,body,sha256,effective_at,created_at,reason FROM params WHERE namespace=? AND version=?", namespace, version).Scan(&v.Version, &body, &v.SHA256, &v.EffectiveAt, &v.CreatedAt, &v.Reason)
+	if errors.Is(err, sql.ErrNoRows) && version == ns.Version {
+		return compiledIn(namespace, ns, true), nil
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return ParamsVersion{}, ErrNotFound
@@ -627,8 +650,9 @@ func (p ParamsStore) Get(ctx context.Context, q allowance.Querier, namespace str
 	return v, nil
 }
 
-// List is the namespace's versions, newest first, at most 100 stored ones
-// followed by the compiled-in version.
+// List is the namespace's versions, newest first: at most 100 stored ones
+// and the compiled-in version in version order (a compiled-in version that
+// supersedes the stored ones comes first).
 func (p ParamsStore) List(ctx context.Context, q allowance.Querier, namespace string) ([]ParamsVersion, error) {
 	ns, ok := p.namespace(namespace)
 	if !ok {
@@ -650,9 +674,9 @@ func (p ParamsStore) List(ctx context.Context, q allowance.Querier, namespace st
 	if err = rows.Err(); err != nil {
 		return nil, err
 	}
-	b := ns.Body()
-	sum := sha256.Sum256(b)
-	return append(out, ParamsVersion{Namespace: namespace, Version: ns.Version, SHA256: hex.EncodeToString(sum[:]), Reason: "compiled-in defaults", CompiledIn: true}), nil
+	out = append(out, compiledIn(namespace, ns, false))
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Version > out[j].Version })
+	return out, nil
 }
 
 // Set validates body and appends it as the next version. The stored body is

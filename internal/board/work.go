@@ -1304,12 +1304,20 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 			reward = r.Amount
 		}
 	}
-	if err = s.enqueueMCPWorkEvents(ctx, tx, c.Operation, w, root, cmp.Or(w.Worker, worker), reward, a, now); err != nil {
+	// An accept or a payout reaching a worker at 0¢ standing carries the
+	// one step that starts it (C334).
+	workerNext, err := s.zeroStandingNext(ctx, tx, c.Operation, cmp.Or(w.Worker, worker), now)
+	if err != nil {
+		return Result{}, err
+	}
+	if err = s.enqueueMCPWorkEvents(ctx, tx, c.Operation, w, root, cmp.Or(w.Worker, worker), reward, workerNext, a, now); err != nil {
 		return Result{}, err
 	}
 	// The inbox entry log (C61): the same parties, and a named reviewer;
 	// under INBOX_ENTRIES=read work.update is pushed from those entries.
-	entries, err := s.recordInbox(ctx, tx, workInboxSource(c.Operation, w, root.Room, cmp.Or(w.Worker, worker), a, now))
+	src := workInboxSource(c.Operation, w, root.Room, cmp.Or(w.Worker, worker), a, now)
+	src.workerNext = workerNext
+	entries, err := s.recordInbox(ctx, tx, src)
 	if err != nil {
 		return Result{}, err
 	}

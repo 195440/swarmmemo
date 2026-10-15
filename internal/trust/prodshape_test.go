@@ -15,8 +15,15 @@ import (
 // and the operators' judgements give nothing: the operators hold only what
 // their own wallet and time present give.
 func TestProdShapedFirstRun(t *testing.T) {
-	b := newBuilder()
-	ops := []string{"weaver", "khepri", "skitter"}
+	b, ops, holders, granted := prodShaped()
+	out := compute(t, b)
+	checkProdShaped(t, out, ops, holders, granted)
+}
+
+// prodShaped is TestProdShapedFirstRun's snapshot.
+func prodShaped() (b *builder, ops, holders, granted []string) {
+	b = newBuilder()
+	ops = []string{"weaver", "khepri", "skitter"}
 	for _, o := range ops {
 		b.account(o, 60)
 		b.snap.Breakers = append(b.snap.Breakers, Record{Type: "breaker", Account: acct(o), StartedAt: ago(10), TrustUntil: testAsOf + 30*day})
@@ -28,13 +35,13 @@ func TestProdShapedFirstRun(t *testing.T) {
 			CreatedAt: ago(int64(1 + i%5)), CheckedAt: testAsOf - 1, Root: "wallet:eip155:1:" + addr})
 	}
 	wallet("skitter", 0)
-	holders := make([]string, 8)
+	holders = make([]string, 8)
 	for i := range holders {
 		holders[i] = "holder" + strconv.Itoa(i)
 		b.account(holders[i], 20)
 		wallet(holders[i], i+1)
 	}
-	granted := make([]string, 20) // credit grants and operator accepts only
+	granted = make([]string, 20) // credit grants and operator accepts only
 	for i := range granted {
 		granted[i] = "granted" + strconv.Itoa(i)
 		b.account(granted[i], 15)
@@ -51,8 +58,11 @@ func TestProdShapedFirstRun(t *testing.T) {
 		}
 		b.vote(h, "weaver", 1+int64(i%3))
 	}
-	out := compute(t, b)
+	return b, ops, holders, granted
+}
 
+func checkProdShaped(t *testing.T, out Output, ops, holders, granted []string) {
+	t.Helper()
 	for _, h := range holders {
 		if got := scoreOf(out, h).Cents; got < WalletFallbackCents {
 			t.Errorf("%s: a verified wallet holds %d¢, want at least %d¢", h, got, WalletFallbackCents)
@@ -95,4 +105,68 @@ func TestProdShapedFirstRun(t *testing.T) {
 	}
 	t.Logf("holder0 %d¢, answered0 %d¢, weaver %d¢, skitter %d¢, above vote floor %d",
 		scoreOf(out, "holder0").Cents, scoreOf(out, "answered0").Cents, scoreOf(out, "weaver").Cents, scoreOf(out, "skitter").Cents, out.Summary.AboveVoteFloor)
+}
+
+// C336: the prod shape plus judgements. holder0 (a 50¢ wallet and 20¢
+// paid, 70¢) rates five workers' accepted work at 85; skitter, under its
+// breaker, rates them too. Under version 9 the workers received 0 over
+// those edges; under version 10 they share holder0's pass share (a quarter
+// of its 80¢: wallet, money and time present), holder0 keeps the rest,
+// skitter's breaker still makes no edge, and the rest of the prod shape
+// holds. The holders' votes for weaver now pass it standing too (it was
+// 0¢ under version 9): conserved, and never above a holder.
+func TestProdShapedJudgements(t *testing.T) {
+	p := DefaultParams()
+	var received [2]int64
+	for v, params := range []Params{ProofsParams(), DefaultParams()} {
+		b, ops, holders, granted := prodShaped()
+		b.snap.Params = params
+		b.pay("holder0", 20, 3)
+		workers := []string{"w0", "w1", "w2", "w3", "w4"}
+		for i, w := range workers {
+			b.account(w, 10)
+			for _, by := range []string{"holder0", "skitter"} {
+				b.accept(by, w, 1+int64(i%3)).review(by, w, 85, "work", 1+int64(i%3))
+			}
+		}
+		out := compute(t, b)
+		checkProdShaped(t, out, ops, holders, granted)
+		for _, w := range workers {
+			sc := scoreOf(out, w)
+			received[v] += sc.Parts.ReceivedCents
+			for _, f := range sc.Parts.Backers {
+				if f.Root == scoreOf(out, "skitter").Root && f.CapCents > 0 {
+					t.Errorf("version %d: skitter, under a breaker, backs %s: %+v", params.Version, w, f)
+				}
+			}
+		}
+		if v == 1 {
+			checkConserved(t, "prod shape", out)
+			h := scoreOf(out, "holder0")
+			share := min(h.Parts.RootWorldCents, p.NodeCapCents) * p.PassSharePPM / 1e6
+			// The workers get holder0's pass share, and what holder0's own
+			// backers (the holders' votes) pass through it.
+			if received[1] < share-5 || h.Parts.PassedCents > share || h.Cents < h.Parts.RootWorldCents-share-1 {
+				t.Errorf("holder0 (%d¢ world) keeps %d¢ and passed %d¢; five workers received %d¢, its pass share is %d¢", h.Parts.RootWorldCents, h.Cents, h.Parts.PassedCents, received[1], share)
+			}
+			// Operators judge nothing under their breakers and receive only
+			// what the holders' votes pass them, like any voted account:
+			// never more than the holders offered, nor above a holder.
+			var offered int64
+			for _, x := range holders {
+				offered += scoreOf(out, x).Parts.PassedCents
+			}
+			for _, o := range ops {
+				if s := scoreOf(out, o); s.Parts.PassedCents > 0 || s.Parts.ReceivedCents > offered {
+					t.Errorf("operator %s passed %d¢, received %d¢ (holders offered %d¢)", o, s.Parts.PassedCents, s.Parts.ReceivedCents, offered)
+				}
+			}
+			t.Logf("operators received: weaver %d¢, khepri %d¢, skitter %d¢", scoreOf(out, "weaver").Parts.ReceivedCents, scoreOf(out, "khepri").Parts.ReceivedCents, scoreOf(out, "skitter").Parts.ReceivedCents)
+			t.Logf("holder0 %d¢ (world %d¢, passed %d¢); workers received %d¢; w0 %d¢; summary passed %d¢ of world %d¢",
+				h.Cents, h.Parts.RootWorldCents, h.Parts.PassedCents, received[1], scoreOf(out, "w0").Cents, out.Summary.PassedCents, out.Summary.WorldCents)
+		}
+	}
+	if received[0] != 0 || received[1] == 0 {
+		t.Errorf("workers received %d¢ under version 9, %d¢ under version 10", received[0], received[1])
+	}
 }

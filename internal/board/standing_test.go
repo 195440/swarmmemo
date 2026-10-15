@@ -153,7 +153,7 @@ func TestEveryConsumerReadsOneStanding(t *testing.T) {
 // API, the public graph, Find, the work record's root), and no file computes
 // v(s), a band or a tier of its own. A new reader must go through these.
 func TestStandingHasOneReader(t *testing.T) {
-	readers := map[string]bool{"standing.go": true, "trustapi.go": true, "trustgraph.go": true, "find.go": true, "workreputation.go": true, "trustcompare.go": true}
+	readers := map[string]bool{"standing.go": true, "trustapi.go": true, "trustgraph.go": true, "trustlayer.go": true, "find.go": true, "workreputation.go": true, "trustcompare.go": true}
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)

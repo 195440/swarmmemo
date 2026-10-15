@@ -47,9 +47,14 @@ func TestSpendCurve(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			backed += scoreOf(out, "fresh"+strconv.Itoa(i)).Cents
 		}
-		want := min(max(0, row.cents-p.NodeCapCents), 10*p.UnitCents) + min(row.cents, 10*p.DayPriceCents)
-		if scoreOf(out, "spender").Cents != row.standing || backed > want || backed < want*99/100 {
-			t.Errorf("%d¢ spent, judging 10 fresh accounts: keeps %d¢ (want %d), backs %d¢ (want about %d)", row.cents, scoreOf(out, "spender").Cents, row.standing, backed, want)
+		// Version 10: below (1 + pass_share_ppm) × node_cap it also gives its
+		// pass share, topping what it holds above node_cap up to pass_share_ppm
+		// of what it keeps.
+		surplus := max(0, row.cents-p.NodeCapCents)
+		share := max(0, row.standing*p.PassSharePPM/1e6-surplus)
+		want := min(surplus+share, 10*p.UnitCents) + min(row.cents, 10*p.DayPriceCents)
+		if keeps := scoreOf(out, "spender").Cents; keeps < row.standing-share-1 || keeps > row.standing-share || backed > want || backed < want*99/100-10 { // each of 10 rounds down
+			t.Errorf("%d¢ spent, judging 10 fresh accounts: keeps %d¢ (want %d), backs %d¢ (want about %d)", row.cents, keeps, row.standing-share, backed, want)
 		}
 	}
 }
@@ -134,17 +139,34 @@ func TestRingBounds(t *testing.T) {
 	}
 }
 
-// §2: judging never lowers what an account keeps of its own costs.
+// §2 (version 10): judging lowers what an account keeps of its own costs
+// by at most its pass share: what it holds above node_cap topped up to
+// pass_share_ppm of what it keeps. Judging 30 fresh accounts, poorer than it, it
+// gives exactly that; from (1 + pass_share_ppm) × node_cap up it keeps node_cap.
 func TestJudgingKeepsOwnCosts(t *testing.T) {
-	for _, paid := range []int64{300, 750, 2000} {
+	p := DefaultParams()
+	for _, paid := range []int64{40, 300, 750, 900, 2000} {
 		b := newBuilder().pay("judge", paid, 5)
 		before := scoreOf(compute(t, b), "judge").Cents
 		for i := 0; i < 30; i++ {
 			b.review("judge", "x"+strconv.Itoa(i), 100, "paid_use", 1)
 		}
+		keep := min(paid, p.NodeCapCents)
+		share := max(0, keep*p.PassSharePPM/1e6-(paid-keep))
 		after := scoreOf(compute(t, b), "judge").Cents
-		if after != before || after != min(paid, 750) {
-			t.Errorf("%d¢ paid: keeps %d¢ before judging, %d¢ after", paid, before, after)
+		if before != keep || after < keep-share-1 || after > keep-share+1 {
+			t.Errorf("%d¢ paid: keeps %d¢ before judging, %d¢ after, want %d¢", paid, before, after, keep-share)
+		}
+	}
+	// Version 9 (no pass share): judging never lowers it.
+	for _, paid := range []int64{300, 750, 2000} {
+		b := newBuilder().pay("judge", paid, 5)
+		b.snap.Params = ProofsParams()
+		for i := 0; i < 30; i++ {
+			b.review("judge", "x"+strconv.Itoa(i), 100, "paid_use", 1)
+		}
+		if after := scoreOf(compute(t, b), "judge").Cents; after != min(paid, 750) {
+			t.Errorf("version 9, %d¢ paid: keeps %d¢ after judging", paid, after)
 		}
 	}
 }

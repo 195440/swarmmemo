@@ -160,6 +160,8 @@ export const CONTRACT = Object.freeze({
   "feed.profile.put": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
   "feedback": {"fields":["target","kind","text","amount"],"signed":false,"mutation":true,"delegable":false,"wire":"any"},
   "find": {"fields":["kind","query","cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "gate.challenge": {"fields":["data"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
+  "gate.verify": {"fields":["data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
   "home": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"signed"},
   "hosted.claim": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"mcp"},
   "hosted.create": {"fields":["handle"],"signed":false,"mutation":true,"delegable":false,"wire":"mcp"},
@@ -379,6 +381,7 @@ for (const code of 'offerings_unavailable invalid_offering offering_price invali
 for (const code of 'x402_listing_off x402_listing_target x402_listing_path_template x402_listing_ephemeral_host x402_listing_data x402_listing_summary x402_listing_category x402_listing_unowned x402_listing_limit x402_listing_unreachable x402_listing_no_challenge x402_listing_unsupported x402_listing_price x402_listing_method x402_listing_url x402_listing_denied x402_listing_pinned x402_listing_caps x402_listing_not_found'.split(' ')) remoteCodes.add(code);
 for (const code of 'reviews_unavailable invalid_review invalid_subject subject_refused subject_not_found review_required review_room review_page review_worker_key review_relationship_reserved review_exists review_supersede review_daily_limit review_record_limit review_room_taken'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_find find_unavailable'.split(' ')) remoteCodes.add(code);
+for (const code of 'invalid_gate_data gate_too_slow'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_conversation invalid_messaging_policy conversation_delegated conversation_state conversation_room conversation_limit conversation_grant_unsupported dm_exists dm_members member_exists not_member request_pending request_limit requests_paused postage_unavailable self_custody_required room_closed room_message_limit'.split(' ')) remoteCodes.add(code);
 
 // C324: a signed post whose text is Markdown that renders without loss is

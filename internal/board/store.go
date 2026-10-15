@@ -29,6 +29,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"swarmmemo/internal/gate"
 	"swarmmemo/internal/services"
 )
 
@@ -125,6 +126,9 @@ type Store struct {
 	trust    trustState
 	// signals is the write signals' HMAC key (signals.go, C160).
 	signals signalsState
+	// The SwarmMemo Gate's pending challenges (gate.go, C325), in memory.
+	gateMu     sync.Mutex
+	gatekeeper *gate.Gate
 	// The moderation engine (moderationwire.go); nil while MODERATION is off.
 	moderation moderationState
 	// Arrivals by client (clientstats.go), in memory until written.
@@ -853,6 +857,9 @@ func (s *Store) executeCommand(ctx context.Context, cmd Command, source string) 
 	if cmd.Operation == "feedback" {
 		ctx = context.WithValue(ctx, funnelSourceKey{}, source) // an anonymous caller's network (funnel_feedback.go)
 	}
+	if cmd.Operation == "gate.challenge" {
+		ctx = context.WithValue(ctx, gateSourceKey{}, source) // challenges are counted per network (gate.go)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return empty, err
@@ -1240,6 +1247,10 @@ func (s *Store) execute(ctx context.Context, tx *sql.Tx, c Command, a actor, now
 		return s.issueStandingChallenge(ctx, tx, c, a, now)
 	case "standing.work":
 		return s.submitStandingWork(ctx, tx, c, a, now)
+	case "gate.challenge":
+		return s.gateChallenge(ctx, c)
+	case "gate.verify":
+		return s.gateVerify(ctx, tx, c, a, now)
 	case "vouch":
 		return s.vouch(ctx, tx, c, a, now)
 	// RFC0013: conversations, messaging policy, sealing and hosted identities.

@@ -96,7 +96,7 @@ def _own_schemas(profile):
     page ={"cursor": string(maximum=1024), "limit": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5}}
     schemas = {
         "local_status": object_schema({"intent_id": string(INTENT)}),
-        "find_work": object_schema({"query": string(maximum=160), "state": {"type": "string", "enum": WORK_KINDS}, **page}),
+        "find_work": object_schema({"query": string(maximum=160), "state": {"type": "string", "enum": WORK_KINDS}, "standing": string(HEX32), "worker": string(HEX64), "eligible_for": string(HEX64), **page}),
         "read_work": object_schema({"work_id": string(HEX32), "history": {"type": "boolean", "default": False}, "agent": string(HEX64), **page}, ("work_id",)),
         "read_thread": object_schema({"message_id": string(HEX32), "include_provenance": {"type": "boolean", "default": False}, **page}, ("message_id",)),
     }
@@ -310,6 +310,19 @@ def _valid_create_options(data):
     return True
 
 
+def _standing(standing):
+    """A standing task's seats (Go WorkStanding), on a work or a works.list
+    filtered by standing; anything else is invalid_response."""
+    if (not isinstance(standing, dict) or set(standing) - STANDING_COUNTS - {"tiers", "usdc_per_agent_day", "usdc_day_max"} or not STANDING_COUNTS <= standing.keys()
+            or any(type(standing[name]) is not int or not 0 <= standing[name] < 2**63 for name in STANDING_COUNTS)
+            or any(name in standing and _usdc_units(standing[name]) is None for name in ("usdc_per_agent_day", "usdc_day_max"))
+            or not isinstance(standing.get("tiers"), list) or not 1 <= len(standing["tiers"]) <= LIMITS["work_standing_tiers_maximum"]
+            or any(not isinstance(t, dict) or set(t) - {"name", "credits", "usdc"} or not isinstance(t.get("name"), str) or not re.fullmatch(STANDING_TIER, t["name"])
+                   or type(t.get("credits")) is not int or ("usdc" in t and _usdc_units(t["usdc"]) is None) for t in standing["tiers"])):
+        raise BridgeError("invalid_response")
+    return standing
+
+
 def _work(profile, work, expected=None):
     if not isinstance(work, dict) or set(work) - WORK_REQUIRED - WORK_OPTIONAL or not WORK_REQUIRED <= work.keys(): raise BridgeError("invalid_response")
     # reward_usdc is a reward's USDC asset (amount a decimal string, RFC 0016);
@@ -330,15 +343,7 @@ def _work(profile, work, expected=None):
             raise BridgeError("invalid_response")
     if "requester_may_decide_at" in work and (type(work["requester_may_decide_at"]) is not int or not 0 <= work["requester_may_decide_at"] < 2**63): raise BridgeError("invalid_response")
     # standing: a standing task's seats; standing_id and tier: a result it opened.
-    if "standing" in work:
-        standing = work["standing"]
-        if (not isinstance(standing, dict) or set(standing) - STANDING_COUNTS - {"tiers", "usdc_per_agent_day", "usdc_day_max"} or not STANDING_COUNTS <= standing.keys()
-                or any(type(standing[name]) is not int or not 0 <= standing[name] < 2**63 for name in STANDING_COUNTS)
-                or any(name in standing and _usdc_units(standing[name]) is None for name in ("usdc_per_agent_day", "usdc_day_max"))
-                or not isinstance(standing.get("tiers"), list) or not 1 <= len(standing["tiers"]) <= LIMITS["work_standing_tiers_maximum"]
-                or any(not isinstance(t, dict) or set(t) - {"name", "credits", "usdc"} or not isinstance(t.get("name"), str) or not re.fullmatch(STANDING_TIER, t["name"])
-                       or type(t.get("credits")) is not int or ("usdc" in t and _usdc_units(t["usdc"]) is None) for t in standing["tiers"])):
-            raise BridgeError("invalid_response")
+    if "standing" in work: _standing(work["standing"])
     if "standing_id" in work and (not isinstance(work["standing_id"], str) or not re.fullmatch(HEX32, work["standing_id"]) or work["standing_id"] == work.get("id")): raise BridgeError("invalid_response")
     if "tier" in work and (not isinstance(work["tier"], str) or not re.fullmatch(STANDING_TIER, work["tier"])): raise BridgeError("invalid_response")
     # request is the task at its newest version, bounded (4096 bytes on one
@@ -572,11 +577,17 @@ def _dispatch(profile, action, a):
         query.update(room=profile.room)
         if "query" in a: query["query"] = a["query"]
         if "state" in a: query["kind"] = a["state"]
+        # standing: a standing task's results and its seats (data.standing);
+        # worker and eligible_for: fingerprints, as hosted find_work takes them.
+        for name in ("standing", "worker", "eligible_for"):
+            if name in a: query[name] = a[name]
         result = _request(profile, "/api/works?" + urllib.parse.urlencode(query))
         data = result.get("data", {})
         works = data.get("works")
         if not isinstance(works, list) or len(works) > limit or type(data.get("has_more")) is not bool: raise BridgeError("invalid_response")
-        return {**common, "works": [_work(profile, work) for work in works], "has_more": data["has_more"], "next_cursor": _cursor(result.get("next_cursor", ""))}
+        found = {**common, "works": [_work(profile, work) for work in works], "has_more": data["has_more"], "next_cursor": _cursor(result.get("next_cursor", ""))}
+        if "standing" in data: found["standing"] = _standing(data["standing"])
+        return found
     if action == "read_work":
         # agent: the fingerprint an eligibility preview is for (GET /api/work/ID?agent=).
         result = _request(profile, "/api/work/" + a["work_id"] + ("?" + urllib.parse.urlencode({"agent": a["agent"]}) if "agent" in a else ""))

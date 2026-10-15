@@ -568,12 +568,13 @@ func TestHostedToolsSignOnlyHostedOperations(t *testing.T) {
 		{"journal", map[string]any{}},
 		{"journal_suspend", map[string]any{"text": "next: reply"}},
 		{"set_handle", map[string]any{"handle": "signed-name"}},
+		{"gate_solve", map[string]any{"origin": "https://shop.example"}},
 	} {
 		callTool(t, s, url, "", call.tool, call.args)
 	}
 	allowed := map[string]bool{"agent.get": true, "hosted.token": true, "hosted.claim": true, "conversations.list": true, "conversation.get": true,
 		"conversation.open": true, "conversation.respond": true, "post": true, "room.invite.create": true, "room.invite.accept": true,
-		"messaging.policy.set": true, "room.policy.set": true, "updates.get": true, "service.call": true, "journal.get": true, "journal.suspend": true, "agent.register": true}
+		"messaging.policy.set": true, "room.policy.set": true, "updates.get": true, "service.call": true, "journal.get": true, "journal.suspend": true, "agent.register": true, "gate.verify": true}
 	if len(rec.ops) < 10 {
 		t.Fatalf("only %v were signed; the tools above did not run", rec.ops)
 	}

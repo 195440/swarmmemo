@@ -8,6 +8,8 @@
   --graph-bg:#ffffff;--graph-ink:#111111;--graph-muted:#6f6f6f;--graph-edge:#9a9a9a;
   --graph-bridge:#111111;--graph-bridge-weak:#8a8a8a;--graph-infra:#111111;--graph-pulse:#111111;
   --graph-hud:#ffffff;--graph-hud-line:#d9d9d9;
+  /* The trust layer's one accent (backing, trusted agents) and its penalty ring. */
+  --graph-trust:#a87400;--graph-attack:#c4452c;
   --graph-c0:#2a2a2a;--graph-c1:#6a6a6a;--graph-c2:#7a7a7a;--graph-c3:#5e5e5e;
   --graph-c4:#727272;--graph-c5:#666666;--graph-c6:#7e7e7e;--graph-c7:#626262;
   --graph-c8:#767676;--graph-c9:#6e6e6e;--graph-c10:#5a5a5a;--graph-c11:#848484;
@@ -17,6 +19,7 @@
     --graph-bg:#000000;--graph-ink:#f2f2f2;--graph-muted:#9a9a9a;--graph-edge:#5c5c5c;
     --graph-bridge:#f2f2f2;--graph-bridge-weak:#7a7a7a;--graph-infra:#f2f2f2;--graph-pulse:#f2f2f2;
     --graph-hud:#000000;--graph-hud-line:#333333;
+    --graph-trust:#e3aa2c;--graph-attack:#e0664c;
     --graph-c0:#9c9c9c;--graph-c1:#4a4a4a;--graph-c2:#525252;--graph-c3:#464646;
     --graph-c4:#4e4e4e;--graph-c5:#484848;--graph-c6:#545454;--graph-c7:#444444;
     --graph-c8:#505050;--graph-c9:#4c4c4c;--graph-c10:#424242;--graph-c11:#585858;
@@ -286,3 +289,31 @@ html.graph-expanded{overflow:hidden}
 .paper-map .graph-controls .button{min-height:40px;padding:0 var(--s-4)}
 .paper-map #graph-play{background:var(--ink);color:var(--surface);border-color:var(--ink);min-width:6em}
 
+
+/* The trust layer (trust-layer.js): a Map | Trust switch above Figure 1;
+   while Trust shows, the map's stage and controls step aside. */
+.graph-layers{display:inline-flex;margin:0 0 var(--s-2);border:1px solid var(--ink)}
+.graph-layer{min-height:36px;padding:0 var(--s-4);border:0;background:transparent;color:var(--ink);font:400 15px/1 var(--sans);cursor:pointer}
+.graph-layer+.graph-layer{border-left:1px solid var(--ink)}
+.graph-layer[aria-pressed=true]{background:var(--ink);color:var(--surface)}
+.graph-layer:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.graph-app[data-layer=trust] #graph-stage,.graph-app[data-layer=trust] #graph-controls{display:none}
+.graph-trust[hidden]{display:none}
+.graph-trust-canvas{position:absolute;inset:0;display:block;width:100%;height:100%;touch-action:none}
+.graph-trust-canvas[hidden]{display:none}
+.graph-trust-canvas:focus-visible{outline:2px solid var(--graph-ink);outline-offset:-2px}
+.graph-trust-status{position:absolute;left:var(--s-3);top:var(--s-3);right:var(--s-3);width:max-content;max-width:calc(100% - 2 * var(--s-3))}
+.graph-trust-legend{position:absolute;left:var(--s-3);bottom:var(--s-3);margin:0;padding:8px 10px;list-style:none;background:var(--graph-hud);border:1px solid var(--graph-hud-line);border-radius:var(--radius);font-size:11px;line-height:1.5;color:var(--graph-ink)}
+.graph-trust-legend li{display:flex;gap:7px;align-items:center;white-space:nowrap}
+.graph-trust-legend i{flex:none;display:inline-block;width:8px;height:8px}
+.graph-trust-legend i.disc{border-radius:50%;background:var(--graph-ink)}
+.graph-trust-legend i.diamond{width:7px;height:7px;transform:rotate(45deg);border:1.5px solid var(--graph-ink)}
+.graph-trust-legend i.gold{height:3px;width:14px;background:var(--graph-trust)}
+.graph-trust-legend i.grey{height:1px;width:14px;background:var(--graph-edge)}
+.graph-trust-label{position:absolute;left:0;top:0;pointer-events:none;font:var(--t-meta)/1.2 var(--sans);color:var(--graph-ink);white-space:nowrap;text-shadow:0 0 3px var(--graph-bg),0 0 3px var(--graph-bg)}
+.graph-trust-label.anchor{font-family:var(--mono);color:var(--graph-muted)}
+.graph-trust-note{font-size:14px;color:var(--muted);max-width:82ch;margin:var(--s-3) auto 0;text-align:center}
+@media (max-width:600px){
+  .graph-trust-legend{font-size:10px;padding:4px 6px}
+  .graph-trust-status{font-size:11px;white-space:normal}
+}

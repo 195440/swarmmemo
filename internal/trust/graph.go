@@ -20,8 +20,12 @@ type Graph struct {
 	Src     []int32           `json:"src"`
 	Dst     []int32           `json:"dst"`
 	EdgeCap []int64           `json:"edge_cap"`
-	Levels  []int64           `json:"levels"`
-	MaxWork int64             `json:"max_work"`
+	// Pass is, per node, the part of what it keeps (min(world, cap)) it
+	// offers over its judgement edges (version 10's pass_share_ppm, at most its
+	// edges' total capacity); nil before version 10.
+	Pass    []int64 `json:"pass,omitempty"`
+	Levels  []int64 `json:"levels"`
+	MaxWork int64   `json:"max_work"`
 
 	Index map[string]int `json:"-"`
 	// recent are the judgement edges made within the backer window, by
@@ -49,6 +53,25 @@ func flowLevels(U, nodeCap int64) []int64 {
 	for _, l := range []int64{U / 8, U / 4, U / 2, U, 2 * U, nodeCap} {
 		l = min(l, nodeCap)
 		if l > 0 && (len(out) == 0 || l > out[len(out)-1]) {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// passFlowLevels are version 10's levels: U/64, U/32 and U/16 before
+// flowLevels', so a pass share of a few cents spreads over the accounts a
+// root judged instead of filling the first few to U/8 (each at most
+// node_cap, ascending).
+func passFlowLevels(U, nodeCap int64) []int64 {
+	var out []int64
+	for _, l := range []int64{U / 64, U / 32, U / 16} {
+		if l = min(l, nodeCap); l > 0 && (len(out) == 0 || l > out[len(out)-1]) {
+			out = append(out, l)
+		}
+	}
+	for _, l := range flowLevels(U, nodeCap) {
+		if len(out) == 0 || l > out[len(out)-1] {
 			out = append(out, l)
 		}
 	}
@@ -84,6 +107,9 @@ func (r *run) newGraph(worldMC map[string]int64, member map[string]*logEntry, li
 		g.Cap = append(g.Cap, c)
 	}
 	g.Levels = flowLevels(r.p.UnitCents*mc, nodeCap)
+	if r.p.PassSharePPM > 0 {
+		g.Levels = passFlowLevels(r.p.UnitCents*mc, nodeCap)
+	}
 	return g
 }
 
@@ -169,6 +195,34 @@ func (g *Graph) setEdges(r *run, set judgementSet, acc func(string) int64, membe
 		g.Dst = append(g.Dst, int32(k.dst))
 		g.EdgeCap = append(g.EdgeCap, c)
 	}
+	g.setPass(p.PassSharePPM)
+}
+
+// setPass sets each node's pass share (§2, version 10). A node offers its
+// edges what it holds above its cap and, when that is less than pass_share_ppm of
+// what it keeps (keep = min(world, cap)), tops it up to that from what it
+// keeps, never beyond its edges' total capacity:
+//
+//	pass = min(max(0, pass_share_ppm × keep − surplus), max(0, out − surplus))
+//
+// with surplus = world − keep and out the capacity of its judgement edges.
+// A node that judges nobody offers nothing, and one holding at least
+// (1 + pass_share_ppm) × cap offers only its surplus, as before version 10.
+func (g *Graph) setPass(passPPM int64) {
+	g.Pass = nil
+	if passPPM <= 0 {
+		return
+	}
+	out := make([]int64, len(g.Labels))
+	for k := range g.Src {
+		out[g.Src[k]] = min(out[g.Src[k]]+g.EdgeCap[k], 1<<60)
+	}
+	g.Pass = make([]int64, len(g.Labels))
+	for i := range g.Labels {
+		keep := min(g.World[i], g.Cap[i])
+		surplus := g.World[i] - keep
+		g.Pass[i] = min(max(0, mulDiv(keep, passPPM, 1e6)-surplus), max(0, out[i]-surplus))
+	}
 }
 
 // flowResult is one flow over the graph.
@@ -180,8 +234,10 @@ type flowResult struct {
 
 // flow is the capacity-bounded max-flow from the world (and extra, per
 // node, for a viewer's view): each node keeps min(world + extra, cap) of
-// its own; the rest flows from the source over the judgement edges into
-// the nodes' sinks, raised level by level up to each cap. It is specified
+// its own, less its pass share (version 10); the rest flows from the
+// source over the judgement edges into the nodes' sinks, its own included,
+// raised level by level up to each cap, so the pass share a node's edges
+// do not carry comes back to it. It is specified
 // exactly, for the verifier: network nodes 0..n−1, source n, sink n+1;
 // insertion order: source → node by node, judgement edges in (src, dst)
 // order, node → sink by node; then each level raises the sinks and runs
@@ -201,6 +257,9 @@ func (g *Graph) flow(ctx context.Context, extra []int64, maxWork, work int64) (f
 			w += extra[i]
 		}
 		res.Own[i] = min(w, g.Cap[i])
+		if g.Pass != nil {
+			res.Own[i] -= g.Pass[i]
+		}
 		in[i] = -1
 		if rest := w - res.Own[i]; rest > 0 {
 			in[i] = net.add(S, i, rest)
@@ -227,9 +286,17 @@ func (g *Graph) flow(ctx context.Context, extra []int64, maxWork, work int64) (f
 		}
 	}
 	for i := 0; i < n; i++ {
-		res.Standing[i] = res.Own[i] + net.flowOn(sink[i])
+		got := net.flowOn(sink[i])
+		res.Standing[i] = res.Own[i] + got
 		if in[i] >= 0 {
 			res.Passed[i] = net.flowOn(in[i])
+		}
+		// A node's offered pass share that reached its own sink is what it
+		// kept, not what it passed or received (own costs count first).
+		if g.Pass != nil && g.Pass[i] > 0 {
+			kept := min(res.Passed[i], got, g.Pass[i])
+			res.Own[i] += kept
+			res.Passed[i] -= kept
 		}
 	}
 	for k, e := range ids {

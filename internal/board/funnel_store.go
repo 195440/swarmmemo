@@ -1108,6 +1108,9 @@ const (
 func (s *Store) entryOf(ctx context.Context, a *funnelAccount, r FunnelRow) (entry, ref string, err error) {
 	d0 := a.firstSeen / 86400
 	for _, d := range a.days {
+		if d.day == d0 && d.ref == GateRef {
+			return "gate", d.ref, nil
+		}
 		if d.day == d0 && d.ref != "" {
 			return "ref:" + d.ref, d.ref, nil
 		}

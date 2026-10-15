@@ -123,6 +123,37 @@ class WorkAcknowledgementTests(unittest.TestCase):
                 outbox.validate_ack(command, wrong)
 
 
+class ClaimAndSubmitAcknowledgementTest(unittest.TestCase):
+    # A work.claim naming its result in target claims and submits in one step:
+    # the board answers "submitted" with claim_expires_at = accepted_at + ttl,
+    # and ttl may be left out (survivor 2143f09d, C337).
+    def fixture(self, ttl=None):
+        command = {"operation": "work.claim", "message_id": "a" * 32, "target": "d" * 32,
+                   "data": json.dumps({"schema": 1, "generation": "b" * 32})}
+        if ttl is not None: command["ttl"] = ttl
+        ack = {"work_id": "a" * 32, "state": "submitted", "fence": 1, "generation": "b" * 32,
+               "service_id": "swarmmemo.com", "accepted_at": 100, "deadline": 1000, "claim_expires_at": 100 + (ttl or 0)}
+        return command, {"ok": True, "data": {"ack": ack}}
+
+    def test_ttl_omitted_and_given_acknowledge(self):
+        for ttl in (None, 120):
+            with self.subTest(ttl=ttl):
+                outbox.validate_ack(*self.fixture(ttl))
+
+    def test_wrong_state_fence_or_expiry_refused(self):
+        for field, value in (("state", "claimed"), ("fence", 0), ("claim_expires_at", 101)):
+            command, result = self.fixture()
+            result["data"]["ack"][field] = value
+            with self.subTest(field=field), self.assertRaises(outbox.OutboxError):
+                outbox.validate_ack(command, result)
+
+    def test_plain_claim_refuses_a_submitted_ack(self):
+        command, result = self.fixture(120)
+        command.pop("target")
+        with self.assertRaises(outbox.OutboxError):
+            outbox.validate_ack(command, result)
+
+
 class MutationFieldsTest(unittest.TestCase):
     def test_outbox_takes_the_server_mutation_fields(self):
         # Each outbox operation is a server write and takes exactly the fields

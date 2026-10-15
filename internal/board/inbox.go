@@ -160,6 +160,9 @@ type inboxSource struct {
 	// Work: the transition's state and the parties it tells, by role.
 	workState string
 	parties   []workParty
+	// workerNext is the worker's next step, for its entry's detail.next
+	// (zeroStandingNext: an accept or a payout at 0¢ standing).
+	workerNext string
 }
 
 type workParty struct{ account, role string }
@@ -189,7 +192,11 @@ func concerned(ctx context.Context, tx *sql.Tx, src inboxSource) ([]inboxEntry, 
 				continue
 			}
 			seen[p.account] = true
-			detail := encodeInboxDetail(map[string]any{"state": src.workState, "role": p.role})
+			fields := map[string]any{"state": src.workState, "role": p.role}
+			if p.role == "worker" && src.workerNext != "" {
+				fields["next"] = src.workerNext
+			}
+			detail := encodeInboxDetail(fields)
 			out = append(out, inboxEntry{account: p.account, kind: inboxWork, subject: src.subject, room: src.room, actor: src.actor,
 				detail: detail, reasons: []string{inboxWork}, needsAnswer: src.workState == "submitted" && p.role == "reviewer"})
 		}

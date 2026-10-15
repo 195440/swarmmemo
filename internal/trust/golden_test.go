@@ -164,3 +164,32 @@ func testRecomputePy(t *testing.T, inputs, want []byte) {
 		t.Fatalf("recompute.py output sha256 %s, Go %s", hex.EncodeToString(g[:]), hex.EncodeToString(w[:]))
 	}
 }
+
+// C336: the golden fixture's snapshot under the compiled default (version
+// 10, the pass share and its finer levels): scripts/trust/recompute.py
+// reproduces the output byte for byte, and the fixture exercises the pass
+// share (a root at or below node_cap passing standing).
+func TestGoldenPassRecompute(t *testing.T) {
+	snap := goldenUnifiedSnapshot()
+	if snap.Params.Version != PassVersion || snap.Params.PassSharePPM == 0 {
+		t.Fatalf("the fixture runs version %d", snap.Params.Version)
+	}
+	var buf bytes.Buffer
+	if err := snap.WriteJSONL(&buf); err != nil {
+		t.Fatal(err)
+	}
+	out, err := Compute(context.Background(), snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	passing := 0
+	for _, sc := range out.Scores {
+		if sc.Parts.RootWorldCents <= snap.Params.NodeCapCents && sc.Parts.PassedCents > 0 {
+			passing++
+		}
+	}
+	if passing == 0 {
+		t.Fatal("no root at or below node_cap passes standing")
+	}
+	testRecomputePy(t, buf.Bytes(), out.Canonical())
+}

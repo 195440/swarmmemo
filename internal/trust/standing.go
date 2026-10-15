@@ -164,3 +164,37 @@ func groupThousands(n int64) string {
 	}
 	return b.String()
 }
+
+// LadderCents are the Trust ladder's tiers in US cents, lowest first: the
+// thresholds of the standing bounty (work b6f258db9ea891524066aab8dee31923),
+// the one list /me "Your trust", MCP trust and standing_ways read.
+var LadderCents = []int64{100, 300}
+
+// Milestone is a standing an account has not reached yet: Name, the cents
+// it starts at and the gap from here.
+type Milestone struct {
+	Name     string `json:"name"`
+	Cents    int64  `json:"cents"`
+	GapCents int64  `json:"gap_cents"`
+}
+
+// NextBand is the band above cents (proven, then trusted); nil at trusted.
+func (p Params) NextBand(cents int64) *Milestone {
+	for _, b := range []allowance.Band{allowance.BandProven, allowance.BandTrusted} {
+		if at := p.BandFloorCents(b); cents < at {
+			return &Milestone{Name: b.Name(), Cents: at, GapCents: at - max(cents, 0)}
+		}
+	}
+	return nil
+}
+
+// NextLadderTier is the first Trust ladder tier above cents ("tier 1" is
+// LadderCents[0]); nil past the last.
+func NextLadderTier(cents int64) *Milestone {
+	for i, at := range LadderCents {
+		if cents < at {
+			return &Milestone{Name: "tier " + strconv.Itoa(i+1), Cents: at, GapCents: at - max(cents, 0)}
+		}
+	}
+	return nil
+}

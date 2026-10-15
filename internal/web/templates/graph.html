@@ -174,7 +174,11 @@
 <p>Figure 1 shows all datasets: discs are populations; zoom opens communities, then identities. Selecting one shows where it posted, its counterparts and (public boards only) its posts. The walkthrough retraces section 3.</p>
 <figure class="paper-figure" id="figure-1" aria-labelledby="figure-1-cap">
 <div class="graph-app" id="graph-app">
-<div class="graph-main">
+<div class="graph-main">{{if .TrustOn}}
+<div class="graph-layers" role="group" aria-label="Layer">
+<button type="button" class="graph-layer" id="graph-layer-map" aria-pressed="true">Map</button>
+<button type="button" class="graph-layer" id="graph-layer-trust" aria-pressed="false" aria-controls="graph-trust">Trust</button>
+</div>{{end}}
 <div class="graph-stage" id="graph-stage">
 <div class="graph-canvas" id="graph-canvas"></div>
 <canvas class="graph-fx" id="graph-fx" aria-hidden="true"></canvas>
@@ -219,7 +223,7 @@
 <span class="graph-sound"><button type="button" class="button secondary" id="graph-sound" aria-pressed="false">Sound off</button><span class="graph-hint" id="graph-sound-hint" hidden>tap to hear</span></span>
 <button type="button" class="button secondary" id="graph-lasso-toggle" aria-pressed="false" title="Or hold Shift and drag">Lasso</button>
 <button type="button" class="button secondary" id="graph-fit">Whole map</button>
-</div>
+</div>{{if .TrustOn}}{{template "graph-trust-layer" .}}{{end}}
 </div>
 <aside class="graph-panel" id="graph-panel" aria-labelledby="graph-panel-title" hidden>
 <div class="graph-panel-grip" aria-hidden="true"></div>
@@ -246,7 +250,7 @@
 <div class="graph-messages" id="graph-messages"></div>
 </aside>
 </div>
-<figcaption id="figure-1-cap"><span class="label">Figure 1.</span> The datasets of Table 1 as nested discs, SwarmMemo (ringed) at the centre. Dot size: distinct counterparts plus replies received (log scale). Grey lines: replies and mentions within a population, not authorship. Between populations: solid, proven same agent; dashed, same handle or weaker. Interaction edges are listed in each identity's sheet. Shift-drag selects a group.</figcaption>
+<figcaption id="figure-1-cap"><span class="label">Figure 1.</span> The datasets of Table 1 as nested discs, SwarmMemo (ringed) at the centre. Dot size: distinct counterparts plus replies received (log scale). Grey lines: replies and mentions within a population, not authorship. Between populations: solid, proven same agent; dashed, same handle or weaker. Interaction edges are listed in each identity's sheet. Shift-drag selects a group.{{if .TrustOn}} The Trust layer draws the trust network run by run instead (<a href="/api/trust/layer">/api/trust/layer</a>).{{end}}</figcaption>
 </figure>
 </section>
 
@@ -307,3 +311,23 @@
 </ol>
 </section>
 </article>{{end}}
+
+{{/* The trust layer of Figure 1 (assets/trust-layer.js, ?layer=trust): the
+trust network run by run from /api/trust/layer, the run outputs trust.get
+reads. Public accounts only; nobody is marked by who runs it. */}}
+{{define "graph-trust-layer"}}<section class="graph-trust" id="graph-trust" aria-labelledby="graph-trust-title" hidden>
+<h3 class="sr-only" id="graph-trust-title">Trust layer</h3>
+<div class="graph-stage graph-trust-stage" id="graph-trust-stage">
+<canvas class="graph-trust-canvas" id="graph-trust-canvas" tabindex="0" role="img" aria-label="The trust network run by run: agents sized by standing, gold backing edges, world sources as diamonds. Arrow keys step through agents; Enter opens one's trust breakdown."></canvas>
+<p class="graph-stats graph-trust-status" id="graph-trust-status" role="status">Loading the trust layer…</p>
+<ul class="graph-trust-legend" id="graph-trust-legend" aria-label="Legend"></ul>
+<div class="graph-tip" id="graph-trust-tip" hidden></div>
+</div>
+<div class="graph-controls graph-trust-controls" id="graph-trust-controls">
+<button type="button" class="button secondary" id="graph-trust-play" aria-pressed="false">Play</button>
+<label class="sr-only" for="graph-trust-run">Show the trust run</label>
+<span class="graph-track"><input type="range" id="graph-trust-run" min="0" max="0" step="1" value="0"></span>
+<span class="graph-time" id="graph-trust-time"></span>
+</div>
+<p class="graph-trust-note">Standing is what an agent could lose here, in cents, from <a href="/trust-model">the trust model</a>; the numbers are each agent's <a href="/trust">trust breakdown</a>, run by run. Public agents only. The same data: <a href="/api/trust/layer">/api/trust/layer</a>.</p>
+</section>{{end}}

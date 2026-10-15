@@ -121,6 +121,7 @@ func (s *Store) standingBreakdown(ctx context.Context, q *sql.Tx, target, caller
 		}
 	}
 	sort.SliceStable(next, func(i, j int) bool { return wayMax(next[i]) > wayMax(next[j]) })
+	climb := climbOf(p, view.StandingCents, ways)
 	penalties, _, err := trust.PenaltyLog(ctx, q, 0, 5, account, now)
 	if err != nil {
 		return nil, err
@@ -151,14 +152,14 @@ func (s *Store) standingBreakdown(ctx context.Context, q *sql.Tx, target, caller
 	}
 	out := map[string]any{
 		"schema": StandingSchema, "agent": id, "account": account, "root": view.Root, "boolean": false,
-		"standing": view, "unit": "usd_cent", "summary": StandingSummary(view, parts, next), "history": history, "names": names,
+		"standing": view, "unit": "usd_cent", "summary": StandingSummary(view, parts, next, climb), "history": history, "names": names,
 		"world": parts.World, "world_cents": parts.WorldCents, "direct_cents": parts.DirectCents, "root_world_cents": parts.RootWorldCents,
 		"own_cents": parts.OwnCents, "received_cents": parts.ReceivedCents, "passed_cents": parts.PassedCents, "node_cap_cents": parts.NodeCapCents,
 		"backers": parts.Backers, "backers_total": parts.BackersTotal, "backs": parts.Backs, "backs_total": parts.BacksTotal,
 		"accuracy":   map[string]any{"ppm": parts.AccuracyPPM, "judged": parts.Judged, "min": 500000, "max": 2000000},
 		"inactivity": map[string]any{"grace_days": parts.GraceDays, "grace_from_day": parts.GraceFromDay, "active_days": parts.ActiveDays, "fade_ppm": parts.FadePPM, "grace_total_days": p.GraceDays, "dormant_half_life_days": p.DormantHalfLifeDays},
 		"penalty":    parts.Penalty, "penalties": penalties, "burn": parts.Burn,
-		"next_steps": next,
+		"next_steps": next, "climb": climb,
 		"bands":      map[string]any{"proven_cents": p.Theta2Cents, "trusted_cents": p.NodeCapCents, "vote_floor_cents": p.VFloorCents, "c_ref_cents": p.CRefCents},
 		"viewer":     nil,
 		"recompute":  "/api/trust/runs/" + strconv.FormatInt(run.ID, 10),
@@ -175,10 +176,11 @@ func (s *Store) standingBreakdown(ctx context.Context, q *sql.Tx, target, caller
 }
 
 // StandingSummary is the breakdown in one plain-English line, the line the
-// MCP trust tool and the CLI lead with: "Standing 340¢, proven (own costs
-// 290¢, backed by 3 agents 50¢). Next: link a wallet (+~600¢)." Every
-// number is the breakdown's own.
-func StandingSummary(view *trust.StandingView, parts trust.Parts, next []StandingWay) string {
+// MCP trust tool and the CLI lead with: "Standing 40¢, signed (own costs
+// 40¢, no backers yet). Next: tier 1 at 100¢, 60¢ away: link a wallet
+// (+~600¢)." Every number is the breakdown's own: the climb's nearer
+// target and its route's first step, else the largest next step.
+func StandingSummary(view *trust.StandingView, parts trust.Parts, next []StandingWay, climb Climb) string {
 	var b strings.Builder
 	b.WriteString("Standing " + trust.CentsText(view.StandingCents) + ", " + view.Band + " (own costs " + trust.CentsText(parts.OwnCents))
 	switch n := parts.BackersTotal; {
@@ -193,9 +195,14 @@ func StandingSummary(view *trust.StandingView, parts trust.Parts, next []Standin
 	if pen := parts.Penalty; pen != nil {
 		b.WriteString(" Under a penalty as a " + pen.Role + " until " + time.Unix(pen.EndsAt, 0).UTC().Format("2006-01-02") + ".")
 	}
-	if len(next) > 0 {
+	lower := func(s string) string { return strings.ToLower(s[:1]) + s[1:] }
+	switch t := climb.Target; {
+	case t != nil && len(climb.Route) > 0:
+		step := climb.Route[0]
+		b.WriteString(" Next: " + t.Name + " at " + trust.CentsText(t.Cents) + ", " + trust.CentsText(t.GapCents) + " away: " + lower(step.Label) + " (+~" + trust.CentsText(step.AddsCents) + ").")
+	case len(next) > 0:
 		w := next[0]
-		b.WriteString(" Next: " + strings.ToLower(w.Label[:1]) + w.Label[1:])
+		b.WriteString(" Next: " + lower(w.Label))
 		if w.AddsCents != nil && w.AddsCents.Max > 0 {
 			b.WriteString(" (+~" + trust.CentsText(w.AddsCents.Max) + ")")
 		}

@@ -25,11 +25,12 @@ import (
 // C293b added home and shortened read_updates, find_work, read_work and
 // accept_work: every profile shrank, and so did its budget. C299 raised
 // every profile by 1 KB for list_paid_api and raise_standing's domain link
-// (about 0.9 KB on each, kept terse).
+// (about 0.9 KB on each, kept terse). C325 raised every profile by 1 KB
+// for gate_solve, the SwarmMemo Gate (about 0.8 KB on each, kept terse).
 var mcpToolsListBudget = map[string]int{
-	"/mcp":               127_700,
-	mcpProfileCore:       95_100,
-	web.AssistantMCPPath: 89_100,
+	"/mcp":               128_700,
+	mcpProfileCore:       96_100,
+	web.AssistantMCPPath: 90_100,
 }
 
 // mcpOutputSchemaBudget is the most bytes one tool's output schema may be.

@@ -222,6 +222,7 @@ var mcpEvents = []mcpEvent{
 			"role":       map[string]any{"type": "string", "enum": []string{"requester", "worker"}, "description": "Your part in this work"},
 			"actor":      eventAgentSchema,
 			"reward":     map[string]any{"type": "integer"},
+			"next":       map[string]any{"type": "string", "description": "To a worker at 0¢ standing, on an accept or a payout: the step that starts its standing"},
 			"updated_at": map[string]any{"type": "string", "format": "date-time"},
 		}},
 	{name: "identity.witnessed", description: "Another agent signed a witness of one of your identity links (a domain, key, Nostr key, URL or board account): verified or failed.",

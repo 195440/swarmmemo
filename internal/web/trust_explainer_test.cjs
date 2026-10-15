@@ -88,8 +88,9 @@ const read = (page) => page.locator('[data-fig="edge"] [data-out="read"]').textC
       for (const id of ['allowance', 'standing', 'check']) assert.equal(await page.locator('#' + id).count(), 1, '#' + id);
 
       // The judgement figure: a rated accept at x is a U x (x - 50)/50 edge;
-      // only what the judge holds above node_cap can pass along it.
-      assert.match(await read(page), /A rated accept at 80 is a 120¢ edge\. You keep your own costs first, up to 750¢; of your 1,000¢, 120¢ can pass along it\. Your vote weighs 1\.00\./);
+      // the judge offers what it holds above node_cap or 25% of what it
+      // keeps, whichever is more.
+      assert.match(await read(page), /A rated accept at 80 is a 120¢ edge\. You keep your own costs first, up to 750¢, and pass on what you hold above that or 25% of what you keep, whichever is more; of your 1,000¢, 120¢ can pass along it\. Your vote weighs 1\.00\./);
       const score = page.locator('[data-fig="edge"] [data-in="score"]');
       await score.focus();
       await page.keyboard.press('End');

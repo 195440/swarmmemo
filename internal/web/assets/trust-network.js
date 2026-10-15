@@ -9,8 +9,10 @@
 // the renderer then only moves the camera. Hover or focus an agent for its
 // handle, standing, band and roots; click or Enter opens its page; arrow keys
 // step through agents by standing. The figure's list is the text version and
-// stays when WebGL2 is missing. Text is only ever set as textContent.
+// stays when WebGL2 is missing. Text is only ever set as textContent. The
+// layout and token colours are trust-draw.js's, shared with the trust layer.
 import { Renderer, STYLE } from './graph-gl.js';
+import { rgbOf, layout as forceLayout } from './trust-draw.js';
 
 const fig = document.querySelector('[data-fig="network"]');
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -18,13 +20,6 @@ const KINDS = { vouch: '--trust', work_accept: '--water', witness: '--witness', 
 const KIND_NAMES = { vouch: 'vouch', work_accept: 'accepted work', witness: 'verified witness', key_link: 'key link' };
 const TICKS = 320, PER_FRAME = 8, LABELS = 6;
 
-// Every colour is a CSS token, resolved through a canvas into RGB.
-const probe = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
-function rgbOf(css, fallback) {
-  if (!css || !probe) return fallback;
-  probe.clearRect(0, 0, 1, 1); probe.fillStyle = '#000'; probe.fillStyle = css; probe.fillRect(0, 0, 1, 1);
-  const d = probe.getImageData(0, 0, 1, 1).data; return [d[0] / 255, d[1] / 255, d[2] / 255];
-}
 function readTheme() {
   const cs = getComputedStyle(fig);
   const v = (n) => cs.getPropertyValue(n).trim();
@@ -35,49 +30,7 @@ function readTheme() {
   return t;
 }
 
-// A stable start: each agent on a spiral by rank, nudged by a hash of its id.
-function hash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0) / 4294967296; }
-
-function layout(nodes, edges, radius) {
-  const n = nodes.length, x = new Float64Array(n), y = new Float64Array(n), vx = new Float64Array(n), vy = new Float64Array(n);
-  for (let i = 0; i < n; i++) {
-    const a = i * 2.39996 + hash(nodes[i].id) * 0.5, r = 40 * Math.sqrt(i + 1);
-    x[i] = Math.cos(a) * r; y[i] = Math.sin(a) * r;
-  }
-  const area = Math.max(1, n) * 3600, k = Math.sqrt(area / Math.max(1, n));
-  let tick = 0;
-  return {
-    x, y, done: () => tick >= TICKS,
-    step(count) {
-      for (let c = 0; c < count && tick < TICKS; c++, tick++) {
-        const cool = 1 - tick / TICKS;
-        vx.fill(0); vy.fill(0);
-        for (let i = 0; i < n; i++) {
-          for (let j = i + 1; j < n; j++) {
-            let dx = x[i] - x[j], dy = y[i] - y[j];
-            let d2 = dx * dx + dy * dy;
-            if (d2 < 1e-4) { dx = (hash(nodes[i].id + j) - 0.5); dy = (hash(nodes[j].id + i) - 0.5); d2 = dx * dx + dy * dy + 1e-4; }
-            const minD = radius[i] + radius[j] + 6;
-            const f = k * k / d2 + (d2 < minD * minD ? (minD * minD - d2) / d2 * 2 : 0);
-            vx[i] += dx * f; vy[i] += dy * f; vx[j] -= dx * f; vy[j] -= dy * f;
-          }
-        }
-        for (const e of edges) {
-          const dx = x[e.b] - x[e.a], dy = y[e.b] - y[e.a], d = Math.sqrt(dx * dx + dy * dy) + 1e-6;
-          const f = d / k * (1 + Math.min(2, e.weight / 25));
-          vx[e.a] += dx * f; vy[e.a] += dy * f; vx[e.b] -= dx * f; vy[e.b] -= dy * f;
-        }
-        const limit = k * 2 * cool + 1;
-        for (let i = 0; i < n; i++) {
-          vx[i] -= x[i] * 0.04; vy[i] -= y[i] * 0.04; // gravity keeps islands near
-          const m = Math.sqrt(vx[i] * vx[i] + vy[i] * vy[i]) + 1e-9, s = Math.min(m, limit) / m;
-          x[i] += vx[i] * s; y[i] += vy[i] * s;
-          if (!Number.isFinite(x[i]) || !Number.isFinite(y[i])) { x[i] = 0; y[i] = 0; }
-        }
-      }
-    },
-  };
-}
+const layout = (nodes, edges, radius) => forceLayout(nodes, edges, radius, { ticks: TICKS });
 
 async function main() {
   if (!fig) return;

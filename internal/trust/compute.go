@@ -45,9 +45,12 @@ import (
 // (n + m), 0.5, 2) from a first pass at accuracy 1.
 //
 // Standing is a capacity-bounded max-flow from the world (flow.go's Dinic):
-// each root keeps min(world, node_cap) of its own costs, and only what it
-// holds above node_cap flows on over its judgement edges into the other
-// roots' sinks, raised in levels up to node_cap (max-min fair).
+// each root keeps min(world, node_cap) of its own costs less its pass share
+// (version 10: what it holds above node_cap topped up to pass_share_ppm of what
+// it keeps, at most its edges' capacity), and that offer flows over its
+// judgement edges into the roots' sinks, its own included, raised in levels
+// up to node_cap (max-min fair). Flow is conserved: what judgements deliver
+// left another root's world edge.
 //
 // Penalties (§8) come from the detectors in every run (ring, funnel,
 // shared_wallet) and from the public log's moderation and override entries:

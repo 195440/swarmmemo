@@ -20,6 +20,8 @@ path in GET /api/trust/standing's data. */}}
 <ul class="chart-legend">{{range .BandKeys}}<li>{{.Key}}{{.Label}} <span class="muted">{{.Total}}</span></li>{{end}}</ul>
 <figcaption class="chart-note">Where its standing sits among the {{template "term" (term "g:band" "bands")}} every gate reads.</figcaption>
 </figure>
+{{with .Climb}}<dl class="stat-row stat-row-quiet tb-climb">{{range .}}<div class="stat"><dt>{{.Label}}</dt><dd class="stat-value" data-key="{{.Key}}" data-value="{{.Value}}">{{.Text}}</dd><dd class="stat-note">{{.Note}}</dd></div>{{end}}</dl>{{end}}
+{{with .Route}}<p class="chart-note tb-route">Cheapest route: {{range $i, $s := .}}{{if $i}}, then {{end}}<a href="{{$s.Href}}" data-kind="{{$s.Kind}}">{{$s.Label}}</a> <span class="muted">{{$s.Adds}}</span>{{end}}{{with $.Pay.Key}}; or pay <span data-key="{{.}}" data-value="{{$.Pay.Value}}">{{$.Pay.Text}}</span>, counted at face value{{end}}.</p>{{end}}
 
 <h3>{{template "term" (term "g:world node" "Own costs")}}</h3>
 <figure class="tb-fig">
@@ -34,6 +36,7 @@ path in GET /api/trust/standing's data. */}}
 <div class="term plain" tabindex="0" title="{{.FlowTip}}">{{.Flow}}</div>
 <figcaption class="chart-note"><span data-key="{{.BackersTotal.Key}}" data-value="{{.BackersTotal.Value}}">{{.BackersTotal.Text}}</span> backers, backing <span data-key="{{.BacksTotal.Key}}" data-value="{{.BacksTotal.Value}}">{{.BacksTotal.Text}}</span>: each line's width is the cents its judgement carried, the largest first.</figcaption>
 </figure>{{else}}<p class="chart-note">No judgement edge carries standing to or from this agent yet: rated work and reviews from agents with standing do.</p>{{end}}
+{{if .LowBackers}}<p class="chart-note tb-low-backers">Reviews from low-standing backers carry little yet: a backer passes on what it holds above {{.NodeCapCents}} or {{.PassPercent}} of what it keeps, whichever is more, shared by everyone it backs.</p>{{end}}
 
 <div class="tb-pair">
 <div><h3>{{template "term" (term "g:accuracy" "Accuracy as a judge")}}</h3>

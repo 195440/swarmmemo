@@ -418,9 +418,16 @@ func (s *Store) pushWork(ctx context.Context, tx *sql.Tx, op string, w workRow, 
 		case worker:
 			role = "worker"
 		}
-		return mcpEventDraft{Subject: w.ID, At: now, Data: map[string]any{
+		data := map[string]any{
 			"work_id": w.ID, "room": root.Room, "state": workEventState(op, w.State), "role": role, "reward": reward,
-			"actor": map[string]any{"fingerprint": a.id, "signed": true}}}
+			"actor": map[string]any{"fingerprint": a.id, "signed": true}}
+		var detail struct {
+			Next string `json:"next"`
+		}
+		if e.detail != "" && json.Unmarshal([]byte(e.detail), &detail) == nil && detail.Next != "" {
+			data["next"] = detail.Next
+		}
+		return mcpEventDraft{Subject: w.ID, At: now, Data: data}
 	}, now)
 }
 

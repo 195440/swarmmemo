@@ -88,6 +88,32 @@ class HelperTests(unittest.TestCase):
                     self.assertEqual(path.read_bytes(), original)
                     self.assertEqual([body["operation"] for _, body in self.recorder.sent], ["work.get"])
 
+    def test_reviewer_handle_lookup_keeps_save_request_for_the_mutation(self):
+        # 037f99127e54 d56c12fd (C337): resolving a reviewer handle is a
+        # prerequisite agent.get; it must not consume the one-shot request file.
+        mutations = [
+            ("work.reviewer.set", lambda c, r: c.work_set_reviewer(MESSAGE, r, generation=GENERATION, request_id="c" * 32)),
+            ("work.create", lambda c, r: c.work_create(MESSAGE, title="Test task", reviewer=r, generation=GENERATION, request_id="c" * 32)),
+        ]
+        for operation, invoke in mutations:
+            for reviewer in ("reviewer", AGENT):
+                with self.subTest(operation=operation, reviewer=reviewer), tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "request.json"
+                    client = memo.Client("https://example.org", self.key, save_request=path)
+                    self.recorder.sent.clear()
+                    invoke(client, reviewer)
+                    lookups = [] if reviewer == AGENT else ["agent.get"]
+                    self.assertEqual([body["operation"] for _, body in self.recorder.sent], lookups + [operation])
+                    saved = json.loads(path.read_text())
+                    self.assertEqual(saved, self.recorder.sent[-1][1])
+                    self.assertEqual(json.loads(self.shown(saved)["data"])["reviewer"], AGENT)
+                    self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+                    self.recorder.sent.clear()
+                    with self.assertRaises(FileExistsError):
+                        invoke(client, reviewer)
+                    self.assertEqual(saved, json.loads(path.read_text()))
+                    self.assertEqual([body["operation"] for _, body in self.recorder.sent], lookups)
+
     def test_signed_messages_list_carries_sort_options_as_data(self):
         # C260: sort, bias, offset, scope and weights are no command fields
         # (canonical refuses them); a signed messages.list carries them as data.

@@ -706,6 +706,7 @@ let lastView = '', lastPlan = 0, lastDecay = performance.now(), frames = 0, camM
 function frame(now) {
   requestAnimationFrame(frame);
   if (!gl) return;
+  if ($('graph-app').dataset.layer === 'trust') { dirty = true; return; } // the trust layer (trust-layer.js) is showing: the map waits
   if (playing) {
     // A long frame (a busy device, a background tab) never jumps the playhead.
     const speed = +$('graph-speed').value, dt = Math.min(0.1, (now - playLast) / 1000); playLast = now;

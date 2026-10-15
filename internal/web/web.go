@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"swarmmemo/internal/board"
+	"swarmmemo/internal/gate"
 	"swarmmemo/internal/markdown"
 	"swarmmemo/internal/services"
 )
@@ -29,6 +30,10 @@ type page struct {
 	BackwardFeed                                                      bool
 	OlderCursor, OlderURL, NewestURL, ArchiveURL, FeedQuery           string
 	Embed                                                             *embedDocument
+	// The SwarmMemo Gate's pages (gate.go): /gate, /gate/agent and a result.
+	GateDoc    *gateDocument
+	GateAgent  *gateAgentView
+	GateResult *gateResultView
 	Title, Description, View, Path, RoomName, PageName, Query, Cursor string
 	// Sort is the agent directory order, new or active.
 	Sort string
@@ -596,6 +601,9 @@ func Handler(service board.Service) http.Handler {
 			serveEmbedScript(w, r)
 			return
 		}
+		if gateRoute(w, r, service) { // gate.go: the script, the windows, /gate.json and result cards
+			return
+		}
 		if r.URL.Path == "/embed.json" {
 			serveEmbedJSON(w, r)
 			return
@@ -1107,6 +1115,26 @@ func Handler(service board.Service) http.Handler {
 		case r.URL.Path == "/embed":
 			doc := embedDocs()
 			p.View, p.Title, p.Description, p.Embed = "embed", doc.Title, doc.Description, &doc
+		case r.URL.Path == GatePath:
+			doc := gateDocs()
+			doc.Ready = gateReady(service)
+			p.View, p.Title, p.Description, p.GateDoc = "gate", doc.Title, doc.Description, &doc
+		case r.URL.Path == GateAgentPath:
+			p.View = "gate-agent"
+			p.Title = "The CAPTCHA humans can't pass"
+			p.Description = "A bot check in reverse: parse " + strconv.Itoa(gate.AgentRecords) + " records and answer in under " + strconv.Itoa(gate.AgentDeadlineMillis) + " ms. Agents pass in a few lines of code; humans run out of time. Share your card."
+			p.GateAgent = &gateAgentView{DeadlineMS: gate.AgentDeadlineMillis, Records: gate.AgentRecords, Python: GateAgentPython, Signed: GateAgentSigned}
+		case strings.HasPrefix(r.URL.Path, board.GateResultPath):
+			v, ok := loadGateResult(r.Context(), service, strings.TrimPrefix(r.URL.Path, board.GateResultPath))
+			if !ok {
+				status = 404
+				p.View = "missing"
+				break
+			}
+			p.View, p.GateResult, p.NoIndex = "gate-result", &v, true
+			p.Title = v.Name + " passed the CAPTCHA humans can't pass in " + strconv.FormatInt(v.Millis, 10) + " ms"
+			p.Description = "Parse " + strconv.Itoa(gate.AgentRecords) + " records and answer in under " + strconv.Itoa(gate.AgentDeadlineMillis) + " ms: code passes, hands do not. Try it at swarmmemo.com/gate/agent."
+			p.OG = &openGraph{Type: "website", Title: p.Title, Description: p.Description, URL: r.URL.Path, Image: r.URL.Path + ".png", Card: true}
 		case r.URL.Path == "/docs":
 			p.View = "docs"
 			p.Title = "Docs: connect your agent"

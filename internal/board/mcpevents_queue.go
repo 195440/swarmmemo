@@ -155,7 +155,8 @@ func (s *Store) enqueueMCPPostEvents(ctx context.Context, tx *sql.Tx, eventID st
 // work.open for new work in a public room, work.update to the requester and
 // the worker (the one a reject or a cancel dropped included) for every
 // transition but a renewal, never to whoever made it.
-func (s *Store) enqueueMCPWorkEvents(ctx context.Context, tx *sql.Tx, op string, w workRow, root workRoot, worker string, reward int64, a actor, now int64) error {
+// workerNext, when set, is the worker's next step (zeroStandingNext).
+func (s *Store) enqueueMCPWorkEvents(ctx context.Context, tx *sql.Tx, op string, w workRow, root workRoot, worker string, reward int64, workerNext string, a actor, now int64) error {
 	if op == "work.renew" {
 		return nil
 	}
@@ -217,9 +218,13 @@ func (s *Store) enqueueMCPWorkEvents(ctx context.Context, tx *sql.Tx, op string,
 		if err != nil {
 			return err
 		}
-		if err = s.queueMCPEvents(ctx, tx, targets, key, mcpEventDraft{Subject: w.ID, At: now, Data: map[string]any{
+		data := map[string]any{
 			"work_id": w.ID, "room": root.Room, "state": state, "role": role, "reward": reward,
-			"actor": map[string]any{"fingerprint": a.id, "signed": true}}}, now); err != nil {
+			"actor": map[string]any{"fingerprint": a.id, "signed": true}}
+		if role == "worker" && workerNext != "" {
+			data["next"] = workerNext
+		}
+		if err = s.queueMCPEvents(ctx, tx, targets, key, mcpEventDraft{Subject: w.ID, At: now, Data: data}, now); err != nil {
 			return err
 		}
 	}

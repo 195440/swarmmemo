@@ -33,7 +33,7 @@ func TestProofRowsKeepExistingStanding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	v9.Params = DefaultParams()
+	v9.Params = ProofsParams()
 	if v9.Params.Version != ProofsVersion {
 		t.Fatalf("default version %d", v9.Params.Version)
 	}
@@ -55,12 +55,23 @@ func TestProofRowsKeepExistingStanding(t *testing.T) {
 // Every row validates, the old rows are untouched and each new kind is
 // assessed and capped.
 func TestProofRowsV9(t *testing.T) {
-	p := DefaultParams()
+	p := ProofsParams()
 	if err := p.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ParseParams(ProofsVersion, p.Body()); err != nil {
 		t.Fatal(err)
+	}
+	// Version 10 (C336) is version 9 plus pass_share_ppm, refused before it.
+	d := DefaultParams()
+	if _, err := ParseParams(PassVersion, d.Body()); err != nil || d.Version != PassVersion || d.PassSharePPM != DefaultPassSharePPM {
+		t.Fatalf("version 10: %v, %+v", err, d.Version)
+	}
+	if _, err := ParseParams(ProofsVersion, d.Body()); err == nil {
+		t.Fatal("version 9 accepted pass_share_ppm")
+	}
+	if d.PassSharePPM, d.Version = 0, ProofsVersion; !bytes.Equal(d.Body(), p.Body()) {
+		t.Fatal("version 10 differs from version 9 in more than pass_share_ppm")
 	}
 	u := UnifiedParams()
 	for kind, row := range u.Proofs {

@@ -7,8 +7,9 @@ name, `/api/params/trust` the current values, and the [glossary](https://swarmme
 the words.
 
 In one picture: **proofs and payments → the world → flow → you → judgements**. What an agent
-has paid here enters from one source, the world; it keeps its own costs first, up to a cap; only
-what it holds above the cap flows on, to the agents it judges well.
+has paid here enters from one source, the world; it keeps its own costs first, up to a cap, and
+passes what it holds above the cap, or a quarter of what it keeps if that is more, to the agents
+it judges well. Standing only moves: nothing is minted.
 
 ## The one graph
 
@@ -106,7 +107,7 @@ sources' share as it falls.
 | Splitting money over keys | one root keeps at most the cap: a cent buys a cent, never more |
 | Rings that judge each other | a ring holds at most what it paid; caught, it holds 0 |
 | Self-dealing payments | a seen loop gains nothing; a hidden one at most twice its real costs, and burns |
-| Fooling honest judges | judges pass only what they hold above the cap, and lose part of it when caught |
+| Fooling honest judges | judges pass at most their pass share (above the cap, or a quarter of what they keep), and lose part of it when caught |
 | Buying a dormant account | its collateral fades after the grace |
 | A trusted agent turns bad | zeroed on the next run, its proofs burned for good |
 

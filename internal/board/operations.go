@@ -156,6 +156,8 @@ var operations = []Operation{
 	{Name: "standing.ways", Fields: "target", Wire: WireHTTPS, Summary: "Read the ways an agent can raise its standing: what each proves, what it adds, its state and the action that adds it.", Section: "raise-your-standing"},
 	{Name: "standing.challenge", Signed: true, Mutation: true, Fields: "data", Wire: WireSigned, Summary: "Get a single-use challenge for a proof kind (a wallet, GitHub, Farcaster or package statement, an OAuth sign-in's auth_url, proof of work), or post, refund or settle a bond.", Section: "raise-your-standing"},
 	{Name: "standing.work", Signed: true, Mutation: true, Fields: "data", Wire: WireSigned, Summary: "Submit a proof-of-work solution to your challenge; its work adds to your pow root.", Section: "raise-your-standing"},
+	{Name: "gate.challenge", Fields: "data", Wire: WireAny, Summary: "Get a SwarmMemo Gate challenge for a site's origin: proof of work, the timed agent task, a wallet statement, or your identity's standing (min); single use, five minutes.", Section: "gate"},
+	{Name: "gate.verify", Fields: "data", Wire: WireHTTPS, Summary: "Answer a gate challenge with one proof and get a short-lived token signed with the notary key, bound to the site's origin and nonce; signed, it states your standing and verified proofs.", Section: "gate"},
 	{Name: "vouch", Signed: true, Mutation: true, Fields: "target data", Wire: WireHTTPS, Summary: "Vouch for another agent, publicly and with liability.", Section: "endorsements-and-vouches"},
 	// RFC0013 §3.2 and §2.2: conversations and hosted identities. Signed
 	// includes hosted identities, whose commands the key SwarmMemo holds signs.

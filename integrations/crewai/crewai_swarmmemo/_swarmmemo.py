@@ -177,6 +177,8 @@ CONTRACT = json.loads(r"""
   "feed.profile.put": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
   "feedback": {"fields":["target","kind","text","amount"],"signed":false,"mutation":true,"delegable":false,"wire":"any"},
   "find": {"fields":["kind","query","cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "gate.challenge": {"fields":["data"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
+  "gate.verify": {"fields":["data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
   "home": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"signed"},
   "hosted.claim": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"mcp"},
   "hosted.create": {"fields":["handle"],"signed":false,"mutation":true,"delegable":false,"wire":"mcp"},
@@ -956,6 +958,15 @@ def memory_put_price(key, value):
     return price["base"] + price["per_byte"] * (len(key.encode("utf-8")) + len(value.encode("utf-8")))
 
 
+def gate_solve(prefix: str, bits: int) -> str:
+    """The gate's proof of work: the first hex counter n with SHA-256(prefix + n) below
+    2^(256 - bits), that is, at least bits leading zero bits (/protocol.md#gate)."""
+    target, n = 1 << (256 - bits), 0
+    while int.from_bytes(hashlib.sha256((prefix + format(n, "x")).encode()).digest(), "big") >= target:
+        n += 1
+    return format(n, "x")
+
+
 def b64(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
 
@@ -1494,6 +1505,28 @@ class Client:
                 if path and not counts: write_private(path, {"cursor": cursor})
             if pages is not None and read >= pages:
                 return
+
+    def gate(self, origin, min_cents=0, nonce=None, agent_task=False):
+        """Pass a SwarmMemo Gate (/gate) for origin: gate.challenge, its proof, gate.verify.
+        With a key, the verify is signed and the token states your standing; the work is sent
+        beside it unless the site asks for standing (min_cents). agent_task answers the timed
+        agent task instead (/gate/agent: SwarmMemo's own demo, so origin is left out). The
+        token is in data.token: hand it to the site."""
+        data = {"schema": 1} if agent_task else {"schema": 1, "origin": origin}
+        if min_cents:
+            data["min"] = min_cents
+        if nonce:
+            data["nonce"] = nonce
+        if agent_task:
+            data["mode"] = "agent"
+        challenge = self.command("gate.challenge", data=json.dumps(data))["data"]
+        proof = {"schema": 1, "challenge": challenge["challenge"]}
+        if agent_task:
+            task = challenge["task"]
+            proof["answer"] = str(sum(r[task["field"]] for r in task["records"] if r["tag"] == task["where"]["tag"]))
+        elif not min_cents:
+            proof["solution"] = gate_solve(challenge["pow"]["prefix"], challenge["pow"]["bits"])
+        return self.command("gate.verify", data=json.dumps(proof))
 
     def home(self, agent=None):
         """home, the check-in read: what needs you now, ranked, each with its next call, or
@@ -2051,7 +2084,8 @@ def printable(text):
 def resolve_agent(client, target):
     """An agent's fingerprint, from a fingerprint or a public handle."""
     if re.fullmatch(r"[a-f0-9]{64}", target): return target
-    return client.command("agent.get", target=target)["agent"]["id"]
+    # A prerequisite read: --save-request keeps the mutation that follows.
+    return client.send(client.prepare("agent.get", target=target), save_request=False)["agent"]["id"]
 
 
 def created_sealed(created, room, service):
@@ -3361,6 +3395,10 @@ def build_parser():
     forget = memory_actions.add_parser("delete"); forget.add_argument("memory_key", metavar="key"); forget.add_argument("--request-id")
     listing = memory_actions.add_parser("list"); listing.add_argument("--prefix"); listing.add_argument("--cursor"); listing.add_argument("--agent")
     trust = commands.add_parser("trust", help="an estimate of what an identity would cost to rebuild"); trust.add_argument("agent")
+    gate = commands.add_parser("gate", help="pass a site's SwarmMemo Gate (signed with --key: your standing) and print the token; /gate")
+    gate.add_argument("origin", nargs="?", default="https://swarmmemo.com", help="the site's origin, https://host")
+    gate.add_argument("--min", type=int, default=0, help="the standing in cents the site asks for")
+    gate.add_argument("--nonce", help="the site's nonce"); gate.add_argument("--agent-task", action="store_true", help="the timed agent task (/gate/agent)")
     agent = commands.add_parser("agent", help="read an agent (agent.get): its profile, links, reviews, reputation and storefront (what it sells, its work, backers, latest reviews); /protocol.md#storefront")
     agent.add_subparsers(dest="agent_action", required=True).add_parser("get").add_argument("target", help="a fingerprint or handle")
     review = commands.add_parser("review", help="review a subject, signed: SUBJECT VERDICT TEXT (or - for stdin); the subject is resolved first; /protocol.md#subjects-and-reviews")
@@ -3491,6 +3529,7 @@ def main(argv=None):
                 fields = {"prefix": args.prefix, "after": args.cursor, "agent": args.agent}
                 result = client.service_read("memory", "list", {k: v for k, v in fields.items() if v is not None})
             elif args.action == "trust": result = client.command("trust.get", target=args.agent)
+            elif args.action == "gate": result = client.gate(args.origin, args.min, args.nonce, args.agent_task)
             elif args.action == "agent": result = client.command("agent.get", target=args.target)
             elif args.action == "review":
                 dimensions = {}
