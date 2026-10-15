@@ -23,7 +23,7 @@ type Domain struct{ base }
 
 func newDomain() Domain {
 	return Domain{base{Spec{Kind: "domain", Label: "Verify a domain", Proves: "You control a domain's DNS; its age and rank are its price.", Reveals: "the domain.",
-		Flow: FlowDNS, Method: "dns-txt", Root: "`domain:` + registrable domain",
+		Flow: FlowDNS, Method: "dns-txt", Root: "`domain:` + registrable domain", Needs: []string{NeedDomain}, EffortMinutes: 30,
 		Priced: "registration age (up to 200, one-year ramp, from RDAP) + Tranco rank (up to 400); unknown counts 0", Value: "the domain",
 		Action: `identity.link {"schema":1,"kind":"domain","value":DOMAIN}, after a TXT record _swarmmemo.DOMAIN = swarmmemo-fingerprint=FINGERPRINT`}}}
 }
@@ -36,7 +36,7 @@ type Wallet struct{ base }
 
 func newWallet() Wallet {
 	return Wallet{base{Spec{Kind: "wallet", Label: "Link a wallet", Proves: "You control an Ethereum address; personhood credentials and onchain history behind it count through Corroborate.",
-		Reveals: "the address.", Flow: FlowSignature, Method: "eip4361-signature", Root: "`wallet:eip155:1:` + address",
+		Reveals: "the address.", Flow: FlowSignature, Method: "eip4361-signature", Root: "`wallet:eip155:1:` + address", Needs: []string{NeedWallet}, EffortMinutes: 2,
 		Priced: "Corroborate's resolver total for the address (personhood and onchain history), re-read daily; at least " + itoa(trust.WalletFallbackCents) + " for the verified signature (the row's fallback_cents)", Value: "the EVM address",
 		ChallengeTTL: 900,
 		Action:       `standing.challenge {"schema":1,"kind":"wallet","value":ADDRESS}, sign data.message with personal_sign, then identity.link {"schema":1,"kind":"wallet","value":ADDRESS,"proof":SIGNATURE,"nonce":NONCE}`}}}
@@ -64,7 +64,7 @@ type GitHub struct{ base }
 
 func newGitHub() GitHub {
 	return GitHub{base{Spec{Kind: "github", Label: "Link GitHub", Proves: "You control a GitHub account; its age and public activity count.",
-		Reveals: "the GitHub login.", Flow: FlowStatement, Method: "github-gist", Root: "`github:` + GitHub's numeric account number",
+		Reveals: "the GitHub login.", Flow: FlowStatement, Method: "github-gist", Root: "`github:` + GitHub's numeric account number", Needs: []string{"github"}, EffortMinutes: 5,
 		Priced: "account age (up to 200, one-year ramp) + public repositories and followers (up to 100, saturating)", Value: "the GitHub login",
 		ChallengeTTL: 3600, RecheckSeconds: 7 * 86400,
 		Action: `standing.challenge {"schema":1,"kind":"github","value":LOGIN}, publish data.statement in a public gist, then identity.link {"schema":1,"kind":"github","value":LOGIN,"proof":GIST_ID,"nonce":NONCE}`}}}
@@ -80,7 +80,7 @@ type Pow struct{ base }
 
 func newPow() Pow {
 	return Pow{base{Spec{Kind: "pow", Label: "Proof of work", Proves: "You spent compute: priced at what the hashes cost on a rented GPU. Small by design.",
-		Reveals: "nothing.", Flow: FlowWork, Method: "sha256-work", Root: "`pow:` + your key",
+		Reveals: "nothing.", Flow: FlowWork, Method: "sha256-work", Root: "`pow:` + your key", EffortMinutes: 30,
 		Priced: "the work's GPU cost (2,158,000 units of 2^20 SHA-256 a cent), saturating: 50 × v / (v + 50)", ChallengeTTL: 3600,
 		Action: `standing.challenge {"schema":1,"kind":"pow","bits":BITS}, find a solution, then standing.work {"schema":1,"nonce":NONCE,"solution":SOLUTION}`}}}
 }

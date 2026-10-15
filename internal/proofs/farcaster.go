@@ -50,7 +50,7 @@ func newFarcaster(hub, apiKey string, f fetcher) *Farcaster {
 		hub = DefaultFarcasterHub
 	}
 	return &Farcaster{spec: Spec{Kind: "farcaster", Label: "Link Farcaster", Proves: "You control a Farcaster account (FID); its age and followers count.",
-		Reveals: "the FID.", Flow: FlowStatement, Method: "farcaster-hub", Root: "`farcaster:` + the FID",
+		Reveals: "the FID.", Flow: FlowStatement, Method: "farcaster-hub", Root: "`farcaster:` + the FID", Needs: []string{"farcaster"}, EffortMinutes: 5,
 		Priced: "FID age (up to 120, one-year ramp) + followers (up to 80, saturating at 100)", Value: "the FID",
 		ChallengeTTL: 3600,
 		Action:       `standing.challenge {"schema":1,"kind":"farcaster","value":FID}, cast data.statement (or personal_sign it with the FID's custody or verified address), then identity.link {"schema":1,"kind":"farcaster","value":FID,"proof":"cast" or SIGNATURE,"nonce":NONCE}`},

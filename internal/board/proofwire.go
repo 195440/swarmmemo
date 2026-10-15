@@ -410,6 +410,10 @@ func (s *Store) bondWay(ctx context.Context, q *sql.Tx, w *StandingWay, account 
 	if !s.BondEnabled() {
 		w.Status = "disabled-no-credentials"
 	}
+	if w.AddsCents != nil {
+		// A bond adds at least the smallest deposit taken.
+		w.AddsCents.Min = min(s.bondConfig().MinUnits/10_000, w.AddsCents.Max)
+	}
 	var id string
 	err := q.QueryRowContext(ctx, "SELECT id FROM proof_bonds WHERE account=? AND state IN ('held','refund_owed','refunded','burned') ORDER BY created_at DESC LIMIT 1", account).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {

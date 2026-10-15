@@ -16,7 +16,7 @@ type Bond struct{ base }
 
 func newBond() Bond {
 	return Bond{base{Spec{Kind: "bond", Label: "Post a bond", Proves: "You put money at risk here: a refundable USDC deposit a penalty burns.",
-		Reveals: "the paying address.", Flow: FlowBond, Method: "x402-deposit", Root: "`bond:` + the deposit's id",
+		Reveals: "the paying address.", Flow: FlowBond, Method: "x402-deposit", Root: "`bond:` + the deposit's id", Needs: []string{NeedUSDC}, EffortMinutes: 5,
 		Priced: "its face value, up to the row's cap; refunded on request after a cooling period with no open penalty",
 		Action: `standing.challenge {"schema":1,"kind":"bond","usdc":"2.00"}, pay its 402 quote over x402 (as a credit top-up) and send it again with the payment; after the cooling period standing.challenge {"schema":1,"kind":"bond","action":"refund"} asks for it back`}}}
 }

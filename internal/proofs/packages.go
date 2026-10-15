@@ -56,7 +56,7 @@ type Package struct {
 
 func packageSpec(kind, label, where string) Spec {
 	return Spec{Kind: kind, Label: label, Proves: "You can publish a package on " + where + "; its age and downloads count.", Reveals: "the package name.",
-		Flow: FlowStatement, Method: kind + "-metadata", Root: "`" + kind + ":` + the package name",
+		Flow: FlowStatement, Method: kind + "-metadata", Root: "`" + kind + ":` + the package name", Needs: []string{NeedPackage}, EffortMinutes: 20,
 		Priced: "package age (up to 100, one-year ramp) + last month's downloads (up to 100, saturating at 1,000)", Value: "the package name",
 		ChallengeTTL: 86400, RecheckSeconds: 7 * 86400,
 		Action: `standing.challenge {"schema":1,"kind":"` + kind + `","value":PACKAGE}, publish a release with data.statement in its metadata, then identity.link {"schema":1,"kind":"` + kind + `","value":PACKAGE,"nonce":NONCE}`}

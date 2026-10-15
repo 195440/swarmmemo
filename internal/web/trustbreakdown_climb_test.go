@@ -32,6 +32,28 @@ func TestTrustBreakdownClimb(t *testing.T) {
 			t.Errorf("Your trust lacks %q", want)
 		}
 	}
+	// C342: a free route shows first, then paying as the faster way.
+	a.Climb.Route = []board.ClimbStep{{Kind: "money", Label: "Pay SwarmMemo", AddsCents: 60, CostCents: 60}}
+	a.Climb.FreeRoute = &board.FreeRoute{Days: 4, Steps: []board.ClimbStep{{Kind: "pow", Label: "Proof of work", AddsCents: 25}, {Kind: "earned", Label: "Earned standing", AddsCents: 40}}}
+	b.Reset()
+	if err := templates.ExecuteTemplate(&b, "trust-breakdown", buildTrustBreakdown(a, time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	html = b.String()
+	free := `Free route: <a href="/me#standing-pow" data-kind="pow">Proof of work</a> <span class="muted">up to &#43;25¢</span>, then <a href="/work" data-kind="earned" data-key="climb.free_route.days" data-value="4">about 4 active days</a>, no money.`
+	paid := `Faster: <a href="/tools/topup" data-kind="money">Pay SwarmMemo</a> <span class="muted">&#43;60¢, costs 60¢</span>.`
+	if i, j := strings.Index(html, free), strings.Index(html, paid); i < 0 || j < i {
+		t.Errorf("Your trust: free route then paid, got\n%s", html)
+	}
+	// The free route alone closes the gap: paying shows as the faster way.
+	a.Climb.Route = a.Climb.FreeRoute.Steps
+	b.Reset()
+	if err := templates.ExecuteTemplate(&b, "trust-breakdown", buildTrustBreakdown(a, time.Now())); err != nil {
+		t.Fatal(err)
+	}
+	if html = b.String(); !strings.Contains(html, `Faster: pay <span data-key="climb.pay_cents" data-value="60">60¢</span> now`) || strings.Count(html, "Proof of work</a>") != 1 {
+		t.Errorf("Your trust: free route equal to the cheapest, got\n%s", html)
+	}
 	// Received standing, or trusted: no sentence and no climb.
 	a.ReceivedCents, a.Climb = 20, board.Climb{}
 	b.Reset()

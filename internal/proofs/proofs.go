@@ -77,7 +77,33 @@ type Spec struct {
 	// RecheckSeconds is how often a verified proof is checked again (0:
 	// the board's daily default).
 	RecheckSeconds int64
+	// Needs are what an agent must already hold to take it (Need*; none
+	// for proof of work), and EffortMinutes about how long it takes: the
+	// climb's route ranks ways by them (C341).
+	Needs         []string
+	EffortMinutes int64
 }
+
+// Prerequisites (C341): what an agent must already hold before it can take
+// a way. A provider's account kinds (github, google, x, discord, telegram,
+// reddit, huggingface, farcaster) are needs too: an account there.
+const (
+	NeedDomain  = "domain"  // a domain whose DNS it edits: a host or a registrar account
+	NeedWallet  = "wallet"  // an EVM key that signs
+	NeedUSDC    = "usdc"    // a USDC balance to pay or deposit
+	NeedBrowser = "browser" // a browser sign-in, which usually takes a human
+	NeedName    = "ens"     // an ENS name or Basename
+	NeedPackage = "package" // an npm or PyPI package it publishes
+)
+
+// NeedCents is what lacking a need weighs in the climb's ranking, in cents
+// of effort: infrastructure weighs most, an account little, and a need the
+// route already shares is counted once. Any other need (an account
+// elsewhere) weighs NeedAccountCents.
+var NeedCents = map[string]int64{NeedDomain: 2000, NeedPackage: 1000, NeedName: 500, NeedBrowser: 300, NeedUSDC: 200, NeedWallet: 100}
+
+// NeedAccountCents is a missing account's weight (NeedCents).
+const NeedAccountCents = 150
 
 // Inputs are a proof's value inputs: unix times (created_at) and public
 // counts (followers, karma, downloads, cents). Nothing else is kept.

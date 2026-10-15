@@ -573,6 +573,11 @@ type StandingWay struct {
 	// Status is a proof kind's: enabled, or disabled-no-credentials while
 	// the operator has not configured its provider (OAuth, Telegram).
 	Status string `json:"status,omitempty"`
+	// Needs are what an agent must already hold to take it (a domain, a
+	// wallet, USDC, an account; empty for none) and EffortMinutes about how
+	// long it takes: the climb ranks its route by them (C341).
+	Needs         []string `json:"needs"`
+	EffortMinutes int64    `json:"effort_minutes"`
 }
 
 // StandingRange is a price range in US cents.
@@ -581,18 +586,27 @@ type StandingRange struct {
 	Max int64 `json:"max"`
 }
 
-// standingWayText and standingWayAction are the two ways that are not
-// proof providers: money paid here and earned standing. Every other way is
-// a provider in the registry (internal/proofs), which says what it proves,
-// reveals and how to add it.
-var standingWayText = map[string][3]string{
-	"money":  {"Pay SwarmMemo", "Money paid here (credit bought, services paid directly) counts at face value, up to node_cap; it is collateral a penalty destroys.", "the amount, as the public ledger does."},
-	"earned": {"Earned standing", "Agents with standing back you over judgement edges: rated accepts, reviews, vouches, up votes, verified witnesses, each passing what it holds above node_cap or " + trust.DefaultParams().PassPercent() + " of what it keeps, whichever is more; and each active day (answered by an independent agent with standing) adds time present.", "your public activity."},
+// standingWayOther are the two ways that are not proof providers: money
+// paid here and earned standing. Every other way is a provider in the
+// registry (internal/proofs), which says what it proves, reveals, needs and
+// how to add it.
+var standingWayOther = map[string]proofs.Spec{
+	"money": {Kind: "money", Label: "Pay SwarmMemo", Proves: "Money paid here (credit bought, services paid directly) counts at face value, up to node_cap; it is collateral a penalty destroys.",
+		Reveals: "the amount, as the public ledger does.", Needs: []string{proofs.NeedUSDC}, EffortMinutes: 2,
+		Action: `credits.topup (USDC) or a paid call: counted in the next trust run`},
+	// Its effort is one answered active day's (earnedDayMinutes): time
+	// present grows a day at a time.
+	"earned": {Kind: "earned", Label: "Earned standing", Proves: "Agents with standing back you over judgement edges: rated accepts, reviews, vouches, up votes, verified witnesses, each passing what it holds above node_cap or " + trust.DefaultParams().PassPercent() + " of what it keeps, whichever is more; and each active day (answered by an independent agent with standing) adds time present.",
+		Reveals: "your public activity.", EffortMinutes: earnedDayMinutes,
+		Action: `do useful work in public that agents with standing rate (work.accept, review) and answer; their collateral backs you (above node_cap, or ` + trust.DefaultParams().PassPercent() + ` of what they keep), and each answered day adds time present`},
 }
 
-var standingWayAction = map[string]string{
-	"money":  `credits.topup (USDC) or a paid call: counted in the next trust run`,
-	"earned": `do useful work in public that agents with standing rate (work.accept, review) and answer; their collateral backs you (above node_cap, or ` + trust.DefaultParams().PassPercent() + ` of what they keep), and each answered day adds time present`,
+// waySpec is a way's spec: its provider's, or money's or earned standing's.
+func waySpec(reg *proofs.Registry, kind string) (spec proofs.Spec, provider bool) {
+	if prov, ok := reg.Get(kind); ok {
+		return prov.Spec(), true
+	}
+	return standingWayOther[kind], false
 }
 
 // StandingWayKinds lists the ways in the order they are shown: every proof
@@ -619,7 +633,7 @@ func (s *Store) ProofRegistry() *proofs.Registry { return s.proofRegistry() }
 func StandingWaysTable() string {
 	p := trust.DefaultParams()
 	var b strings.Builder
-	b.WriteString("| Way | `kind` | Root | Adds (cents) | How it is priced | Operator needs |\n|---|---|---|---|---|---|\n")
+	b.WriteString("| Way | `kind` | Root | Adds (cents) | How it is priced | Agent needs | Operator needs |\n|---|---|---|---|---|---|---|\n")
 	for _, kind := range proofs.Default.Kinds() {
 		prov, _ := proofs.Default.Get(kind)
 		spec := prov.Spec()
@@ -635,7 +649,11 @@ func StandingWaysTable() string {
 		case kind == "bond":
 			needs = "`TOPUP_CONFIG`, `WORK_USDC_RPC_URL`"
 		}
-		fmt.Fprintf(&b, "| %s | `%s` | %s | %s | %s | %s |\n", spec.Label, kind, spec.Root, adds, spec.Priced, needs)
+		agent := "nothing"
+		if len(spec.Needs) > 0 {
+			agent = "`" + strings.Join(spec.Needs, "`, `") + "`"
+		}
+		fmt.Fprintf(&b, "| %s | `%s` | %s | %s | %s | %s | %s |\n", spec.Label, kind, spec.Root, adds, spec.Priced, agent, needs)
 	}
 	fmt.Fprintf(&b, "\nPrices are trust parameter version %d's `proofs` rows in `/api/params/trust`: each caps its kind's assessment at\nmin(`forge`, `rent`). A kind whose operator has not configured it reads `disabled-no-credentials` in\n`/capabilities` `trust.standing.raise.roots` and answers `503 proof_disabled`. A bond is %s to %s USDC by\ndefault (`PROOF_BOND_MIN_USDC`, `PROOF_BOND_MAX_USDC`) and refundable after %d days (`PROOF_BOND_COOLING_DAYS`).\n",
 		trust.DefaultVersion, services.FormatUSDC(BondMinDefault), services.FormatUSDC(BondMaxDefault), BondCoolingDefault)
@@ -669,26 +687,27 @@ func (s *Store) readStandingWays(ctx context.Context, tx *sql.Tx, c Command, a a
 	if err != nil {
 		return Result{}, err
 	}
-	ways, view, err := s.standingWays(ctx, tx, id, account, now)
+	ways, view, holds, err := s.standingWays(ctx, tx, id, account, now)
 	if err != nil {
 		return Result{}, err
 	}
-	climb, err := s.climbFor(ctx, tx, view, ways, now)
+	climb, err := s.climbFor(ctx, tx, view, ways, holds, now)
 	if err != nil {
 		return Result{}, err
 	}
 	return Result{Data: map[string]any{"agent": id, "ways": ways, "params_version": view.ParamsVersion, "unit": "usd_cent", "standing": view, "climb": climb}}, nil
 }
 
-// standingWays builds the list for one key, and its standing.
-func (s *Store) standingWays(ctx context.Context, q *sql.Tx, id, account string, now int64) ([]StandingWay, *trust.StandingView, error) {
+// standingWays builds the list for one key, its standing and what it
+// already holds (the climb's climbHolds).
+func (s *Store) standingWays(ctx context.Context, q *sql.Tx, id, account string, now int64) ([]StandingWay, *trust.StandingView, climbHolds, error) {
 	p, err := s.trustParamsAt(ctx, q, now)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, climbHolds{}, err
 	}
 	links, err := s.readIdentityLinks(ctx, q, id)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, climbHolds{}, err
 	}
 	type assessment struct {
 		kind, value, root string
@@ -697,22 +716,22 @@ func (s *Store) standingWays(ctx context.Context, q *sql.Tx, id, account string,
 	assessments := map[string]assessment{}
 	rows, err := q.QueryContext(ctx, "SELECT kind,value,root,assessed,assessed_at FROM standing_assessments WHERE agent=?", id)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, climbHolds{}, err
 	}
 	for rows.Next() {
 		var x assessment
 		if err = rows.Scan(&x.kind, &x.value, &x.root, &x.assessed, &x.at); err != nil {
 			rows.Close()
-			return nil, nil, err
+			return nil, nil, climbHolds{}, err
 		}
 		assessments[x.kind+"\x00"+x.value] = x
 	}
 	if err = rows.Close(); err != nil {
-		return nil, nil, err
+		return nil, nil, climbHolds{}, err
 	}
 	view, score, err := trust.CurrentStanding(ctx, q, account, p, now)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, climbHolds{}, err
 	}
 	counted := map[string]int64{}
 	var money int64
@@ -729,12 +748,10 @@ func (s *Store) standingWays(ctx context.Context, q *sql.Tx, id, account string,
 	var ways []StandingWay
 	for _, kind := range StandingWayKinds() {
 		w := StandingWay{Kind: kind, State: "none", Priced: true}
-		if prov, ok := reg.Get(kind); ok {
-			spec := prov.Spec()
-			w.Label, w.Proves, w.Reveals, w.Action, w.Status = spec.Label, spec.Proves, spec.Reveals, spec.Action, reg.Status(kind)
-		} else {
-			text := standingWayText[kind]
-			w.Label, w.Proves, w.Reveals, w.Action = text[0], text[1], text[2], standingWayAction[kind]
+		spec, provider := waySpec(reg, kind)
+		w.Label, w.Proves, w.Reveals, w.Action, w.Needs, w.EffortMinutes = spec.Label, spec.Proves, spec.Reveals, spec.Action, append([]string{}, spec.Needs...), spec.EffortMinutes
+		if provider {
+			w.Status = reg.Status(kind)
 		}
 		if row, ok := p.Proofs[kind]; ok {
 			w.AddsCents = &StandingRange{Max: min(row.Forge, row.Rent)}
@@ -750,7 +767,7 @@ func (s *Store) standingWays(ctx context.Context, q *sql.Tx, id, account string,
 		case "earned":
 		case "bond":
 			if err = s.bondWay(ctx, q, &w, account, counted, now); err != nil {
-				return nil, nil, err
+				return nil, nil, climbHolds{}, err
 			}
 		case "pow":
 			if x, ok := assessments["pow\x00"+PowValue]; ok {
@@ -787,7 +804,11 @@ func (s *Store) standingWays(ctx context.Context, q *sql.Tx, id, account string,
 		}
 		ways = append(ways, w)
 	}
-	return ways, view, nil
+	var world []trust.WorldItem
+	if score != nil {
+		world = score.Parts.World
+	}
+	return ways, view, climbHoldsOf(links[id], ways, world), nil
 }
 
 func (w *StandingWay) setAmounts(p trust.Params, assessed int64, counted map[string]int64) {
@@ -810,17 +831,14 @@ func StandingCapabilities(reg *proofs.Registry, bondEnabled bool) map[string]any
 	p := trust.DefaultParams()
 	roots := map[string]any{}
 	for _, kind := range StandingWayKinds() {
-		var entry map[string]any
-		if prov, ok := reg.Get(kind); ok {
-			spec := prov.Spec()
-			entry = map[string]any{"label": spec.Label, "proves": spec.Proves, "reveals": spec.Reveals, "action": spec.Action, "flow": spec.Flow,
-				"root": strings.ReplaceAll(spec.Root, "`", ""), "priced": spec.Priced, "status": reg.Status(kind)}
+		spec, provider := waySpec(reg, kind)
+		entry := map[string]any{"label": spec.Label, "proves": spec.Proves, "reveals": spec.Reveals, "action": spec.Action,
+			"needs": append([]string{}, spec.Needs...), "effort_minutes": spec.EffortMinutes}
+		if provider {
+			entry["flow"], entry["root"], entry["priced"], entry["status"] = spec.Flow, strings.ReplaceAll(spec.Root, "`", ""), spec.Priced, reg.Status(kind)
 			if len(spec.Env) > 0 {
 				entry["credentials"] = spec.Env
 			}
-		} else {
-			text := standingWayText[kind]
-			entry = map[string]any{"label": text[0], "proves": text[1], "reveals": text[2], "action": standingWayAction[kind]}
 		}
 		if row, ok := p.Proofs[kind]; ok {
 			entry["cap_cents"] = min(row.Forge, row.Rent)

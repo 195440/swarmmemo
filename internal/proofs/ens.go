@@ -59,7 +59,7 @@ func newENS(ethRPC, baseRPC string, f fetcher) *ENS {
 	}
 	t := pay.Keccak256([]byte("NameRegistered(uint256,address,uint256)"))
 	return &ENS{spec: Spec{Kind: "ens", Label: "Link an ENS name or Basename", Proves: "A name you hold resolves to your verified wallet, and is that wallet's primary name; its age counts.",
-		Reveals: "the name.", Flow: FlowWallet, Method: "ens-primary-name", Root: "`ens:` + the name",
+		Reveals: "the name.", Flow: FlowWallet, Method: "ens-primary-name", Root: "`ens:` + the name", Needs: []string{NeedName, NeedWallet}, EffortMinutes: 10,
 		Priced: "50 for holding a name + its registration age (up to 150, one-year ramp)", Value: "NAME.eth or NAME.base.eth",
 		Action: `link a wallet first, set the name's address and the wallet's primary name to each other, then identity.link {"schema":1,"kind":"ens","value":NAME}`},
 		eth:  ensChain{rpc: ethRPC, registry: "0x00000000000c2e074ec69a0dfb2997ba6c7d2e1e", registrar: "0x57f1887a8bf19b14fc0df6fd9b2acc9af147ea85", fromBlock: 9380410, parent: "eth", reverseSfx: "addr.reverse"},

@@ -110,7 +110,7 @@ func (s *Store) standingBreakdown(ctx context.Context, q *sql.Tx, target, caller
 	if score != nil {
 		parts = score.Parts
 	}
-	ways, _, err := s.standingWays(ctx, q, id, account, now)
+	ways, _, holds, err := s.standingWays(ctx, q, id, account, now)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +121,7 @@ func (s *Store) standingBreakdown(ctx context.Context, q *sql.Tx, target, caller
 		}
 	}
 	sort.SliceStable(next, func(i, j int) bool { return wayMax(next[i]) > wayMax(next[j]) })
-	climb := climbOf(p, view.StandingCents, ways)
+	climb := climbOf(p, view.StandingCents, ways, holds)
 	penalties, _, err := trust.PenaltyLog(ctx, q, 0, 5, account, now)
 	if err != nil {
 		return nil, err
@@ -179,7 +179,9 @@ func (s *Store) standingBreakdown(ctx context.Context, q *sql.Tx, target, caller
 // MCP trust tool and the CLI lead with: "Standing 40¢, signed (own costs
 // 40¢, no backers yet). Next: tier 1 at 100¢, 60¢ away: link a wallet
 // (+~600¢)." Every number is the breakdown's own: the climb's nearer
-// target and its route's first step, else the largest next step.
+// target and its free route then what paying costs (C342: "…, 50¢ away:
+// about 5 active days free, or pay 50¢ now."), else its route's first
+// step, else the largest next step.
 func StandingSummary(view *trust.StandingView, parts trust.Parts, next []StandingWay, climb Climb) string {
 	var b strings.Builder
 	b.WriteString("Standing " + trust.CentsText(view.StandingCents) + ", " + view.Band + " (own costs " + trust.CentsText(parts.OwnCents))
@@ -197,6 +199,13 @@ func StandingSummary(view *trust.StandingView, parts trust.Parts, next []Standin
 	}
 	lower := func(s string) string { return strings.ToLower(s[:1]) + s[1:] }
 	switch t := climb.Target; {
+	case t != nil && climb.FreeRoute != nil:
+		// Free first (C342), then paying as the faster way, at its cost.
+		b.WriteString(" Next: " + t.Name + " at " + trust.CentsText(t.Cents) + ", " + trust.CentsText(t.GapCents) + " away: " + climb.FreeRoute.Text())
+		if climb.PayCents > 0 {
+			b.WriteString(", or pay " + trust.CentsText(climb.PayCents) + " now")
+		}
+		b.WriteString(".")
 	case t != nil && len(climb.Route) > 0:
 		step := climb.Route[0]
 		b.WriteString(" Next: " + t.Name + " at " + trust.CentsText(t.Cents) + ", " + trust.CentsText(t.GapCents) + " away: " + lower(step.Label) + " (+~" + trust.CentsText(step.AddsCents) + ").")

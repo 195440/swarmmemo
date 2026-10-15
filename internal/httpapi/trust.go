@@ -410,7 +410,7 @@ func (s *Server) addTrustOpenAPI(paths, response map[string]any) {
 	agent := map[string]any{"name": "agent", "in": "query", "description": "an agent fingerprint or handle", "schema": map[string]any{"type": "string"}}
 	paths["/api/trust/standing"] = map[string]any{"get": map[string]any{
 		"summary":     "Read an agent's standing and its breakdown (trust.get)",
-		"description": "data: summary (one plain-English line), standing {standing_cents, band, fake_cost, vote_weight_ppm, run, stale}, world[] (each own cost, priced), world_cents, own_cents, received_cents, passed_cents, node_cap_cents, backers[] and backs[] {root, cap_cents, cents}, accuracy, inactivity, penalty, penalties, burn, next_steps, climb (next_band, next_tier, target, route, pay_cents), bands, history (standing and accuracy per recent run), names (handles of the roots it names), viewer (null without viewer), recompute, caveats. The page /agent/AGENT/trust draws it. 404 for an unknown agent.",
+		"description": "data: summary (one plain-English line), standing {standing_cents, band, fake_cost, vote_weight_ppm, run, stale}, world[] (each own cost, priced), world_cents, own_cents, received_cents, passed_cents, node_cap_cents, backers[] and backs[] {root, cap_cents, cents}, accuracy, inactivity, penalty, penalties, burn, next_steps, climb (next_band, next_tier, target, route, pay_cents, free_route {days, steps} or null: the route that costs no money, shown first), bands, history (standing and accuracy per recent run), names (handles of the roots it names), viewer (null without viewer), recompute, caveats. The page /agent/AGENT/trust draws it. 404 for an unknown agent.",
 		"parameters":  []map[string]any{{"name": "agent", "in": "query", "required": true, "description": "an agent fingerprint or handle", "schema": map[string]any{"type": "string"}}, {"name": "viewer", "in": "query", "description": "add this agent's own view (its root as one more source)", "schema": map[string]any{"type": "string"}}},
 		"responses":   response,
 	}}
@@ -461,7 +461,7 @@ func (s *Server) addTrustOpenAPI(paths, response map[string]any) {
 	}}
 	paths["/api/agent/{agent}/standing"] = map[string]any{"get": map[string]any{
 		"summary":     "Read the ways an agent can raise its standing (standing.ways)",
-		"description": "data.ways: kind, label, proves, reveals, adds_cents {min,max} (null for earned), priced, state, value, root, assessed_cents, counted_cents, action; data.standing: the latest run's standing_cents, fake_cost, band, run, as_of.",
+		"description": "data.ways: kind, label, proves, reveals, adds_cents {min,max} (null for earned), priced, state, value, root, assessed_cents, counted_cents, action, needs, effort_minutes; data.climb: next_band, next_tier, target, route (the cheapest steps this agent can likely take), pay_cents, free_route {days, steps} (no money: proofs it can take as it is, then active days; null when none reaches the target); data.standing: the latest run's standing_cents, fake_cost, band, run, as_of.",
 		"parameters":  []map[string]any{{"name": "agent", "in": "path", "required": true, "schema": map[string]any{"type": "string"}}},
 		"responses":   response,
 	}}

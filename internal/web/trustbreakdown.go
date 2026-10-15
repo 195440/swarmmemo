@@ -111,9 +111,13 @@ type trustBreakdownView struct {
 	PassPercent  string
 	// Climb: the next band and Trust ladder tier, and the cheapest route
 	// to the nearer (board.Climb).
-	Climb []cell
-	Route []climbStep
-	Pay   cell
+	// Free is the route that costs no money, shown first (C342); Faster
+	// says the route after it is the paid, faster one.
+	Climb  []cell
+	Free   []climbStep
+	Faster bool
+	Route  []climbStep
+	Pay    cell
 	// Accuracy as a judge, with its trend when the runs moved it.
 	Accuracy                cell
 	AccuracyScale, AccTrend template.HTML
@@ -145,6 +149,9 @@ type costKey struct {
 
 type climbStep struct {
 	Kind, Label, Href, Adds string
+	// Key and Value name the number a step shows (the free route's days).
+	Key   string
+	Value int64
 }
 
 type wayBar struct {
@@ -274,15 +281,42 @@ func buildTrustBreakdown(a *breakdownAnswer, now time.Time) *trustBreakdownView 
 			v.Climb = append(v.Climb, cell{Label: m.label, Note: m.at.Name + " at " + cents(m.at.Cents), Key: m.key + ".gap_cents", Value: m.at.GapCents, Text: cents(m.at.GapCents) + " away"})
 		}
 	}
-	for _, st := range a.Climb.Route {
+	step := func(st board.ClimbStep) climbStep {
 		adds := "up to +" + cents(st.AddsCents)
 		if st.CostCents > 0 {
 			adds = "+" + cents(st.AddsCents) + ", costs " + cents(st.CostCents)
 		}
-		v.Route = append(v.Route, climbStep{Kind: st.Kind, Label: st.Label, Href: wayHref(st.Kind), Adds: adds})
+		return climbStep{Kind: st.Kind, Label: st.Label, Href: wayHref(st.Kind), Adds: adds}
+	}
+	// Free first (C342): proofs it can take as it is, then active days;
+	// then paying, the faster way, at its cost.
+	sameAsFree := false
+	if fr := a.Climb.FreeRoute; fr != nil {
+		for _, st := range fr.Steps {
+			if st.Kind != "earned" {
+				v.Free = append(v.Free, step(st))
+			}
+		}
+		if fr.Days > 0 {
+			days := "about " + count(fr.Days) + " active day"
+			if fr.Days != 1 {
+				days += "s"
+			}
+			v.Free = append(v.Free, climbStep{Kind: "earned", Label: days, Href: wayHref("earned"), Key: "climb.free_route.days", Value: fr.Days})
+		}
+		v.Faster = true
+		sameAsFree = len(fr.Steps) == len(a.Climb.Route)
+		for i := 0; sameAsFree && i < len(fr.Steps); i++ {
+			sameAsFree = fr.Steps[i].Kind == a.Climb.Route[i].Kind && fr.Steps[i].AddsCents == a.Climb.Route[i].AddsCents
+		}
+	}
+	if !sameAsFree {
+		for _, st := range a.Climb.Route {
+			v.Route = append(v.Route, step(st))
+		}
 	}
 	// The sure route beside free proofs: paying the whole gap.
-	if a.Climb.PayCents > 0 && len(a.Climb.Route) > 0 && a.Climb.Route[0].CostCents == 0 {
+	if a.Climb.PayCents > 0 && (len(v.Route) == 0 && v.Faster || len(v.Route) > 0 && a.Climb.Route[0].CostCents == 0) {
 		v.Pay = cell{Key: "climb.pay_cents", Value: a.Climb.PayCents, Text: cents(a.Climb.PayCents)}
 	}
 

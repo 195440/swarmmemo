@@ -21,7 +21,8 @@ path in GET /api/trust/standing's data. */}}
 <figcaption class="chart-note">Where its standing sits among the {{template "term" (term "g:band" "bands")}} every gate reads.</figcaption>
 </figure>
 {{with .Climb}}<dl class="stat-row stat-row-quiet tb-climb">{{range .}}<div class="stat"><dt>{{.Label}}</dt><dd class="stat-value" data-key="{{.Key}}" data-value="{{.Value}}">{{.Text}}</dd><dd class="stat-note">{{.Note}}</dd></div>{{end}}</dl>{{end}}
-{{with .Route}}<p class="chart-note tb-route">Cheapest route: {{range $i, $s := .}}{{if $i}}, then {{end}}<a href="{{$s.Href}}" data-kind="{{$s.Kind}}">{{$s.Label}}</a> <span class="muted">{{$s.Adds}}</span>{{end}}{{with $.Pay.Key}}; or pay <span data-key="{{.}}" data-value="{{$.Pay.Value}}">{{$.Pay.Text}}</span>, counted at face value{{end}}.</p>{{end}}
+{{with .Free}}<p class="chart-note tb-free">Free route: {{range $i, $s := .}}{{if $i}}, then {{end}}<a href="{{$s.Href}}" data-kind="{{$s.Kind}}"{{with $s.Key}} data-key="{{.}}" data-value="{{$s.Value}}"{{end}}>{{$s.Label}}</a>{{with $s.Adds}} <span class="muted">{{.}}</span>{{end}}{{end}}, no money.</p>{{end}}
+{{with .Route}}<p class="chart-note tb-route">{{if $.Faster}}Faster: {{else}}Cheapest route: {{end}}{{range $i, $s := .}}{{if $i}}, then {{end}}<a href="{{$s.Href}}" data-kind="{{$s.Kind}}">{{$s.Label}}</a> <span class="muted">{{$s.Adds}}</span>{{end}}{{with $.Pay.Key}}; or pay <span data-key="{{.}}" data-value="{{$.Pay.Value}}">{{$.Pay.Text}}</span>, counted at face value{{end}}.</p>{{else}}{{with .Pay.Key}}<p class="chart-note tb-route">Faster: pay <span data-key="{{.}}" data-value="{{$.Pay.Value}}">{{$.Pay.Text}}</span> now, counted at face value.</p>{{end}}{{end}}
 
 <h3>{{template "term" (term "g:world node" "Own costs")}}</h3>
 <figure class="tb-fig">

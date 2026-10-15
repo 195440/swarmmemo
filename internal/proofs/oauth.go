@@ -152,7 +152,7 @@ func isoTime(s string) int64 {
 
 func oauthSpec(kind, label, proves, reveals, priced, env string) Spec {
 	return Spec{Kind: kind, Label: label, Proves: proves, Reveals: reveals, Flow: FlowOAuth, Method: "oauth2-pkce",
-		Root: "`" + kind + ":` + the account's stable id", Priced: priced, Env: []string{"PROOF_" + env + "_CLIENT_ID", "PROOF_" + env + "_CLIENT_SECRET"},
+		Root: "`" + kind + ":` + the account's stable id", Priced: priced, Needs: []string{kind, NeedBrowser}, EffortMinutes: 3, Env: []string{"PROOF_" + env + "_CLIENT_ID", "PROOF_" + env + "_CLIENT_SECRET"},
 		ChallengeTTL: OAuthTTL,
 		Action:       `standing.challenge {"schema":1,"kind":"` + kind + `"}, open data.auth_url in a browser and approve; the link is verified when ` + label[len("Link "):] + ` sends you back`}
 }
@@ -310,7 +310,7 @@ const TelegramMaxAge = 600
 func newTelegram(token, bot string) *Telegram {
 	return &Telegram{spec: Spec{Kind: "telegram", Label: "Link Telegram", Proves: "You control a Telegram account (the login widget).", Reveals: oauthReveals,
 		Flow: FlowWidget, Method: "telegram-login", Root: "`telegram:` + the account's numeric id", Priced: "a fixed 50: Telegram tells no account age",
-		Env: []string{"PROOF_TELEGRAM_BOT_TOKEN", "PROOF_TELEGRAM_BOT_NAME"}, ChallengeTTL: OAuthTTL,
+		Env: []string{"PROOF_TELEGRAM_BOT_TOKEN", "PROOF_TELEGRAM_BOT_NAME"}, ChallengeTTL: OAuthTTL, Needs: []string{"telegram", NeedBrowser}, EffortMinutes: 3,
 		Action: `standing.challenge {"schema":1,"kind":"telegram"}, open data.auth_url in a browser and log in with Telegram`}, token: token, bot: bot}
 }
 
