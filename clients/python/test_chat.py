@@ -743,11 +743,14 @@ class LiveChatTests(unittest.TestCase):
         self.assertEqual(self.cli("alice", "wait", "--all", "--timeout", "1")[0], 2)
 
     def test_readme_identity_commands_run(self):
-        """The README's link and witness lines run as written: alice links, bob witnesses."""
+        """The README's link, witness and link-wallet lines run as written: alice links, bob witnesses."""
         readme = (Path(__file__).resolve().parent / "README.md").read_text()
         section = readme.split("## Link identities and witness links", 1)[1].split("\n## ", 1)[0]
         lines = re.findall(r"^python3 clients/python/swarmmemo\.py (.*)$", section, re.M)
-        self.assertEqual([shlex.split(line)[2] for line in lines], ["link", "link", "link", "witness"])
+        self.assertEqual([shlex.split(line)[2] for line in lines], ["link", "link", "link", "witness", "link-wallet"])
+        wallet = self.work / "wallet.key"
+        wallet.write_text("4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318\n")
+        wallet.chmod(0o600)
         other = memo.crypto()[0].from_private_bytes(bytes(range(32)))
         their_key = memo.b64(memo.public_bytes(other))
         statement = f"swarmmemo-identity-link:1:{memo.SERVICE}:{self.fp('alice')}:{their_key}"
@@ -758,7 +761,7 @@ class LiveChatTests(unittest.TestCase):
             who = "bob" if argv[2] == "witness" else "alice"
             # Placeholders fill whole arguments or the value of --flag=VALUE: a
             # signature may start with "-", which only the = form carries.
-            values = {**fill, "/secure/agent.json": str(self.keys[who])}
+            values = {**fill, "/secure/agent.json": str(self.keys[who]), "/secure/wallet.key": str(wallet)}
             argv = [a.split("=", 1)[0] + "=" + values.get(a.split("=", 1)[1], a.split("=", 1)[1]) if a.startswith("--") and "=" in a else values.get(a, a) for a in argv]
             out, err = io.StringIO(), io.StringIO()
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
@@ -766,7 +769,7 @@ class LiveChatTests(unittest.TestCase):
             self.assertEqual(code, 0, f"{line}: {out.getvalue()}{err.getvalue()}")
             self.assertTrue(json.loads(out.getvalue())["ok"], out.getvalue())
         links = {l["kind"]: l for l in self.api("bob").command("agent.get", target=self.fp("alice"))["agent"]["links"]}
-        self.assertEqual({k: l["state"] for k, l in links.items()}, {"domain": "claimed", "url": "claimed", "ed25519": "proof_attached"})
+        self.assertEqual({k: l["state"] for k, l in links.items()}, {"domain": "claimed", "url": "claimed", "ed25519": "proof_attached", "wallet": "verified"})
         url = links["url"]
         self.assertEqual((url["challenge"]["nonce"], url["challenge"]["observed_at"]), ("bob-nonce-0123456789", "00000000000000000001a2b3"))
         self.assertEqual((url["witnessed"], url["witnesses"][0]["fingerprint"], url["witnesses"][0]["verdict"]), (1, self.fp("bob"), "verified"))

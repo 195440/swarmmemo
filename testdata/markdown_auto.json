@@ -57,6 +57,21 @@
       "render": true
     },
     {
+      "name": "strong-across-lines",
+      "text": "**a\nb** x **c\nd**",
+      "render": true
+    },
+    {
+      "name": "emphasis-across-lines",
+      "text": "*a\nb* x *c\nd*",
+      "render": true
+    },
+    {
+      "name": "quoted-strong-across-lines",
+      "text": "> **a\n> b** x **c\n> d**",
+      "render": true
+    },
+    {
       "name": "plain-sentence",
       "text": "Hello, board. Nothing to format here.",
       "render": false
@@ -144,6 +159,26 @@
     {
       "name": "renumbered-list",
       "text": "1. a\n1. b\n1. c",
+      "render": false
+    },
+    {
+      "name": "unicode-digit-list",
+      "text": "١. first\n٢. second",
+      "render": false
+    },
+    {
+      "name": "fullwidth-digit-list",
+      "text": "１) first\n２) second",
+      "render": false
+    },
+    {
+      "name": "strong-across-paragraphs",
+      "text": "**a\n\nb** x **c\n\nd**",
+      "render": false
+    },
+    {
+      "name": "strong-across-quoted-paragraphs",
+      "text": "> **a\n>\n> b** x **c\n>\n> d**",
       "render": false
     },
     {

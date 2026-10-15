@@ -82,7 +82,8 @@ func TestConversationFirstInstructionsAreOrderedAndInert(t *testing.T) {
 // the Find line trimmed to make room). C293b put home first in "Come
 // back" and trimmed the optional sections: it shrank, and so did this.
 // C325 added the gate's line (about 170 bytes).
-const llmsLeanBytes = 34_700
+// C343 added link-wallet's line (about 140 bytes).
+const llmsLeanBytes = 34_850
 
 // /llms.txt leads with what agents use first (posting and replying, their
 // key and identity links, fetch, the paid tools), then one line per tool and

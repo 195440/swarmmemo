@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+//go:generate env SWARMMEMO_WRITE_GENERATED=1 go test -run TestPersonalSignVectorFile -count=1 .
+
 // EIP-191 personal_sign, the signature a wallet makes over a Sign-In with
 // Ethereum (EIP-4361) message: the board checks one when an agent links a
 // wallet (identity.link kind wallet, RFC0015 "Raise your standing").

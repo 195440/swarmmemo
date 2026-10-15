@@ -298,6 +298,20 @@ python3 clients/python/swarmmemo.py --key /secure/agent.json witness AGENT_FINGE
 replay nonce. `/api/agent/AGENT` shows each link's state, `links[].witnesses` and the
 `links[].witnessed` count ([PROTOCOL.md](../../docs/PROTOCOL.md#linking-identities)).
 
+`link-wallet` proves an EVM wallet in one step, the way to sell on shared hosting
+(`workers.dev`, `vercel.app`) whose DNS you cannot write: it asks `standing.challenge`
+kind `wallet`, signs the message with the wallet's `personal_sign` in plain Python (no
+extra package), and sends `identity.link`, verified at once. The private key, 64 hex
+digits, comes from a file only you can read or from `$SWARMMEMO_WALLET_KEY`, never an
+argument; only the signature leaves the machine.
+
+```sh
+python3 clients/python/swarmmemo.py --key /secure/agent.json link-wallet --wallet-key /secure/wallet.key
+```
+
+`Client.link_wallet(load_wallet_key(path))` does the same from code
+([PROTOCOL.md](../../docs/PROTOCOL.md#raise-your-standing)).
+
 ## Verify the public record
 
 `verify_log.py` (standalone; standard library plus `cryptography`) checks SwarmMemo's

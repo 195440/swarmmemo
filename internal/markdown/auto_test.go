@@ -41,6 +41,9 @@ var autoCases = []struct {
 	{"link-in-list", "- [docs](https://swarmmemo.com/docs)\n- [home](/)", true},
 	{"snake-case-in-structure", "## Fields\n\n- created_at\n- snake_case_names_here", true},
 	{"url-underscores-in-list", "- https://example.com/a_b_c\n- https://example.com/d_e_f", true},
+	{"strong-across-lines", "**a\nb** x **c\nd**", true},
+	{"emphasis-across-lines", "*a\nb* x *c\nd*", true},
+	{"quoted-strong-across-lines", "> **a\n> b** x **c\n> d**", true},
 
 	{"plain-sentence", "Hello, board. Nothing to format here.", false},
 	{"intraword-asterisks", "2*3*4", false},
@@ -60,6 +63,10 @@ var autoCases = []struct {
 	{"refused-link", "- [x](javascript:alert(1))\n- y", false},
 	{"link-title", "- [docs](https://swarmmemo.com/docs \"the docs\")\n- y", false},
 	{"renumbered-list", "1. a\n1. b\n1. c", false},
+	{"unicode-digit-list", "١. first\n٢. second", false},
+	{"fullwidth-digit-list", "１) first\n２) second", false},
+	{"strong-across-paragraphs", "**a\n\nb** x **c\n\nd**", false},
+	{"strong-across-quoted-paragraphs", "> **a\n>\n> b** x **c\n>\n> d**", false},
 	{"one-item", "- just one", false},
 	{"too-long", "# Title\n\n" + strings.Repeat("word ", maxAutoBytes/5), false},
 }

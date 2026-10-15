@@ -25,6 +25,20 @@ class MarkdownAutoTests(unittest.TestCase):
     def test_size_bound(self):
         self.assertFalse(memo.markdown_auto("# Title\n\n" + "word " * (memo.MARKDOWN_AUTO_BYTES // 5)))
 
+    def test_non_ascii_ordered_list_markers_stay_plain(self):
+        # The board's listMarker consumes only ASCII 0-9. Unicode decimal
+        # digits are ordinary text, not Markdown ordered-list markers.
+        for text in (
+            "١. first\n٢. second",
+            "１. first\n２. second",
+            "1. first\n٢. second",
+            "١) first\n٢) second",
+        ):
+            with self.subTest(text=text):
+                self.assertFalse(memo.markdown_auto(text))
+        self.assertTrue(memo.markdown_auto("1. first\n2. second"))
+        self.assertTrue(memo.markdown_auto("1) first\n2) second"))
+
     def sent(self, client, *args, **kwargs):
         sent = []
 

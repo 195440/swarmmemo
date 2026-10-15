@@ -1,0 +1,54 @@
+{
+  "about": "C343: personal_sign (EIP-191) by internal/services SignPersonal, written by go generate ./internal/services: RFC 6979, low s, r || s || v with v 27 or 28. The clients' link-wallet signers must give the same address (EIP-55) and signature for each key and message. Test keys only.",
+  "vectors": [
+    {
+      "name": "siwe",
+      "key": "0123456789012345678901234567890123456789012345678901234567890123",
+      "message": "swarmmemo.com wants you to sign in with your Ethereum account:\n0x14791697260E4c9A71f18484C9f997B308e59325\n\nLink this address to SwarmMemo agent 4f5d0c1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6 to raise its standing.\n\nURI: https://swarmmemo.com\nVersion: 1\nChain ID: 1\nNonce: 0123456789abcdef0123456789abcdef\nIssued At: 2026-10-15T00:00:00Z\nExpiration Time: 2026-10-15T00:15:00Z",
+      "address": "0x14791697260E4c9A71f18484C9f997B308e59325",
+      "signature": "0x3aefade18057ba905a86234947e989713c05644ff1deb7a6352ba618e254cfef7621ba7569f3b7dff25d45b5df98823cf1408aa5aefc415a1651b659b2291bba1b"
+    },
+    {
+      "name": "key-one-empty",
+      "key": "0000000000000000000000000000000000000000000000000000000000000001",
+      "message": "",
+      "address": "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+      "signature": "0x0ac02a3eb3039b7a3ebb6a35f1e0dd31a4ed51781205a2c193354752a25edad50593868baf38c519b78bdc61a23c3f55e058c29f8b83d79ae48cc47d931afaed1b"
+    },
+    {
+      "name": "key-n-minus-one-utf8",
+      "key": "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140",
+      "message": "héllo ✓",
+      "address": "0x80C0dbf239224071c59dD8970ab9d542E3414aB2",
+      "signature": "0x559cd7628d98acd13766c9eee7f09e728ff3f7626070412e946683a19edd271267ca85f81b06ea253902ad92629664d5fc38ccf6d06a5a2dabbbf555c25d785f1c"
+    },
+    {
+      "name": "block-edge",
+      "key": "4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318",
+      "message": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "address": "0x2c7536E3605D9C16a7a3D7b1898e529396a65c23",
+      "signature": "0x325314489de1e954fe111b3ac7d8e4a64e86a053af45c4a765e5c26c326cf16f03e87b6dcdc758194d6abc2c026de686cfb79353c073ed93aff561c6ce82f5f81b"
+    },
+    {
+      "name": "pad-one-byte",
+      "key": "4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318",
+      "message": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "address": "0x2c7536E3605D9C16a7a3D7b1898e529396a65c23",
+      "signature": "0x57f03894baeb0c9d1cb912b4ea2b0b4b6417fcc0fff95090a4221de6947564eb097bd5fc6b5dd5522ae88b79c602d9c636a71fbbfe88ad6430d5ee95788290ff1b"
+    },
+    {
+      "name": "three-blocks",
+      "key": "000000000000000000000000000000000000000000000000000000000000000b",
+      "message": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "address": "0x3DA8D322CB2435dA26E9C9fEE670f9fB7Fe74E49",
+      "signature": "0x5cbc5f66cf9b91e6d999d925439dcb7d7de0c718ac250d65ebe3093dc41489487ad07100c7fc9d0b833f68062ee94e10df8cecbc9a40e40212d4589b0c2df4581b"
+    },
+    {
+      "name": "web3js-some-data",
+      "key": "4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318",
+      "message": "Some data",
+      "address": "0x2c7536E3605D9C16a7a3D7b1898e529396a65c23",
+      "signature": "0xb91467e570a6466aa9e9876cbcd013baba02900b8979d43fe208a4a4f339f5fd6007e74cd82e037b800186422fc2da167c747ef045e5d18a5f5d4300f8e1a0291c"
+    }
+  ]
+}

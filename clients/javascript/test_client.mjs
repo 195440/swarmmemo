@@ -8,7 +8,7 @@ import {join} from 'node:path';
 import {spawn, spawnSync} from 'node:child_process';
 import {gzipSync} from 'node:zlib';
 import {createPrivateKey, createPublicKey, sign, verify} from 'node:crypto';
-import {Client, DelegatedClient, ClientError, CONTRACT, FIELDS, canonical, delegationContext, generateKey, importKey, writeKey, loadKey, conversationRoom, loadSeal, agentSubjectID, workCreateData, standingTier, WORK_STANDING_CREATE, markdownAuto, MARKDOWN_POST_DATA} from './swarmmemo.mjs';
+import {Client, DelegatedClient, ClientError, CONTRACT, FIELDS, canonical, delegationContext, generateKey, importKey, writeKey, loadKey, conversationRoom, loadSeal, agentSubjectID, workCreateData, standingTier, WORK_STANDING_CREATE, markdownAuto, MARKDOWN_POST_DATA, keccak256, walletAddress, personalSign, loadWalletKey, walletChallengeOK, WALLET_KEY_ENV} from './swarmmemo.mjs';
 
 const vector = JSON.parse(await readFile(new URL('../python/signing-vector.json', import.meta.url), 'utf8'));
 const fixtureKey = importKey({private_key: Buffer.from(vector.seed_hex, 'hex').toString('base64url'), public_key: vector.command.public_key});
@@ -659,4 +659,107 @@ test('C324: posts sign format markdown by default, by the detector Go wrote test
   assert.equal(data(signed, table, {data: edit}), edit); // the caller's data wins
   assert.equal(data(anonymous, table), undefined); // an unsigned post cannot sign a format
   assert.throws(() => signed.prepare({operation: 'post', text: 'x'}, {format: 'html'}), error => error.code === 'invalid_option');
+});
+
+const walletKeyHex = '4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318', walletAddressHex = '0x2c7536E3605D9C16a7a3D7b1898e529396a65c23';
+test('C343: personalSign reproduces the personal_sign vectors Go wrote to testdata/wallet_sign.json', async () => {
+  assert.equal(keccak256(Buffer.alloc(0)).toString('hex'), 'c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470');
+  assert.equal(keccak256(Buffer.from('abc')).toString('hex'), '4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45');
+  const {vectors} = JSON.parse(await readFile(new URL('../../testdata/wallet_sign.json', import.meta.url), 'utf8'));
+  assert.ok(vectors.length >= 4);
+  for (const v of vectors) {
+    const key = Buffer.from(v.key, 'hex');
+    assert.equal(walletAddress(key), v.address, v.name); assert.equal(personalSign(key, v.message), v.signature, v.name);
+  }
+  for (const key of [Buffer.alloc(32), Buffer.from('fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141', 'hex'), Buffer.alloc(31), '00'.repeat(32)]) assert.throws(() => personalSign(key, 'x'), errorCode('invalid_wallet_key'));
+});
+
+test('C343: loadWalletKey reads an owner-only file or the environment, never quoting the key', async t => {
+  const dir = await temp(t), file = join(dir, 'wallet.key');
+  const handle = await open(file, 'wx', 0o644); await handle.writeFile('0x' + walletKeyHex + '\n'); await handle.close();
+  await chmod(file, 0o644);
+  await assert.rejects(loadWalletKey({file}), error => errorCode('unsafe_key_file')(error) && !error.message.includes(walletKeyHex));
+  await chmod(file, 0o600);
+  assert.equal((await loadWalletKey({file})).toString('hex'), walletKeyHex);
+  const saved = {default: process.env[WALLET_KEY_ENV], other: process.env.SWARMMEMO_TEST_OTHER};
+  t.after(() => { for (const [name, value] of [[WALLET_KEY_ENV, saved.default], ['SWARMMEMO_TEST_OTHER', saved.other]]) if (value === undefined) delete process.env[name]; else process.env[name] = value; });
+  process.env[WALLET_KEY_ENV] = walletKeyHex; process.env.SWARMMEMO_TEST_OTHER = 'not a key ' + walletKeyHex.slice(0, 20);
+  assert.equal((await loadWalletKey()).toString('hex'), walletKeyHex);
+  await assert.rejects(loadWalletKey({env: 'SWARMMEMO_TEST_OTHER'}), error => errorCode('invalid_wallet_key')(error) && !error.message.includes(walletKeyHex.slice(0, 20)));
+  delete process.env[WALLET_KEY_ENV];
+  await assert.rejects(loadWalletKey(), errorCode('invalid_wallet_key'));
+});
+
+test('C343: linkWallet signs only this service’s sign-in for its own address', async t => {
+  for (const message of [`evil.example wants you to sign in with your Ethereum account:\n${walletAddressHex}\n\nNonce: ${'n'.repeat(32)}\n`,
+    `swarmmemo.com wants you to sign in with your Ethereum account:\n0x0000000000000000000000000000000000000001\n\nNonce: ${'n'.repeat(32)}\n`]) {
+    const operations = [];
+    const origin = await server(t, (req, res) => {let raw = ''; req.on('data', c => {raw += c;}); req.on('end', () => {operations.push(JSON.parse(raw).operation); res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ok: true, data: {value: walletAddressHex, nonce: 'n'.repeat(32), message}}));});});
+    const client = new Client({origin, key: fixtureKey, allowInsecureLoopback: true});
+    await assert.rejects(client.linkWallet(Buffer.from(walletKeyHex, 'hex')), errorCode('invalid_wallet_challenge'));
+    assert.deepEqual(operations, ['standing.challenge']);
+  }
+});
+
+const siweFingerprint = '4f5d0c1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6', siweNonce = '0123456789abcdef0123456789abcdef';
+const siwe = ({service = 'swarmmemo.com', address = walletAddressHex, fingerprint = siweFingerprint, nonce = siweNonce, uri, chain = '1', tail = ''} = {}) =>
+  `${service} wants you to sign in with your Ethereum account:\n${address}\n\nLink this address to SwarmMemo agent ${fingerprint} to raise its standing.\n\n`
+  + `URI: ${uri ?? 'https://' + service}\nVersion: 1\nChain ID: ${chain}\nNonce: ${nonce}\nIssued At: 2026-10-15T00:00:00Z\nExpiration Time: 2026-10-15T00:15:00Z${tail}`;
+test('C343-sec: the wallet challenge must be the exact sign-in, line for line', () => {
+  const ok = (message, nonce = siweNonce) => walletChallengeOK(message, 'swarmmemo.com', walletAddressHex, siweFingerprint, nonce);
+  assert.equal(ok(siwe()), true);
+  for (const [name, message] of Object.entries({
+    domain: siwe({service: 'evil.example'}), uri: siwe({uri: 'https://app.example.org'}), chain: siwe({chain: '137'}),
+    agent: siwe({fingerprint: '0'.repeat(64)}), address: siwe({address: '0x0000000000000000000000000000000000000001'}),
+    resources: siwe({tail: '\nResources:\n- https://evil.example/permit'}), trailing: siwe({tail: '\n'}),
+    statement: siwe().replace('to raise its standing.', 'and approve transfers.'), stamp: siwe().replace('00:15:00Z', '00:15:00+01:00'),
+    regexDomain: siwe({service: 'swarmmemoxcom'}),
+  })) assert.equal(ok(message), false, name);
+  for (const nonce of ['short', 'n'.repeat(65), 'abc def12', 'abcdefgh\nURI: x', 'abcdefgh١']) assert.equal(ok(siwe({nonce}), nonce), false, nonce);
+  assert.equal(walletChallengeOK(siwe(), 'swarmmemo.com', walletAddressHex, undefined, siweNonce), false);
+});
+
+test('C343-sec: web3.js personal_sign vector and linkWallet signs the exact challenge', async t => {
+  assert.equal(personalSign(Buffer.from(walletKeyHex, 'hex'), 'Some data'), '0xb91467e570a6466aa9e9876cbcd013baba02900b8979d43fe208a4a4f339f5fd6007e74cd82e037b800186422fc2da167c747ef045e5d18a5f5d4300f8e1a0291c');
+  for (const tail of ['', '\nResources:\n- https://evil.example']) {
+    const sent = [], message = siwe({fingerprint: fixtureKey.fingerprint, tail});
+    const origin = await server(t, (req, res) => {let raw = ''; req.on('data', c => {raw += c;}); req.on('end', () => {sent.push(JSON.parse(raw)); res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ok: true, data: {value: walletAddressHex, nonce: siweNonce, message}}));});});
+    const client = new Client({origin, key: fixtureKey, allowInsecureLoopback: true});
+    if (tail) {
+      await assert.rejects(client.linkWallet(Buffer.from(walletKeyHex, 'hex')), errorCode('invalid_wallet_challenge'));
+      assert.deepEqual(sent.map(c => c.operation), ['standing.challenge']);
+    } else {
+      await client.linkWallet(Buffer.from(walletKeyHex, 'hex'));
+      assert.deepEqual(sent.map(c => c.operation), ['standing.challenge', 'identity.link']);
+      assert.equal(JSON.parse(sent[1].data).proof, personalSign(Buffer.from(walletKeyHex, 'hex'), message));
+    }
+  }
+});
+
+test('C343-sec: loadWalletKey refuses a symlink, FIFO, directory or missing file without hanging', async t => {
+  const dir = await temp(t), file = join(dir, 'wallet.key');
+  const handle = await open(file, 'wx', 0o600); await handle.writeFile(walletKeyHex); await handle.close();
+  await symlink(file, join(dir, 'link.key'));
+  const made = spawnSync('mkfifo', ['-m', '600', join(dir, 'fifo.key')]);
+  for (const name of ['link.key', ...(made.status === 0 ? ['fifo.key'] : []), 'missing.key', '.']) {
+    await assert.rejects(loadWalletKey({file: join(dir, name)}), error => error instanceof ClientError && !error.message.includes(walletKeyHex), name);
+  }
+});
+
+test('C343: optional real Go board verifies linkWallet in one step', {skip: !process.env.SWARMMEMO_TEST_BINARY}, async t => {
+  const binary = process.env.SWARMMEMO_TEST_BINARY, dir = await temp(t);
+  const probe = createServer(); probe.listen(0, '127.0.0.1'); await once(probe, 'listening'); const port = probe.address().port; await new Promise(resolve => probe.close(resolve));
+  const origin = `http://127.0.0.1:${port}`;
+  const child = spawn(binary, ['serve'], {env: {...process.env, DATA_DIR: join(dir, 'data'), LISTEN_ADDR: `127.0.0.1:${port}`, ALLOW_INSECURE_LOCAL: 'true', ADMIN_TOKEN_FILE: '', SERVICE_ID: 'swarmmemo.com', PUBLIC_URL: origin, TRUST_LOOPBACK_PROXY: 'false'}, stdio: 'ignore'});
+  t.after(async () => {if (child.exitCode === null) {child.kill('SIGTERM'); await once(child, 'exit');}});
+  let ready = false;
+  for (let i = 0; i < 100; i++) {try {if ((await fetch(origin + '/health', {signal: AbortSignal.timeout(100)})).ok) {ready = true; break;}} catch (_) {} await new Promise(resolve => setTimeout(resolve, 25));}
+  assert.ok(ready, 'isolated Go server did not become healthy');
+  const key = generateKey(), client = new Client({origin, key, allowInsecureLoopback: true});
+  const file = join(dir, 'wallet.key'), handle = await open(file, 'wx', 0o600); await handle.writeFile(walletKeyHex + '\n'); await handle.close();
+  const walletKey = await loadWalletKey({file});
+  const linked = await client.linkWallet(walletKey);
+  assert.equal(linked.data.state, 'verified'); assert.equal(linked.data.value, walletAddressHex);
+  const link = (await client.send(client.prepare({operation: 'agent.get', target: key.fingerprint}))).agent.links.find(l => l.kind === 'wallet');
+  assert.equal(link.state, 'verified'); assert.equal(personalSign(walletKey, link.statement), link.proof);
 });

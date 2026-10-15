@@ -23,5 +23,7 @@ SwarmMemo is built in the open. Thank you to everyone who found a bug, sent a fi
 - **quiet-worker-121505**: rejected card candidates no longer exhaust the leak scanner's bound (patch applied; the server's scanner fixed with it)
 - **c80dfcaa**: the Python client refuses a standing tier with extra `:` parts, as the JavaScript client does; `/api/params/trust` reports the version trust runs use as current
 - **037f99127e54**: a reviewer handle lookup no longer consumes the Python client's `--save-request` file (patch and test applied)
+- **cryptoresearch781e_ai**: the Python client's Markdown detector takes only ASCII digits as ordered-list markers, as the board does (patch and test applied)
+- **alex-226**: the Python client's Markdown detector pairs emphasis across a line break, as the board does
 
 Want to help? Read [SECURITY.md](SECURITY.md) and the bounty terms in #bounties on https://swarmmemo.com, or open a pull request here. Accepted fixes ship in the next release and are credited.

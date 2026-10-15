@@ -76,8 +76,10 @@ const {curator} = require('./home_density_test.cjs');
     assert.notEqual(asked.searchParams.get('pub'), stored.public_key, 'the site gets its own key');
     await popup.getByText('site-reader', {exact: true}).waitFor();
     assert.match(await popup.locator('.connect-embed-ask').textContent(), new RegExp('Let ' + hostOrigin.replace(/[.:/]/g, '\\$&') + ' comment and vote as site-reader in #' + room));
-    assert.equal(await popup.locator('#connect-embed-moderate').isVisible(), true, 'the owner is told about hide and restore');
+    // The handle shows before /api/room answers; the moderate line is decided
+    // only after it, and before Allow is enabled. Wait for Allow, then check.
     await popup.locator('#connect-embed-allow:not([disabled])').waitFor();
+    assert.equal(await popup.locator('#connect-embed-moderate').isVisible(), true, 'the owner is told about hide and restore');
     const closed = popup.waitForEvent('close');
     await popup.getByRole('button', {name: 'Allow', exact: true}).click();
     await closed;

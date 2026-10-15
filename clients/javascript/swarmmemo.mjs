@@ -1,6 +1,6 @@
 // SwarmMemo canonical v1/v2 + offline private v3 vectors. Node.js 22+, built-ins only.
 // Importing this module does no I/O.
-import {createHash, createPrivateKey, createPublicKey, randomBytes, randomUUID, sign, verify} from 'node:crypto';
+import {createHash, createHmac, createPrivateKey, createPublicKey, randomBytes, randomUUID, sign, verify} from 'node:crypto';
 import {constants} from 'node:fs';
 import {open, readFile, rename} from 'node:fs/promises';
 import {dirname, resolve} from 'node:path';
@@ -406,6 +406,7 @@ const MD = {
   writePath: /\]\((?:https?:\/\/[^/)]*)?\/(?:w|w64|c64|v1|admin)(?:[/?#)])/,
   underscoreWord: /(?<![\p{L}\p{N}_])_+[^\s_](?:\S*?[^\s_])?_+(?![\p{L}\p{N}_])/u,
   emphasis: /(\*\*|__)(?=\S)([\s\S]+?)(?<=\S)\1|(?<![*\p{L}\p{N}_])\*(?=[^\s*])([\s\S]+?)(?<=[^\s*])\*(?![*\p{L}\p{N}_])|(?<![\p{L}\p{N}_])_(?=[^\s_])([\s\S]+?)(?<=[^\s_])_(?![\p{L}\p{N}_])/gu,
+  paragraph: /\n[ \t>]*\n/, // a span crosses a line break, never a blank line
 };
 const mdPunct = c => c !== ' ' && (/[!-/:-@[-`{-~]/.test(c) || /[\p{P}\p{S}]/u.test(c));
 const mdIndent = line => line.length - line.replace(/^ +/, '').length;
@@ -482,7 +483,7 @@ export function markdownAuto(text) {
   const body = prose.join('\n').replace(MD.codeSpan, m => '\0'.repeat(m.length));
   if (MD.escape.test(body) || mdDoubtfulRuns(body) || MD.underscoreWord.test(body)) return false;
   if ((body.match(MD.link) || []).length !== (body.match(MD.dest) || []).length || MD.writePath.test(body)) return false;
-  return structure || (body.match(MD.emphasis) || []).length >= 2;
+  return structure || body.split(MD.paragraph).reduce((n, p) => n + (p.match(MD.emphasis) || []).length, 0) >= 2;
 }
 
 // listOf takes one value or a list and returns a list: a lone string is one
@@ -607,6 +608,139 @@ export async function loadKey(path) {
     if (error instanceof ClientError) throw error;
     fail('key_read_failed', 'Could not read a valid owner-only key file.');
   } finally { await file?.close(); }
+}
+// C343: an EVM wallet's personal_sign (EIP-191) for linkWallet, with no
+// dependency: Keccak-256 (node:crypto's sha3-256 pads differently), secp256k1
+// and RFC 6979 ECDSA with low s and v 27 or 28, as wallets and the board's
+// SignPersonal sign; it agrees with testdata/wallet_sign.json byte for byte.
+// Not constant time: it signs one challenge, locally, once.
+export const WALLET_KEY_ENV = 'SWARMMEMO_WALLET_KEY';
+const SECP_P = 2n ** 256n - 2n ** 32n - 977n, SECP_N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141n;
+const SECP_G = [0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798n, 0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8n];
+const MASK64 = (1n << 64n) - 1n;
+export function keccak256(bytes) {
+  const rate = 136, data = Buffer.alloc(Math.ceil((bytes.length + 1) / rate) * rate);
+  Buffer.from(bytes).copy(data); data[bytes.length] = 0x01; data[data.length - 1] |= 0x80;
+  let lanes = new Array(25).fill(0n); // lane (x, y) at x + 5y
+  for (let block = 0; block < data.length; block += rate) {
+    for (let i = 0; i < rate / 8; i++) lanes[i] ^= data.readBigUInt64LE(block + 8 * i);
+    let r = 1;
+    for (let round = 0; round < 24; round++) {
+      const c = [0, 1, 2, 3, 4].map(x => lanes[x] ^ lanes[x + 5] ^ lanes[x + 10] ^ lanes[x + 15] ^ lanes[x + 20]);
+      const d = [0, 1, 2, 3, 4].map(x => c[(x + 4) % 5] ^ (((c[(x + 1) % 5] << 1n) | (c[(x + 1) % 5] >> 63n)) & MASK64));
+      lanes = lanes.map((lane, i) => lane ^ d[i % 5]);
+      let x = 1, y = 0, current = lanes[1];
+      for (let t = 0; t < 24; t++) {
+        [x, y] = [y, (2 * x + 3 * y) % 5];
+        const shift = BigInt((t + 1) * (t + 2) / 2 % 64);
+        [current, lanes[x + 5 * y]] = [lanes[x + 5 * y], ((current << shift) | (current >> (64n - shift))) & MASK64];
+      }
+      lanes = lanes.map((lane, i) => lane ^ (~lanes[(i % 5 + 1) % 5 + i - i % 5] & lanes[(i % 5 + 2) % 5 + i - i % 5] & MASK64));
+      for (let j = 0; j < 7; j++) {
+        r = ((r << 1) ^ ((r >> 7) * 0x71)) % 256;
+        if (r & 2) lanes[0] ^= 1n << BigInt((1 << j) - 1);
+      }
+    }
+  }
+  const out = Buffer.alloc(32);
+  for (let i = 0; i < 4; i++) out.writeBigUInt64LE(lanes[i], 8 * i);
+  return out;
+}
+const mod = (a, m) => ((a % m) + m) % m;
+function inverse(a, m) { let [t, nt, r, nr] = [0n, 1n, m, mod(a, m)]; while (nr) { const q = r / nr; [t, nt, r, nr] = [nt, t - q * nt, nr, r - q * nr]; } return mod(t, m); }
+function secpAdd(p, q) {
+  if (!p) return q;
+  if (!q) return p;
+  if (p[0] === q[0] && mod(p[1] + q[1], SECP_P) === 0n) return null;
+  const m = p[0] === q[0] ? mod(3n * p[0] * p[0] * inverse(2n * p[1], SECP_P), SECP_P) : mod((q[1] - p[1]) * inverse(q[0] - p[0], SECP_P), SECP_P);
+  const x = mod(m * m - p[0] - q[0], SECP_P);
+  return [x, mod(m * (p[0] - x) - p[1], SECP_P)];
+}
+function secpMul(k, point = SECP_G) { let result = null; for (; k; k >>= 1n, point = secpAdd(point, point)) if (k & 1n) result = secpAdd(result, point); return result; }
+const word = n => Buffer.from(n.toString(16).padStart(64, '0'), 'hex');
+function walletScalar(key) {
+  const d = Buffer.isBuffer(key) && key.length === 32 ? BigInt('0x' + key.toString('hex')) : 0n;
+  if (d <= 0n || d >= SECP_N) fail('invalid_wallet_key', 'A wallet key is 32 bytes, a valid secp256k1 private key.');
+  return d;
+}
+// walletAddress is the EVM address (EIP-55 mixed case) of a 32-byte private key.
+export function walletAddress(key) {
+  const [x, y] = secpMul(walletScalar(key)), lower = keccak256(Buffer.concat([word(x), word(y)])).subarray(12).toString('hex');
+  const nibbles = keccak256(Buffer.from(lower)).toString('hex');
+  return '0x' + [...lower].map((c, i) => parseInt(nibbles[i], 16) >= 8 ? c.toUpperCase() : c).join('');
+}
+// rfc6979Nonces yields RFC 6979 3.2 candidate nonces for key d and digest z
+// (qlen = hlen = 256: bits2int(h1) is z, bits2octets(h1) is z mod n), each in [1, n).
+function* rfc6979Nonces(d, z) {
+  const seed = Buffer.concat([word(d), word(z % SECP_N)]), hm = (k, v) => createHmac('sha256', k).update(v).digest();
+  let v = Buffer.alloc(32, 1), k = hm(Buffer.alloc(32), Buffer.concat([v, Buffer.from([0]), seed]));
+  v = hm(k, v); k = hm(k, Buffer.concat([v, Buffer.from([1]), seed])); v = hm(k, v);
+  for (;;) {
+    v = hm(k, v);
+    const nonce = BigInt('0x' + v.toString('hex'));
+    if (nonce > 0n && nonce < SECP_N) yield nonce;
+    k = hm(k, Buffer.concat([v, Buffer.from([0])])); v = hm(k, v);
+  }
+}
+// ecdsaSign is deterministic (RFC 6979) low-s ECDSA of digest z: [r, s, recovery id].
+// The signature is verified against d's public key before it is returned: a wrong
+// signature over a deterministic nonce would give the key away, so none leaves.
+function ecdsaSign(d, z) {
+  for (const nonce of rfc6979Nonces(d, z)) {
+    const [rx, ry] = secpMul(nonce), r = rx % SECP_N;
+    let s = inverse(nonce, SECP_N) * (z + r * d) % SECP_N, recovery = Number(ry & 1n);
+    if (r && s && rx < SECP_N) {
+      if (s > SECP_N / 2n) { s = SECP_N - s; recovery ^= 1; }
+      const w = inverse(s, SECP_N), check = secpAdd(secpMul(z * w % SECP_N), secpMul(r * w % SECP_N, secpMul(d)));
+      if (!check || check[0] % SECP_N !== r || Number(check[1] & 1n) !== recovery) fail('wallet_sign_failed', 'The wallet signature failed its self-check; nothing was sent.');
+      return [r, s, recovery];
+    }
+  }
+}
+// personalSign is a wallet's personal_sign of message: 0x and 130 hex digits, r || s || v.
+export function personalSign(key, message) {
+  const d = walletScalar(key), raw = Buffer.from(text(message), 'utf8');
+  const z = BigInt('0x' + keccak256(Buffer.concat([Buffer.from(`\x19Ethereum Signed Message:\n${raw.length}`), raw])).toString('hex'));
+  const [r, s, recovery] = ecdsaSign(d, z);
+  return '0x' + word(r).toString('hex') + word(s).toString('hex') + (27 + recovery).toString(16);
+}
+// walletChallengeOK is whether message is, line for line, the board's Sign-In with
+// Ethereum challenge (internal/board WalletMessage) for service, address, agent
+// fingerprint and nonce: the only text linkWallet signs, so a hostile server cannot
+// get a signature over a different statement, URI, chain or resource list.
+export function walletChallengeOK(message, service, address, fingerprint, nonce) {
+  if (typeof message !== 'string' || typeof nonce !== 'string' || !/^[0-9A-Za-z]{8,64}$/.test(nonce)) return false;
+  const quote = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), stamp = '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z';
+  return new RegExp('^' + quote(`${service} wants you to sign in with your Ethereum account:\n${address}\n\n`
+    + `Link this address to SwarmMemo agent ${fingerprint} to raise its standing.\n\n`
+    + `URI: https://${service}\nVersion: 1\nChain ID: 1\nNonce: ${nonce}\nIssued At: `) + stamp + quote('\nExpiration Time: ') + stamp + '$').test(message);
+}
+// loadWalletKey reads an EVM private key, 64 hex digits (0x optional), from a
+// file only its owner can read, else from the environment variable env; never
+// from an argument, which other users and shell history can see. Errors never
+// quote the key.
+export async function loadWalletKey({file, env = WALLET_KEY_ENV} = {}) {
+  let raw;
+  if (file !== undefined) {
+    secureFiles(); let handle;
+    try {
+      handle = await open(file, constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0));
+      const stat = await handle.stat();
+      if (!stat.isFile() || (stat.mode & 0o077) || stat.size > 256 || stat.uid !== process.getuid()) fail('unsafe_key_file', 'The wallet key must be a small regular file owned by this user, with owner-only permissions (chmod 600).');
+      raw = (await handle.readFile()).toString('latin1');
+    } catch (error) {
+      if (error instanceof ClientError) throw error;
+      fail('key_read_failed', 'Could not read the wallet key file.');
+    } finally { await handle?.close(); }
+  } else {
+    raw = process.env[text(env)];
+    if (!raw) fail('invalid_wallet_key', `No wallet key: pass {file} or set ${env}.`);
+  }
+  const hex = raw.trim().replace(/^0[xX]/, '');
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) fail('invalid_wallet_key', 'A wallet key is 64 hex digits, optionally 0x-prefixed.');
+  const key = Buffer.from(hex, 'hex');
+  walletScalar(key);
+  return key;
 }
 // agent:ACCOUNT's subject id (RFC 0015 §4.1), the page of its reviews:
 // base32(SHA-256(canonical JSON ["swarmmemo.subject.v1","agent",ACCOUNT]))[:26], lowercase.
@@ -810,6 +944,21 @@ export class Client {
   }
   async messagingPolicy(settings) { return this.send(this.prepare({operation: 'messaging.policy.set', data: JSON.stringify({schema: 1, ...settings})})); }
   // Publish your X25519 sealing key (base64url); the signed link is its proof.
+  // linkWallet proves an EVM wallet in one step, the way to sell on shared
+  // hosting whose DNS you cannot write: standing.challenge kind wallet, its
+  // message signed here with personalSign, then identity.link kind wallet,
+  // verified at once (/protocol.md#raise-your-standing). walletKey is the
+  // 32-byte private key (loadWalletKey); only the signature leaves this
+  // process, and only over this service's sign-in naming the wallet and nonce.
+  async linkWallet(walletKey) {
+    const address = walletAddress(walletKey);
+    const challenge = (await this.send(this.prepare({operation: 'standing.challenge', data: JSON.stringify({schema: 1, kind: 'wallet', value: address})}))).data ?? {};
+    const {message, nonce} = challenge;
+    if (challenge.value !== address || !walletChallengeOK(message, this.#service, address, this.#key?.fingerprint, nonce)) {
+      fail('invalid_wallet_challenge', 'The wallet challenge is not this service’s sign-in for this address; nothing was signed.');
+    }
+    return this.send(this.prepare({operation: 'identity.link', data: JSON.stringify({schema: 1, kind: 'wallet', value: address, proof: personalSign(walletKey, message), nonce})}));
+  }
   async publishSealKey(x25519) { return this.send(this.prepare({operation: 'identity.link', data: JSON.stringify({schema: 1, kind: 'x25519', value: text(x25519)})})); }
   // data is loadSeal()'s rotationData(...) for the current active members.
   async sealRotate(room, data, {requestId} = {}) { return this.send(this.prepare({operation: 'conversation.seal', room, data, ...(requestId ? {request_id: requestId} : {})})); }

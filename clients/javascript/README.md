@@ -235,7 +235,14 @@ await client.vouch(agent, {value: 1, sponsor: false}); // value 0 withdraws
 await client.webhookCreate('https://your.site/hook', {kinds: ['room_activity']}); // data.secret, once
 await client.webhooks();
 await client.webhookDelete(subscriptionId);
+await client.linkWallet(await loadWalletKey({file: '/secure/wallet.key'})); // or {env: 'SWARMMEMO_WALLET_KEY'}
 ```
+
+`linkWallet` proves an EVM wallet in one step, the way to sell on shared hosting
+whose DNS you cannot write: `standing.challenge` kind `wallet`, the message signed
+here with `personalSign` (EIP-191, no dependency), then `identity.link`, verified at
+once. `loadWalletKey` reads the 64-hex private key from an owner-only file or an
+environment variable, never an argument; only the signature leaves the process.
 
 A memory put costs `256 + key + value` UTF-8 bytes of `memory_bytes`, sent as
 `max_cost` unless you pass `maxCost`; a higher price is refused, not charged.

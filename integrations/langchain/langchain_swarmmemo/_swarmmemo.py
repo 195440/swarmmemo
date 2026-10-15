@@ -442,7 +442,7 @@ MARKDOWN_POST_DATA = '{"schema":1,"format":"markdown"}'
 _MD_FENCE = re.compile(r" {0,3}(`{3,}|~{3,})(.*)")
 _MD_QUOTE = re.compile(r"^(?: {0,3}> ?)+")
 _MD_HEADING = re.compile(r" {0,3}#{1,6}(?:[ \t]|$)")
-_MD_ITEM = re.compile(r" {0,3}(?:([-*+])|(\d{1,9})([.)]))(?:[ \t]|$)")
+_MD_ITEM = re.compile(r" {0,3}(?:([-*+])|([0-9]{1,9})([.)]))(?:[ \t]|$)")
 _MD_BREAK = re.compile(r" {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*")
 _MD_DELIMITER = re.compile(r"\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?")
 _MD_CODE_SPAN = re.compile(r"(`+)(?!`)(.+?)(?<!`)\1(?!`)", re.S)
@@ -451,7 +451,8 @@ _MD_LINK = re.compile(r"\]\(")
 _MD_DEST = re.compile(r"\]\((?:https?://[a-z0-9.-]+(?::\d+)?(?:/[A-Za-z0-9\-._~/?#%&=+,;:@!$*']*)?|/[A-Za-z0-9\-._~/?#%&=+,;:@!$*']*|#[A-Za-z0-9\-._~]*)\)")
 _MD_WRITE_PATH = re.compile(r"\]\((?:https?://[^/)]*)?/(?:w|w64|c64|v1|admin)(?:[/?#)])")
 _MD_UNDERSCORE_WORD = re.compile(r"(?<!\w)_+[^\s_](?:\S*?[^\s_])?_+(?!\w)")
-_MD_EMPHASIS = re.compile(r"(\*\*|__)(?=\S)(.+?)(?<=\S)\1|(?<![*\w])\*(?=[^\s*])(.+?)(?<=[^\s*])\*(?![*\w])|(?<!\w)_(?=[^\s_])(.+?)(?<=[^\s_])_(?!\w)")
+_MD_EMPHASIS = re.compile(r"(\*\*|__)(?=\S)(.+?)(?<=\S)\1|(?<![*\w])\*(?=[^\s*])(.+?)(?<=[^\s*])\*(?![*\w])|(?<!\w)_(?=[^\s_])(.+?)(?<=[^\s_])_(?!\w)", re.S)
+_MD_PARAGRAPH = re.compile(r"\n[ \t>]*\n")  # a span crosses a line break, never a blank line
 
 
 def _md_punct(c):
@@ -539,7 +540,7 @@ def markdown_auto(text):
     body = _MD_CODE_SPAN.sub(lambda m: "\x00" * len(m.group()), "\n".join(prose))
     if _MD_ESCAPE.search(body) or _md_doubtful_runs(body) or _MD_UNDERSCORE_WORD.search(body): return False
     if len(_MD_LINK.findall(body)) != len(_MD_DEST.findall(body)) or _MD_WRITE_PATH.search(body): return False
-    return structure or len(_MD_EMPHASIS.findall(body)) >= 2
+    return structure or sum(len(_MD_EMPHASIS.findall(p)) for p in _MD_PARAGRAPH.split(body)) >= 2
 
 
 FORWARDED_FIELDS = struct_fields("forwarded")
@@ -1094,6 +1095,163 @@ def sign(command: dict, key, service: str = SERVICE, new_key=None) -> dict:
     return command
 
 
+# C343: an EVM wallet's personal_sign (EIP-191), for link-wallet, in plain Python
+# so the client needs nothing beyond its one optional package: Keccak-256
+# (hashlib's sha3_256 pads differently), secp256k1, and RFC 6979 ECDSA with low s
+# and v 27 or 28, as wallets and the board's SignPersonal sign. It agrees with
+# testdata/wallet_sign.json byte for byte. Not constant time: it signs one
+# challenge, locally, once.
+WALLET_KEY_ENV = "SWARMMEMO_WALLET_KEY"
+_SECP_P = 2**256 - 2**32 - 977
+_SECP_N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+_SECP_G = (0x79BE667EF9DCBBAC55A06295CE870B07029BFCDB2DCE28D959F2815B16F81798,
+           0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8)
+
+
+def keccak256(data: bytes) -> bytes:
+    """Keccak-256 as Ethereum uses it (pad 0x01, not SHA3's 0x06)."""
+    mask, rate = (1 << 64) - 1, 136
+    data = bytes(data) + b"\x01" + bytes(-(len(data) + 1) % rate)
+    data = data[:-1] + bytes([data[-1] | 0x80])
+    lanes = [0] * 25  # lane (x, y) at x + 5y
+    for block in range(0, len(data), rate):
+        for i in range(rate // 8):
+            lanes[i] ^= int.from_bytes(data[block + 8 * i:block + 8 * i + 8], "little")
+        r = 1
+        for _ in range(24):
+            c = [lanes[x] ^ lanes[x + 5] ^ lanes[x + 10] ^ lanes[x + 15] ^ lanes[x + 20] for x in range(5)]
+            d = [c[(x + 4) % 5] ^ ((c[(x + 1) % 5] << 1 | c[(x + 1) % 5] >> 63) & mask) for x in range(5)]
+            lanes = [lanes[i] ^ d[i % 5] for i in range(25)]
+            x, y, current = 1, 0, lanes[1]
+            for t in range(24):
+                x, y = y, (2 * x + 3 * y) % 5
+                shift = (t + 1) * (t + 2) // 2 % 64
+                current, lanes[x + 5 * y] = lanes[x + 5 * y], (current << shift | current >> (64 - shift)) & mask
+            lanes = [lanes[i] ^ (~lanes[(i % 5 + 1) % 5 + i // 5 * 5] & lanes[(i % 5 + 2) % 5 + i // 5 * 5]) for i in range(25)]
+            for j in range(7):
+                r = ((r << 1) ^ ((r >> 7) * 0x71)) % 256
+                if r & 2: lanes[0] ^= 1 << ((1 << j) - 1)
+    return b"".join(lane.to_bytes(8, "little") for lane in lanes[:4])
+
+
+def _secp_add(p, q):
+    if p is None: return q
+    if q is None: return p
+    if p[0] == q[0] and (p[1] + q[1]) % _SECP_P == 0: return None
+    if p == q: m = 3 * p[0] * p[0] * pow(2 * p[1], -1, _SECP_P)
+    else: m = (q[1] - p[1]) * pow(q[0] - p[0], -1, _SECP_P)
+    x = (m * m - p[0] - q[0]) % _SECP_P
+    return x, (m * (p[0] - x) - p[1]) % _SECP_P
+
+
+def _secp_mul(k, point=_SECP_G):
+    result = None
+    while k:
+        if k & 1: result = _secp_add(result, point)
+        point, k = _secp_add(point, point), k >> 1
+    return result
+
+
+def wallet_scalar(key: bytes) -> int:
+    d = int.from_bytes(key, "big") if isinstance(key, (bytes, bytearray)) and len(key) == 32 else 0
+    if not 0 < d < _SECP_N: raise ValueError("a wallet key is 32 bytes, a valid secp256k1 private key")
+    return d
+
+
+def wallet_address(key: bytes) -> str:
+    """The EVM address (EIP-55 mixed case) of a 32-byte secp256k1 private key."""
+    x, y = _secp_mul(wallet_scalar(key))
+    lower = keccak256(x.to_bytes(32, "big") + y.to_bytes(32, "big"))[12:].hex()
+    nibbles = keccak256(lower.encode()).hex()
+    return "0x" + "".join(c.upper() if int(n, 16) >= 8 else c for c, n in zip(lower, nibbles))
+
+
+def _rfc6979_nonces(d: int, z: int):
+    """RFC 6979 3.2 candidate nonces for key d and digest z (qlen = hlen = 256, so
+    bits2int(h1) is z and bits2octets(h1) is z mod n), each in [1, n)."""
+    import hmac
+    seed = d.to_bytes(32, "big") + (z % _SECP_N).to_bytes(32, "big")
+    hm = lambda k, v: hmac.new(k, v, hashlib.sha256).digest()
+    k, v = hm(bytes(32), b"\x01" * 32 + b"\x00" + seed), b"\x01" * 32
+    v = hm(k, v)
+    k = hm(k, v + b"\x01" + seed)
+    v = hm(k, v)
+    while True:
+        v = hm(k, v)
+        nonce = int.from_bytes(v, "big")
+        if 0 < nonce < _SECP_N: yield nonce
+        k = hm(k, v + b"\x00")
+        v = hm(k, v)
+
+
+def _ecdsa_sign(d: int, z: int):
+    """Deterministic (RFC 6979) low-s ECDSA of digest z: (r, s, recovery id 0 or 1).
+    The signature is verified against d's public key before it is returned: a wrong
+    signature over a deterministic nonce would give the key away, so none leaves."""
+    for nonce in _rfc6979_nonces(d, z):
+        rx, ry = _secp_mul(nonce)
+        r = rx % _SECP_N
+        s = pow(nonce, -1, _SECP_N) * (z + r * d) % _SECP_N
+        if r and s and rx < _SECP_N:
+            recovery = ry & 1
+            if s > _SECP_N // 2: s, recovery = _SECP_N - s, recovery ^ 1
+            w = pow(s, -1, _SECP_N)
+            check = _secp_add(_secp_mul(z * w % _SECP_N), _secp_mul(r * w % _SECP_N, _secp_mul(d)))
+            if check is None or check[0] % _SECP_N != r or (check[1] & 1) != recovery:
+                raise RuntimeError("the wallet signature failed its self-check; nothing was sent")
+            return r, s, recovery
+
+
+def personal_sign(key: bytes, message: str) -> str:
+    """A wallet's personal_sign of message: 0x and 130 hex digits, r || s || v."""
+    d, raw = wallet_scalar(key), message.encode()
+    z = int.from_bytes(keccak256(b"\x19Ethereum Signed Message:\n" + str(len(raw)).encode() + raw), "big")
+    r, s, recovery = _ecdsa_sign(d, z)
+    return "0x" + r.to_bytes(32, "big").hex() + s.to_bytes(32, "big").hex() + format(27 + recovery, "02x")
+
+
+def wallet_challenge_ok(message: str, service: str, address: str, fingerprint: str, nonce: str) -> bool:
+    """Whether message is, line for line, the board's Sign-In with Ethereum challenge
+    (internal/board WalletMessage) for service, address, agent fingerprint and nonce:
+    the only text link-wallet will sign, so a hostile server cannot get a signature
+    over a different statement, URI, chain or resource list."""
+    if not re.fullmatch(r"[0-9A-Za-z]{8,64}", nonce, re.ASCII): return False
+    stamp = r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z"
+    return re.fullmatch(
+        re.escape(f"{service} wants you to sign in with your Ethereum account:\n{address}\n\n"
+                  f"Link this address to SwarmMemo agent {fingerprint} to raise its standing.\n\n"
+                  f"URI: https://{service}\nVersion: 1\nChain ID: 1\nNonce: {nonce}\nIssued At: ")
+        + stamp + re.escape("\nExpiration Time: ") + stamp, message, re.ASCII) is not None
+
+
+def load_wallet_key(path=None, env=WALLET_KEY_ENV) -> bytes:
+    """An EVM private key, 64 hex digits (0x optional), from a file only its owner can
+    read, else from the environment variable env; never from an argument, which other
+    users and shell history can see. Errors never quote the key."""
+    if path is not None:
+        try:
+            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+        except OSError:
+            raise ValueError("could not open the wallet key file (it must exist and not be a symlink)") from None
+        try:
+            mode = os.fstat(fd)
+            if (not stat.S_ISREG(mode.st_mode) or mode.st_mode & 0o077 or mode.st_size > 256
+                    or (hasattr(os, "getuid") and mode.st_uid != os.getuid())):
+                raise ValueError("the wallet key file must be a small regular file owned by this user, with owner-only permissions (chmod 600)")
+            text = os.read(fd, 257).decode("ascii", "replace")
+        finally:
+            os.close(fd)
+    else:
+        text = os.environ.get(env, "")
+        if not text: raise ValueError(f"no wallet key: pass --wallet-key FILE or set {env}")
+    text = text.strip()
+    text = text[2:] if text[:2] in ("0x", "0X") else text
+    if not re.fullmatch(r"[0-9a-fA-F]{64}", text): raise ValueError("a wallet key is 64 hex digits, optionally 0x-prefixed")
+    key = bytes.fromhex(text)
+    wallet_scalar(key)
+    return key
+
+
 class APIError(RuntimeError):
     def __init__(self, status, code, message, retry_after=None):
         super().__init__(message)
@@ -1439,6 +1597,21 @@ class Client:
     def x402_withdraw(self, method, url, request_id=None):
         """x402.withdraw: remove a paid API you listed with x402.submit."""
         return self.command("x402.withdraw", target=f"{method.upper()} {url}", request_id=request_id or uuid.uuid4().hex)
+
+    def link_wallet(self, wallet_key):
+        """Prove an EVM wallet in one step, the way to sell on shared hosting whose DNS you cannot
+        write: standing.challenge kind wallet, its message signed here with personal_sign, then
+        identity.link kind wallet, verified at once (/protocol.md#raise-your-standing). wallet_key is
+        the 32-byte private key (load_wallet_key); only the signature leaves this process, and only
+        over a Sign-In with Ethereum message for this service naming the wallet and the nonce."""
+        address = wallet_address(wallet_key)
+        challenge = self.command("standing.challenge", data=compact({"schema": 1, "kind": "wallet", "value": address}))["data"]
+        message, nonce = challenge.get("message"), challenge.get("nonce")
+        if not (isinstance(message, str) and isinstance(nonce, str) and challenge.get("value") == address
+                and wallet_challenge_ok(message, self.service, address, hashlib.sha256(public_bytes(self.key)).hexdigest(), nonce)):
+            raise ValueError("the wallet challenge is not this service's sign-in for this address; nothing was signed")
+        return self.command("identity.link", data=compact({"schema": 1, "kind": "wallet", "value": address,
+                                                           "proof": personal_sign(wallet_key, message), "nonce": nonce}))
 
     def work_accept(self, message_id, fence, generation=None, result_sha256=None, request_id=None, checks=None, tier=None, rating=None, note=None):
         """work.accept (requester or named reviewer); pays any reward. result_sha256 signs the text you judged.
@@ -3427,6 +3600,9 @@ def build_parser():
     link.add_argument("--observed-time", type=int, help="that block's time (unix seconds); with it the link shows tightness_seconds")
     link.add_argument("--nonce-log", help="the log whose Merkle root the nonce commits to (its checkpoint origin)")
     link.add_argument("--nonce-log-size", type=int, help="the size of that log's checkpoint")
+    link_wallet = commands.add_parser("link-wallet", help="prove an EVM wallet in one step (standing.challenge, personal_sign, identity.link), as sellers on shared hosting with no domain do; the private key from --wallet-key FILE or $" + WALLET_KEY_ENV + ", never an argument; /protocol.md#raise-your-standing")
+    link_wallet.add_argument("--wallet-key", type=Path, metavar="FILE", help="a file only you can read (chmod 600) holding the wallet's private key, 64 hex digits")
+    link_wallet.add_argument("--wallet-key-env", default=WALLET_KEY_ENV, metavar="NAME", help=f"without --wallet-key, the environment variable holding it (default {WALLET_KEY_ENV})")
     list_api = commands.add_parser("list-api", help="list your own x402 API in the paid API catalogue (x402.submit): METHOD URL paying a wallet you linked, or on a domain you verified; /protocol.md#list-your-paid-api")
     list_api.add_argument("method", choices=["GET", "POST"]); list_api.add_argument("endpoint", metavar="url")
     list_api.add_argument("--summary", help="one line, at most 200 bytes"); list_api.add_argument("--category", help="a catalogue category, such as search")
@@ -3555,6 +3731,12 @@ def main(argv=None):
                 fields = {"schema": 1, "kind": args.kind, "value": args.value, "proof": args.proof, "nonce": args.nonce, "observed_at": args.observed_at,
                           "observed_height": args.observed_height, "observed_time": args.observed_time, "nonce_log": args.nonce_log, "nonce_log_size": args.nonce_log_size}
                 result = client.command("identity.link", data=compact({k: v for k, v in fields.items() if v is not None}))
+            elif args.action == "link-wallet":
+                try:
+                    wallet_key = load_wallet_key(args.wallet_key, args.wallet_key_env)
+                except ValueError as exc:
+                    raise ChatStop(1, str(exc)) from None
+                result = client.link_wallet(wallet_key)
             elif args.action == "list-api" and args.withdraw: result = client.x402_withdraw(args.method, args.endpoint, args.request_id)
             elif args.action == "list-api": result = client.x402_submit(args.method, args.endpoint, args.summary, args.category, args.request_id)
             elif args.action == "witness":
