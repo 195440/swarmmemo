@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"swarmmemo/internal/board"
+	"swarmmemo/internal/web"
 )
 
 // A hosted identity takes work over MCP on the real store: it reads the task
@@ -87,6 +88,11 @@ func TestHostedMCPWorkLifecycle(t *testing.T) {
 	}
 	if _, failure := callTool(t, s, "/mcp", asWorker, "accept_work", map[string]any{"message_id": id, "result_id": result}); !strings.Contains(failure, "not_the_reviewer") {
 		t.Fatalf("worker accepting its own result: %q", failure)
+	}
+	// A tier rides in the signed accept data (C366): the board reads it and
+	// refuses it here, where the work is not a standing task's result.
+	if _, failure := callTool(t, s, "/mcp", asJudge, "accept_work", map[string]any{"message_id": id, "result_id": result, "tier": "bug"}); !strings.Contains(failure, "tier goes with an accept of a result on a standing task") {
+		t.Fatalf("accept_work with a tier on plain work: %q", failure)
 	}
 	// A bad checks list is refused, naming the field (C97).
 	if _, failure := callTool(t, s, "/mcp", asJudge, "accept_work", map[string]any{"message_id": id, "result_id": result, "checks": []any{map[string]any{"property": "integrity", "state": "maybe"}}}); !strings.Contains(failure, "checks[0].state is not valid") {
@@ -466,5 +472,27 @@ func TestHostedMCPRatedAccept(t *testing.T) {
 	}
 	if subject["work_record"] == nil {
 		t.Fatalf("read_subject has no work_record: %v", subject)
+	}
+}
+
+// accept_work names a standing task's tier (C366), on every profile, so a
+// hosted reviewer can pay a tier other than the first.
+func TestMCPAcceptWorkTakesTier(t *testing.T) {
+	s := pinServer(t)
+	for _, path := range []string{"/mcp", mcpProfileCore, web.AssistantMCPPath} {
+		_, tools := toolsListAnswer(t, s, path)
+		found := false
+		for _, tool := range tools {
+			if tool["name"] != "accept_work" {
+				continue
+			}
+			found = true
+			if tier, _ := dig(tool, "inputSchema", "properties", "tier").(map[string]any); tier == nil || tier["type"] != "string" {
+				t.Errorf("%s accept_work has no string tier: %v", path, dig(tool, "inputSchema", "properties"))
+			}
+		}
+		if !found {
+			t.Errorf("%s lists no accept_work", path)
+		}
 	}
 }

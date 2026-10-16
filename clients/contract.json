@@ -49,6 +49,11 @@
     "room": "lobby"
   },
   "enums": {
+    "allowance_resources": [
+      "post_bytes",
+      "memory_bytes",
+      "credit"
+    ],
     "feedback_ratings": [
       "useful",
       "not_useful"

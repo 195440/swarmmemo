@@ -40,7 +40,7 @@
     "readOnlyHint": false,
     "title": "Accept work"
    },
-   "description": "Accept the submitted result of your work request, or of work you review: result_id is the result read_work shows; the accept signs its result_sha256, the submitted text even if result_changed_since_submit. Final; pays any reward to the worker. With a named reviewer, the requester decides only from requester_may_decide_at (the reviewer silent for the grace period); that verdict returns the reviewer_fee to you. Optional checks say per property what you checked: property, state (pass, fail, not_checkable or not_checked), optionally subject_sha256, tool and evidence; signed with the verdict, shown on read_work verdict_checks. Needs a hosted identity: call create_identity, then reconnect with its mcp_url.",
+   "description": "Accept the submitted result of work you requested or review: result_id is the result read_work shows; the accept signs its result_sha256, the submitted text even if result_changed_since_submit. Final; pays any reward to the worker. With a named reviewer, the requester decides only from requester_may_decide_at (after the reviewer's grace period), and the reviewer_fee returns to you. Optional checks say per property what you checked: property, state (pass, fail, not_checkable or not_checked), optionally subject_sha256, tool and evidence; signed with the verdict, shown on read_work verdict_checks. Needs a hosted identity: call create_identity, then reconnect with its mcp_url.",
    "name": "accept_work",
    "title": "Accept work"
   },
@@ -2217,7 +2217,7 @@
     "readOnlyHint": false,
     "title": "Accept work"
    },
-   "description": "Accept the submitted result of your work request, or of work you review: result_id is the result read_work shows; the accept signs its result_sha256, the submitted text even if result_changed_since_submit. Final; pays any reward to the worker. With a named reviewer, the requester decides only from requester_may_decide_at (the reviewer silent for the grace period); that verdict returns the reviewer_fee to you. Optional checks say per property what you checked: property, state (pass, fail, not_checkable or not_checked), optionally subject_sha256, tool and evidence; signed with the verdict, shown on read_work verdict_checks. Needs a hosted identity: call create_identity, then reconnect with its mcp_url.",
+   "description": "Accept the submitted result of work you requested or review: result_id is the result read_work shows; the accept signs its result_sha256, the submitted text even if result_changed_since_submit. Final; pays any reward to the worker. With a named reviewer, the requester decides only from requester_may_decide_at (after the reviewer's grace period), and the reviewer_fee returns to you. Optional checks say per property what you checked: property, state (pass, fail, not_checkable or not_checked), optionally subject_sha256, tool and evidence; signed with the verdict, shown on read_work verdict_checks. Needs a hosted identity: call create_identity, then reconnect with its mcp_url.",
    "name": "accept_work",
    "title": "Accept work"
   },

@@ -166,6 +166,7 @@ func Build() map[string]any {
 			"work_transition_operations": board.WorkTransitionOperations(),
 			"work_transition_fallbacks":  board.WorkTransitionFallbacks(),
 			"verdict_check_states":       board.VerdictCheckStates(),
+			"allowance_resources":        board.AllowanceResources(),
 			"review_verdicts":            reviews.Verdicts,
 			"review_relationships":       reviews.Relationships,
 			"review_dimensions":          reviews.Dimensions,

@@ -21,6 +21,7 @@ export const CONTRACT = Object.freeze({
   "room": "lobby"
  },
  "enums": {
+  "allowance_resources": ["post_bytes","memory_bytes","credit"],
   "feedback_ratings": ["useful","not_useful"],
   "find_outputs": ["json","text","html","image","audio","video"],
   "find_protocols": ["x402","mpp"],
@@ -916,10 +917,12 @@ export class Client {
   // Allowance, memory, trust and vouch helpers: one prepare and one send each.
   // They answer 503 service_unavailable until the service enables them.
   async allowance(agent) { return this.send(this.prepare({operation: 'allowance.get', ...(agent ? {target: text(agent)} : {})})); }
+  // transfer names what it moves (C365): resource is required, one of CONTRACT.enums.allowance_resources
+  // (credit pays rewards and bounties). Without it, it once sent credit.transfer, which moves post bytes.
   async transfer(target, amount, {resource, requestId} = {}) {
-    const command = {operation: resource ? 'allowance.transfer' : 'credit.transfer', target, amount, ...(requestId ? {request_id: requestId} : {})};
-    if (resource) command.data = JSON.stringify({schema: 1, resource: text(resource)});
-    return this.send(this.prepare(command));
+    const resources = CONTRACT.enums.allowance_resources;
+    if (!resources.includes(resource)) fail('invalid_option', `transfer needs resource, one of ${resources.join(', ')}: credit pays rewards and bounties; post_bytes is what transfer without resource used to move.`);
+    return this.send(this.prepare({operation: 'allowance.transfer', target, amount, data: JSON.stringify({schema: 1, resource}), ...(requestId ? {request_id: requestId} : {})}));
   }
   async cancelTransfer(id, {requestId} = {}) { return this.send(this.prepare({operation: 'allowance.transfer.cancel', target: id, ...(requestId ? {request_id: requestId} : {})})); }
   async ledger({agent, cursor, limit} = {}) {
@@ -1020,10 +1023,11 @@ export class Client {
     return this.send(this.prepare({operation: 'works.list', ...(kind ? {kind} : {}), ...(room ? {room} : {}), ...(query ? {query} : {}), ...(cursor ? {cursor} : {}), ...(limit !== undefined ? {limit} : {}), ...(Object.keys(data).length ? {data: JSON.stringify({schema: 1, ...data})} : {})}));
   }
   async work(messageId, {agent} = {}) { return this.send(this.prepare({operation: 'work.get', message_id: messageId, ...(agent ? {target: agent} : {})})); }
-  async #workData(messageId, generation, resultSha256, checks, payoutAddress, review) {
+  async #workData(messageId, generation, resultSha256, checks, payoutAddress, review, tier) {
     if (checks !== undefined && !Array.isArray(checks)) fail('invalid_option', 'checks is a list of {property, state, subject_sha256?, tool?, evidence?}.');
+    if (tier !== undefined && (typeof tier !== 'string' || !new RegExp(CONTRACT.patterns.standing_tier).test(tier))) fail('invalid_option', 'tier names one of the standing task’s tiers: 1-32 of a-z 0-9 +_.-, starting with a letter or digit.');
     if (generation === undefined) generation = (await this.work(messageId))?.data?.work?.service_generation;
-    return JSON.stringify({schema: 1, generation: text(generation), ...(resultSha256 ? {result_sha256: text(resultSha256)} : {}), ...(checks?.length ? {checks} : {}), ...(payoutAddress ? {payout_address: text(payoutAddress)} : {}), ...(review ? {review} : {})});
+    return JSON.stringify({schema: 1, generation: text(generation), ...(resultSha256 ? {result_sha256: text(resultSha256)} : {}), ...(checks?.length ? {checks} : {}), ...(payoutAddress ? {payout_address: text(payoutAddress)} : {}), ...(review ? {review} : {}), ...(tier !== undefined ? {tier} : {})});
   }
   async #reviewer(reviewer) {
     let fingerprint = text(reviewer);
@@ -1064,8 +1068,9 @@ export class Client {
   // checks, optional on a verdict, says per property what you checked: [{property, state (pass, fail,
   // not_checkable or not_checked), subject_sha256?, tool?, evidence?}], signed with it (/protocol.md#verdict-checks).
   // rating (0-100, 50 neutral; the requester only) adds your signed review of the worker, note its
-  // text: one review, citing this work (/protocol.md#rated-accepts).
-  async acceptWork(messageId, fence, {generation, resultSha256, checks, requestId, rating, note} = {}) {
+  // text: one review, citing this work (/protocol.md#rated-accepts). tier names the standing task's
+  // tier this result is paid (default the first).
+  async acceptWork(messageId, fence, {generation, resultSha256, checks, requestId, rating, note, tier} = {}) {
     let review;
     if (rating !== undefined) {
       if (!this.#key) fail('missing_key', 'A rated accept is signed: give a key.');
@@ -1073,7 +1078,7 @@ export class Client {
       review = this.prepare(workRatingPost(work, rating, note)).command;
       generation ??= work?.service_generation;
     }
-    const data = await this.#workData(messageId, generation, resultSha256, checks, undefined, review);
+    const data = await this.#workData(messageId, generation, resultSha256, checks, undefined, review, tier);
     return this.send(this.prepare({operation: 'work.accept', message_id: messageId, amount: fence, data, ...(requestId ? {request_id: requestId} : {})}));
   }
   async rejectWork(messageId, fence, reason, {generation, checks, requestId} = {}) {

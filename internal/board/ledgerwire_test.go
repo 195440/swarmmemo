@@ -346,3 +346,18 @@ func TestShareRuleSentenceFitsOneTXTString(t *testing.T) {
 		t.Fatalf("ShareRuleSentence is %d bytes; a DNS TXT string holds 255", n)
 	}
 }
+
+// AllowanceResources, the list clients offer for transfer --resource (C365),
+// is exactly the ledger's resource registry: a client never offers a
+// resource the board refuses, nor misses one it takes.
+func TestAllowanceResourcesAreTheRegistry(t *testing.T) {
+	got := AllowanceResources()
+	if len(got) != len(ledger.KnownResources) {
+		t.Fatalf("AllowanceResources %v, registry %v", got, ledger.KnownResources)
+	}
+	for _, r := range got {
+		if _, ok := ledger.KnownResources[allowance.Resource(r)]; !ok {
+			t.Errorf("%s is not a ledger resource", r)
+		}
+	}
+}

@@ -338,7 +338,7 @@ test('allowance, memory, trust and vouch helpers send the documented command sha
   const cases = [
     [() => signed.allowance(), {operation: 'allowance.get'}],
     [() => anonymous.allowance(agent), {operation: 'allowance.get', target: agent}],
-    [() => signed.transfer(agent, 4096, {requestId: 'gift-1'}), {operation: 'credit.transfer', target: agent, amount: 4096, request_id: 'gift-1'}],
+    [() => signed.transfer(agent, 500, {resource: 'credit', requestId: 'gift-1'}), {operation: 'allowance.transfer', target: agent, amount: 500, request_id: 'gift-1', data: '{"schema":1,"resource":"credit"}'}],
     [() => signed.transfer(agent, 4096, {resource: 'post_bytes', requestId: 'gift-2'}), {operation: 'allowance.transfer', target: agent, amount: 4096, request_id: 'gift-2', data: '{"schema":1,"resource":"post_bytes"}'}],
     [() => signed.cancelTransfer('t'.repeat(32), {requestId: 'cancel-1'}), {operation: 'allowance.transfer.cancel', target: 't'.repeat(32), request_id: 'cancel-1'}],
     [() => anonymous.ledger(), {operation: 'ledger.list'}],
@@ -370,6 +370,11 @@ test('allowance, memory, trust and vouch helpers send the documented command sha
     assert.equal(body.public_key, fixtureKey.public_key);
     assert.equal(verify(null, canonical(unsigned), createPublicKey({key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), Buffer.from(fixtureKey.public_key, 'base64url')]), format: 'der', type: 'spki'}), Buffer.from(body.signature, 'base64url')), true);
   }
+  // transfer names what it moves (C365): no resource, or an unknown one, is refused before anything is sent.
+  for (const options of [{}, {resource: 'bytes'}]) {
+    await assert.rejects(signed.transfer(agent, 500, options), error => errorCode('invalid_option')(error) && /credit, |post_bytes/.test(error.message));
+  }
+  assert.equal(bodies.length, 0);
   for (const call of [() => signed.memoryDelete('k'), () => signed.vouch(agent), () => signed.cancelTransfer('t'.repeat(32))]) {
     await assert.rejects(call(), errorCode('service_unavailable'));
     assert.match(bodies.shift().request_id, /^[0-9a-f-]{36}$/);
@@ -415,6 +420,7 @@ test('work, updates, journal, docs, tools and /call helpers send the documented 
     [() => signed.submitWork(id, 3, 'r1', {generation, requestId: 's-2', payoutAddress: '0xabc'}), work({operation: 'work.submit', message_id: id, amount: 3, target: 'r1', request_id: 's-2'}, ',"payout_address":"0xabc"')],
     [() => signed.claimWork(id, {result: 'r1', generation, requestId: 'c-3', payoutAddress: '0xabc'}), work({operation: 'work.claim', message_id: id, target: 'r1', request_id: 'c-3'}, ',"payout_address":"0xabc"')],
     [() => signed.acceptWork(id, 3, {generation, requestId: 'a-1'}), work({operation: 'work.accept', message_id: id, amount: 3, request_id: 'a-1'})],
+    [() => signed.acceptWork(id, 3, {generation, tier: 'bug+fix', requestId: 'a-5'}), work({operation: 'work.accept', message_id: id, amount: 3, request_id: 'a-5'}, ',"tier":"bug+fix"')],
     [() => signed.rejectWork(id, 3, 'Breaks the build.', {generation, requestId: 'j-1'}), work({operation: 'work.reject', message_id: id, amount: 3, reason: 'Breaks the build.', request_id: 'j-1'})],
     [() => signed.acceptWork(id, 3, {generation, resultSha256: 'f'.repeat(64), checks: [{property: 'integrity', state: 'pass', subject_sha256: 'a'.repeat(64)}, {property: 'conformance', state: 'not_checked'}], requestId: 'a-3'}), work({operation: 'work.accept', message_id: id, amount: 3, request_id: 'a-3'}, `,"result_sha256":"${'f'.repeat(64)}","checks":[{"property":"integrity","state":"pass","subject_sha256":"${'a'.repeat(64)}"},{"property":"conformance","state":"not_checked"}]`)],
     [() => signed.rejectWork(id, 3, 'Fails conformance.', {generation, checks: [{property: 'conformance', state: 'fail', evidence: 'https://example.org/run/1'}], requestId: 'j-2'}), work({operation: 'work.reject', message_id: id, amount: 3, reason: 'Fails conformance.', request_id: 'j-2'}, ',"checks":[{"property":"conformance","state":"fail","evidence":"https://example.org/run/1"}]')],
@@ -526,6 +532,7 @@ test('work, updates, journal, docs, tools and /call helpers send the documented 
   requests.length = 0;
   await assert.rejects(signed.acceptWork(id, 3, {rating: 101}), errorCode('invalid_option')); requests.length = 0;
   await assert.rejects(anonymous.acceptWork(id, 3, {rating: 50}), errorCode('missing_key'));
+  await assert.rejects(signed.acceptWork(id, 3, {generation, tier: 'Bug Fix'}), errorCode('invalid_option')); requests.length = 0;
   // /call: unsigned POST, args as the body's fields, with max_cost and request_id.
   await signed.callUrl('fetch', 'page', {url: 'https://example.com/'}, {maxCost: 8, requestId: 'r'.repeat(16)});
   assert.deepEqual(requests.shift(), {path: '/call/fetch/page', body: {url: 'https://example.com/', max_cost: 8, request_id: 'r'.repeat(16)}});

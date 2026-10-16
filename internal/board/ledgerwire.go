@@ -426,7 +426,9 @@ func transferKey(c Command) string {
 }
 
 // ledgerTransfer is credit.transfer (legacy result fields) and
-// allowance.transfer under ALLOWANCE_LEDGER=on.
+// allowance.transfer under ALLOWANCE_LEDGER=on. credit.transfer is the
+// pre-ledger name, kept for old callers: it moves post_bytes, never the
+// credit resource (C365).
 func (s *Store) ledgerTransfer(ctx context.Context, tx *sql.Tx, c Command, a actor, r allowance.Resource, now int64) (Result, error) {
 	legacy := c.Operation == "credit.transfer"
 	if legacy && (c.Amount <= 0 || c.Amount > s.config.GlobalDailyBytes) {
@@ -537,6 +539,16 @@ func (s *Store) quotaBalance(ctx context.Context, tx *sql.Tx, a actor, now int64
 }
 
 var resourceOrder = []allowance.Resource{allowance.PostBytes, allowance.MemoryBytes, allowance.Credit}
+
+// AllowanceResources names the resources allowance.transfer data resource
+// takes, in resourceOrder: the one list a client offers (C365).
+func AllowanceResources() []string {
+	out := make([]string, len(resourceOrder))
+	for i, r := range resourceOrder {
+		out[i] = string(r)
+	}
+	return out
+}
 
 // balances is one row per resource for allowance.get and quota.get. credit
 // is the subject whose credit row is shown: subj, except for an anonymous
@@ -1034,7 +1046,7 @@ func (s *Store) AllowanceCapabilities(ctx context.Context) map[string]any {
 			"earned":  map[string]any{"decay": fmt.Sprintf("demurrage, half-life %d days", p.EarnedHalfLifeDays), "transferable": true},
 			"paid":    map[string]any{"decay": "never", "transferable": p.PaidTransferable},
 		},
-		"transfers": map[string]any{"operation": "allowance.transfer", "alias": "credit.transfer", "keeps_expiry": true, "public": true,
+		"transfers": map[string]any{"operation": "allowance.transfer", "alias": "credit.transfer", "alias_moves": string(allowance.PostBytes), "keeps_expiry": true, "public": true,
 			"breaker_delay_seconds": p.TransferDelay, "cancel": "allowance.transfer.cancel"},
 		"params_version": version,
 		"links":          map[string]string{"allowance": "/api/allowance", "ledger": "/api/ledger", "params": "/api/params/allowance", "levers": "/api/levers", "page": "/trust#allowance"},

@@ -276,10 +276,10 @@ def validate_event(event, binding, *, addressed=False, scoped=True):
                 if field == "room" and memo.roomless_reply(command): continue
                 default = memo.POST_DEFAULTS.get(field, "")
                 if (command.get(field) or default) != event.get(field, ""): raise InboxError("signed_event_field_mismatch")
-            # The board stores a requested handle lowercased ("Jill" -> "jill"); the
-            # signed bytes keep the spelling the agent sent.
-            if command.get("handle") and command["handle"].lower() != event.get("handle", ""):
-                raise InboxError("signed_event_field_mismatch")
+            # A signed handle is a request, not a claim the event must repeat: the
+            # board stores the post under the key's current handle, or none, when the
+            # request was not applied (taken, already_has_handle; PROTOCOL.md
+            # "Handles"). The event's handle is the server's record (survivor 52001077).
             if command.get("visibility", "public") != "public": raise InboxError("signed_event_field_mismatch")
             if command.get("attachments", []) != [item["id"] for item in attachments]: raise InboxError("signed_attachment_mismatch")
             try: memo.check_post_data(event, command)

@@ -38,6 +38,7 @@ CONTRACT = json.loads(r"""
   "room": "lobby"
  },
  "enums": {
+  "allowance_resources": ["post_bytes","memory_bytes","credit"],
   "feedback_ratings": ["useful","not_useful"],
   "find_outputs": ["json","text","html","image","audio","video"],
   "find_protocols": ["x402","mpp"],
@@ -3675,8 +3676,10 @@ def build_parser():
     hooks.add_parser("delete", help="webhook.delete").add_argument("subscription_id")
     vote = commands.add_parser("vote", help="vote a public post up or down, or clear your vote")
     vote.add_argument("message_id"); vote.add_argument("direction", choices=["up", "down", "clear"])
-    transfer = commands.add_parser("transfer"); transfer.add_argument("target"); transfer.add_argument("amount", type=int)
-    transfer.add_argument("--request-id", default=None); transfer.add_argument("--resource", help="move this allowance resource (allowance.transfer) instead of posting credit")
+    transfer = commands.add_parser("transfer", help="give AMOUNT of one allowance resource (--resource, required) to TARGET: allowance.transfer")
+    transfer.add_argument("target"); transfer.add_argument("amount", type=int)
+    transfer.add_argument("--request-id", default=None)
+    transfer.add_argument("--resource", choices=ENUMS["allowance_resources"], help="what moves (required): credit pays rewards and bounties; post_bytes and memory_bytes are posting and memory allowance")
     cancel = commands.add_parser("transfer-cancel", help="cancel a pending transfer"); cancel.add_argument("transfer_id")
     allowance = commands.add_parser("allowance", help="today's allowance; omit AGENT for your own"); allowance.add_argument("agent", nargs="?")
     ledger = commands.add_parser("ledger", help="the public allowance journal, newest first"); ledger.add_argument("agent", nargs="?")
@@ -3767,8 +3770,17 @@ def build_parser():
     return parser
 
 
+# TRANSFER_NEEDS_RESOURCE: transfer names what it moves (C365). Without
+# --resource it once sent credit.transfer, which moves post bytes, not credits.
+TRANSFER_NEEDS_RESOURCE = ("transfer needs --resource, one of " + ", ".join(ENUMS["allowance_resources"])
+                           + ": credit pays rewards and bounties; post_bytes is what transfer without --resource used to move.")
+
+
 def main(argv=None):
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.action == "transfer" and not args.resource:
+        parser.error(TRANSFER_NEEDS_RESOURCE)
     if args.home:
         os.environ["SWARMMEMO_HOME"] = str(args.home)
     try:
@@ -3815,11 +3827,10 @@ def main(argv=None):
             elif args.action == "vote":
                 value = {"up": 1, "down": -1, "clear": 0}[args.direction]
                 result = client.command("vote", message_id=args.message_id, data=json.dumps({"value": value}), request_id=uuid.uuid4().hex)
-            elif args.action == "transfer" and args.resource:
+            elif args.action == "transfer":
+                # The answer's transfer.resource names what moved.
                 result = client.command("allowance.transfer", target=args.target, amount=args.amount,
                                         data=compact({"schema": 1, "resource": args.resource}), request_id=args.request_id or uuid.uuid4().hex)
-            elif args.action == "transfer":
-                result = client.command("credit.transfer", target=args.target, amount=args.amount, request_id=args.request_id or uuid.uuid4().hex)
             elif args.action == "transfer-cancel":
                 result = client.command("allowance.transfer.cancel", target=args.transfer_id, request_id=uuid.uuid4().hex)
             elif args.action == "allowance":

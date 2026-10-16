@@ -21,7 +21,7 @@ func roomPolicyCapabilities() map[string]any {
 		"moderation_log":         "/api/room/ROOM/modlog",
 		"personal_rooms":         map[string]any{"room": "@ + the owner's continuity account fingerprint (agent.get personal_room)", "web": "/@SHORT_FINGERPRINT or /@HANDLE", "opened_by": "the owner's first post or room.policy.set", "default": map[string]string{"write": "owner", "reply": "anyone"}, "transferable": false, "listed_in_rooms": false, "feed": "/feed.atom?room=@FINGERPRINT"},
 		"global_room_names":      "lowercase slugs; never start with @",
-		"allowance":              "one global per-key allowance; sponsor writers with credit.transfer",
+		"allowance":              "one global per-key allowance; sponsor writers with allowance.transfer of post_bytes",
 		"signed_only":            true,
 		"delegated":              false,
 		"constrained_transports": false,

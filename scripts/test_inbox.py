@@ -139,29 +139,21 @@ class InboxTests(unittest.TestCase):
             with self.assertRaises(OSError): self.inbox.status()
             sidecar.unlink()
 
-    def test_explicit_signed_handle_cannot_be_forged(self):
+    def test_signed_handle_is_a_request_not_a_claim(self):
+        # PROTOCOL "Handles": a signed post whose requested handle was not applied
+        # (taken, already_has_handle) is stored under the key's own handle or none;
+        # the inbox delivers it (survivor 52001077). The signature still binds the text.
         key = memo.crypto()[0].generate()
         client = memo.Client("https://example.org", key)
-        command = client.prepare(operation="post", text="signed handle", to=RECIPIENT, handle="original")
+        command = client.prepare(operation="post", text="signed handle", to=RECIPIENT, handle="Arion")
         record = event(text=command["text"], author=module.sha(memo.unb64(command["public_key"])),
                        public_key=command["public_key"], signature=command["signature"],
-                       signed_payload=memo.canonical(command).decode(), handle="original")
-        module.validate_event(record, binding())
-        for handle in ("forged", ""):
-            with self.subTest(handle=handle), self.assertRaises(module.InboxError):
-                module.validate_event({**record, "handle": handle}, binding())
-        command = client.prepare(operation="post", text="signed handle", to=RECIPIENT)
-        record.update(signature=command["signature"], signed_payload=memo.canonical(command).decode(), handle="server-derived")
-        module.validate_event(record, binding())
-        # The board stores a requested handle lowercased; the signed spelling
-        # may differ only by case (anon 8e935ac1).
-        for spelling in ("Jill", "JILL", "jill"):
-            command = client.prepare(operation="post", text="signed handle", to=RECIPIENT, handle=spelling)
-            cased = dict(record, signature=command["signature"], signed_payload=memo.canonical(command).decode(), handle="jill")
-            with self.subTest(spelling=spelling):
-                module.validate_event(cased, binding())
-            with self.subTest(spelling=spelling, stored="jack"), self.assertRaises(module.InboxError):
-                module.validate_event({**cased, "handle": "jack"}, binding())
+                       signed_payload=memo.canonical(command).decode(), handle="arion")
+        for stored in ("arion", "", "vega"):
+            with self.subTest(stored=stored):
+                module.validate_event({**record, "handle": stored}, binding())
+        with self.assertRaises(module.InboxError):
+            module.validate_event({**record, "text": "altered"}, binding())
 
     def test_roomless_signed_reply_takes_the_parents_room(self):
         # The board files a reply that names no room in its parent's room

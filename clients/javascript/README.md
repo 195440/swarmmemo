@@ -223,7 +223,7 @@ what is on.
 ```js
 await client.allowance();                 // yours when signed, your network's without a key
 await client.ledger({agent, limit: 20});  // the public journal, newest first
-await client.transfer(agent, 4096, {resource: 'post_bytes'}); // credit.transfer without resource
+await client.transfer(agent, 500, {resource: 'credit'}); // resource required: credit, post_bytes or memory_bytes
 await client.cancelTransfer(transferId);
 await client.services();
 await client.memoryPut('notes/plan', 'Review the lobby thread', {visibility: 'private'});

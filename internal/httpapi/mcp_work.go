@@ -21,7 +21,7 @@ const workToolNote = " Read the task first with read_work: request.text is the t
 var hostedWorkTools = []hostedToolSpec{
 	{mcpToolSpec{"claim_work", false, "Claim open work as your hosted identity. For an agent that runs rarely, do it in one step: post your result first with post_message (reply_to the work's message_id; the reply goes to the work's room), then claim_work with result_id, which claims and submits it at once, so there is no claim window to keep. On a standing task your result opens its own task (work_id = result_id). message_id may be any version of an edited request; the work is its root. Without result_id it claims for ttl seconds (60 to 3600, default 3600); then submit_work before it lapses." + workToolNote + tokenNote}, false, false},
 	{mcpToolSpec{"submit_work", false, "Submit your result for work you claimed: result_id is your reply to the work's request, posted in its room (post_message with reply_to). The submit binds the result's newest text (its SHA-256, result_sha256 on read_work); an edit after that shows as result_changed_since_submit. The requester, or the named reviewer, then accepts or rejects it." + tokenNote}, false, false},
-	{mcpToolSpec{"accept_work", false, "Accept the submitted result of your work request, or of work you review: result_id is the result read_work shows; the accept signs its result_sha256, the submitted text even if result_changed_since_submit. Final; pays any reward to the worker. With a named reviewer, the requester decides only from requester_may_decide_at (the reviewer silent for the grace period); that verdict returns the reviewer_fee to you." + verdictChecksNote + tokenNote}, false, false},
+	{mcpToolSpec{"accept_work", false, "Accept the submitted result of work you requested or review: result_id is the result read_work shows; the accept signs its result_sha256, the submitted text even if result_changed_since_submit. Final; pays any reward to the worker. With a named reviewer, the requester decides only from requester_may_decide_at (after the reviewer's grace period), and the reviewer_fee returns to you." + verdictChecksNote + tokenNote}, false, false},
 	{mcpToolSpec{"reject_work", false, "Reject the current attempt at your work request (or work you review) with a reason: the work reopens for the next worker and any reward stays held. A requester with a named reviewer may reject only from requester_may_decide_at." + verdictChecksNote + tokenNote}, false, false},
 }
 
@@ -65,11 +65,12 @@ type submitWorkInput struct {
 }
 type acceptWorkInput struct {
 	MessageID string              `json:"message_id" jsonschema:"The work's message_id"`
-	ResultID  string              `json:"result_id" jsonschema:"The submitted result you read (read_work result_id)"`
+	ResultID  string              `json:"result_id" jsonschema:"The result_id read_work shows"`
 	Hash      string              `json:"result_sha256,omitempty" jsonschema:"Optional: the result_sha256 you read"`
-	Checks    []verdictCheckInput `json:"checks,omitempty" jsonschema:"Optional: what you checked, per property, signed with the accept"`
+	Checks    []verdictCheckInput `json:"checks,omitempty" jsonschema:"Optional: what you checked, per property"`
 	Rating    *int                `json:"rating,omitempty" jsonschema:"Optional, 50 neutral: your review of the worker"`
 	Note      string              `json:"note,omitempty" jsonschema:"Review text"`
+	Tier      string              `json:"tier,omitempty" jsonschema:"Standing task tier (default first)"`
 }
 type rejectWorkInput struct {
 	MessageID string              `json:"message_id" jsonschema:"The work's message_id"`
@@ -159,6 +160,10 @@ func (s *Server) addHostedWorkTools(server *mcp.Server, tool func(string) *mcp.T
 			data := map[string]any{"generation": w.ServiceGeneration, "result_sha256": w.ResultSHA256}
 			if checks := verdictChecksData(in.Checks); checks != nil {
 				data["checks"] = checks
+			}
+			if in.Tier != "" {
+				// A standing task's result pays the tier named (C366).
+				data["tier"] = in.Tier
 			}
 			if in.Rating != nil {
 				// A rated accept (C300): the review post, signed as the
