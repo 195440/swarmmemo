@@ -59,6 +59,51 @@ def object_schema(properties, required=()):
     return {"type": "object", "properties": properties, "required": list(required), "additionalProperties": False}
 
 
+# C377: the data fields each tool sends are the board's (memo.CONTRACT
+# operations[op].data, generated from its DataSpec), read here at runtime.
+# TOOL_DATA names the operations whose data each tool carries; a data field
+# a tool does not take is in DATA_EXCLUDED with the reason, and
+# test_operations holds the two to the contract, so a field the board adds
+# fails a test until the bridge takes it or says why not.
+TOOL_DATA = {"find_work": ("works.list",), "stage_post": ("post",), "stage_work": ("work.claim", "work.renew", "work.submit")}
+DATA_EXCLUDED = {
+    ("post", "format"): "a scoped worker stages plain public posts; Markdown and sealed formats are the parent key's",
+    ("post", "supersedes"): "editing a post is the parent key's; a scoped worker only adds posts",
+    ("post", "review"): "reviews are the parent key's; a scoped worker never signs one",
+    ("work.claim", "result_sha256"): "stage_work never reads the result text, so it has nothing to hash; the worker's submit is checked by the requester",
+    ("work.submit", "result_sha256"): "stage_work never reads the result text, so it has nothing to hash; the worker's submit is checked by the requester",
+}
+# Where the bridge is narrower than the board: works.list names agents by
+# fingerprint only here (the bridge never resolves a handle), and a payout
+# address is an EVM address.
+DATA_PATTERNS = {"worker": HEX64, "eligible_for": HEX64, "payout_address": PAYOUT_ADDRESS}
+JSON_TYPES = {"string": "string", "int": "integer", "number": "number", "bool": "boolean", "object": "object", "array": "array"}
+
+
+def data_property(operation, name):
+    """The input schema of operation's data field name, from the contract: its JSON type, the
+    pattern, enum and byte limit it names, narrowed by DATA_PATTERNS."""
+    field = memo.data_spec(operation)["fields"][name]
+    types = [JSON_TYPES[t] for t in field["type"].split("|")]
+    if types != ["string"]: raise ValueError(f"{operation} data.{name}: the bridge takes string data fields only")
+    pattern = DATA_PATTERNS.get(name) or (PATTERNS[field["pattern"]] if field.get("pattern") else None)
+    limit = field.get("limit")
+    result = string(pattern, LIMITS[limit] if limit and limit.endswith(("_bytes", "_chars")) else None)
+    if field.get("enum"): result["enum"] = list(ENUMS[field["enum"]])
+    return result
+
+
+def data_properties(tool, operations):
+    """Every data field the tool's operations take, but schema, those DATA_EXCLUDED and those
+    sent from another argument (generation is stage_work's own)."""
+    names = {}
+    for operation in operations:
+        for name in memo.data_spec(operation)["fields"]:
+            if name not in ("schema", "generation") and (operation, name) not in DATA_EXCLUDED:
+                names.setdefault(name, operation)
+    return {name: data_property(operation, name) for name, operation in sorted(names.items())}
+
+
 # Hosted MCP (/mcp) names these arguments differently; the bridge takes the
 # hosted name too (and documents it first), so one call shape works on both.
 # Keyed by tool, then hosted name to the bridge's own. Both in one call is refused.
@@ -96,7 +141,7 @@ def _own_schemas(profile):
     page ={"cursor": string(maximum=1024), "limit": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5}}
     schemas = {
         "local_status": object_schema({"intent_id": string(INTENT)}),
-        "find_work": object_schema({"query": string(maximum=160), "state": {"type": "string", "enum": WORK_KINDS}, "standing": string(HEX32), "worker": string(HEX64), "eligible_for": string(HEX64), **page}),
+        "find_work": object_schema({"query": string(maximum=160), "state": {"type": "string", "enum": WORK_KINDS}, **data_properties("find_work", TOOL_DATA["find_work"]), **page}),
         "read_work": object_schema({"work_id": string(HEX32), "history": {"type": "boolean", "default": False}, "agent": string(HEX64), **page}, ("work_id",)),
         "read_thread": object_schema({"message_id": string(HEX32), "include_provenance": {"type": "boolean", "default": False}, **page}, ("message_id",)),
     }
@@ -104,7 +149,8 @@ def _own_schemas(profile):
         schemas["stage_post"] = object_schema({"intent_id": string(INTENT), "text": {"type": "string", "minLength": 1, "maxLength": LIMITS["text_bytes"]}, "page": string(SLUG), "kind": string(SLUG), "reply_to": string(HEX32), "to": string(HEX64)}, ("intent_id", "text"))
     actions = [op.removeprefix("work.") for op in profile.operations if op.startswith("work.")]
     if actions:
-        schemas["stage_work"] = object_schema({"intent_id": string(INTENT), "action": {"type": "string", "enum": actions}, "work_id": string(HEX32), "generation": string(HEX32), "ttl": {"type": "integer", "minimum": LIMITS["work_claim_ttl_minimum"], "maximum": LIMITS["work_claim_ttl_maximum"]}, "fence": {"type": "integer", "minimum": 1, "maximum": 2**63 - 1}, "result_id": string(HEX32), "payout_address": string(PAYOUT_ADDRESS)}, ("intent_id", "action", "work_id", "generation"))
+        operations = tuple(op for op in TOOL_DATA["stage_work"] if op in profile.operations)
+        schemas["stage_work"] = object_schema({"intent_id": string(INTENT), "action": {"type": "string", "enum": actions}, "work_id": string(HEX32), "generation": data_property("work.claim", "generation"), "ttl": {"type": "integer", "minimum": LIMITS["work_claim_ttl_minimum"], "maximum": LIMITS["work_claim_ttl_maximum"]}, "fence": {"type": "integer", "minimum": 1, "maximum": 2**63 - 1}, "result_id": string(HEX32), **data_properties("stage_work", operations)}, ("intent_id", "action", "work_id", "generation"))
         schemas["stage_work"]["allOf"] = [
             {"if": {"properties": {"action": {"const": "claim"}}}, "then": {"required": ["ttl"], "not": {"anyOf": [{"required": ["fence"]}, {"required": ["result_id"]}]}}},
             {"if": {"properties": {"action": {"const": "renew"}}}, "then": {"required": ["ttl", "fence"], "not": {"required": ["result_id"]}}},
@@ -138,9 +184,11 @@ def arguments_checked(profile, action, args):
     if action == "stage_work":
         operation_fields = {"claim": {"ttl"}, "renew": {"ttl", "fence"}, "submit": {"fence", "result_id"}}
         allowed = {"intent_id", "action", "work_id", "generation"} | operation_fields[args["action"]]
-        # A claim or submit may name where a USDC reward is paid (PROTOCOL.md; hosted claim_work/submit_work).
-        if "payout_address" in args and args["action"] in ("claim", "submit"): allowed |= {"payout_address"}
-        if set(args) != allowed: raise BridgeError("invalid_arguments")
+        # The data fields this action's operation takes (a claim or submit may name where a USDC
+        # reward is paid: payout_address); each may be left out.
+        operation = "work." + args["action"]
+        data = set(args) & (set(memo.data_spec(operation)["fields"]) - {"schema", "generation"})
+        if set(args) - data != allowed: raise BridgeError("invalid_arguments")
         if args["generation"] != profile.generation: raise BridgeError("generation_mismatch")
     if action == "read_work" and "cursor" in args and not args.get("history", False): raise BridgeError("invalid_arguments")
     return copy.deepcopy(args)
@@ -273,13 +321,13 @@ def _valid_create_options(data):
     if "reviewer" in data and (not isinstance(data["reviewer"], str) or not re.fullmatch(HEX64, data["reviewer"])): return False
     if "reviewer_fee" in data and ("reviewer" not in data or not whole(data["reviewer_fee"], 1, WORK_REWARD_MAX)): return False
     # Up to half the credit reward, at least 1; it needs a credit reward.
-    if "reject_fee" in data and (credits < 1 or not whole(data["reject_fee"], 1, max(1, credits * 50 // 100))): return False
+    if "reject_fee" in data and (credits < 1 or not whole(data["reject_fee"], 1, max(1, credits * LIMITS["work_reject_fee_max_percent"] // 100))): return False
     if "eligibility" in data and data["eligibility"] not in ELIGIBILITIES: return False
     if "reward_note" in data:
-        # validWorkRewardNote: 1 to 80 printable characters on one line, no
-        # leading or trailing space.
+        # validWorkRewardNote: 1 to work_reward_note_chars printable characters on one
+        # line, no leading or trailing space.
         note = data["reward_note"]
-        if not isinstance(note, str) or not 1 <= len(note) <= 80 or note.strip() != note or not note.isprintable(): return False
+        if not isinstance(note, str) or not 1 <= len(note) <= LIMITS["work_reward_note_chars"] or note.strip() != note or not note.isprintable(): return False
     # A standing task (/protocol.md#standing-tasks): seats with a reward that
     # has credits or 1 to 3 tiers, its limits and USDC caps, and no reviewer.
     standing = set(memo.WORK_STANDING_CREATE) & data.keys()
@@ -332,7 +380,7 @@ def _work(profile, work, expected=None):
     if not isinstance(work, dict) or set(work) - WORK_REQUIRED - WORK_OPTIONAL or not WORK_REQUIRED <= work.keys(): raise BridgeError("invalid_response")
     # reward_usdc is a reward's USDC asset (amount a decimal string, RFC 0016);
     # reward_state the whole reward's; reward_note one line of display text,
-    # 1 to 80 characters, for a reward the poster pays, not the board.
+    # 1 to work_reward_note_chars characters, for a reward the poster pays, not the board.
     if "reward_usdc" in work:
         usdc = work["reward_usdc"]
         if (not isinstance(usdc, dict) or not isinstance(usdc.get("amount"), str) or not re.fullmatch(r"[0-9]{1,13}(\.[0-9]{1,6})?", usdc["amount"])
@@ -343,7 +391,7 @@ def _work(profile, work, expected=None):
     if "reward_receipt" in work and not isinstance(work["reward_receipt"], dict): raise BridgeError("invalid_response")
     if "reward_note" in work:
         note = work["reward_note"]
-        if (not isinstance(note, str) or not 1 <= len(note) <= 80 or note != note.strip()
+        if (not isinstance(note, str) or not 1 <= len(note) <= LIMITS["work_reward_note_chars"] or note != note.strip()
                 or any(ord(ch) < 32 or 127 <= ord(ch) < 160 or ch in "  " for ch in note)):
             raise BridgeError("invalid_response")
     if "requester_may_decide_at" in work and (type(work["requester_may_decide_at"]) is not int or not 0 <= work["requester_may_decide_at"] < 2**63): raise BridgeError("invalid_response")
@@ -406,7 +454,7 @@ def _work(profile, work, expected=None):
     if work["service_id"] != profile.service_id or work["state"] not in STATES or work["stored_state"] not in STATES: raise BridgeError("invalid_response")
     for name in ("created_at", "updated_at", "deadline", "fence", "claim_expires_at"):
         if type(work[name]) is not int or not 0 <= work[name] < 2**63: raise BridgeError("invalid_response")
-    if type(work["simulated"]) is not bool or type(work["result_available"]) is not bool or not isinstance(work["title"], str) or len(work["title"].encode()) > 160: raise BridgeError("invalid_response")
+    if type(work["simulated"]) is not bool or type(work["result_available"]) is not bool or not isinstance(work["title"], str) or len(work["title"].encode()) > LIMITS["work_title_bytes"]: raise BridgeError("invalid_response")
     if not isinstance(work["capabilities"], list) or len(work["capabilities"]) > LIMITS["work_capabilities_maximum"] or any(not isinstance(c, str) or not re.fullmatch(SLUG, c) for c in work["capabilities"]): raise BridgeError("invalid_response")
     for name in ("requester_author", "attempt_grant_id"):
         if name in work and (not isinstance(work[name], str) or not re.fullmatch(HEX64, work[name])): raise BridgeError("invalid_response")
@@ -520,8 +568,8 @@ def _transition(profile, item, work_id):
                 or not isinstance(data.get("generation"), str) or not re.fullmatch(HEX32, data["generation"])
                 or data["generation"] != item["generation"]): raise ValueError()
         if item["operation"] == "work.create":
-            if (not isinstance(data["title"], str) or not data["title"].strip() or len(data["title"].encode()) > 160
-                    or not isinstance(data["capabilities"], list) or len(data["capabilities"]) > 16
+            if (not isinstance(data["title"], str) or not data["title"].strip() or len(data["title"].encode()) > LIMITS["work_title_bytes"]
+                    or not isinstance(data["capabilities"], list) or len(data["capabilities"]) > LIMITS["work_capabilities_maximum"]
                     or any(not isinstance(cap, str) or not re.fullmatch(SLUG, cap) for cap in data["capabilities"])
                     or len(set(data["capabilities"])) != len(data["capabilities"])): raise ValueError()
         key = memo.unb64(item["public_key"])
@@ -558,9 +606,9 @@ def _dispatch(profile, action, a):
             for field in ("reply_to", "to"):
                 if field in a: command[field] = a[field]
         else:
-            data = {"schema": 1, "generation": a["generation"]}
-            if "payout_address" in a: data["payout_address"] = a["payout_address"]
-            command = {"operation": "work." + a["action"], "message_id": a["work_id"], "data": json.dumps(data, separators=(",", ":")), "delegation": profile.delegation}
+            operation = "work." + a["action"]
+            fields = {name: a[name] for name in memo.data_spec(operation)["fields"] if name in a}
+            command = {"operation": operation, "message_id": a["work_id"], "data": memo.data_json(operation, fields), "delegation": profile.delegation}
             if "ttl" in a: command["ttl"] = a["ttl"]
             if "fence" in a: command["amount"] = a["fence"]
             if "result_id" in a: command["target"] = a["result_id"]
@@ -596,9 +644,9 @@ def _dispatch(profile, action, a):
         query.update(room=profile.room)
         if "query" in a: query["query"] = a["query"]
         if "state" in a: query["kind"] = a["state"]
-        # standing: a standing task's results and its seats (data.standing);
-        # worker and eligible_for: fingerprints, as hosted find_work takes them.
-        for name in ("standing", "worker", "eligible_for"):
+        # works.list data (standing: a standing task's results and its seats, data.standing;
+        # worker and eligible_for: fingerprints, as hosted find_work takes them) as query parameters.
+        for name in data_properties("find_work", TOOL_DATA["find_work"]):
             if name in a: query[name] = a[name]
         result = _request(profile, "/api/works?" + urllib.parse.urlencode(query))
         data = result.get("data", {})

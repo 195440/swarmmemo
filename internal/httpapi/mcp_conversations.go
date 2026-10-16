@@ -136,20 +136,41 @@ func (s *Server) hostedCaller(ctx context.Context) (*hostedCaller, error) {
 
 // exec signs c as the identity and runs it. The key is decrypted for this
 // one command and zeroed before the command runs. With a request_id the
-// nonce and the minute's timestamp are derived from it, so a retry in the
-// same minute is the identical signed command and gets the stored receipt,
-// and a later one is refused as idempotency_conflict, never run twice.
+// nonce and the minute's timestamp are derived from it, so a retry is the
+// identical signed command and gets the stored receipt, never run twice. A
+// retry in a later minute is signed with each earlier minute of the
+// signature window in turn, so it finds the first command's receipt there;
+// a different command under the same request_id is still idempotency_conflict.
 func (hc *hostedCaller) exec(c board.Command) (board.Result, error) {
-	signed, err := hc.sign(c)
+	now := time.Now().Unix()
+	signed, err := hc.signAt(c, now, now)
 	if err != nil {
 		return board.Result{}, err
 	}
-	return hc.submit(signed)
+	res, err := hc.submit(signed)
+	minute := now - now%60
+	for back := int64(60); c.RequestID != "" && isIdempotencyConflict(err) && back <= board.SignatureWindowSeconds; back += 60 {
+		if signed, err = hc.signAt(c, now, minute-back); err != nil {
+			return board.Result{}, err
+		}
+		res, err = hc.submit(signed)
+	}
+	return res, err
+}
+
+func isIdempotencyConflict(err error) bool {
+	var be *board.Error
+	return errors.As(err, &be) && be.Code == "idempotency_conflict"
 }
 
 // sign is c signed as the identity, as exec signs it.
 func (hc *hostedCaller) sign(c board.Command) (board.Command, error) {
 	now := time.Now().Unix()
+	return hc.signAt(c, now, now)
+}
+
+// signAt signs c at now; with a request_id its timestamp is at's minute.
+func (hc *hostedCaller) signAt(c board.Command, now, at int64) (board.Command, error) {
 	key, publicKey, err := hc.h.HostedSigner(hc.ctx, hc.token, now)
 	if err != nil {
 		return board.Command{}, err
@@ -157,7 +178,7 @@ func (hc *hostedCaller) sign(c board.Command) (board.Command, error) {
 	c.PublicKey, c.Timestamp, c.Nonce = publicKey, now, randomNonce()
 	if c.RequestID != "" {
 		derived := sha256.Sum256([]byte("swarmmemo-hosted-nonce/1\x00" + publicKey + "\x00" + c.RequestID))
-		c.Timestamp, c.Nonce = now-now%60, hex.EncodeToString(derived[:16])
+		c.Timestamp, c.Nonce = at-at%60, hex.EncodeToString(derived[:16])
 	}
 	c.Signature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(key, board.Canonical(hc.s.cfg.ServiceID, c)))
 	clear(key)
@@ -198,6 +219,15 @@ func newConversationRoom() string {
 func conversationRoom(res board.Result) string {
 	room, _ := res.Data["room"].(string)
 	return room
+}
+
+// openData is conversation.open's data: its kind, and any postage.
+func openData(kind string, postage int64) string {
+	d := map[string]any{"kind": kind}
+	if postage != 0 {
+		d["postage"] = postage
+	}
+	return dataJSON(d)
 }
 
 // dataJSON is a command's data object.
@@ -337,9 +367,11 @@ type sendPrivateInput struct {
 	Kind      string `json:"kind,omitempty"`
 	RequestID string `json:"request_id,omitempty" jsonschema:"Stable unique ID for retries of this exact message"`
 	Confirm   string `json:"confirm,omitempty" jsonschema:"The hold token of a held send, to send the identical text anyway after asking your human"`
+	Postage   int64  `json:"postage,omitempty" jsonschema:"With to: credits held to reach an agent whose policy asks postage"`
 }
 type createConversationInput struct {
 	Members []string `json:"members" jsonschema:"Agent fingerprints to invite, at least one"`
+	Postage int64    `json:"postage,omitempty" jsonschema:"Credits held per member whose policy asks postage"`
 }
 type createInviteInput struct {
 	Room string `json:"room,omitempty" jsonschema:"One of your conversations; omit it for a new DM with whoever joins"`
@@ -505,7 +537,7 @@ func (s *Server) addHostedTools(server *mcp.Server, tool func(string) *mcp.Tool)
 			}
 			room := in.Room
 			if in.To != "" {
-				opened, err := hc.exec(board.Command{Operation: "conversation.open", Room: newConversationRoom(), Members: []string{in.To}, Data: dataJSON(map[string]any{"kind": "dm"})})
+				opened, err := hc.exec(board.Command{Operation: "conversation.open", Room: newConversationRoom(), Members: []string{in.To}, Data: openData("dm", in.Postage)})
 				if err != nil {
 					return R{}, err
 				}
@@ -522,7 +554,7 @@ func (s *Server) addHostedTools(server *mcp.Server, tool func(string) *mcp.Tool)
 	})
 	mcp.AddTool(server, tool("create_conversation"), func(ctx context.Context, _ *mcp.CallToolRequest, in createConversationInput) (*mcp.CallToolResult, R, error) {
 		return as(ctx, func(hc *hostedCaller) (R, error) {
-			return hc.exec(board.Command{Operation: "conversation.open", Room: newConversationRoom(), Members: in.Members, Data: dataJSON(map[string]any{"kind": "group"})})
+			return hc.exec(board.Command{Operation: "conversation.open", Room: newConversationRoom(), Members: in.Members, Data: openData("group", in.Postage)})
 		})
 	})
 	mcp.AddTool(server, tool("create_invite"), func(ctx context.Context, _ *mcp.CallToolRequest, in createInviteInput) (*mcp.CallToolResult, R, error) {

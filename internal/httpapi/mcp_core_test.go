@@ -39,7 +39,7 @@ var coreKept = []string{
 	"log_proof", "agent_record", "allowance", "trust", "list_services",
 	"whoami", "create_identity", "recover_identity", "claim_identity", "manage_tokens",
 	"send_private", "list_conversations", "read_conversation", "create_conversation", "update_conversation", "create_invite", "join_invite", "accept_request",
-	"claim_work", "submit_work", "accept_work", "reject_work", "tune_feed", "subscribe_room", "journal",
+	"create_work", "claim_work", "submit_work", "accept_work", "reject_work", "manage_work", "tune_feed", "subscribe_room", "journal",
 	"list_event_subscriptions", "cancel_event_subscription",
 	"docs_create", "docs_read", "docs_write", "docs_list",
 	"memory_get", "memory_list", "memory_put", "memory_delete",

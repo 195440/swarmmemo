@@ -9,7 +9,7 @@ import {spawn, spawnSync} from 'node:child_process';
 import {gzipSync} from 'node:zlib';
 import {fileURLToPath} from 'node:url';
 import {createECDH, createPrivateKey, createPublicKey, randomBytes, sign, verify} from 'node:crypto';
-import {Client, DelegatedClient, ClientError, CONTRACT, FIELDS, canonical, delegationContext, generateKey, importKey, writeKey, loadKey, conversationRoom, loadSeal, agentSubjectID, workCreateData, standingTier, WORK_STANDING_CREATE, markdownAuto, MARKDOWN_POST_DATA, keccak256, walletAddress, personalSign, loadWalletKey, walletChallengeOK, WALLET_KEY_ENV} from './swarmmemo.mjs';
+import {Client, DelegatedClient, ClientError, CONTRACT, FIELDS, canonical, delegationContext, generateKey, importKey, writeKey, loadKey, conversationRoom, loadSeal, agentSubjectID, workCreateData, standingTier, WORK_STANDING_CREATE, markdownAuto, MARKDOWN_POST_DATA, keccak256, walletAddress, personalSign, loadWalletKey, walletChallengeOK, WALLET_KEY_ENV, dataFor, workRatingPost} from './swarmmemo.mjs';
 
 const vector = JSON.parse(await readFile(new URL('../python/signing-vector.json', import.meta.url), 'utf8'));
 const fixtureKey = importKey({private_key: Buffer.from(vector.seed_hex, 'hex').toString('base64url'), public_key: vector.command.public_key});
@@ -805,4 +805,163 @@ test('C343: optional real Go board verifies linkWallet in one step', {skip: !pro
   assert.equal(linked.data.state, 'verified'); assert.equal(linked.data.value, walletAddressHex);
   const link = (await client.send(client.prepare({operation: 'agent.get', target: key.fingerprint}))).agent.links.find(l => l.kind === 'wallet');
   assert.equal(link.state, 'verified'); assert.equal(personalSign(walletKey, link.statement), link.proof);
+});
+
+// C377: every board data field is sendable from each JS wrapper of its operation, derived from
+// the contract (CONTRACT.operations[op].data, generated from the board's DataSpec). Each field is
+// sent through the wrapper to a recording fetch and checked in the signed data. A field the board
+// adds fails here until the wrapper sends it or JS_EXCLUDED says why; no wrapper sends a field the
+// contract does not know or marks removed.
+const P = {generation: 'a'.repeat(32), message: 'b'.repeat(32), agent: 'c'.repeat(64), tx: '0x' + 'd'.repeat(64), room: '~' + 'a'.repeat(26)};
+const PATTERN_SAMPLES = {work_id: 'e'.repeat(32), message_id: 'e'.repeat(32), fingerprint: 'f'.repeat(64), tx_hash: P.tx, standing_tier: 'bug'};
+const FIELD_SAMPLES = {checks: [{property: 'tests', state: 'pass'}], tiers: [{name: 'bug', credits: 5}], capabilities: ['review'], ids: [P.message],
+  review: {subject: 'site:https://example.org/', verdict: 'good'}};
+const camelName = name => name.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+function dataSample(operation, name) {
+  const field = CONTRACT.operations[operation].data.fields[name], kind = field.type.split('|')[0];
+  if (Object.hasOwn(FIELD_SAMPLES, name)) return FIELD_SAMPLES[name];
+  if (field.enum) { const first = CONTRACT.enums[field.enum][0]; return kind === 'array' ? [first] : first; }
+  if (kind === 'string') return PATTERN_SAMPLES[field.pattern] ?? 'x1';
+  return {int: 2, number: 1.5, bool: true, object: {k: 'v'}, array: ['x1']}[kind];
+}
+// operation: [call(client, options), the fields the call sends from its own arguments].
+const JS_WRAPPERS = {
+  'allowance.transfer': [(c, o) => c.transfer(P.agent, 5, {resource: 'credit', ...o}), ['resource']],
+  vouch: [(c, o) => c.vouch(P.agent, o), ['value', 'sponsor']],
+  'webhook.create': [(c, o) => c.webhookCreate('https://example.org/hook', o), ['url']],
+  'conversation.get': [(c, o) => c.conversation(P.room, o), []],
+  'conversation.open': [(c, o) => c.openConversation({members: [P.agent], ...o}), ['kind', 'sealed']],
+  'conversation.respond': [(c, o) => c.respond(P.room, 'accept', o), ['action']],
+  'messaging.policy.set': [(c, o) => c.messagingPolicy(o), []],
+  post: [(c, o) => c.review('https://example.org/', 'good', 'text', o), ['review']],
+  'works.list': [(c, o) => c.works(o), []],
+  'work.create': [(c, o) => c.createWork(P.message, {title: 't', generation: P.generation, ...o}), ['generation', 'title', 'capabilities']],
+  'work.claim': [(c, o) => c.claimWork(P.message, {generation: P.generation, ...o}), ['generation']],
+  'work.submit': [(c, o) => c.submitWork(P.message, 3, 'r'.repeat(32), {generation: P.generation, ...o}), ['generation']],
+  'work.accept': [(c, o) => c.acceptWork(P.message, 3, {generation: P.generation, ...o}), ['generation']],
+  'work.reject': [(c, o) => c.rejectWork(P.message, 3, 'no', {generation: P.generation, ...o}), ['generation']],
+  'work.cancel': [(c, o) => c.cancelWork(P.message, 'done', {generation: P.generation, ...o}), ['generation']],
+  'work.settle': [(c, o) => c.settleWork(P.message, P.tx, {generation: P.generation, ...o}), ['generation', 'tx_hash']],
+  'work.reviewer.set': [(c, o) => c.setWorkReviewer(P.message, P.agent, {generation: P.generation, ...o}), ['generation', 'reviewer']],
+  'updates.get': [(c, o) => c.updates({cursor: 'c1', ...o}), []],
+  'updates.dispose': [(c, o) => c.dispose([P.message], 'replied', o), ['ids', 'state']],
+  'updates.mark_read': [(c, o) => c.markRead([P.message], o), ['ids']],
+  'verify.publish': [(c, o) => c.verifyPublish({command: 'c', environment: 'e', outputSha256: 'f'.repeat(64), checks: FIELD_SAMPLES.checks, limits: 'l', ...o}), ['command', 'environment', 'output_sha256', 'checks', 'limits']],
+  find: [(c, o) => c.find('q', o), []],
+};
+// A field a wrapper takes under another option: the options that send it.
+const JS_ARGUMENTS = {
+  'work.accept review': () => ({rating: 80}), 'find type': v => ({types: v}),
+  'work.create per_agent_day': v => ({seats: 2, perAgentDay: v}), 'work.create day_max': v => ({seats: 2, dayMax: v}),
+  'work.create results_max': v => ({seats: 2, resultsMax: v}), 'work.create tiers': v => ({seats: 2, tiers: v}),
+  'work.create usdc_per_agent_day': v => ({seats: 2, reward: 5, usdcPerAgentDay: v}), 'work.create usdc_day_max': v => ({seats: 2, reward: 5, usdcDayMax: v}),
+  'updates.mark_read all': () => ({all: true}),
+};
+// A field a wrapper does not send ('operation field'), with the reason.
+const JS_EXCLUDED = {};
+// Operations no Client method wraps, with the reason.
+const noWrapper = 'no wrapper: prepare({operation, data: JSON.stringify(dataFor(operation, fields))}) sends every field';
+const JS_NO_WRAPPER = {
+  ...Object.fromEntries(['agent.profile.publish', 'allowance.get', 'credits.topup', 'delegation.revoke', 'feed.get', 'feed.profile.fork', 'feed.profile.get', 'feed.profile.put',
+    'gate.challenge', 'gate.verify', 'hosted.claim', 'hosted.recover', 'hosted.token', 'identity.unlink', 'identity.witness', 'key.backup.get', 'key.backup.put', 'messages.list',
+    'offering.answer', 'offering.buy', 'offering.publish', 'offering.refund', 'room.policy.set', 'room.style.check', 'room.style.set', 'room.subscribe', 'spend_limit.set',
+    'standing.work', 'subjects.list', 'vote', 'work.renew', 'x402.submit'].map(op => [op, noWrapper])),
+  ...Object.fromEntries(['blob.put', 'room.invite.accept', 'service.call', 'service.read', 'trust.get'].map(op => [op, 'its data is a raw string, not fields'])),
+  'identity.link': 'linkWallet and publishSealKey send fixed kinds; ' + noWrapper,
+  'standing.challenge': 'linkWallet sends kind wallet only; ' + noWrapper,
+  'conversation.seal': 'sealRotate sends the data string loadSeal().rotationData makes',
+  'delegation.create': 'enrollment needs the child key as targetKey: prepare({operation, data}, {targetKey})',
+  ...Object.fromEntries(['private_read.create', 'private_read.revoke'].map(op => [op, 'private grants use the Python private-inbox helper, not this client'])),
+};
+
+function recordingFetch(t) {
+  const sent = [], original = globalThis.fetch;
+  globalThis.fetch = async (url, {body} = {}) => {
+    const parsed = body ? JSON.parse(body) : {};
+    if (body) sent.push(parsed);
+    const reply = String(url).endsWith('/api/changes?after=-1') ? {ok: true, generation: P.generation}
+      : parsed.operation === 'work.get' ? {ok: true, data: {work: {id: P.message, service_generation: P.generation, fence: 3, worker_subject: 'agent:' + P.agent}}}
+      : parsed.operation === 'agent.get' ? {ok: true, agent: {id: P.agent}}
+      : parsed.operation === 'subject.resolve' ? {ok: true, data: {subject: {id: 's'.repeat(26), uri: 'site:https://example.org/'}}}
+      : {ok: true, data: {}};
+    return new Response(JSON.stringify(reply), {status: 200, headers: {'Content-Type': 'application/json'}});
+  };
+  t.after(() => {globalThis.fetch = original;});
+  const data = operation => {
+    const body = sent.findLast(b => b.operation === operation);
+    assert.ok(body, `no ${operation} command was sent`);
+    return JSON.parse(body.data);
+  };
+  return {sent, data};
+}
+
+test('every JS wrapper sends every data field of its operation (C377)', async t => {
+  const {sent, data} = recordingFetch(t), client = new Client({origin: 'https://example.org', key: fixtureKey});
+  const operations = Object.keys(CONTRACT.operations).filter(op => CONTRACT.operations[op].data).sort();
+  assert.deepEqual([...new Set([...Object.keys(JS_WRAPPERS), ...Object.keys(JS_NO_WRAPPER)])].sort(), operations);
+  for (const op of Object.keys(JS_WRAPPERS)) assert.ok(!Object.hasOwn(JS_NO_WRAPPER, op), op);
+  for (const [operation, [call, base]] of Object.entries(JS_WRAPPERS)) {
+    for (const name of Object.keys(CONTRACT.operations[operation].data.fields)) {
+      if (name === 'schema' || Object.hasOwn(JS_EXCLUDED, `${operation} ${name}`)) continue;
+      const value = dataSample(operation, name);
+      const options = base.includes(name) ? {} : (JS_ARGUMENTS[`${operation} ${name}`] ?? (v => ({[camelName(name)]: v})))(value);
+      sent.length = 0;
+      await call(client, options);
+      assert.ok(Object.hasOwn(data(operation), name), `${operation} data.${name} is not sent: give the wrapper the field or record why in JS_EXCLUDED`);
+      for (const body of sent) {
+        const spec = CONTRACT.operations[body.operation]?.data;
+        if (!spec || spec.raw || body.data === undefined) continue;
+        for (const key of Object.keys(JSON.parse(body.data))) {
+          assert.ok(Object.hasOwn(spec.fields, key), `${body.operation} sent ${key}, which the contract does not take`);
+          assert.ok(!Object.hasOwn(spec.removed, key), `${body.operation} sent removed ${key}`);
+        }
+      }
+    }
+  }
+  for (const key of Object.keys(JS_EXCLUDED)) { const [op, name] = key.split(' '); assert.ok(Object.hasOwn(CONTRACT.operations[op].data.fields, name), `stale exclusion ${key}`); }
+  for (const [op, reason] of Object.entries(JS_NO_WRAPPER)) {
+    assert.ok(reason.trim(), op);
+    const spec = CONTRACT.operations[op].data;
+    if (spec.raw) continue;
+    const fields = Object.fromEntries(Object.keys(spec.fields).filter(n => n !== 'schema').map(n => [camelName(n), dataSample(op, n)]));
+    assert.deepEqual(Object.keys(dataFor(op, fields)).filter(n => n !== 'schema').sort(), Object.keys(spec.fields).filter(n => n !== 'schema').sort(), op);
+  }
+});
+
+test('dataFor checks names, types and enums against the contract; the audit gaps send', async t => {
+  assert.deepEqual(dataFor('works.list', {worker: 'w'}), {schema: 1, worker: 'w'});
+  assert.deepEqual(dataFor('vote', {value: 1}), {value: 1});
+  assert.deepEqual(dataFor('work.create', {generation: 'g', title: 't', capabilities: [], rejectFee: 5}), {schema: 1, generation: 'g', title: 't', capabilities: [], reject_fee: 5});
+  for (const [op, fields] of [['works.list', {nonsense: 1}], ['work.create', {generation: 'g', title: 't', capabilities: [], rejectFee: '5'}], ['vote', {value: true}],
+    ['find', {type: ['nonsense']}], ['work.renew', {}], ['blob.put', {}], ['agent.get', {}], ['works.list', {constructor: 'x'}]]) assert.throws(() => dataFor(op, fields), errorCode('invalid_option'), op);
+  const spec = CONTRACT.operations['works.list'].data, saved = {...spec};
+  try {
+    spec.fields = Object.fromEntries(Object.entries(saved.fields).filter(([name]) => name !== 'worker'));
+    spec.removed = {worker: '1.99.0'}; spec.aliases = {by: 'eligible_for'};
+    assert.throws(() => dataFor('works.list', {worker: 'w'}), error => errorCode('invalid_option')(error) && /removed in 1.99.0/.test(error.message));
+    assert.deepEqual(dataFor('works.list', {by: 'w'}), {schema: 1, eligible_for: 'w'});
+  } finally { Object.assign(spec, saved); }
+  // The audit's JS gaps: createWork refused rejectFee locally, works had no worker, vouch no weight.
+  const {data} = recordingFetch(t), client = new Client({origin: 'https://example.org', key: fixtureKey});
+  await client.createWork(P.message, {title: 't', generation: P.generation, reward: 10, rejectFee: 5});
+  assert.equal(data('work.create').reject_fee, 5);
+  await client.works({worker: 'alice'});
+  assert.deepEqual(data('works.list'), {schema: 1, worker: 'alice'});
+  await client.vouch(P.agent, {weight: 20});
+  assert.deepEqual(data('vouch'), {schema: 1, value: 1, sponsor: false, weight: 20});
+  await client.rejectWork(P.message, 3, 'no', {generation: P.generation, checks: FIELD_SAMPLES.checks});
+  assert.deepEqual(data('work.reject').checks, FIELD_SAMPLES.checks);
+});
+
+test('Markdown reviews and rated-accept notes sign format markdown (citepulse-ai 8b49d2b7)', async t => {
+  const {data} = recordingFetch(t), client = new Client({origin: 'https://example.org', key: fixtureKey});
+  await client.review('https://example.org/', 'good', '**Solid** work, see *notes*.');
+  assert.equal(data('post').format, 'markdown');
+  await client.review('https://example.org/', 'good', 'plain words');
+  assert.equal(data('post').format, undefined);
+  const work = {id: P.message, worker_subject: 'agent:' + P.agent};
+  assert.equal(JSON.parse(workRatingPost(work, 80, '- fast\n- correct').data).format, 'markdown');
+  assert.equal(JSON.parse(workRatingPost(work, 80, 'fast and correct').data).format, undefined);
+  await client.acceptWork(P.message, 3, {rating: 90, note: '**Great** result, see *notes*.'});
+  assert.equal(JSON.parse(data('work.accept').review.data).format, 'markdown');
 });

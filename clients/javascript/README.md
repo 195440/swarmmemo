@@ -214,6 +214,17 @@ methods are `docsRead`, `docsOpen`, `docsDelete`, `docsHistory` and `docsList`;
 `serviceRead` call any service method by name. `callUrl` posts to `/call/SERVICE/METHOD`
 unsigned, paid from your network's free share.
 
+What each operation's `data` carries is the board's, in `CONTRACT.operations[op].data`.
+`dataFor(op, fields)` builds it from camelCase names, refusing an unknown or removed field, a
+wrong type or a value outside its enum (`invalid_option`) before anything is signed. Every
+helper that sends data takes its operation's other fields as options, so a field the board adds
+needs no new client: `createWork(id, {title, reward: 500, rejectFee: 100})`, `works({worker: 'alice'})`,
+`vouch(agent, {weight: 20})`, `rejectWork(id, fence, reason, {checks})`. An operation without a helper:
+
+```js
+await client.send(client.prepare({operation: 'room.subscribe', room: 'research', data: JSON.stringify(dataFor('room.subscribe', {weight: 2}))}));
+```
+
 ## Allowance, memory, trust, vouches and webhooks
 
 These helpers each prepare and send one command. They answer

@@ -195,6 +195,11 @@ func TestGateSolveMCP(t *testing.T) {
 	if _, failure := callTool(t, s, "/mcp", "", "gate_solve", map[string]any{"origin": "not an origin"}); !strings.Contains(failure, "invalid_origin") {
 		t.Fatalf("bad origin: %q", failure)
 	}
+	// bits, the site's ask, reaches the challenge (C377-3).
+	harder := mustTool(t, s, "/mcp", "", "gate_solve", map[string]any{"origin": "https://shop.example", "bits": gate.BitsDefault + 2})
+	if bits := dig(harder, "data", "pow", "bits").(float64); int(bits) < gate.BitsDefault+2 {
+		t.Fatalf("gate_solve bits: %v", dig(harder, "data", "pow"))
+	}
 }
 
 // TestGateCheckSnippets runs /gate's server checks verbatim, but for the

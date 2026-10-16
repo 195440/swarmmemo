@@ -496,3 +496,59 @@ func TestMCPAcceptWorkTakesTier(t *testing.T) {
 		}
 	}
 }
+
+// A hosted identity posts work and manages it over MCP (C377-3): its request
+// post becomes work with create_work, a worker's claim is renewed, the
+// requester names a reviewer and cancels; and post_message supersedes edits
+// a hosted post, never an anonymous one.
+func TestHostedMCPCreateAndManageWork(t *testing.T) {
+	_, s := hostedServer(t)
+	requester, worker, judge := newIdentity(t, s, "work-poster"), newIdentity(t, s, "work-doer"), newIdentity(t, s, "work-checker")
+	asRequester, asWorker := "Bearer "+requester["token"].(string), "Bearer "+worker["token"].(string)
+	ack := func(result map[string]any) map[string]any {
+		t.Helper()
+		a, _ := dig(result, "data", "ack").(map[string]any)
+		if a == nil {
+			t.Fatalf("no ack in %v", result)
+		}
+		return a
+	}
+	posted := mustTool(t, s, "/mcp", asRequester, "post_message", map[string]any{"room": "gigs", "kind": "request", "text": "Translate a paragraph into French."})
+	id := posted["receipt"].(map[string]any)["id"].(string)
+	if a := ack(mustTool(t, s, "/mcp", asRequester, "create_work", map[string]any{"message_id": id, "title": "Translate a paragraph", "capabilities": []any{"translation"}, "ttl": 86400})); a["state"] != "open" || a["work_id"] != id {
+		t.Fatalf("create_work: %v", a)
+	}
+	if title := dig(mustTool(t, s, "/mcp", "", "read_work", map[string]any{"message_id": id}), "data", "work", "title"); title != "Translate a paragraph" {
+		t.Fatalf("read_work after create_work: title %v", title)
+	}
+	if _, failure := callTool(t, s, "/mcp", asRequester, "create_work", map[string]any{"message_id": id, "title": "Again", "capabilities": []any{}, "bounty": 5}); failure == "" {
+		t.Fatal("create_work took an input it does not have")
+	}
+	if a := ack(mustTool(t, s, "/mcp", asWorker, "claim_work", map[string]any{"message_id": id, "ttl": 600})); a["state"] != "claimed" {
+		t.Fatalf("claim_work: %v", a)
+	}
+	if a := ack(mustTool(t, s, "/mcp", asWorker, "manage_work", map[string]any{"message_id": id, "action": "renew", "ttl": 1800})); a["state"] != "claimed" {
+		t.Fatalf("manage_work renew: %v", a)
+	}
+	if _, failure := callTool(t, s, "/mcp", asRequester, "manage_work", map[string]any{"message_id": id, "action": "close"}); !strings.Contains(failure, "renew, cancel, settle or reviewer") {
+		t.Fatalf("manage_work with an unknown action: %q", failure)
+	}
+	if a := ack(mustTool(t, s, "/mcp", asRequester, "manage_work", map[string]any{"message_id": id, "action": "cancel", "reason": "No longer needed."})); a["state"] != "cancelled" {
+		t.Fatalf("manage_work cancel: %v", a)
+	}
+	// A second request names its reviewer while open.
+	second := mustTool(t, s, "/mcp", asRequester, "post_message", map[string]any{"room": "gigs", "kind": "request", "text": "Check a translation."})["receipt"].(map[string]any)["id"].(string)
+	mustTool(t, s, "/mcp", asRequester, "create_work", map[string]any{"message_id": second, "title": "Check a translation", "capabilities": []any{"translation"}})
+	mustTool(t, s, "/mcp", asRequester, "manage_work", map[string]any{"message_id": second, "action": "reviewer", "reviewer": judge["agent"]})
+	if r := dig(mustTool(t, s, "/mcp", "", "read_work", map[string]any{"message_id": second}), "data", "work", "reviewer"); r == nil {
+		t.Fatal("manage_work reviewer named no reviewer")
+	}
+
+	// supersedes edits the identity's own post; an anonymous post cannot.
+	if edit := mustTool(t, s, "/mcp", asRequester, "post_message", map[string]any{"room": "gigs", "supersedes": id, "text": "Translate a paragraph into **French**, please."}); edit["receipt"] == nil {
+		t.Fatalf("post_message supersedes: %v", edit)
+	}
+	if _, failure := callTool(t, s, "/mcp", "", "post_message", map[string]any{"room": "gigs", "supersedes": id, "text": "Not mine."}); !strings.Contains(failure, "supersedes") {
+		t.Fatalf("anonymous post_message supersedes: %q", failure)
+	}
+}

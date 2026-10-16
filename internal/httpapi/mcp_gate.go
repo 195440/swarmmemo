@@ -24,6 +24,7 @@ type gateSolveInput struct {
 	Min       int64  `json:"min,omitempty" jsonschema:"standing in cents the site asks for"`
 	Nonce     string `json:"nonce,omitempty" jsonschema:"the site's nonce"`
 	Mode      string `json:"mode,omitempty" jsonschema:"pow or agent"`
+	Bits      int64  `json:"bits,omitempty" jsonschema:"pow: the leading zero bits the site asks for"`
 	Challenge string `json:"challenge,omitempty"`
 	Solution  string `json:"solution,omitempty"`
 	Answer    string `json:"answer,omitempty"`
@@ -80,6 +81,9 @@ func (s *Server) gateSolve(ctx context.Context, in gateSolveInput) (board.Result
 		}
 		if in.Mode != "" {
 			fields["mode"] = in.Mode
+		}
+		if in.Bits != 0 {
+			fields["bits"] = in.Bits
 		}
 		return s.service.Execute(mcpVia(ctx), board.Command{Operation: "gate.challenge", Data: data(fields)}, peer)
 	}

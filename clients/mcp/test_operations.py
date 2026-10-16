@@ -179,7 +179,7 @@ class OperationTests(unittest.TestCase):
         # ID, its results and data.standing its seats), worker and eligible_for, as
         # hosted find_work and GET /api/works do.
         properties = op.tool_schemas(self.profile)["find_work"]["properties"]
-        self.assertEqual(properties["standing"], {"type": "string", "pattern": op.HEX32})
+        self.assertEqual(properties["standing"], {"type": "string", "pattern": op.PATTERNS["work_id"]})
         self.assertEqual(properties["worker"], {"type": "string", "pattern": op.HEX64})
         self.assertEqual(properties["eligible_for"], {"type": "string", "pattern": op.HEX64})
         seats = {"seats": 10, "open": 5, "submitted": 3, "owed": 0, "paid": 2, "results": 5, "per_agent_day": 1, "day_max": 10, "opened_today": 2,
@@ -514,6 +514,56 @@ class TransitionFieldsTest(unittest.TestCase):
         transition = contract["structs"]["work_transition"]
         self.assertEqual((set(transition["required"]), set(transition["optional"])), (op.WORK_TRANSITION_REQUIRED, op.WORK_TRANSITION_OPTIONAL))
         self.assertEqual(op.WORK_TRANSITION_OPERATIONS, {name for name, o in contract["operations"].items() if o["mutation"] and name.startswith("work.")})
+
+
+class DataParityTest(unittest.TestCase):
+    """C377: every data field of the operations a tool carries (TOOL_DATA) is in its input
+    schema, built from the contract, or in DATA_EXCLUDED with a reason; no tool takes a field
+    the contract does not know or has removed. A field the board adds fails here first."""
+    setUp, load = OperationTests.setUp, OperationTests.load
+
+    def schemas(self):
+        profile = self.profile
+        return op.tool_schemas(profile)
+
+    def test_every_data_field_is_a_property_or_excluded_with_a_reason(self):
+        schemas, own = self.schemas(), {"stage_work": {"generation"}}
+        for tool, operations in op.TOOL_DATA.items():
+            properties = schemas[tool]["properties"]
+            for operation in operations:
+                spec = op.memo.data_spec(operation)
+                for name in spec["fields"]:
+                    if name == "schema": continue
+                    with self.subTest(tool=tool, operation=operation, field=name):
+                        reason = op.DATA_EXCLUDED.get((operation, name))
+                        if reason is None:
+                            self.assertIn(name, properties, f"{tool} cannot send {operation} data.{name}: add it or record why in DATA_EXCLUDED")
+                        else:
+                            self.assertTrue(reason.strip(), "an exclusion needs its reason")
+                            self.assertNotIn(name, properties, f"{name} is excluded and offered")
+            # No property is a removed data field, and each data-named one is the contract's.
+            data_names = set().union(*(op.memo.data_spec(o)["fields"] for o in operations))
+            removed = set().union(*(op.memo.data_spec(o)["removed"] for o in operations))
+            self.assertFalse(removed & properties.keys(), tool)
+            for name in properties.keys() & data_names - own.get(tool, set()):
+                operation = next(o for o in operations if name in op.memo.data_spec(o)["fields"])
+                self.assertEqual(properties[name], op.data_property(operation, name), f"{tool}.{name} is not built from the contract")
+        for (operation, name) in op.DATA_EXCLUDED:
+            self.assertIn(name, op.memo.data_spec(operation)["fields"], f"stale exclusion {operation}.{name}")
+            self.assertTrue(any(operation in ops for ops in op.TOOL_DATA.values()))
+
+    def test_a_field_the_board_adds_reaches_the_schema(self):
+        spec = op.memo.data_spec("work.claim")
+        added = {**spec, "fields": {**spec["fields"], "note": {"type": "string", "required": False}}}
+        with patch.dict(op.memo.CONTRACT["operations"]["work.claim"], {"data": added}):
+            self.assertIn("note", self.schemas()["stage_work"]["properties"])
+            result = op.dispatch(self.profile, "stage_work", {"intent_id": "n", "action": "claim", "work_id": "b" * 32, "generation": "a" * 32, "ttl": 60, "note": "hi"})
+            stored = op._queue(self.profile).inspect(result["id"], sensitive=True)["intent"]
+            self.assertEqual(json.loads(stored["data"]), {"schema": 1, "generation": "a" * 32, "note": "hi"})
+        removed = {**spec, "fields": {k: v for k, v in spec["fields"].items() if k != "payout_address"}, "removed": {"payout_address": "1.99.0"}}
+        with patch.dict(op.memo.CONTRACT["operations"]["work.claim"], {"data": removed}):
+            with self.assertRaisesRegex(BridgeError, "invalid_arguments"):
+                op.dispatch(self.profile, "stage_work", {"intent_id": "r", "action": "claim", "work_id": "b" * 32, "generation": "a" * 32, "ttl": 60, "payout_address": "0x" + "a" * 40})
 
 
 if __name__ == "__main__": unittest.main()

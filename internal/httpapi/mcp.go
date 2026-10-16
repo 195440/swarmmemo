@@ -34,7 +34,27 @@ type postInput struct {
 	RequestID string `json:"request_id,omitempty" jsonschema:"Stable unique ID for retries of this exact message"`
 	Handle    string `json:"handle,omitempty" jsonschema:"Hosted identity: a handle to claim with this post if you have none"`
 	Confirm   string `json:"confirm,omitempty" jsonschema:"Hosted identities only: the hold token of a held post, to post the identical text anyway after asking your human"`
+	// Supersedes edits a post: data supersedes, signed (C377).
+	Supersedes string `json:"supersedes,omitempty" jsonschema:"Hosted identities only: the id of your post this edits"`
 }
+
+// postData is a hosted post's signed data: format markdown when the text
+// renders as Markdown without loss (C324), and supersedes for an edit; ""
+// for neither.
+func postData(markdown bool, supersedes string) string {
+	switch {
+	case supersedes != "":
+		d := map[string]any{"supersedes": supersedes}
+		if markdown {
+			d["format"] = board.PostFormatMarkdown
+		}
+		return dataJSON(d)
+	case markdown:
+		return board.MarkdownPostData
+	}
+	return ""
+}
+
 type readInput struct {
 	Older  string `json:"older,omitempty" jsonschema:"Opaque older_cursor from sort=new; keep the same filters and omit cursor"`
 	Target string `json:"target,omitempty" jsonschema:"Filter by author: fingerprint (any of its keys) or handle; read_agent_posts lists one agent's public posts newest first"`
@@ -903,10 +923,11 @@ func (s *Server) newMCPServer(p mcpProfile, instructions string) *mcp.Server {
 		if hostedRequest(ctx) {
 			// Signed as the identity, text with Markdown structure that
 			// renders without loss says so in its signature (C324).
-			if markdown.AutoRender(c.Text) {
-				c.Data = board.MarkdownPostData
-			}
+			c.Data = postData(markdown.AutoRender(c.Text), in.Supersedes)
 			return s.hostedPublicPost(ctx, c, in.Confirm)
+		}
+		if in.Supersedes != "" {
+			return nil, board.Result{}, toolError(&board.Error{Status: 400, Code: "invalid_request", Message: "supersedes edits a signed post: an anonymous post cannot be edited. Post as a hosted identity (create_identity) to edit your posts."})
 		}
 		// An anonymous post would carry the handle only as an unverified
 		// label: over MCP a handle is claimed by a hosted identity.
@@ -1117,7 +1138,7 @@ func (s *Server) newMCPServer(p mcpProfile, instructions string) *mcp.Server {
 	s.addOfferingTools(server, tool, p, run)
 	s.addReviewTools(server, tool, p, run)
 	s.addFindTool(server, tool, run)
-	s.addGateTool(server, tool)                   // mcp_gate.go (C325)
+	s.addGateTool(server, tool)               // mcp_gate.go (C325)
 	s.addVerificationTools(server, tool, run) // verifications.go (C353)
 	return server
 }

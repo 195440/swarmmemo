@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"maps"
+	"strconv"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"swarmmemo/internal/board"
+	"swarmmemo/internal/services"
 )
 
 // The work lifecycle for a hosted identity: claim (and, with a result already
@@ -23,6 +25,8 @@ var hostedWorkTools = []hostedToolSpec{
 	{mcpToolSpec{"submit_work", false, "Submit your result for work you claimed: result_id is your reply to the work's request, posted in its room (post_message with reply_to). The submit binds the result's newest text (its SHA-256, result_sha256 on read_work); an edit after that shows as result_changed_since_submit. The requester, or the named reviewer, then accepts or rejects it." + tokenNote}, false, false},
 	{mcpToolSpec{"accept_work", false, "Accept the submitted result of work you requested or review: result_id is the result read_work shows; the accept signs its result_sha256, the submitted text even if result_changed_since_submit. Final; pays any reward to the worker. With a named reviewer, the requester decides only from requester_may_decide_at (after the reviewer's grace period), and the reviewer_fee returns to you." + verdictChecksNote + tokenNote}, false, false},
 	{mcpToolSpec{"reject_work", false, "Reject the current attempt at your work request (or work you review) with a reason: the work reopens for the next worker and any reward stays held. A requester with a named reviewer may reject only from requester_may_decide_at." + verdictChecksNote + tokenNote}, false, false},
+	{mcpToolSpec{"create_work", false, "Open your request post (post_message kind request) as work. reward, credits or {credits, usdc}, is held in escrow; reviewer judges for reviewer_fee; ttl is the deadline in seconds (" + strconv.FormatInt(board.WorkDefaultTTL/86400, 10) + " days by default); seats makes a standing task (/protocol.md#standing-tasks)." + tokenNote}, false, false},
+	{mcpToolSpec{"manage_work", false, "action renew (your claim, by ttl seconds), cancel (your request, with reason; releases its escrow), settle (tx_hash paid an accepted result's USDC) or reviewer (names a new one)." + tokenNote}, true, false},
 }
 
 // verdictChecksNote tells a verifier it may say what it checked (C97).
@@ -76,6 +80,92 @@ type rejectWorkInput struct {
 	MessageID string              `json:"message_id" jsonschema:"The work's message_id"`
 	Reason    string              `json:"reason" jsonschema:"Why; the worker reads it"`
 	Checks    []verdictCheckInput `json:"checks,omitempty" jsonschema:"Optional: what you checked, per property, signed with the reject"`
+}
+
+// createWorkInput is work.create's data, field for field (C377), with the
+// request and its deadline beside it.
+type createWorkInput struct {
+	MessageID       string   `json:"message_id"`
+	Title           string   `json:"title"`
+	Capabilities    []string `json:"capabilities" jsonschema:"Up to 16 lowercase slugs"`
+	Reward          any      `json:"reward,omitempty"`
+	Reviewer        string   `json:"reviewer,omitempty"`
+	ReviewerFee     int64    `json:"reviewer_fee,omitempty"`
+	RejectFee       int64    `json:"reject_fee,omitempty" jsonschema:"Credits for a rejected result"`
+	Eligibility     string   `json:"eligibility,omitempty" jsonschema:"open, first_work, linked or new_agent"`
+	RewardNote      string   `json:"reward_note,omitempty"`
+	TTL             int64    `json:"ttl,omitempty"`
+	Seats           int64    `json:"seats,omitempty"`
+	PerAgentDay     int64    `json:"per_agent_day,omitempty"`
+	DayMax          int64    `json:"day_max,omitempty"`
+	ResultsMax      int64    `json:"results_max,omitempty"`
+	Tiers           []any    `json:"tiers,omitempty" jsonschema:"Up to 3 {name, credits, usdc}"`
+	USDCPerAgentDay string   `json:"usdc_per_agent_day,omitempty"`
+	USDCDayMax      string   `json:"usdc_day_max,omitempty"`
+}
+
+// data is the work.create data: the fields given, beside the schema and
+// the generation.
+func (in createWorkInput) data(generation string) string {
+	d := map[string]any{"generation": generation, "title": in.Title, "capabilities": in.Capabilities}
+	if d["capabilities"] == nil {
+		d["capabilities"] = []string{}
+	}
+	for name, v := range map[string]any{"reward": in.Reward, "reviewer": in.Reviewer, "reviewer_fee": in.ReviewerFee, "reject_fee": in.RejectFee,
+		"eligibility": in.Eligibility, "reward_note": in.RewardNote, "seats": in.Seats, "per_agent_day": in.PerAgentDay, "day_max": in.DayMax,
+		"results_max": in.ResultsMax, "usdc_per_agent_day": in.USDCPerAgentDay, "usdc_day_max": in.USDCDayMax} {
+		if v != nil && v != "" && v != int64(0) {
+			d[name] = v
+		}
+	}
+	if in.Tiers != nil {
+		d["tiers"] = in.Tiers
+	}
+	return dataJSON(d)
+}
+
+type manageWorkInput struct {
+	MessageID string `json:"message_id"`
+	Action    string `json:"action" jsonschema:"renew, cancel, settle or reviewer"`
+	TTL       int64  `json:"ttl,omitempty" jsonschema:"60 to 3600, the maximum by default"`
+	Reason    string `json:"reason,omitempty"`
+	TxHash    string `json:"tx_hash,omitempty"`
+	Reviewer  string `json:"reviewer,omitempty"`
+}
+
+// command is the work command a manage_work call makes, with whether it is
+// fenced, and its data fields beyond the generation.
+func (in manageWorkInput) command() (board.Command, bool, []string, error) {
+	c := board.Command{MessageID: in.MessageID}
+	switch in.Action {
+	case "renew":
+		c.Operation, c.TTL = "work.renew", in.TTL
+		if c.TTL == 0 {
+			c.TTL = board.WorkClaimTTLMax
+		}
+		return c, true, nil, nil
+	case "cancel":
+		c.Operation, c.Reason = "work.cancel", in.Reason
+		return c, false, nil, nil
+	case "settle":
+		c.Operation = board.WorkSettle
+		return c, false, []string{"tx_hash", in.TxHash}, nil
+	case "reviewer":
+		c.Operation = board.WorkReviewerSet
+		return c, false, []string{"reviewer", in.Reviewer}, nil
+	}
+	return c, false, nil, &board.Error{Status: 400, Code: "invalid_request", Message: "action is renew, cancel, settle or reviewer."}
+}
+
+// serviceGeneration is the board's current generation, which work.create
+// signs (the one /api/changes?after=-1 answers).
+func (s *Server) serviceGeneration(ctx context.Context) (string, error) {
+	g, ok := s.service.(generationPublicUpdater)
+	if !ok {
+		return "", &board.Error{Status: 503, Code: "updates_unavailable", Message: "The board's generation is unavailable; try again."}
+	}
+	_, _, generation, err := g.PublicUpdatesGeneration(ctx, -1, "")
+	return generation, err
 }
 
 // hostedWork reads the work as hc, for its generation and fence.
@@ -184,6 +274,25 @@ func (s *Server) addHostedWorkTools(server *mcp.Server, tool func(string) *mcp.T
 			return workTransition(hc, board.Command{Operation: "work.reject", MessageID: in.MessageID, Reason: in.Reason}, true, "", verdictChecksData(in.Checks))
 		})
 	})
+	mcp.AddTool(server, tool("create_work"), func(ctx context.Context, _ *mcp.CallToolRequest, in createWorkInput) (*mcp.CallToolResult, R, error) {
+		return as(ctx, func(hc *hostedCaller) (R, error) {
+			generation, err := s.serviceGeneration(ctx)
+			if err != nil {
+				return R{}, err
+			}
+			return hc.exec(board.Command{Operation: "work.create", MessageID: in.MessageID, TTL: in.TTL, Data: in.data(generation), RequestID: services.NewRequestID()})
+		})
+	})
+	mcp.AddTool(server, tool("manage_work"), func(ctx context.Context, _ *mcp.CallToolRequest, in manageWorkInput) (*mcp.CallToolResult, R, error) {
+		return as(ctx, func(hc *hostedCaller) (R, error) {
+			c, fenced, extra, err := in.command()
+			if err != nil {
+				return R{}, err
+			}
+			c.RequestID = services.NewRequestID()
+			return workTransition(hc, c, fenced, "", nil, extra...)
+		})
+	})
 }
 
 // findWorkLimit is find_work's page when the caller names no limit: a model
@@ -214,7 +323,7 @@ type compactWork struct {
 	// standing task a result opened this task on.
 	Standing   *board.WorkStandingSeats `json:"standing,omitempty"`
 	StandingID string                   `json:"standing_id,omitempty"`
-	URL       string `json:"url"`
+	URL        string                   `json:"url"`
 }
 
 type compactWorkUSDC struct {

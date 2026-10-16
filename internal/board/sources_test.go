@@ -477,6 +477,7 @@ func generatedSections(t *testing.T) map[string]string {
 		"ranking-params":    rankingParamsProtocolSection(),
 		"directory-ranking": directoryRankingProtocolSection(),
 		"read-limits":       readLimitsProtocolSection(),
+		"data-fields":       dataFieldsProtocolSection(), // dataspec_test.go
 		// Inside its list item, like free-hooks.
 		"anchor-timeline": anchorTimelineProtocolSection(),
 		// Inside a list item: indented, and the end marker keeps its indent.

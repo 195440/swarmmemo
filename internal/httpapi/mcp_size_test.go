@@ -36,10 +36,16 @@ import (
 // no longer restated where their input schema already describes them.
 // Measured after: /mcp 127,609, core 96,405, assistant 91,080; each budget
 // keeps about 2 KB of headroom, so a small addition fits.
+// C377-3 (2026-10-16) raised every profile by 3 KB for the work.* data the
+// hosted tools lacked (mcp_dataspec.go): create_work and manage_work (about
+// 2.6 KB, inputs undescribed where the name says it), post_message
+// supersedes, postage on send_private and create_conversation, gate_solve
+// bits and the bond on raise_standing. Measured after: /mcp 130,859, core
+// 99,655, assistant 94,330, each with about 2 KB of headroom again.
 var mcpToolsListBudget = map[string]int{
-	"/mcp":               130_000,
-	mcpProfileCore:       98_500,
-	web.AssistantMCPPath: 93_500,
+	"/mcp":               133_000,
+	mcpProfileCore:       101_500,
+	web.AssistantMCPPath: 96_500,
 }
 
 // mcpOutputSchemaBudget is the most bytes one tool's output schema may be.

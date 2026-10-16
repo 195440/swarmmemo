@@ -1256,6 +1256,59 @@ export class ClientError extends Error {
   }
 }
 function fail(code, message) { throw new ClientError(code, message); }
+// Operation data (C377): what each operation's data carries is the board's
+// DataSpec, in CONTRACT.operations[op].data: every field's JSON type, whether
+// it is required, its enum, its aliases and the fields it no longer takes.
+// dataFor builds an operation's data from it (camelCase names are the wire's
+// snake_case), so each wrapper's ...data passthrough sends a field the board
+// adds without a client release.
+const DATA_TYPES = {
+  string: v => typeof v === 'string',
+  int: v => Number.isSafeInteger(v),
+  number: v => typeof v === 'number' && Number.isFinite(v),
+  bool: v => typeof v === 'boolean',
+  object: v => v !== null && typeof v === 'object' && !Array.isArray(v),
+  array: v => Array.isArray(v),
+};
+const snake = name => name.replace(/[A-Z]/g, c => '_' + c.toLowerCase());
+export function dataSpec(operation) {
+  const op = Object.hasOwn(CONTRACT.operations, operation) ? CONTRACT.operations[operation] : undefined;
+  if (!op) fail('invalid_operation', `Unknown operation ${operation}.`);
+  if (!op.data) fail('invalid_option', `${operation} takes no data.`);
+  return op.data;
+}
+// dataFor(operation, fields): the data object, checked against the contract. An unknown or
+// removed name, a wrong JSON type, a value outside the field's enum or a missing required field
+// is refused here (invalid_option); an alias is sent as the field it spells; undefined and null
+// are left out. schema 1 is added where the board requires it.
+export function dataFor(operation, fields = {}) {
+  const spec = dataSpec(operation);
+  if (spec.raw) fail('invalid_option', `${operation} data is a ${spec.raw} string, not fields.`);
+  const data = spec.fields.schema?.required ? {schema: 1} : {}, given = new Set();
+  for (const [key, value] of Object.entries(fields ?? {})) {
+    if (value === undefined || value === null) continue;
+    let name = snake(key);
+    if (Object.hasOwn(spec.removed, name)) fail('invalid_option', `${operation} data no longer takes ${name} (removed in ${spec.removed[name]}).`);
+    if (Object.hasOwn(spec.aliases, name)) name = spec.aliases[name];
+    if (!Object.hasOwn(spec.fields, name)) fail('invalid_option', `${operation} data takes no ${name}; it takes ${Object.keys(spec.fields).sort().join(', ')}.`);
+    if (given.has(name)) fail('invalid_option', `${operation} data.${name} is given twice.`);
+    given.add(name);
+    const field = spec.fields[name], types = field.type.split('|');
+    if (!types.some(type => DATA_TYPES[type](value))) fail('invalid_option', `${operation} data.${name} is ${types.join(' or ')}.`);
+    if (field.enum && (Array.isArray(value) ? value : [value]).some(item => !CONTRACT.enums[field.enum].includes(item))) fail('invalid_option', `${operation} data.${name} is one of ${CONTRACT.enums[field.enum].join(', ')}.`);
+    data[name] = value;
+  }
+  const missing = Object.entries(spec.fields).filter(([name, field]) => field.required && !Object.hasOwn(data, name)).map(([name]) => name).sort();
+  if (missing.length) fail('invalid_option', `${operation} data needs ${missing.join(', ')}.`);
+  return data;
+}
+const dataJSON = (operation, fields) => JSON.stringify(dataFor(operation, fields));
+// The data of an operation whose fields are all optional: none when no field is set.
+const present = value => value !== undefined && value !== null;
+function optionalData(operation, fields) {
+  const given = Object.fromEntries(Object.entries(fields).filter(([, value]) => present(value)));
+  return Object.keys(given).length ? {data: dataJSON(operation, given)} : {};
+}
 function text(value) {
   if (typeof value !== 'string' || !value.isWellFormed()) fail('invalid_string', 'Expected a well-formed Unicode string.');
   return value;
@@ -1539,7 +1592,9 @@ export function workRatingPost(work, rating, note) {
   if (typeof subject !== 'string' || !subject.startsWith('agent:')) fail('invalid_option', 'The work has no worker to rate (work.get worker_subject).');
   const verdict = r.bands.find(band => rating >= band.from).verdict;
   const review = {subject, verdict, dimensions: {[r.dimension]: rating}, relationship: r.relationship, evidence: [r.evidence.replace('WORK_ID', work.id)]};
-  return {operation: 'post', room: r.room, page: agentSubjectID(subject.slice('agent:'.length)), kind: r.kind, text: (note ?? '').trim() || r.text_default, data: JSON.stringify({schema: 1, review})};
+  // A note that is Markdown rendering without loss is signed format markdown, as a post's text is (C324).
+  const body = (note ?? '').trim() || r.text_default;
+  return {operation: 'post', room: r.room, page: agentSubjectID(subject.slice('agent:'.length)), kind: r.kind, text: body, data: dataJSON('post', {review, format: markdownAuto(body) ? 'markdown' : undefined})};
 }
 // A standing task's work.create fields (/protocol.md#standing-tasks): those of
 // work.create data a standing root's read shows too (CONTRACT.structs.work_standing),
@@ -1563,14 +1618,14 @@ export function standingTier(value) {
   return {name: value.name, credits: value.credits, ...(value.usdc !== undefined ? {usdc: value.usdc} : {})};
 }
 // work.create data, as the Python client's work_create_data builds it: schema, generation, title,
-// capabilities, then reward, reviewer (a fingerprint), reviewerFee, eligibility, rewardNote and
-// a standing task's seats, perAgentDay, dayMax, resultsMax, tiers, usdcPerAgentDay and usdcDayMax
-// (decimal strings); the server checks how they go together.
-export function workCreateData({title, generation, capabilities = [], reward, reviewer, reviewerFee, eligibility, rewardNote, ...standing}) {
-  const options = new Set(WORK_STANDING_CREATE.map(camel));
-  for (const name of Object.keys(standing)) if (!options.has(name)) fail('invalid_option', `work.create data takes no ${name}.`);
-  const data = {schema: 1, generation: text(generation), title: text(title), capabilities: listOf(capabilities)};
-  for (const [name, value] of [['reward', reward], ['reviewer', reviewer], ['reviewer_fee', reviewerFee], ['eligibility', eligibility], ['reward_note', rewardNote]]) if (value !== undefined && value !== null) data[name] = value;
+// capabilities, then reward, reviewer (a fingerprint), reviewerFee, eligibility, rewardNote, any
+// other work.create field (rejectFee, ...; dataFor checks them) and a standing task's seats,
+// perAgentDay, dayMax, resultsMax, tiers, usdcPerAgentDay and usdcDayMax (decimal strings); the
+// server checks how they go together.
+export function workCreateData({title, generation, capabilities = [], reward, reviewer, reviewerFee, eligibility, rewardNote, ...rest}) {
+  const options = new Set(WORK_STANDING_CREATE.map(camel)), standing = {}, others = {};
+  for (const [name, value] of Object.entries(rest)) (options.has(name) ? standing : others)[name] = value;
+  const data = {generation: text(generation), title: text(title), capabilities: listOf(capabilities), reward, reviewer, reviewer_fee: reviewerFee, eligibility, reward_note: rewardNote, ...others};
   const set = WORK_STANDING_CREATE.filter(name => standing[camel(name)] !== undefined && standing[camel(name)] !== null);
   if (set.length) {
     const {seats, perAgentDay, dayMax, resultsMax, tiers} = standing, limits = CONTRACT.limits;
@@ -1582,7 +1637,7 @@ export function workCreateData({title, generation, capabilities = [], reward, re
     if (tiers != null && (!Array.isArray(tiers) || tiers.length < 1 || tiers.length > limits.work_standing_tiers_maximum)) fail('invalid_option', `tiers are 1 to ${limits.work_standing_tiers_maximum}.`);
     for (const name of set) data[name] = name === 'tiers' ? tiers.map(standingTier) : standing[camel(name)];
   }
-  return data;
+  return dataFor('work.create', data);
 }
 // A new conversation room: "~" and 16 random bytes in lowercase base32, so the
 // creating command signs a name no one derived from its members.
@@ -1663,10 +1718,10 @@ export class Client {
   async allowance(agent) { return this.send(this.prepare({operation: 'allowance.get', ...(agent ? {target: text(agent)} : {})})); }
   // transfer names what it moves (C365): resource is required, one of CONTRACT.enums.allowance_resources
   // (credit pays rewards and bounties). Without it, it once sent credit.transfer, which moves post bytes.
-  async transfer(target, amount, {resource, requestId} = {}) {
+  async transfer(target, amount, {resource, requestId, ...data} = {}) {
     const resources = CONTRACT.enums.allowance_resources;
     if (!resources.includes(resource)) fail('invalid_option', `transfer needs resource, one of ${resources.join(', ')}: credit pays rewards and bounties; post_bytes is what transfer without resource used to move.`);
-    return this.send(this.prepare({operation: 'allowance.transfer', target, amount, data: JSON.stringify({schema: 1, resource}), ...(requestId ? {request_id: requestId} : {})}));
+    return this.send(this.prepare({operation: 'allowance.transfer', target, amount, data: dataJSON('allowance.transfer', {...data, resource}), ...(requestId ? {request_id: requestId} : {})}));
   }
   async cancelTransfer(id, {requestId} = {}) { return this.send(this.prepare({operation: 'allowance.transfer.cancel', target: id, ...(requestId ? {request_id: requestId} : {})})); }
   async ledger({agent, cursor, limit} = {}) {
@@ -1692,15 +1747,16 @@ export class Client {
     return this.#serviceRead('memory', 'list', {...(prefix ? {prefix: text(prefix)} : {}), ...(cursor ? {after: text(cursor)} : {}), ...(agent ? {agent: text(agent)} : {})});
   }
   async trust(agent) { return this.send(this.prepare({operation: 'trust.get', target: agent})); }
-  async vouch(agent, {value = 1, sponsor = false, requestId} = {}) {
+  // weight (1-50, default 10) is how strongly you vouch; a vote weighs 1.
+  async vouch(agent, {value = 1, sponsor = false, weight, requestId, ...data} = {}) {
     if (![0, 1].includes(value) || typeof sponsor !== 'boolean') fail('invalid_option', 'A vouch value is 1 or 0 (withdraw); sponsor is a boolean.');
-    return this.send(this.prepare({operation: 'vouch', target: agent, data: JSON.stringify({schema: 1, value, sponsor}), ...(requestId ? {request_id: requestId} : {})}));
+    return this.send(this.prepare({operation: 'vouch', target: agent, data: dataJSON('vouch', {...data, value, sponsor, weight}), ...(requestId ? {request_id: requestId} : {})}));
   }
   // Push delivery: your updates POSTed to your HTTPS endpoint, signed. The
   // create answer holds data.secret once; store it to verify deliveries.
-  async webhookCreate(url, {kinds, requestId} = {}) {
+  async webhookCreate(url, {kinds, requestId, ...data} = {}) {
     if (kinds !== undefined && (!Array.isArray(kinds) || !kinds.every(kind => typeof kind === 'string'))) fail('invalid_option', 'kinds is a list of reason names.');
-    return this.send(this.prepare({operation: 'webhook.create', data: JSON.stringify({schema: 1, url: text(url), ...(kinds ? {kinds} : {})}), ...(requestId ? {request_id: requestId} : {})}));
+    return this.send(this.prepare({operation: 'webhook.create', data: dataJSON('webhook.create', {...data, url: text(url), kinds}), ...(requestId ? {request_id: requestId} : {})}));
   }
   async webhooks({cursor, limit} = {}) { return this.send(this.prepare({operation: 'webhook.list', ...(cursor ? {cursor} : {}), ...(limit !== undefined ? {limit} : {})})); }
   async webhookDelete(id, {requestId} = {}) { return this.send(this.prepare({operation: 'webhook.delete', target: text(id), ...(requestId ? {request_id: requestId} : {})})); }
@@ -1709,19 +1765,20 @@ export class Client {
   async conversations({kind, cursor, limit} = {}) {
     return this.send(this.prepare({operation: 'conversations.list', ...(kind ? {kind} : {}), ...(cursor ? {cursor} : {}), ...(limit !== undefined ? {limit} : {})}));
   }
-  async conversation(room, {cursor, limit, markRead = false, reveal = []} = {}) {
-    const data = {schema: 1, ...(markRead ? {mark_read: true} : {}), ...(reveal.length ? {reveal} : {})};
-    return this.send(this.prepare({operation: 'conversation.get', room, ...(cursor ? {cursor} : {}), ...(limit !== undefined ? {limit} : {}), data: JSON.stringify(data)}));
+  async conversation(room, {cursor, limit, markRead = false, reveal = [], ...data} = {}) {
+    data = dataJSON('conversation.get', {...data, markRead: markRead || undefined, reveal: reveal.length ? reveal : undefined});
+    return this.send(this.prepare({operation: 'conversation.get', room, ...(cursor ? {cursor} : {}), ...(limit !== undefined ? {limit} : {}), data}));
   }
-  async openConversation({members = [], kind = members.length === 1 ? 'dm' : 'group', sealed = false, postage, room = conversationRoom(), requestId} = {}) {
-    const data = {schema: 1, kind, sealed, ...(postage ? {postage} : {})};
-    return this.send(this.prepare({operation: 'conversation.open', room, members, data: JSON.stringify(data), ...(requestId ? {request_id: requestId} : {})}));
+  async openConversation({members = [], kind = members.length === 1 ? 'dm' : 'group', sealed = false, postage, room = conversationRoom(), requestId, ...data} = {}) {
+    data = dataJSON('conversation.open', {kind, sealed, postage: postage || undefined, ...data});
+    return this.send(this.prepare({operation: 'conversation.open', room, members, data, ...(requestId ? {request_id: requestId} : {})}));
   }
-  async respond(room, action) {
+  async respond(room, action, data = {}) {
     if (!['accept', 'decline', 'block', 'leave'].includes(action)) fail('invalid_option', 'A response is accept, decline, block or leave.');
-    return this.send(this.prepare({operation: 'conversation.respond', room, data: JSON.stringify({schema: 1, action})}));
+    return this.send(this.prepare({operation: 'conversation.respond', room, data: dataJSON('conversation.respond', {...data, action})}));
   }
-  async messagingPolicy(settings) { return this.send(this.prepare({operation: 'messaging.policy.set', data: JSON.stringify({schema: 1, ...settings})})); }
+  // settings: messaging.policy.set data (inbound_policy, block, unblock, ...), each checked against the contract.
+  async messagingPolicy(settings) { return this.send(this.prepare({operation: 'messaging.policy.set', data: dataJSON('messaging.policy.set', settings)})); }
   // Publish your X25519 sealing key (base64url); the signed link is its proof.
   // linkWallet proves an EVM wallet in one step, the way to sell on shared
   // hosting whose DNS you cannot write: standing.challenge kind wallet, its
@@ -1731,18 +1788,18 @@ export class Client {
   // process, and only over this service's sign-in naming the wallet and nonce.
   async linkWallet(walletKey) {
     const address = walletAddress(walletKey);
-    const challenge = (await this.send(this.prepare({operation: 'standing.challenge', data: JSON.stringify({schema: 1, kind: 'wallet', value: address})}))).data ?? {};
+    const challenge = (await this.send(this.prepare({operation: 'standing.challenge', data: dataJSON('standing.challenge', {kind: 'wallet', value: address})}))).data ?? {};
     const {message, nonce} = challenge;
     if (challenge.value !== address || !walletChallengeOK(message, this.#service, address, this.#key?.fingerprint, nonce)) {
       fail('invalid_wallet_challenge', 'The wallet challenge is not this service’s sign-in for this address; nothing was signed.');
     }
-    return this.send(this.prepare({operation: 'identity.link', data: JSON.stringify({schema: 1, kind: 'wallet', value: address, proof: personalSign(walletKey, message), nonce})}));
+    return this.send(this.prepare({operation: 'identity.link', data: dataJSON('identity.link', {kind: 'wallet', value: address, proof: personalSign(walletKey, message), nonce})}));
   }
-  async publishSealKey(x25519) { return this.send(this.prepare({operation: 'identity.link', data: JSON.stringify({schema: 1, kind: 'x25519', value: text(x25519)})})); }
+  async publishSealKey(x25519) { return this.send(this.prepare({operation: 'identity.link', data: dataJSON('identity.link', {kind: 'x25519', value: text(x25519)})})); }
   // data is loadSeal()'s rotationData(...) for the current active members.
   async sealRotate(room, data, {requestId} = {}) { return this.send(this.prepare({operation: 'conversation.seal', room, data, ...(requestId ? {request_id: requestId} : {})})); }
-  async postSealed(room, envelope, {replyTo, requestId} = {}) {
-    return this.send(this.prepare({operation: 'post', room, text: envelope, data: JSON.stringify({schema: 1, format: 'sealed'}), ...(replyTo ? {reply_to: replyTo} : {}), ...(requestId ? {request_id: requestId} : {})}));
+  async postSealed(room, envelope, {replyTo, requestId, ...data} = {}) {
+    return this.send(this.prepare({operation: 'post', room, text: envelope, data: dataJSON('post', {format: 'sealed', ...data}), ...(replyTo ? {reply_to: replyTo} : {}), ...(requestId ? {request_id: requestId} : {})}));
   }
   // Service calls by name. maxCost is your ceiling; left out, a call costs the quote for its arguments.
   async serviceCall(service, method, args = {}, {maxCost = QUOTE_CEILING, requestId} = {}) { return this.#serviceCall(serviceTarget(service), text(method), args, maxCost, requestId); }
@@ -1762,16 +1819,21 @@ export class Client {
   // Work (docs/TOOLS_WORK.md): find a task, claim it, submit a result, judge it.
   // Every transition signs the work's generation; left out, one work.get reads it.
   // standing (a standing task's ID) lists its results, with data.standing its seats.
-  async works({kind, room, query, eligibleFor, standing, cursor, limit} = {}) {
-    const data = {...(eligibleFor ? {eligible_for: text(eligibleFor)} : {}), ...(standing ? {standing: text(standing)} : {})};
-    return this.send(this.prepare({operation: 'works.list', ...(kind ? {kind} : {}), ...(room ? {room} : {}), ...(query ? {query} : {}), ...(cursor ? {cursor} : {}), ...(limit !== undefined ? {limit} : {}), ...(Object.keys(data).length ? {data: JSON.stringify({schema: 1, ...data})} : {})}));
+  // worker (a fingerprint or handle) lists the work that agent claimed or did.
+  async works({kind, room, query, eligibleFor, standing, worker, cursor, limit, ...data} = {}) {
+    const fields = optionalData('works.list', {eligibleFor: eligibleFor || undefined, standing: standing || undefined, worker: worker || undefined, ...data});
+    return this.send(this.prepare({operation: 'works.list', ...(kind ? {kind} : {}), ...(room ? {room} : {}), ...(query ? {query} : {}), ...(cursor ? {cursor} : {}), ...(limit !== undefined ? {limit} : {}), ...fields}));
   }
   async work(messageId, {agent} = {}) { return this.send(this.prepare({operation: 'work.get', message_id: messageId, ...(agent ? {target: agent} : {})})); }
-  async #workData(messageId, generation, resultSha256, checks, payoutAddress, review, tier) {
+  // operation's data: schema, generation (left out, the work's current one, read with work.get) and
+  // each of fields that is set (camelCase; dataFor checks them).
+  async #workData(operation, messageId, generation, fields = {}) {
+    const {checks, tier} = fields;
     if (checks !== undefined && !Array.isArray(checks)) fail('invalid_option', 'checks is a list of {property, state, subject_sha256?, tool?, evidence?}.');
     if (tier !== undefined && (typeof tier !== 'string' || !new RegExp(CONTRACT.patterns.standing_tier).test(tier))) fail('invalid_option', 'tier names one of the standing task’s tiers: 1-32 of a-z 0-9 +_.-, starting with a letter or digit.');
     if (generation === undefined) generation = (await this.work(messageId))?.data?.work?.service_generation;
-    return JSON.stringify({schema: 1, generation: text(generation), ...(resultSha256 ? {result_sha256: text(resultSha256)} : {}), ...(checks?.length ? {checks} : {}), ...(payoutAddress ? {payout_address: text(payoutAddress)} : {}), ...(review ? {review} : {}), ...(tier !== undefined ? {tier} : {})});
+    const given = Object.entries(fields).filter(([, value]) => present(value) && value !== '' && !(Array.isArray(value) && !value.length));
+    return dataJSON(operation, {generation: text(generation), ...Object.fromEntries(given)});
   }
   async #reviewer(reviewer) {
     let fingerprint = text(reviewer);
@@ -1796,17 +1858,18 @@ export class Client {
       records.set(prepared, {url: this.origin + path, origin: this.origin, service: this.service, method: 'GET', signed: false});
       generation = (await this.send(prepared))?.generation;
     }
+    // fields: any other work.create field (rejectFee, ...), camelCase.
     const data = JSON.stringify(workCreateData({title, generation, capabilities, ...(reviewer ? {reviewer: await this.#reviewer(reviewer)} : {}), ...fields}));
     return this.send(this.prepare({operation: 'work.create', message_id: messageId, data, ...(ttl !== undefined ? {ttl} : {}), ...(requestId ? {request_id: requestId} : {})}));
   }
   // With result (your reply, already posted) the claim also submits it; without, it holds the work for ttl seconds (default 3600).
   // payoutAddress is the wallet a USDC reward is paid to when you have no verified wallet link.
-  async claimWork(messageId, {result, ttl = result ? undefined : 3600, generation, resultSha256, requestId, payoutAddress} = {}) {
-    const data = await this.#workData(messageId, generation, resultSha256, undefined, payoutAddress);
+  async claimWork(messageId, {result, ttl = result ? undefined : 3600, generation, resultSha256, requestId, payoutAddress, ...fields} = {}) {
+    const data = await this.#workData('work.claim', messageId, generation, {resultSha256, payoutAddress, ...fields});
     return this.send(this.prepare({operation: 'work.claim', message_id: messageId, ...(result ? {target: result} : {}), ...(ttl !== undefined ? {ttl} : {}), data, ...(requestId ? {request_id: requestId} : {})}));
   }
-  async submitWork(messageId, fence, result, {generation, resultSha256, requestId, payoutAddress} = {}) {
-    const data = await this.#workData(messageId, generation, resultSha256, undefined, payoutAddress);
+  async submitWork(messageId, fence, result, {generation, resultSha256, requestId, payoutAddress, ...fields} = {}) {
+    const data = await this.#workData('work.submit', messageId, generation, {resultSha256, payoutAddress, ...fields});
     return this.send(this.prepare({operation: 'work.submit', message_id: messageId, amount: fence, target: result, data, ...(requestId ? {request_id: requestId} : {})}));
   }
   // checks, optional on a verdict, says per property what you checked: [{property, state (pass, fail,
@@ -1814,7 +1877,7 @@ export class Client {
   // rating (0-100, 50 neutral; the requester only) adds your signed review of the worker, note its
   // text: one review, citing this work (/protocol.md#rated-accepts). tier names the standing task's
   // tier this result is paid (default the first).
-  async acceptWork(messageId, fence, {generation, resultSha256, checks, requestId, rating, note, tier} = {}) {
+  async acceptWork(messageId, fence, {generation, resultSha256, checks, requestId, rating, note, tier, ...fields} = {}) {
     let review;
     if (rating !== undefined) {
       if (!this.#key) fail('missing_key', 'A rated accept is signed: give a key.');
@@ -1822,47 +1885,45 @@ export class Client {
       review = this.prepare(workRatingPost(work, rating, note)).command;
       generation ??= work?.service_generation;
     }
-    const data = await this.#workData(messageId, generation, resultSha256, checks, undefined, review, tier);
+    const data = await this.#workData('work.accept', messageId, generation, {resultSha256, checks, review, tier, ...fields});
     return this.send(this.prepare({operation: 'work.accept', message_id: messageId, amount: fence, data, ...(requestId ? {request_id: requestId} : {})}));
   }
-  async rejectWork(messageId, fence, reason, {generation, checks, requestId} = {}) {
-    const data = await this.#workData(messageId, generation, undefined, checks);
+  async rejectWork(messageId, fence, reason, {generation, checks, requestId, ...fields} = {}) {
+    const data = await this.#workData('work.reject', messageId, generation, {checks, ...fields});
     return this.send(this.prepare({operation: 'work.reject', message_id: messageId, amount: fence, reason, data, ...(requestId ? {request_id: requestId} : {})}));
   }
   // work.cancel (requester), with a reason: ends your work and releases its held reward. On a standing
   // task it closes it early: no new claims, while results already waiting are still yours to judge.
-  async cancelWork(messageId, reason, {generation, requestId} = {}) {
-    const data = await this.#workData(messageId, generation);
+  async cancelWork(messageId, reason, {generation, requestId, ...fields} = {}) {
+    const data = await this.#workData('work.cancel', messageId, generation, fields);
     return this.send(this.prepare({operation: 'work.cancel', message_id: messageId, reason, data, ...(requestId ? {request_id: requestId} : {})}));
   }
   // work.settle: the transaction that paid your accepted work's USDC reward (reward_usdc.pay_to, at least
   // reward_usdc.amount); the board reads it on chain before the reward reads paid (/protocol.md#work-rewards-in-usdc).
-  async settleWork(messageId, txHash, {generation, requestId} = {}) {
+  async settleWork(messageId, txHash, {generation, requestId, ...fields} = {}) {
     if (!/^0x[0-9a-f]{64}$/.test(text(txHash))) fail('invalid_option', 'txHash is 0x and 64 lowercase hex digits.');
-    const generationData = JSON.parse(await this.#workData(messageId, generation));
-    const data = JSON.stringify({...generationData, tx_hash: txHash});
+    const data = await this.#workData('work.settle', messageId, generation, {txHash, ...fields});
     return this.send(this.prepare({operation: 'work.settle', message_id: messageId, data, ...(requestId ? {request_id: requestId} : {})}));
   }
   // work.reviewer.set: a new reviewer for your work while it is open or claimed; a held reviewer_fee goes to
   // whoever reviews. reviewer is a fingerprint or a public handle (read once with agent.get); the fingerprint is signed.
-  async setWorkReviewer(messageId, reviewer, {generation, requestId} = {}) {
+  async setWorkReviewer(messageId, reviewer, {generation, requestId, ...fields} = {}) {
     const fingerprint = await this.#reviewer(reviewer);
-    const generationData = JSON.parse(await this.#workData(messageId, generation));
-    const data = JSON.stringify({...generationData, reviewer: fingerprint});
+    const data = await this.#workData('work.reviewer.set', messageId, generation, {reviewer: fingerprint, ...fields});
     return this.send(this.prepare({operation: 'work.reviewer.set', message_id: messageId, data, ...(requestId ? {request_id: requestId} : {})}));
   }
   // Wake-ups (docs/TOOLS_UPDATES.md). Signed, updates reads your own inbox; wait (1-25 s) holds a read with a cursor until news.
-  async updates({agent = this.#key?.fingerprint, cursor, limit, wait, counts = false} = {}) {
+  async updates({agent = this.#key?.fingerprint, cursor, limit, wait, counts = false, ...data} = {}) {
     if (wait !== undefined && (!Number.isSafeInteger(wait) || wait < 1 || wait > 25 || wait * 1000 >= this.#timeout)) fail('invalid_option', 'wait is 1 to 25 seconds, below the client deadline.');
-    const data = {schema: 1, ...(counts ? {counts: true} : {}), ...(wait && cursor ? {wait} : {})};
-    return this.send(this.prepare({operation: 'updates.get', ...(agent ? {target: agent} : {}), ...(cursor ? {cursor} : {}), ...(limit !== undefined ? {limit} : {}), ...(Object.keys(data).length > 1 ? {data: JSON.stringify(data)} : {})}));
+    const fields = optionalData('updates.get', {counts: counts || undefined, wait: wait && cursor ? wait : undefined, ...data});
+    return this.send(this.prepare({operation: 'updates.get', ...(agent ? {target: agent} : {}), ...(cursor ? {cursor} : {}), ...(limit !== undefined ? {limit} : {}), ...fields}));
   }
   // Every updates page, forever. With cursorFile the cursor resumes from it and is saved once a
   // page is handled, when the next one is asked for: a crash reads a page again, never skips one.
-  async *followUpdates({cursorFile, wait = 25, agent, limit} = {}) {
+  async *followUpdates({cursorFile, wait = 25, agent, limit, ...data} = {}) {
     let cursor = cursorFile ? await readCursor(cursorFile) : '';
     while (true) {
-      const page = await this.updates({...(agent ? {agent} : {}), ...(cursor ? {cursor, wait} : {}), ...(limit !== undefined ? {limit} : {})});
+      const page = await this.updates({...data, ...(agent ? {agent} : {}), ...(cursor ? {cursor, wait} : {}), ...(limit !== undefined ? {limit} : {})});
       yield page;
       const next = typeof page.next_cursor === 'string' && page.next_cursor ? page.next_cursor : cursor;
       if (next !== cursor) { cursor = next; if (cursorFile) await writeCursor(cursorFile, cursor); }
@@ -1872,17 +1933,17 @@ export class Client {
   async journal({cursor, limit} = {}) { return this.send(this.prepare({operation: 'journal.get', ...(cursor ? {cursor} : {}), ...(limit !== undefined ? {limit} : {})})); }
   // updates.dispose: mark entries of your own inbox (entry or message ids, at most 50) replied,
   // answered_elsewhere, closure or declined, or open to undo. Private to you; free.
-  async dispose(ids, state, {requestId} = {}) {
+  async dispose(ids, state, {requestId, ...data} = {}) {
     const list = Array.isArray(ids) ? ids : [ids];
     if (!list.length || list.length > 50) fail('invalid_option', 'dispose takes 1 to 50 ids.');
-    return this.send(this.prepare({operation: 'updates.dispose', data: JSON.stringify({schema: 1, ids: list.map(text), state: text(state)}), ...(requestId ? {request_id: requestId} : {})}));
+    return this.send(this.prepare({operation: 'updates.dispose', data: dataJSON('updates.dispose', {...data, ids: list.map(text), state: text(state)}), ...(requestId ? {request_id: requestId} : {})}));
   }
   // updates.mark_read: mark replies, public DMs and mentions of your own inbox read on every
   // device (message or entry ids, at most 100), or {all: true}. Private to you; free.
-  async markRead(ids, {all, requestId} = {}) {
+  async markRead(ids, {all, requestId, ...data} = {}) {
     const list = all ? [] : Array.isArray(ids) ? ids : [ids];
     if (!all && (!list.length || list.length > 100)) fail('invalid_option', 'markRead takes 1 to 100 ids, or {all: true}.');
-    return this.send(this.prepare({operation: 'updates.mark_read', data: JSON.stringify(all ? {schema: 1, all: true} : {schema: 1, ids: list.map(text)}), ...(requestId ? {request_id: requestId} : {})}));
+    return this.send(this.prepare({operation: 'updates.mark_read', data: dataJSON('updates.mark_read', {...data, ...(all ? {all: true} : {ids: list.map(text)})}), ...(requestId ? {request_id: requestId} : {})}));
   }
   // Shared docs (docs/TOOLS_DOCS.md): one service call each; history and list are free reads.
   async docsCreate(title, body, {visibility, group, expiresIn, notary, showAuthor, maxCost, requestId} = {}) {
@@ -1908,7 +1969,8 @@ export class Client {
   async subjectResolve(uri) { return this.send(this.prepare({operation: 'subject.resolve', target: text(uri)})); }
   async subject(target, {cursor, limit} = {}) { return this.send(this.prepare({operation: 'subject.get', target: text(target), ...(cursor ? {cursor} : {}), ...(limit !== undefined ? {limit} : {})})); }
   // review resolves the subject to its canonical form, then signs the post: room reviews, page its id, kind review, data.review.
-  async review(subject, verdict, body, {dimensions, evidence, relationship, supersedes, requestId} = {}) {
+  // data: any other post data field (format, ...), checked against the contract.
+  async review(subject, verdict, body, {dimensions, evidence, relationship, supersedes, requestId, ...data} = {}) {
     if (!this.#key) fail('missing_key', 'A review is signed: give the client a key.');
     const sub = (await this.subjectResolve(subject))?.data?.subject;
     if (typeof sub?.id !== 'string' || typeof sub?.uri !== 'string') fail('invalid_subject', 'subject.resolve did not name the subject.');
@@ -1916,18 +1978,20 @@ export class Client {
     if (relationship && !ENUMS.review_relationships.includes(relationship)) fail('invalid_option', `relationship is one of ${ENUMS.review_relationships.join(', ')}.`);
     if (evidence?.length && listOf(evidence).some(item => typeof item !== 'string' || !ENUMS.review_evidence_kinds.includes(item.split(':')[0]))) fail('invalid_option', `evidence is KIND:ID, KIND one of ${ENUMS.review_evidence_kinds.join(', ')}.`);
     const review = {subject: sub.uri, verdict: text(verdict), ...(dimensions ? {dimensions} : {}), ...(relationship ? {relationship} : {}), ...(evidence?.length ? {evidence: listOf(evidence)} : {})};
-    const data = JSON.stringify({schema: 1, review, ...(supersedes ? {supersedes: text(supersedes)} : {})});
+    // Review text that is Markdown rendering without loss is signed format markdown, as a post's is (C324).
+    if (data.format === undefined && markdownAuto(text(body))) data.format = 'markdown';
+    data = dataJSON('post', {review, supersedes: supersedes ? text(supersedes) : undefined, ...data});
     return this.send(this.prepare({operation: 'post', room: 'reviews', page: sub.id, kind: 'review', text: text(body), data, ...(requestId ? {request_id: requestId} : {})}));
   }
   // Verified by SwarmMemo (/protocol.md#verified-by-swarmmemo): a signed record of what you ran on a repo at a full commit
   // (or a file by fileSha256), public at /v/ID with a README badge. checks: [{property, state, note}], one pass or fail at least.
   // supersedes: the id of your own earlier record this one replaces (/protocol.md, Superseding a record).
-  async verifyPublish({repo, commit, file, fileSha256, command, environment, outputSha256, checks, limits, supersedes, requestId} = {}) {
+  async verifyPublish({repo, commit, file, fileSha256, command, environment, outputSha256, checks, limits, supersedes, requestId, ...more} = {}) {
     if (!this.#key) fail('missing_key', 'A verification is signed: give the client a key.');
     const fields = {repo, commit, file, file_sha256: fileSha256};
-    const data = JSON.stringify({schema: 1, ...Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined && v !== null).map(([k, v]) => [k, text(v)])),
+    const data = dataJSON('verify.publish', {...Object.fromEntries(Object.entries(fields).filter(([, v]) => present(v)).map(([k, v]) => [k, text(v)])),
       command: text(command), environment: text(environment), output_sha256: text(outputSha256), checks: listOf(checks), limits: text(limits),
-      ...(supersedes !== undefined && supersedes !== null ? {supersedes: text(supersedes)} : {})});
+      supersedes: present(supersedes) ? text(supersedes) : undefined, ...more});
     return this.send(this.prepare({operation: 'verify.publish', data, ...(requestId ? {request_id: requestId} : {})}));
   }
   async verification(id) { return this.send(this.prepare({operation: 'verify.get', target: text(id)})); }
@@ -1936,10 +2000,11 @@ export class Client {
   }
   // find: one search by intent; types narrows (ENUMS.find_types); filters: category, maxPrice (USD), output, network, explain.
   // protocol (x402 or mpp), door (agent, human or a door) and parse (auto, rules or off) pass through as the server's find data.
-  async find(query = '', {types, category, maxPrice, output, network, protocol, door, parse, explain, limit, cursor} = {}) {
+  async find(query = '', {types, category, maxPrice, output, network, protocol, door, parse, explain, limit, cursor, ...data} = {}) {
     if (types?.length && listOf(types).some(type => !ENUMS.find_types.includes(type))) fail('invalid_option', `types are ${ENUMS.find_types.join(', ')}.`);
-    const filters = {...(category ? {category} : {}), ...(maxPrice !== undefined ? {max_price: String(maxPrice)} : {}), ...(output ? {output} : {}), ...(network ? {network} : {}), ...(protocol ? {protocol} : {}), ...(door ? {door} : {}), ...(parse ? {parse} : {}), ...(explain ? {explain: true} : {}), ...(types?.length ? {type: listOf(types)} : {})};
-    return this.send(this.prepare({operation: 'find', ...(query ? {query: text(query)} : {}), ...(limit !== undefined ? {limit} : {}), ...(cursor ? {cursor} : {}), ...(Object.keys(filters).length ? {data: JSON.stringify({schema: 1, ...filters})} : {})}));
+    const filters = optionalData('find', {category: category || undefined, maxPrice: maxPrice !== undefined ? String(maxPrice) : undefined, output: output || undefined, network: network || undefined,
+      protocol: protocol || undefined, door: door || undefined, parse: parse || undefined, explain: explain ? true : undefined, type: types?.length ? listOf(types) : undefined, ...data});
+    return this.send(this.prepare({operation: 'find', ...(query ? {query: text(query)} : {}), ...(limit !== undefined ? {limit} : {}), ...(cursor ? {cursor} : {}), ...filters}));
   }
   prepare(input,{transport = 'command', successorKey = null, targetKey = null, format} = {}) {
     const command = commandCopy(input), mutation = mutations.has(command.operation);

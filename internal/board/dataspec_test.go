@@ -323,3 +323,58 @@ func TestDataNormalizations(t *testing.T) {
 		t.Error("ledger.list declares data it never reads")
 	}
 }
+
+// dataRawProtocol is how docs/PROTOCOL.md names each raw data shape.
+var dataRawProtocol = map[string]string{
+	DataRawBase64URL: "a string: unpadded base64url bytes",
+	DataRawViewer:    "the string `viewer`",
+	DataRawService:   "a method's call, each service's own: `schema`, `method`, `args` and a call's `max_cost`",
+}
+
+// dataFieldsProtocolSection is docs/PROTOCOL.md's data-fields table: each
+// operation's data fields from its spec (C377), in the operations table's
+// order.
+func dataFieldsProtocolSection() string {
+	code := func(names []string) string {
+		out := make([]string, len(names))
+		for i, n := range names {
+			out[i] = "`" + n + "`"
+		}
+		return strings.Join(out, " ")
+	}
+	var b strings.Builder
+	b.WriteString("| Operation | Required | Optional |\n|---|---|---|\n")
+	for _, op := range Operations() {
+		spec, ok := op.Data()
+		if !ok {
+			continue
+		}
+		link := fmt.Sprintf("[`%s`](#%s)", op.Name, op.Section)
+		if spec.Raw != "" {
+			raw, ok := dataRawProtocol[spec.Raw]
+			if !ok {
+				panic("dataFieldsProtocolSection: no words for raw data " + spec.Raw)
+			}
+			fmt.Fprintf(&b, "| %s | %s | |\n", link, raw)
+			continue
+		}
+		optional := code(spec.Optional())
+		var notes []string
+		for _, f := range spec.Fields {
+			switch {
+			case f.RemovedIn != "":
+				notes = append(notes, fmt.Sprintf("`%s` removed in %s", f.Name, f.RemovedIn))
+			case f.AliasOf != "":
+				notes = append(notes, fmt.Sprintf("`%s` for `%s`", f.Name, f.AliasOf))
+			}
+		}
+		if spec.Lax {
+			notes = append(notes, "other names ignored")
+		}
+		if len(notes) > 0 {
+			optional = strings.TrimSpace(optional + " (" + strings.Join(notes, "; ") + ")")
+		}
+		fmt.Fprintf(&b, "| %s | %s | %s |\n", link, code(spec.Names(true)), optional)
+	}
+	return b.String()
+}

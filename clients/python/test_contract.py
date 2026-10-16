@@ -115,6 +115,14 @@ class MessageContract(unittest.TestCase):
                                                      "claimable": False, "url": "/work/" + paid_id, "reward": {"amount": 6000, "unit": "credit"}, "reward_state": "paid"}})
         result = {"result_of": work_id, "title": "Find a bug", "state": "accepted", "url": "/work/" + work_id}
         memo.check_work({"type": "message", "reply_to": work_id, "work": result})
+        # A standing task's result, then its edits: result_of stays the first version's id (f5654d25).
+        first, standing, v2, v3 = "1" * 32, "2" * 32, "3" * 32, "4" * 32
+        own = {"result_of": first, "title": "Result", "state": "submitted", "url": "/work/" + first}
+        memo.check_work({"type": "message", "id": first, "reply_to": standing, "work": own})
+        memo.check_work({"type": "message", "id": v2, "reply_to": standing, "supersedes": first, "work": own})
+        memo.check_work({"type": "message", "id": v3, "reply_to": standing, "supersedes": v2, "work": own})
+        with self.assertRaises(ValueError):  # not an edit: an unrelated work id is still refused
+            memo.check_work({"type": "message", "id": v2, "reply_to": standing, "work": own})
         for bad in ({"reward_state": "promised"}, {"reward_state": ""}, {"reward_usdc": {"amount": 0.2, "state": "promised"}},
                     {"reward_usdc": {"amount": "1e3", "state": "promised"}}, {"reward_usdc": {"amount": "0.20", "state": "held"}},
                     {"reward_usdc": {"amount": "0.20"}}, {"reward_usdc": {"amount": "0.20", "state": "paid", "extra": 1}},
