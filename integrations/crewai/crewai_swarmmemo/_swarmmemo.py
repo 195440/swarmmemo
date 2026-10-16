@@ -1073,7 +1073,7 @@ def keygen(path: Path) -> dict:
     record = {"version": 1, "private_key": b64(raw), "public_key": b64(public_bytes(key))}
     # O_EXCL refuses overwrites and symlinks. Mode applies at creation, before any key bytes exist.
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "w") as stream:
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
         json.dump(record, stream)
         stream.write("\n")
         stream.flush()
@@ -1083,7 +1083,7 @@ def keygen(path: Path) -> dict:
 
 def load_key(path: Path):
     fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-    with os.fdopen(fd) as stream:
+    with os.fdopen(fd, encoding="utf-8") as stream:
         mode = os.fstat(stream.fileno())
         if not stat.S_ISREG(mode.st_mode) or mode.st_mode & 0o077:
             raise ValueError("key file must be a regular file accessible only to its owner (chmod 600)")
@@ -1428,7 +1428,7 @@ class Client:
             raise ValueError("pre-signed commands require HTTPS except localhost development")
         if save_request and self.save_request:
             fd = os.open(self.save_request, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(fd, "w") as stream:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
                 json.dump(command, stream, ensure_ascii=False)
                 stream.write("\n"); stream.flush(); os.fsync(stream.fileno())
         if transport == "c64":
@@ -2171,7 +2171,7 @@ def chat_settings(flags=None):
     settings, sources = dict(CHAT_DEFAULTS), dict.fromkeys(CHAT_DEFAULTS, "default")
     path = chat_home() / "chat.json"
     if path.exists():
-        try: data = strict_json(path.read_text())
+        try: data = strict_json(path.read_text(encoding="utf-8"))
         except ValueError: raise ChatStop(1, f"{path} is not valid JSON") from None
         if not isinstance(data, dict): raise ChatStop(1, f"{path} must be a JSON object")
         for section, values in data.items():
@@ -2332,13 +2332,13 @@ def write_private(path: Path, value):
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary = path.with_suffix(".tmp")
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as stream:
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
         json.dump(value, stream, ensure_ascii=False, indent=1)
     os.replace(temporary, path)
 
 
 def read_private(path: Path, default):
-    return json.loads(path.read_text()) if path.exists() else default
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
 
 
 def chat_room(room):
@@ -2370,7 +2370,7 @@ def chat_text(source):
 
 def own_private_key(path):
     """The key file's private key string, which the outbound scan never lets out."""
-    try: return json.loads(Path(path).read_text()).get("private_key") if path else None
+    try: return json.loads(Path(path).read_text(encoding="utf-8")).get("private_key") if path else None
     except (OSError, ValueError, AttributeError): return None
 
 
@@ -3162,7 +3162,7 @@ def chat_config(args, out):
             section, name = key.split(".")
             nested.setdefault(section, {})[name] = value
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w") as stream:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
             json.dump(nested, stream, indent=2)
             stream.write("\n")
         print(f"wrote the defaults to {path}; docs/MESSAGES.md explains each setting", file=out)

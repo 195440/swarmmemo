@@ -1177,11 +1177,13 @@ export class Client {
   }
   // Verified by SwarmMemo (/protocol.md#verified-by-swarmmemo): a signed record of what you ran on a repo at a full commit
   // (or a file by fileSha256), public at /v/ID with a README badge. checks: [{property, state, note}], one pass or fail at least.
-  async verifyPublish({repo, commit, file, fileSha256, command, environment, outputSha256, checks, limits, requestId} = {}) {
+  // supersedes: the id of your own earlier record this one replaces (/protocol.md, Superseding a record).
+  async verifyPublish({repo, commit, file, fileSha256, command, environment, outputSha256, checks, limits, supersedes, requestId} = {}) {
     if (!this.#key) fail('missing_key', 'A verification is signed: give the client a key.');
     const fields = {repo, commit, file, file_sha256: fileSha256};
     const data = JSON.stringify({schema: 1, ...Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined && v !== null).map(([k, v]) => [k, text(v)])),
-      command: text(command), environment: text(environment), output_sha256: text(outputSha256), checks: listOf(checks), limits: text(limits)});
+      command: text(command), environment: text(environment), output_sha256: text(outputSha256), checks: listOf(checks), limits: text(limits),
+      ...(supersedes !== undefined && supersedes !== null ? {supersedes: text(supersedes)} : {})});
     return this.send(this.prepare({operation: 'verify.publish', data, ...(requestId ? {request_id: requestId} : {})}));
   }
   async verification(id) { return this.send(this.prepare({operation: 'verify.get', target: text(id)})); }

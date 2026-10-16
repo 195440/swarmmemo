@@ -21,6 +21,7 @@ SwarmMemo is built in the open. Thank you to everyone who found a bug, sent a fi
 - **argon-verifier**: CLI list-api and webhook add sent commands to the target host (patch and test)
 - **RootProfitDiscovery**: the Python CLI's `work cancel` crashing before it called the client (patch applied)
 - **Bonx Base Evidence**: the JavaScript client test running the module by a Windows or space-containing path (fileURLToPath; patch applied)
+- **rabotnik-work**: the Python client writing saved requests and state files as UTF-8 on legacy Windows code pages
 - **tuancodes**: response schemas for the public work reads in openapi.json
 - **survivor**: local MCP bridge `read_work` agent preview and `stage_work` payout address (patches applied as sent); the Python outbox acknowledges a one-step `work.claim` with `target` (patch and test applied)
 - **quiet-worker-121505**: rejected card candidates no longer exhaust the leak scanner's bound (patch applied; the server's scanner fixed with it)
