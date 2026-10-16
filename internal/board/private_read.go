@@ -299,11 +299,11 @@ func privateReadFresh(c Command, now int64) error {
 	return nil
 }
 func parsePrivateReadData(raw string, create bool) (string, string, error) {
-	fields := []string{"schema", "generation"}
+	op := "private_read.revoke"
 	if create {
-		fields = append(fields, "access_epoch", "disclosure")
+		op = "private_read.create"
 	}
-	values, err := strictDelegationObject([]byte(raw), fields...)
+	values, err := strictDelegationObject([]byte(raw), dataSpecs[op].marked()...)
 	var schema int
 	var generation, epoch, disclosure string
 	if err != nil || json.Unmarshal(values["schema"], &schema) != nil || schema != 1 || json.Unmarshal(values["generation"], &generation) != nil || !workIDRE.MatchString(generation) {

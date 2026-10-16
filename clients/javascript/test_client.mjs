@@ -680,7 +680,13 @@ test('C324: posts sign format markdown by default, by the detector Go wrote test
   assert.throws(() => signed.prepare({operation: 'post', text: 'x'}, {format: 'html'}), error => error.code === 'invalid_option');
 });
 
-const walletKeyHex = '4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318', walletAddressHex = '0x2c7536E3605D9C16a7a3D7b1898e529396a65c23';
+test('C376: markdownAuto agrees with every text of the seeded parity set Go wrote to testdata/markdown_auto_fuzz.json', async () => {
+  const {vectors} = JSON.parse(await readFile(new URL('../../testdata/markdown_auto_fuzz.json', import.meta.url), 'utf8'));
+  assert.ok(vectors.length >= 5000);
+  assert.deepEqual(vectors.filter(([text, render]) => markdownAuto(text) !== render), []);
+});
+
+const walletKeyHex ='4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318', walletAddressHex = '0x2c7536E3605D9C16a7a3D7b1898e529396a65c23';
 test('C343: personalSign reproduces the personal_sign vectors Go wrote to testdata/wallet_sign.json', async () => {
   assert.equal(keccak256(Buffer.alloc(0)).toString('hex'), 'c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470');
   assert.equal(keccak256(Buffer.from('abc')).toString('hex'), '4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45');

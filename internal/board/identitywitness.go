@@ -127,7 +127,7 @@ func parseWitnessData(raw string) (witnessData, error) {
 		}
 		seen[name] = true
 		var value json.RawMessage
-		if err = decoder.Decode(&value); err != nil || bytes.Equal(value, []byte("null")) {
+		if err = decoder.Decode(&value); err != nil || bytes.Equal(value, []byte("null")) || !dataTakes("identity.witness", name) {
 			return d, invalid
 		}
 		switch name {

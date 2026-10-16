@@ -252,9 +252,9 @@ func storeFeedProfile(ctx context.Context, tx *sql.Tx, account string, p FeedPro
 	return version, fromAllowance(err)
 }
 
-// feedData reads a write's data object strictly: its keys among allowed,
-// "schema" (1) always allowed.
-func feedData(op, data string, allowed ...string) (map[string]json.RawMessage, error) {
+// feedData reads a feed command's data object strictly: its keys those op's
+// data spec takes, "schema" (1) always allowed.
+func feedData(op, data string) (map[string]json.RawMessage, error) {
 	if data == "" {
 		return map[string]json.RawMessage{}, nil
 	}
@@ -273,7 +273,7 @@ func feedData(op, data string, allowed ...string) (map[string]json.RawMessage, e
 			}
 			continue
 		}
-		if !slices.Contains(allowed, k) {
+		if !dataTakes(op, k) {
 			return nil, feedUnknown("data." + k)
 		}
 	}
@@ -354,7 +354,7 @@ func feedWriteResult(a actor, p FeedProfile, visibility string, revision int64) 
 // feedProfilePut is feed.profile.put: replace the caller's profile whole.
 // data {profile, visibility?, if_revision?}.
 func (s *Store) feedProfilePut(ctx context.Context, tx *sql.Tx, c Command, a actor, now int64) (Result, error) {
-	m, err := feedData(c.Operation, c.Data, "profile", "visibility", "if_revision")
+	m, err := feedData(c.Operation, c.Data)
 	if err != nil {
 		return Result{}, err
 	}
@@ -424,7 +424,7 @@ func (s *Store) feedProfilePut(ctx context.Context, tx *sql.Tx, c Command, a act
 // hash pins the version previewed (409 profile_changed when it moved on).
 // Rooms that are no longer public are left out and named.
 func (s *Store) feedProfileFork(ctx context.Context, tx *sql.Tx, c Command, a actor, now int64) (Result, error) {
-	m, err := feedData(c.Operation, c.Data, "hash", "visibility")
+	m, err := feedData(c.Operation, c.Data)
 	if err != nil {
 		return Result{}, err
 	}
@@ -481,11 +481,7 @@ func (s *Store) feedProfileFork(ctx context.Context, tx *sql.Tx, c Command, a ac
 // default; subscribing again changes the weight.
 func (s *Store) roomSubscription(ctx context.Context, tx *sql.Tx, c Command, a actor, now int64) (Result, error) {
 	subscribe := c.Operation == "room.subscribe"
-	allowed := []string{}
-	if subscribe {
-		allowed = append(allowed, "weight")
-	}
-	m, err := feedData(c.Operation, c.Data, allowed...)
+	m, err := feedData(c.Operation, c.Data)
 	if err != nil {
 		return Result{}, err
 	}

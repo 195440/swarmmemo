@@ -245,7 +245,7 @@ func parseVerifyData(raw string) (verifyData, error) {
 		}
 		seen[name] = true
 		var value json.RawMessage
-		if err = decoder.Decode(&value); err != nil || bytes.Equal(value, []byte("null")) {
+		if err = decoder.Decode(&value); err != nil || bytes.Equal(value, []byte("null")) || !dataTakes("verify.publish", name) {
 			return d, invalid
 		}
 		var dest *string

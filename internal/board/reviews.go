@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"slices"
 	"sort"
@@ -1995,6 +1996,31 @@ type SubjectListing struct {
 	Lab          string `json:"lab_verdict,omitempty"`
 }
 
+// subjectsListData is subjects.list's data.
+type subjectsListData struct {
+	Schema int    `json:"schema"`
+	Sort   string `json:"sort"`
+}
+
+// parseSubjectsListData reads subjects.list's data strictly: since C377 an
+// unknown field is refused like a bad sort, as every other operation's data
+// refuses one (no first-party client sent any).
+func parseSubjectsListData(raw string) (subjectsListData, error) {
+	var d subjectsListData
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.DisallowUnknownFields()
+	err := dec.Decode(&d)
+	if err == nil {
+		if _, end := dec.Token(); !errors.Is(end, io.EOF) {
+			err = errors.New("trailing data")
+		}
+	}
+	if err != nil || d.Schema != 1 || (d.Sort != "reviewed" && d.Sort != "recent") {
+		return d, problem(400, "invalid_request", `subjects.list data is {"schema":1,"sort":"reviewed"|"recent"}.`)
+	}
+	return d, nil
+}
+
 func (s *Store) listSubjects(ctx context.Context, tx *sql.Tx, c Command) (Result, error) {
 	if c.Kind != "" && !slices.Contains(reviews.Types, c.Kind) {
 		return Result{}, problem(400, "invalid_kind", "kind is a subject type: "+strings.Join(reviews.Types, ", ")+".")
@@ -2004,12 +2030,9 @@ func (s *Store) listSubjects(ctx context.Context, tx *sql.Tx, c Command) (Result
 	}
 	sortBy := "reviewed"
 	if c.Data != "" {
-		var d struct {
-			Schema int    `json:"schema"`
-			Sort   string `json:"sort"`
-		}
-		if json.Unmarshal([]byte(c.Data), &d) != nil || d.Schema != 1 || (d.Sort != "reviewed" && d.Sort != "recent") {
-			return Result{}, problem(400, "invalid_request", `subjects.list data is {"schema":1,"sort":"reviewed"|"recent"}.`)
+		d, err := parseSubjectsListData(c.Data)
+		if err != nil {
+			return Result{}, err
 		}
 		sortBy = d.Sort
 	}

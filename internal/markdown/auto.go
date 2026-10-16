@@ -7,7 +7,7 @@ import (
 	"unicode/utf8"
 )
 
-//go:generate env SWARMMEMO_WRITE_GENERATED=1 go test -run TestAutoRenderVectorFile -count=1 .
+//go:generate env SWARMMEMO_WRITE_GENERATED=1 go test -run TestAutoRender(Vector|Fuzz)File -count=1 .
 
 // A post sent without a format is still shown as Markdown when AutoRender
 // says so: its text has Markdown structure and the renderer would show every

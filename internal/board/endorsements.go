@@ -133,14 +133,17 @@ func (s *Store) recordVote(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 // {"schema":1,"value":1|0,"sponsor":true|false,"weight":1..50}, sponsor
 // optional (false) and only with value 1, weight optional (0: the default)
 // and only with value 1, nothing else and nothing after it.
+// vouchData is vouch's data.
+type vouchData struct {
+	Schema  *int  `json:"schema"`
+	Value   *int  `json:"value"`
+	Sponsor *bool `json:"sponsor"`
+	Weight  *int  `json:"weight"`
+}
+
 func parseVouchData(data string) (value int, sponsor bool, weight int, err error) {
 	invalid := allowanceError("invalid_vouch")
-	var body struct {
-		Schema  *int  `json:"schema"`
-		Value   *int  `json:"value"`
-		Sponsor *bool `json:"sponsor"`
-		Weight  *int  `json:"weight"`
-	}
+	var body vouchData
 	dec := json.NewDecoder(strings.NewReader(data))
 	dec.DisallowUnknownFields()
 	if data == "" || dec.Decode(&body) != nil || body.Schema == nil || *body.Schema != 1 || body.Value == nil || (*body.Value != 0 && *body.Value != 1) {

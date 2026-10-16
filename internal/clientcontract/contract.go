@@ -39,6 +39,52 @@ type Operation struct {
 	Mutation  bool     `json:"mutation"`
 	Delegable bool     `json:"delegable"`
 	Wire      string   `json:"wire"`
+	// Data is what the operation's data carries, when it takes data.
+	Data *Data `json:"data,omitempty"`
+}
+
+// Data is an operation's data spec (board.DataSpecOf) as clients read it:
+// the fields it takes, each alias with the field it names, and each removed
+// field with the release that stopped taking it. Raw, when set, says the
+// data is a string of that shape (base64url, viewer, service), not an
+// object; Lax that unknown fields are ignored rather than refused.
+type Data struct {
+	Raw     string               `json:"raw,omitempty"`
+	Lax     bool                 `json:"lax,omitempty"`
+	Fields  map[string]DataField `json:"fields"`
+	Aliases map[string]string    `json:"aliases"`
+	Removed map[string]string    `json:"removed"`
+}
+
+// DataField is one data field: its JSON type (string, int, number, bool,
+// object, array, or two joined by "|"), whether it is required, and the
+// enums, patterns or limits entry of this contract that checks its value.
+type DataField struct {
+	Type     string `json:"type"`
+	Required bool   `json:"required"`
+	Enum     string `json:"enum,omitempty"`
+	Pattern  string `json:"pattern,omitempty"`
+	Limit    string `json:"limit,omitempty"`
+}
+
+// dataOf is op's data spec for the contract, or nil when it takes no data.
+func dataOf(op board.Operation) *Data {
+	spec, ok := op.Data()
+	if !ok {
+		return nil
+	}
+	d := &Data{Raw: spec.Raw, Lax: spec.Lax, Fields: map[string]DataField{}, Aliases: map[string]string{}, Removed: map[string]string{}}
+	for _, f := range spec.Fields {
+		switch {
+		case f.RemovedIn != "":
+			d.Removed[f.Name] = f.RemovedIn
+		case f.AliasOf != "":
+			d.Aliases[f.Name] = f.AliasOf
+		default:
+			d.Fields[f.Name] = DataField{Type: f.Type, Required: f.Required, Enum: f.Enum, Pattern: f.Pattern, Limit: f.Limit}
+		}
+	}
+	return d
 }
 
 // StructFields reads value's wire fields from its json tags; an untagged
@@ -77,7 +123,7 @@ func Build() map[string]any {
 		if fields == nil {
 			fields = []string{}
 		}
-		operations[op.Name] = Operation{Fields: fields, Signed: op.Signed, Mutation: op.Mutation, Delegable: op.Delegable, Wire: op.Wire}
+		operations[op.Name] = Operation{Fields: fields, Signed: op.Signed, Mutation: op.Mutation, Delegable: op.Delegable, Wire: op.Wire, Data: dataOf(op)}
 	}
 	limits := map[string]int64{}
 	for _, l := range board.PublicLimits() {
@@ -92,6 +138,7 @@ func Build() map[string]any {
 		"verdict_check_note_chars":      board.VerdictCheckNoteMax,
 		"work_reward_note_chars":        board.WorkRewardNoteMax,
 		"work_title_bytes":              board.WorkTitleBytes,
+		"work_reject_fee_max_percent":   board.WorkRejectFeeMaxPercent,
 		"work_capabilities_maximum":     board.WorkCapabilitiesMax,
 		"work_claim_ttl_minimum":        board.WorkClaimTTLMin,
 		"work_claim_ttl_maximum":        board.WorkClaimTTLMax,

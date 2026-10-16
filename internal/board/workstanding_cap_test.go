@@ -72,10 +72,27 @@ func TestWorkStandingResultsMax(t *testing.T) {
 		t.Fatalf("works.list standing: %s", raw)
 	}
 
+	// The claimable listings (rewarded, earn) leave out a task with no seat
+	// open; the plain listing still shows it (telagoebez 27e6f215).
+	inList := func(kind string) bool {
+		for _, w := range run(t, s, Command{Operation: "works.list", Kind: kind}).Data["works"].([]Work) {
+			if w.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+	if inList(WorkKindRewarded) || inList(WorkKindEarn) || !inList("") {
+		t.Fatalf("full task listed: rewarded=%v earn=%v all=%v", inList(WorkKindRewarded), inList(WorkKindEarn), inList(""))
+	}
+
 	// A reject frees a place: the task takes one more result.
 	run(t, s, workCommand(s, owner, Command{Operation: "work.reject", MessageID: r2, Amount: 1, Reason: "dup"}))
 	if st = standingAt(t, s, id); st.Full || st.Open != 1 {
 		t.Fatalf("after a reject: %+v", st)
+	}
+	if !inList(WorkKindEarn) {
+		t.Fatal("a task with a seat open again is missing from earn")
 	}
 	r4, c4 := standingClaim(t, s, w4, id, nil)
 	run(t, s, c4)

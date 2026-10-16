@@ -363,33 +363,15 @@ var workDataAliases = map[string]string{
 }
 
 // workCreateOptional are the fields work.create data may add to schema,
-// generation, title and capabilities. clients/contract.json lists the
-// whole set ("work_create_data"), which clients/mcp checks signed history
-// against.
-var workCreateOptional = []string{"reward", "reviewer", "reviewer_fee", "reject_fee", "eligibility", "reward_note", "seats", "per_agent_day", "day_max", "results_max", "tiers", "usdc_per_agent_day", "usdc_day_max"}
+// generation, title and capabilities, read from its data spec.
+// clients/contract.json lists the whole set ("work_create_data"), which
+// clients/mcp checks signed history against.
+var workCreateOptional = dataSpecs["work.create"].Optional()
 
-// workDataTakes says whether operation's data takes field name.
+// workDataTakes says whether operation's data takes field name: its data
+// spec (dataspec.go) decides.
 func workDataTakes(operation, name string) bool {
-	switch name {
-	case "schema", "generation":
-		return true
-	case "reviewer":
-		return operation == "work.create" || operation == WorkReviewerSet
-	case "title", "capabilities", "reward", "reviewer_fee", "reject_fee", "eligibility", "reward_note",
-		"seats", "per_agent_day", "day_max", "results_max", "tiers", "usdc_per_agent_day", "usdc_day_max":
-		return operation == "work.create"
-	case "tier", "review":
-		return operation == "work.accept"
-	case "result_sha256":
-		return workResultHashOp(operation)
-	case "checks":
-		return workVerdictOp(operation)
-	case "payout_address":
-		return operation == "work.claim" || operation == "work.submit"
-	case "tx_hash":
-		return operation == WorkSettle
-	}
-	return false
+	return dataTakes(operation, name)
 }
 
 // invalidWorkField refuses a data field operation does not take, named by
@@ -1557,16 +1539,19 @@ func (s *Store) PublicOpenRewardedWork(ctx context.Context) (int, error) {
 // list (the items it claimed, public only). Each is optional, but data names
 // at least one. Each names the agent by key fingerprint or registered
 // handle; the caller resolves a handle (agentFingerprint).
+// worksListOptions is works.list's data.
+type worksListOptions struct {
+	Schema      int     `json:"schema"`
+	EligibleFor *string `json:"eligible_for"`
+	Worker      *string `json:"worker"`
+	Standing    *string `json:"standing"`
+}
+
 func worksListData(raw string) (eligibleFor, worker, standing string, err error) {
 	if raw == "" {
 		return "", "", "", nil
 	}
-	var d struct {
-		Schema      int     `json:"schema"`
-		EligibleFor *string `json:"eligible_for"`
-		Worker      *string `json:"worker"`
-		Standing    *string `json:"standing"`
-	}
+	var d worksListOptions
 	dec := json.NewDecoder(strings.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if len(raw) > 512 {
@@ -1580,7 +1565,7 @@ func worksListData(raw string) (eligibleFor, worker, standing string, err error)
 			return "", "", "", problem(400, "invalid_work_data", name+" is not a field works.list data takes. "+WorksListDataRule)
 		}
 		return "", "", "", problem(400, "invalid_work_data", "A field was sent that works.list data does not take. "+WorksListDataRule)
-	} else if errors.As(err, &te) && (te.Field == "schema" || te.Field == "eligible_for" || te.Field == "worker" || te.Field == "standing") {
+	} else if errors.As(err, &te) && dataTakes("works.list", te.Field) {
 		return "", "", "", problem(400, "invalid_work_data", te.Field+" must be "+services.JSONTypeName(te.Type)+". "+WorksListDataRule)
 	}
 	valid := func(v *string) bool { return v == nil || fingerprintRE.MatchString(*v) || handleRE.MatchString(*v) }
@@ -1827,6 +1812,20 @@ func (s *Store) readWork(ctx context.Context, tx *sql.Tx, c Command, a actor, no
 	}
 	for i := range works {
 		works[i].RequesterRecord = records[stored[i].Requester]
+	}
+	if c.Kind == WorkKindRewarded || c.Kind == WorkKindEarn {
+		// A standing task with no seat open now (full, or every seat waiting on
+		// a verdict) can't be claimed, so a worker looking for claimable work
+		// doesn't see it here; it returns when a seat frees, and every other
+		// listing still shows it (telagoebez 27e6f215). The cursor follows the
+		// stored page, so a filtered page may be shorter than the limit.
+		claimable := works[:0]
+		for _, w := range works {
+			if w.Standing == nil || w.Standing.Open > 0 {
+				claimable = append(claimable, w)
+			}
+		}
+		works = claimable
 	}
 	result := Result{Data: map[string]any{"works": works, "has_more": hasMore}}
 	if standing != "" {

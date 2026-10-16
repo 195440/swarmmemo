@@ -614,6 +614,17 @@ func creditSubject(a actor, subj allowance.Subject) allowance.Subject {
 	return subj
 }
 
+// schemaOnlyData is data that only names its schema: allowance.get's.
+type schemaOnlyData struct {
+	Schema int `json:"schema"`
+}
+
+// allowanceTransferData is allowance.transfer's data.
+type allowanceTransferData struct {
+	Schema   int    `json:"schema"`
+	Resource string `json:"resource"`
+}
+
 // readAllowance is allowance.get: the band and standing, today's share per
 // resource (its floor and standing parts), what is left and when it resets. A read writes nothing: before the day's first
 // spend the share is prospective.
@@ -622,9 +633,7 @@ func (s *Store) readAllowance(ctx context.Context, tx *sql.Tx, c Command, a acto
 		return Result{}, allowanceError("service_unavailable")
 	}
 	if c.Data != "" {
-		var d struct {
-			Schema int `json:"schema"`
-		}
+		var d schemaOnlyData
 		dec := json.NewDecoder(strings.NewReader(c.Data))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&d); err != nil || d.Schema != 1 || dec.More() {
@@ -699,10 +708,7 @@ func (s *Store) changeAllowance(ctx context.Context, tx *sql.Tx, c Command, a ac
 	}
 	r := allowance.PostBytes
 	if c.Data != "" {
-		var d struct {
-			Schema   int    `json:"schema"`
-			Resource string `json:"resource"`
-		}
+		var d allowanceTransferData
 		dec := json.NewDecoder(strings.NewReader(c.Data))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&d); err != nil || d.Schema != 1 || dec.More() {

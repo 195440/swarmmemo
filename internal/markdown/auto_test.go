@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"html"
+	"math/rand/v2"
 	"os"
 	"regexp"
 	"strconv"
@@ -69,6 +70,13 @@ var autoCases = []struct {
 	{"strong-across-quoted-paragraphs", "> **a\n>\n> b** x **c\n>\n> d**", false},
 	{"one-item", "- just one", false},
 	{"too-long", "# Title\n\n" + strings.Repeat("word ", maxAutoBytes/5), false},
+
+	// C376 (alex-226): a run of underscores alone on a line is a thematic
+	// break, which a client counting emphasis by regex took for strong text;
+	// and a * run that can open and close but never pairs is not doubtful.
+	{"underscore-break", "__________", false},
+	{"underscore-break-between-paragraphs", "Note\n\n__________\n\ntail text", false},
+	{"unpaired-flanking-star", "# {*@", true},
 }
 
 func TestAutoRender(t *testing.T) {
@@ -134,6 +142,90 @@ func TestAutoRenderVectorFile(t *testing.T) {
 	got, err := os.ReadFile(autoVectorFile)
 	if err != nil || !bytes.Equal(got, want) {
 		t.Fatalf("%s is stale; run go generate ./internal/markdown", autoVectorFile)
+	}
+}
+
+// autoFuzzFile is the parity set (C376): seeded random Markdown-ish texts
+// over the tokens the detector reads, with AutoRender's verdict on each. The
+// clients' ports must agree with every one; with SWARMMEMO_WRITE_GENERATED=1
+// TestAutoRenderFuzzFile writes it (go generate).
+const autoFuzzFile = "../../testdata/markdown_auto_fuzz.json"
+
+// autoFuzzCount is how many texts the parity set holds.
+const autoFuzzCount = 5000
+
+// autoFuzzWords are the inline tokens a generated line is made of: words
+// (ASCII, non-ASCII, URL-shaped and site references), spaces, and every
+// character the renderer reads as syntax.
+var autoFuzzWords = []string{
+	"word", "a", "b", "x", "2", "Note", "snake_case", "__init__", "2*3*4", "é", "中文", "🙂",
+	"https://example.com", "https://Ex.org/a_b", "http://x.io/p?q=1#f", "https://a.b/w/x", "/r/lobby", "/docs", "#top", "src/*.go",
+	"[a](https://ex.com/p)", "[b](/docs)", "[c](#Top)", "[d](https://EX.com:8080/a%20b?q=1#F)", "[e](https://ex.com/w/x)", "[f](/%2Fevil{)",
+	"![g](https://ex.com/i.png)", "[h](https://ex.com/p \"t\")", "<https://ex.com>", "](", "%2F",
+	" ", " ", " ", "  ", "\t",
+	"*", "*", "**", "***", "_", "_", "__", "`", "``", "\\", "\\*", "#", "-", "--", "+", "|", "|", ">", "<", "[", "]", "(", ")", ":", "!", "~", ".", ",", "@", "{", "%", "'", "\"",
+}
+
+// autoFuzzPrefixes open a generated line: block syntax or nothing.
+var autoFuzzPrefixes = []string{
+	"", "", "", "", "- ", "* ", "+ ", "1. ", "2. ", "1) ", "# ", "## ", "> ", "> - ", "  - ", "   ", "    ",
+	"| ", "|---|---|", "| --- | :-: |", "---", "***", "___", "```", "```go", "~~~", "",
+}
+
+// autoFuzzTexts generates the parity set's texts: one to six lines, each a
+// prefix and up to eight words, some lines apart.
+func autoFuzzTexts() []string {
+	rng := rand.New(rand.NewPCG(376, 2026))
+	texts := make([]string, 0, autoFuzzCount)
+	for len(texts) < autoFuzzCount {
+		var b strings.Builder
+		lines := 1 + rng.IntN(6)
+		for l := 0; l < lines; l++ {
+			if l > 0 {
+				b.WriteString([]string{"\n", "\n", "\n", "\n\n", "  \n"}[rng.IntN(5)])
+			}
+			b.WriteString(autoFuzzPrefixes[rng.IntN(len(autoFuzzPrefixes))])
+			for w := rng.IntN(9); w > 0; w-- {
+				b.WriteString(autoFuzzWords[rng.IntN(len(autoFuzzWords))])
+			}
+		}
+		texts = append(texts, b.String())
+	}
+	return texts
+}
+
+// autoFuzzVectors is the parity file: one [text, render] pair per line.
+func autoFuzzVectors() []byte {
+	var out bytes.Buffer
+	out.WriteString(`{"about": "C376: seeded random Markdown-ish texts and internal/markdown AutoRender's verdict on each, as [text, render], written by go generate ./internal/markdown. The Python and JavaScript detectors must agree with every vector.",` + "\n" + `"vectors": [` + "\n")
+	for k, text := range autoFuzzTexts() {
+		var raw bytes.Buffer
+		enc := json.NewEncoder(&raw)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode([]any{text, AutoRender(text)}); err != nil {
+			panic(err)
+		}
+		out.Write(bytes.TrimSuffix(raw.Bytes(), []byte("\n")))
+		if k < autoFuzzCount-1 {
+			out.WriteByte(',')
+		}
+		out.WriteByte('\n')
+	}
+	out.WriteString("]}\n")
+	return out.Bytes()
+}
+
+func TestAutoRenderFuzzFile(t *testing.T) {
+	want := autoFuzzVectors()
+	if os.Getenv("SWARMMEMO_WRITE_GENERATED") == "1" {
+		if err := os.WriteFile(autoFuzzFile, want, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	got, err := os.ReadFile(autoFuzzFile)
+	if err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("%s is stale; run go generate ./internal/markdown", autoFuzzFile)
 	}
 }
 

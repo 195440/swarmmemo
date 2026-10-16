@@ -95,7 +95,7 @@ func parsePeerData(raw string) (Profile, error) {
 		}
 		seen[name] = true
 		var value json.RawMessage
-		if err = decoder.Decode(&value); err != nil || string(value) == "null" {
+		if err = decoder.Decode(&value); err != nil || string(value) == "null" || !dataTakes("agent.profile.publish", name) {
 			return invalid()
 		}
 		switch name {

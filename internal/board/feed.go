@@ -550,7 +550,7 @@ func parseFeedRequest(data string) (feedRequest, error) {
 	if duplicateKey([]byte(data)) {
 		return req, feedError("data for feed.get repeats a field; give each once.")
 	}
-	m, err := feedObject(json.RawMessage(data), "", "profile", "override", "offset", "explain")
+	m, err := feedObject(json.RawMessage(data), "", dataSpecs["feed.get"].Names(false)...)
 	if err != nil {
 		return req, err
 	}

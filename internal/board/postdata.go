@@ -109,6 +109,9 @@ func parsePostData(raw string) (postData, error) {
 		if dec.Decode(&value) != nil || bytes.Equal(value, []byte("null")) {
 			return d, postDataError(usage)
 		}
+		if !dataTakes("post", name) {
+			return d, postDataError(fmt.Sprintf("Unknown post data field %q; %s", name, usage))
+		}
 		switch name {
 		case "schema":
 			var n int

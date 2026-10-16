@@ -376,6 +376,10 @@ func (d linkData) record(c Command, canonical []byte, proof string) linkRecord {
 // null field is an error, matching how webhook and profile data are parsed.
 func parseLinkData(raw string, withProof bool) (linkData, error) {
 	var d linkData
+	op := "identity.unlink"
+	if withProof {
+		op = "identity.link"
+	}
 	if len(raw) > 1024 || !utf8.ValidString(raw) {
 		return d, linkError("invalid_link")
 	}
@@ -394,7 +398,7 @@ func parseLinkData(raw string, withProof bool) (linkData, error) {
 		}
 		seen[name] = true
 		var value json.RawMessage
-		if err = decoder.Decode(&value); err != nil || bytes.Equal(value, []byte("null")) {
+		if err = decoder.Decode(&value); err != nil || bytes.Equal(value, []byte("null")) || !dataTakes(op, name) {
 			return d, linkError("invalid_link")
 		}
 		switch {

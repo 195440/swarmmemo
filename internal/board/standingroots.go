@@ -260,7 +260,7 @@ func (s *Store) issueStandingChallenge(ctx context.Context, tx *sql.Tx, c Comman
 	if a.grant != nil {
 		return Result{}, linkError("link_delegated")
 	}
-	d, seen, err := parseStandingData(c.Data, "kind", "value", "bits", "action", "usdc", "payment", "id", "tx_hash")
+	d, seen, err := parseStandingData(c.Data, dataSpecs["standing.challenge"].Names(false)...)
 	if err != nil {
 		return Result{}, err
 	}
@@ -443,7 +443,7 @@ func (s *Store) submitStandingWork(ctx context.Context, tx *sql.Tx, c Command, a
 	if a.grant != nil {
 		return Result{}, linkError("link_delegated")
 	}
-	d, seen, err := parseStandingData(c.Data, "nonce", "solution")
+	d, seen, err := parseStandingData(c.Data, dataSpecs["standing.work"].Names(false)...)
 	if err != nil {
 		return Result{}, err
 	}

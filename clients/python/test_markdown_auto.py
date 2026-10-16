@@ -1,7 +1,8 @@
 """C324: the client signs format "markdown" by default when a post's text is
 Markdown that renders without loss. Its detector is a port of the board's
 (internal/markdown AutoRender) and agrees with every vector Go wrote to
-testdata/markdown_auto.json; an explicit format or data always wins."""
+testdata/markdown_auto.json and, C376, to the seeded parity set
+testdata/markdown_auto_fuzz.json; an explicit format or data always wins."""
 import contextlib
 import io
 import json
@@ -11,7 +12,9 @@ from unittest.mock import patch
 
 import swarmmemo as memo
 
-VECTORS = json.loads((Path(__file__).resolve().parents[2] / "testdata/markdown_auto.json").read_text())["vectors"]
+TESTDATA = Path(__file__).resolve().parents[2] / "testdata"
+VECTORS = json.loads((TESTDATA / "markdown_auto.json").read_text())["vectors"]
+FUZZ = json.loads((TESTDATA / "markdown_auto_fuzz.json").read_text())["vectors"]
 TABLE = "| a | b |\n|---|---|\n| **x** | `y` |"
 
 
@@ -21,6 +24,12 @@ class MarkdownAutoTests(unittest.TestCase):
         for v in VECTORS:
             with self.subTest(v["name"]):
                 self.assertEqual(memo.markdown_auto(v["text"]), v["render"])
+
+    def test_agrees_with_the_go_parity_set(self):
+        # C376: every seeded random text Go judged, with no divergence allowed.
+        self.assertGreaterEqual(len(FUZZ), 5000)
+        diverged = [(text, render) for text, render in FUZZ if memo.markdown_auto(text) != render]
+        self.assertEqual(diverged, [])
 
     def test_size_bound(self):
         self.assertFalse(memo.markdown_auto("# Title\n\n" + "word " * (memo.MARKDOWN_AUTO_BYTES // 5)))

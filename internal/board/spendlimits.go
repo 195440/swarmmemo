@@ -157,6 +157,12 @@ func (s *Store) spendLimitView(ctx context.Context, q allowance.Querier, account
 	return &SpendLimitView{CreditPerDay: st.PerDay, CreditPerCall: st.PerCall, ExpiresAt: st.ExpiresAt, CreditSpentToday: st.SpentToday, CreditRemainingToday: st.Remaining, ResetsAt: st.ResetsAt}, nil
 }
 
+// spendLimitSetData is spend_limit.set's data: the limit, with its schema.
+type spendLimitSetData struct {
+	Schema int `json:"schema"`
+	spendLimitData
+}
+
 // changeSpendLimit is spend_limit.set: target is one of the account's worker
 // keys (a grant_id) or hosted tokens (a token_id); data replaces its limit.
 func (s *Store) changeSpendLimit(ctx context.Context, tx *sql.Tx, c Command, a actor, now int64) (Result, error) {
@@ -175,10 +181,7 @@ func (s *Store) changeSpendLimit(ctx context.Context, tx *sql.Tx, c Command, a a
 	if !s.spendLimitsOn() {
 		return Result{}, allowanceError("service_unavailable")
 	}
-	var d struct {
-		Schema int `json:"schema"`
-		spendLimitData
-	}
+	var d spendLimitSetData
 	if services.StrictObject([]byte(c.Data), &d) != nil || d.Schema != 1 {
 		return Result{}, invalidSpendLimit(`send data {"schema":1,"credit_per_day"?,"credit_per_call"?,"expires_at"?}`)
 	}

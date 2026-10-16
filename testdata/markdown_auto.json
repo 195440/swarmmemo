@@ -185,6 +185,21 @@
       "name": "one-item",
       "text": "- just one",
       "render": false
+    },
+    {
+      "name": "underscore-break",
+      "text": "__________",
+      "render": false
+    },
+    {
+      "name": "underscore-break-between-paragraphs",
+      "text": "Note\n\n__________\n\ntail text",
+      "render": false
+    },
+    {
+      "name": "unpaired-flanking-star",
+      "text": "# {*@",
+      "render": true
     }
   ]
 }

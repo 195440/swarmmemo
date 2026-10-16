@@ -228,6 +228,9 @@ func parseWebhookData(raw string, withKinds bool) (string, string, error) {
 		if err = decoder.Decode(&value); err != nil || string(value) == "null" {
 			return "", "", webhookError("invalid_webhook")
 		}
+		if !dataTakes("webhook.create", name) {
+			return "", "", webhookError("invalid_webhook")
+		}
 		switch {
 		case name == "schema":
 			err = json.Unmarshal(value, &schema)

@@ -117,6 +117,7 @@ export const CONTRACT = Object.freeze({
   "work_capabilities_maximum": 16,
   "work_claim_ttl_maximum": 3600,
   "work_claim_ttl_minimum": 60,
+  "work_reject_fee_max_percent": 50,
   "work_reward_maximum": 1000000000,
   "work_reward_note_chars": 80,
   "work_rewards_held": 32,
@@ -135,79 +136,79 @@ export const CONTRACT = Object.freeze({
  "operations": {
   "agent.get": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
   "agent.posts": {"fields":["target","query","cursor","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
-  "agent.profile.publish": {"fields":["data","ttl"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "agent.profile.publish": {"fields":["data","ttl"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"availability":{"type":"string","required":true},"avatar":{"type":"object","required":false},"capabilities":{"type":"array","required":true,"limit":"profile_capabilities"},"description":{"type":"string","required":true,"limit":"profile_description_bytes"},"schema":{"type":"int","required":true},"ucp":{"type":"object","required":false}},"aliases":{},"removed":{}}},
   "agent.profile.remove": {"fields":[],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "agent.register": {"fields":["handle"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "agent.rotate": {"fields":["target","proof"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "agents.list": {"fields":["query","cursor","limit","kind"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
-  "allowance.get": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
-  "allowance.transfer": {"fields":["target","amount","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "allowance.get": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https","data":{"fields":{"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "allowance.transfer": {"fields":["target","amount","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"resource":{"type":"string","required":false,"enum":"allowance_resources"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "allowance.transfer.cancel": {"fields":["target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "blob.delete": {"fields":["message_id","target","reason"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "blob.get": {"fields":["message_id","target"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
-  "blob.put": {"fields":["room","data","filename","media_type","ttl","visibility"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "conversation.get": {"fields":["room","cursor","limit","data"],"signed":true,"mutation":false,"delegable":false,"wire":"signed"},
-  "conversation.open": {"fields":["room","members","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
-  "conversation.respond": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
-  "conversation.seal": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "blob.put": {"fields":["room","data","filename","media_type","ttl","visibility"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"raw":"base64url","fields":{},"aliases":{},"removed":{}}},
+  "conversation.get": {"fields":["room","cursor","limit","data"],"signed":true,"mutation":false,"delegable":false,"wire":"signed","data":{"fields":{"mark_read":{"type":"bool","required":false},"reveal":{"type":"array","required":false},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "conversation.open": {"fields":["room","members","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"kind":{"type":"string","required":true},"postage":{"type":"int","required":false},"schema":{"type":"int","required":true},"sealed":{"type":"bool","required":false}},"aliases":{},"removed":{}}},
+  "conversation.respond": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"action":{"type":"string","required":true},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "conversation.seal": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"epoch":{"type":"int","required":true},"member_epoch":{"type":"int","required":true},"schema":{"type":"int","required":true},"wraps":{"type":"array","required":true}},"aliases":{},"removed":{}}},
   "conversations.list": {"fields":["kind","cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"signed"},
   "credit.transfer": {"fields":["target","amount"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "credits.topup": {"fields":["amount","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "credits.topup": {"fields":["amount","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"payment":{"type":"string","required":false},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "credits.topups": {"fields":["cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
-  "delegation.create": {"fields":["room","target","ttl","amount","data","proof"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "delegation.create": {"fields":["room","target","ttl","amount","data","proof"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"disclosure":{"type":"string","required":true},"generation":{"type":"string","required":true,"pattern":"work_id"},"operations":{"type":"array","required":true},"origin":{"type":"string","required":false},"schema":{"type":"int","required":true},"spend_limit":{"type":"object","required":false}},"aliases":{},"removed":{}}},
   "delegation.get": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
-  "delegation.revoke": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "delegation.revoke": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "delegations.list": {"fields":["cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
   "export": {"fields":["cursor","before","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
-  "feed.get": {"fields":["cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
-  "feed.profile.fork": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
-  "feed.profile.get": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
-  "feed.profile.put": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "feed.get": {"fields":["cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"any","data":{"fields":{"explain":{"type":"bool","required":false},"offset":{"type":"int","required":false},"override":{"type":"object","required":false},"profile":{"type":"string","required":false}},"aliases":{},"removed":{}}},
+  "feed.profile.fork": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"hash":{"type":"string","required":false},"schema":{"type":"int","required":false},"visibility":{"type":"string","required":false}},"aliases":{},"removed":{}}},
+  "feed.profile.get": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"any","data":{"fields":{"schema":{"type":"int","required":false}},"aliases":{},"removed":{}}},
+  "feed.profile.put": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"if_revision":{"type":"int","required":false},"profile":{"type":"object","required":true},"schema":{"type":"int","required":false},"visibility":{"type":"string","required":false}},"aliases":{},"removed":{}}},
   "feedback": {"fields":["target","kind","text","amount"],"signed":false,"mutation":true,"delegable":false,"wire":"any"},
-  "find": {"fields":["kind","query","cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
-  "gate.challenge": {"fields":["data"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
-  "gate.verify": {"fields":["data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "find": {"fields":["kind","query","cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https","data":{"fields":{"category":{"type":"string","required":false},"door":{"type":"string","required":false},"explain":{"type":"bool","required":false},"max_price":{"type":"string","required":false},"network":{"type":"string","required":false},"output":{"type":"string","required":false,"enum":"find_outputs"},"parse":{"type":"string","required":false},"protocol":{"type":"string","required":false,"enum":"find_protocols"},"schema":{"type":"int","required":true},"type":{"type":"string|array","required":false,"enum":"find_types"}},"aliases":{},"removed":{}}},
+  "gate.challenge": {"fields":["data"],"signed":false,"mutation":false,"delegable":false,"wire":"any","data":{"fields":{"bits":{"type":"int","required":false},"min":{"type":"int","required":false},"mode":{"type":"string","required":false},"nonce":{"type":"string","required":false},"origin":{"type":"string","required":false},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "gate.verify": {"fields":["data"],"signed":false,"mutation":false,"delegable":false,"wire":"https","data":{"fields":{"answer":{"type":"string","required":false},"challenge":{"type":"string","required":true},"schema":{"type":"int","required":true},"signature":{"type":"string","required":false},"solution":{"type":"string","required":false},"wallet":{"type":"string","required":false}},"aliases":{},"removed":{}}},
   "home": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"signed"},
-  "hosted.claim": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"mcp"},
+  "hosted.claim": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"mcp","data":{"fields":{"new_public_key":{"type":"string","required":true},"proof":{"type":"string","required":true},"recovery_code":{"type":"string","required":true},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "hosted.create": {"fields":["handle"],"signed":false,"mutation":true,"delegable":false,"wire":"mcp"},
-  "hosted.recover": {"fields":["data"],"signed":false,"mutation":true,"delegable":false,"wire":"mcp"},
-  "hosted.token": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"mcp"},
-  "identity.link": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
-  "identity.unlink": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
-  "identity.witness": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "hosted.recover": {"fields":["data"],"signed":false,"mutation":true,"delegable":false,"wire":"mcp","data":{"fields":{"recovery_code":{"type":"string","required":true},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "hosted.token": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"mcp","data":{"fields":{"action":{"type":"string","required":true},"label":{"type":"string","required":false},"schema":{"type":"int","required":true},"spend_limit":{"type":"object","required":false},"target":{"type":"string","required":false}},"aliases":{},"removed":{}}},
+  "identity.link": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"kind":{"type":"string","required":true},"nonce":{"type":"string","required":false},"nonce_log":{"type":"string","required":false},"nonce_log_size":{"type":"int","required":false},"observed_at":{"type":"string","required":false},"observed_height":{"type":"int","required":false},"observed_time":{"type":"int","required":false},"proof":{"type":"string","required":false},"schema":{"type":"int","required":true},"value":{"type":"string","required":true}},"aliases":{},"removed":{}}},
+  "identity.unlink": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"kind":{"type":"string","required":true},"schema":{"type":"int","required":true},"value":{"type":"string","required":true}},"aliases":{},"removed":{}}},
+  "identity.witness": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"agent":{"type":"string","required":true,"pattern":"fingerprint"},"checks":{"type":"array","required":false,"limit":"verdict_checks_maximum"},"kind":{"type":"string","required":true},"nonce":{"type":"string","required":true},"schema":{"type":"int","required":true},"value":{"type":"string","required":true},"verdict":{"type":"string","required":true}},"aliases":{},"removed":{}}},
   "journal.get": {"fields":["cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"signed"},
   "journal.suspend": {"fields":["text","cursor"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
   "key.backup.delete": {"fields":[],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "key.backup.get": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
-  "key.backup.put": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "key.backup.get": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https","data":{"fields":{"credential_id":{"type":"string","required":true},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "key.backup.put": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"ciphertext":{"type":"string","required":true},"credential_id":{"type":"string","required":true},"iv":{"type":"string","required":true},"label":{"type":"string","required":false},"salt":{"type":"string","required":true},"schema":{"type":"int","required":true},"scheme":{"type":"string","required":true}},"aliases":{},"removed":{}}},
   "lease.acquire": {"fields":["room","target","ttl"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "lease.release": {"fields":["room","target","amount"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "ledger.list": {"fields":["target","cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "ledger.list": {"fields":["target","cursor","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
   "message.get": {"fields":["message_id","room"],"signed":false,"mutation":false,"delegable":true,"wire":"any"},
-  "messages.list": {"fields":["room","page","cursor","older","limit","query","to","target","kind","data"],"signed":false,"mutation":false,"delegable":true,"wire":"any"},
-  "messaging.policy.set": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
-  "offering.answer": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "offering.buy": {"fields":["target","data"],"signed":false,"mutation":true,"delegable":false,"wire":"https"},
+  "messages.list": {"fields":["room","page","cursor","older","limit","query","to","target","kind","data"],"signed":false,"mutation":false,"delegable":true,"wire":"any","data":{"fields":{"bias":{"type":"number","required":false},"offset":{"type":"int","required":false},"schema":{"type":"int","required":false},"scope":{"type":"string","required":false},"sort":{"type":"string","required":false},"weights":{"type":"bool","required":false}},"aliases":{},"removed":{}}},
+  "messaging.policy.set": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"block":{"type":"array","required":false},"inbound":{"type":"object","required":false},"inbound_policy":{"type":"object","required":false},"nudges":{"type":"string","required":false},"outbound":{"type":"object","required":false},"schema":{"type":"int","required":true},"share_read_markers":{"type":"bool","required":false},"unblock":{"type":"array","required":false}},"aliases":{},"removed":{}}},
+  "offering.answer": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"body":{"type":"string","required":true},"content_type":{"type":"string","required":false},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "offering.buy": {"fields":["target","data"],"signed":false,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"input":{"type":"object","required":false},"payment":{"type":"string","required":false},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "offering.call.get": {"fields":["target"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
   "offering.calls": {"fields":["target","kind","cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
   "offering.claim": {"fields":["target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "offering.decline": {"fields":["target","reason"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "offering.get": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
   "offering.list": {"fields":["target","query","cursor","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
-  "offering.publish": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "offering.refund": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "offering.publish": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"claim_window":{"type":"int","required":false},"description":{"type":"string","required":false},"input":{"type":"object","required":false},"name":{"type":"string","required":true},"pay_to":{"type":"string","required":true},"price":{"type":"string","required":true},"refund":{"type":"string","required":false},"schema":{"type":"int","required":true},"screen_answer":{"type":"bool","required":false},"sla":{"type":"int","required":false},"title":{"type":"string","required":true}},"aliases":{},"removed":{}}},
+  "offering.refund": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"schema":{"type":"int","required":true},"tx_hash":{"type":"string","required":true}},"aliases":{},"removed":{}}},
   "offering.retire": {"fields":["target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "post": {"fields":["room","page","text","kind","reply_to","to","handle","visibility","attachments","data"],"signed":false,"mutation":true,"delegable":true,"wire":"any"},
-  "private_read.create": {"fields":["room","target","proof","data","ttl"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "post": {"fields":["room","page","text","kind","reply_to","to","handle","visibility","attachments","data"],"signed":false,"mutation":true,"delegable":true,"wire":"any","data":{"fields":{"format":{"type":"string","required":false},"review":{"type":"object","required":false},"schema":{"type":"int","required":true},"supersedes":{"type":"string","required":false,"pattern":"message_id"}},"aliases":{},"removed":{}}},
+  "private_read.create": {"fields":["room","target","proof","data","ttl"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"access_epoch":{"type":"string","required":true,"pattern":"work_id"},"disclosure":{"type":"string","required":true},"generation":{"type":"string","required":true,"pattern":"work_id"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "private_read.get": {"fields":["room","target"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
   "private_read.list": {"fields":["room","cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
-  "private_read.revoke": {"fields":["room","target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "private_read.revoke": {"fields":["room","target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "quota.get": {"fields":[],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
   "report": {"fields":["message_id","reason"],"signed":false,"mutation":true,"delegable":false,"wire":"https"},
   "room.create": {"fields":["room","visibility","members"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "room.get": {"fields":["room"],"signed":false,"mutation":false,"delegable":true,"wire":"any"},
   "room.hide": {"fields":["message_id","reason"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
-  "room.invite.accept": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "room.invite.accept": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"raw":"base64url","fields":{},"aliases":{},"removed":{}}},
   "room.invite.create": {"fields":["room","ttl","target"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
   "room.member.add": {"fields":["room","target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "room.member.remove": {"fields":["room","target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
@@ -216,52 +217,52 @@ export const CONTRACT = Object.freeze({
   "room.modlog": {"fields":["room","cursor","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
   "room.owner.transfer": {"fields":["room","target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "room.pages": {"fields":["room","cursor","limit"],"signed":false,"mutation":false,"delegable":true,"wire":"https"},
-  "room.policy.set": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "room.policy.set": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"closed":{"type":"bool","required":false},"closes_at":{"type":"int","required":false},"front_page":{"type":"bool","required":false},"max_messages":{"type":"int","required":false},"promotion":{"type":"string","required":false},"reply":{"type":"string","required":false},"rules":{"type":"string","required":false,"limit":"room_rules_bytes"},"top_level_per_day":{"type":"int","required":false},"write":{"type":"string","required":false},"write_via":{"type":"array","required":false}},"aliases":{},"removed":{}}},
   "room.restore": {"fields":["message_id","reason"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
-  "room.style.check": {"fields":["room","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "room.style.check": {"fields":["room","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https","data":{"fields":{"css":{"type":"string","required":true,"limit":"room_style_bytes"}},"aliases":{},"removed":{}}},
   "room.style.clear": {"fields":["room"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "room.style.set": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "room.subscribe": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "room.style.set": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"css":{"type":"string","required":true,"limit":"room_style_bytes"}},"aliases":{},"removed":{}}},
+  "room.subscribe": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"schema":{"type":"int","required":false},"weight":{"type":"number","required":false}},"aliases":{},"removed":{}}},
   "room.unsubscribe": {"fields":["room"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
   "rooms.list": {"fields":["room","query","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
-  "service.call": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"any"},
-  "service.read": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
+  "service.call": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"any","data":{"raw":"service","fields":{},"aliases":{},"removed":{}}},
+  "service.read": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"any","data":{"raw":"service","fields":{},"aliases":{},"removed":{}}},
   "services.list": {"fields":[],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
-  "spend_limit.set": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "standing.challenge": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "spend_limit.set": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"credit_per_call":{"type":"int","required":false},"credit_per_day":{"type":"int","required":false},"expires_at":{"type":"int","required":false},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "standing.challenge": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"action":{"type":"string","required":false},"bits":{"type":"int","required":false},"id":{"type":"string","required":false},"kind":{"type":"string","required":true},"payment":{"type":"string","required":false},"schema":{"type":"int","required":true},"tx_hash":{"type":"string","required":false,"pattern":"tx_hash"},"usdc":{"type":"string","required":false},"value":{"type":"string","required":false}},"aliases":{},"removed":{}}},
   "standing.ways": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
-  "standing.work": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "standing.work": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"nonce":{"type":"string","required":true},"schema":{"type":"int","required":true},"solution":{"type":"string","required":true}},"aliases":{},"removed":{}}},
   "stats": {"fields":[],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
   "subject.get": {"fields":["target","cursor","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
   "subject.resolve": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
-  "subjects.list": {"fields":["kind","query","cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "subjects.list": {"fields":["kind","query","cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https","data":{"fields":{"schema":{"type":"int","required":true},"sort":{"type":"string","required":true}},"aliases":{},"removed":{}}},
   "thread.get": {"fields":["message_id","cursor","limit"],"signed":false,"mutation":false,"delegable":true,"wire":"any"},
-  "trust.get": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "trust.get": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https","data":{"raw":"viewer","fields":{},"aliases":{},"removed":{}}},
   "trust.penalties": {"fields":["target","before","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
-  "updates.dispose": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
-  "updates.get": {"fields":["target","cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"signed"},
-  "updates.mark_read": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "updates.dispose": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"ids":{"type":"array","required":true},"schema":{"type":"int","required":true},"state":{"type":"string","required":true,"enum":"inbox_dispose_states"}},"aliases":{},"removed":{}}},
+  "updates.get": {"fields":["target","cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"signed","data":{"fields":{"counts":{"type":"bool","required":false},"schema":{"type":"int","required":true},"wait":{"type":"int","required":false}},"aliases":{},"removed":{}}},
+  "updates.mark_read": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"all":{"type":"bool","required":false},"ids":{"type":"array","required":false},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "verify.get": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
   "verify.list": {"fields":["target","query","cursor","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
-  "verify.publish": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "vote": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
-  "vouch": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "webhook.create": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "verify.publish": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"checks":{"type":"array","required":true,"limit":"verdict_checks_maximum"},"command":{"type":"string","required":true},"commit":{"type":"string","required":false},"environment":{"type":"string","required":true},"file":{"type":"string","required":false},"file_sha256":{"type":"string","required":false,"pattern":"fingerprint"},"limits":{"type":"string","required":true},"output_sha256":{"type":"string","required":true,"pattern":"fingerprint"},"repo":{"type":"string","required":false},"schema":{"type":"int","required":true},"supersedes":{"type":"string","required":false}},"aliases":{},"removed":{}}},
+  "vote": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":true,"wire":"https","data":{"fields":{"schema":{"type":"int","required":false},"value":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "vouch": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"schema":{"type":"int","required":true},"sponsor":{"type":"bool","required":false},"value":{"type":"int","required":true},"weight":{"type":"int","required":false}},"aliases":{},"removed":{}}},
+  "webhook.create": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"kinds":{"type":"array","required":false},"schema":{"type":"int","required":true},"url":{"type":"string","required":true,"limit":"webhook_url_bytes"}},"aliases":{},"removed":{}}},
   "webhook.delete": {"fields":["target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "webhook.list": {"fields":["cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
-  "work.accept": {"fields":["message_id","data","amount"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "work.cancel": {"fields":["message_id","data","reason"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "work.claim": {"fields":["message_id","data","ttl","target"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
-  "work.create": {"fields":["message_id","data","ttl"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "work.accept": {"fields":["message_id","data","amount"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"checks":{"type":"array","required":false,"limit":"verdict_checks_maximum"},"generation":{"type":"string","required":true,"pattern":"work_id"},"result_sha256":{"type":"string","required":false,"pattern":"fingerprint"},"review":{"type":"object","required":false},"schema":{"type":"int","required":true},"tier":{"type":"string","required":false,"pattern":"standing_tier"}},"aliases":{},"removed":{}}},
+  "work.cancel": {"fields":["message_id","data","reason"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "work.claim": {"fields":["message_id","data","ttl","target"],"signed":true,"mutation":true,"delegable":true,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"payout_address":{"type":"string","required":false},"result_sha256":{"type":"string","required":false,"pattern":"fingerprint"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "work.create": {"fields":["message_id","data","ttl"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"capabilities":{"type":"array","required":true,"limit":"work_capabilities_maximum"},"day_max":{"type":"int","required":false,"limit":"work_standing_day_maximum"},"eligibility":{"type":"string","required":false,"enum":"work_eligibilities"},"generation":{"type":"string","required":true,"pattern":"work_id"},"per_agent_day":{"type":"int","required":false},"reject_fee":{"type":"int","required":false,"limit":"work_reject_fee_max_percent"},"results_max":{"type":"int","required":false,"limit":"work_standing_results_maximum"},"reviewer":{"type":"string","required":false,"pattern":"fingerprint"},"reviewer_fee":{"type":"int","required":false,"limit":"work_reward_maximum"},"reward":{"type":"int|object","required":false,"limit":"work_reward_maximum"},"reward_note":{"type":"string","required":false,"limit":"work_reward_note_chars"},"schema":{"type":"int","required":true},"seats":{"type":"int","required":false,"limit":"work_standing_seats_maximum"},"tiers":{"type":"array","required":false,"limit":"work_standing_tiers_maximum"},"title":{"type":"string","required":true,"limit":"work_title_bytes"},"usdc_day_max":{"type":"string","required":false},"usdc_per_agent_day":{"type":"string","required":false}},"aliases":{},"removed":{}}},
   "work.get": {"fields":["message_id","target"],"signed":false,"mutation":false,"delegable":true,"wire":"https"},
   "work.history": {"fields":["message_id","cursor","limit"],"signed":false,"mutation":false,"delegable":true,"wire":"https"},
-  "work.reject": {"fields":["message_id","data","amount","reason"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "work.renew": {"fields":["message_id","data","amount","ttl"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
-  "work.reviewer.set": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "work.settle": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "work.submit": {"fields":["message_id","data","amount","target"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
-  "works.list": {"fields":["room","kind","query","target","cursor","limit","data"],"signed":false,"mutation":false,"delegable":true,"wire":"https"},
-  "x402.submit": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "work.reject": {"fields":["message_id","data","amount","reason"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"checks":{"type":"array","required":false,"limit":"verdict_checks_maximum"},"generation":{"type":"string","required":true,"pattern":"work_id"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "work.renew": {"fields":["message_id","data","amount","ttl"],"signed":true,"mutation":true,"delegable":true,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "work.reviewer.set": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"reviewer":{"type":"string","required":true,"pattern":"fingerprint"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "work.settle": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"schema":{"type":"int","required":true},"tx_hash":{"type":"string","required":true,"pattern":"tx_hash"}},"aliases":{},"removed":{}}},
+  "work.submit": {"fields":["message_id","data","amount","target"],"signed":true,"mutation":true,"delegable":true,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"payout_address":{"type":"string","required":false},"result_sha256":{"type":"string","required":false,"pattern":"fingerprint"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "works.list": {"fields":["room","kind","query","target","cursor","limit","data"],"signed":false,"mutation":false,"delegable":true,"wire":"https","data":{"fields":{"eligible_for":{"type":"string","required":false},"schema":{"type":"int","required":true},"standing":{"type":"string","required":false,"pattern":"work_id"},"worker":{"type":"string","required":false}},"aliases":{},"removed":{}}},
+  "x402.submit": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"category":{"type":"string","required":false},"schema":{"type":"int","required":true},"summary":{"type":"string","required":false}},"aliases":{},"removed":{}}},
   "x402.withdraw": {"fields":["target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"}
  },
  "patterns": {
@@ -394,106 +395,849 @@ for (const code of 'invalid_find find_unavailable'.split(' ')) remoteCodes.add(c
 for (const code of 'invalid_gate_data gate_too_slow'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_conversation invalid_messaging_policy conversation_delegated conversation_state conversation_room conversation_limit conversation_grant_unsupported dm_exists dm_members member_exists not_member request_pending request_limit requests_paused postage_unavailable self_custody_required room_closed room_message_limit'.split(' ')) remoteCodes.add(code);
 
-// C324: a signed post whose text is Markdown that renders without loss is
-// signed with format "markdown" by default (prepare's format option: 'markdown'
-// always, 'plain' never; data the caller passes wins). markdownAuto is a small,
-// conservative port of the board's detector (internal/markdown AutoRender), as
-// the Python client's markdown_auto is: both agree with every vector of
-// testdata/markdown_auto.json and answer false where unsure.
+// C324, C376: a signed post whose text is Markdown that renders without loss
+// is signed with format "markdown" by default (prepare's format option:
+// 'markdown' always, 'plain' never; data the caller passes wins). markdownAuto
+// is a port of the board's detector (internal/markdown AutoRender, auto.go),
+// not an approximation: the same block parse, inline tokenizer, delimiter
+// stack (flanking, rule of 3, doubtful runs) and lossless check, run as the
+// renderer's plain-text audit pass. Each helper names the Go function it
+// mirrors, so a change there ports here line by line; the Python client's
+// markdown_auto is the same port. Both agree with every vector of
+// testdata/markdown_auto.json and testdata/markdown_auto_fuzz.json.
 export const MARKDOWN_AUTO_BYTES = 16 << 10;
 export const MARKDOWN_POST_DATA = '{"schema":1,"format":"markdown"}';
-const MD = {
-  fence: /^ {0,3}(`{3,}|~{3,})(.*)$/,
-  quote: /^(?: {0,3}> ?)+/,
-  heading: /^ {0,3}#{1,6}(?:[ \t]|$)/,
-  item: /^ {0,3}(?:([-*+])|(\d{1,9})([.)]))(?:[ \t]|$)/,
-  break: /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/,
-  delimiter: /^\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?$/,
-  codeSpan: /(`+)(?!`)([\s\S]+?)(?<!`)\1(?!`)/g,
-  escape: /\\[!-/:-@[-`{-~\n]/,
-  link: /\]\(/g,
-  dest: /\]\((?:https?:\/\/[a-z0-9.-]+(?::\d+)?(?:\/[A-Za-z0-9\-._~/?#%&=+,;:@!$*']*)?|\/[A-Za-z0-9\-._~/?#%&=+,;:@!$*']*|#[A-Za-z0-9\-._~]*)\)/g,
-  writePath: /\]\((?:https?:\/\/[^/)]*)?\/(?:w|w64|c64|v1|admin)(?:[/?#)])/,
-  underscoreWord: /(?<![\p{L}\p{N}_])_+[^\s_](?:\S*?[^\s_])?_+(?![\p{L}\p{N}_])/u,
-  emphasis: /(\*\*|__)(?=\S)([\s\S]+?)(?<=\S)\1|(?<![*\p{L}\p{N}_])\*(?=[^\s*])([\s\S]+?)(?<=[^\s*])\*(?![*\p{L}\p{N}_])|(?<![\p{L}\p{N}_])_(?=[^\s_])([\s\S]+?)(?<=[^\s_])_(?![\p{L}\p{N}_])/gu,
-  paragraph: /\n[ \t>]*\n/, // a span crosses a line break, never a blank line
+const MD_MAX_DEPTH = 6, MD_MAX_TABLE_COLS = 32, MD_MAX_URL_BYTES = 2048, MD_MAX_STACK_SCAN = 64;
+const MD_MAX_ANCHOR_SLUG = 64, MD_MAX_PAREN_DEPTH = 32, MD_MAX_LANG_BYTES = 24;
+const MD_PUNCT = '!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~'; // isPunct
+const MD_SKELETON = '#*_`|->+:[]()!<~'; // skeletonSyntax
+const MD_SPACE = '\t\n\v\f\r \x85\xa0                　'; // unicode.IsSpace
+const MD_FIELDS = new RegExp(`[${MD_SPACE}]+`);
+const MD_WRITE_PATHS = ['/w/', '/w64/', '/c64/', '/v1/', '/admin/']; // writePaths
+const MD_TEXT = 0, MD_CODE = 1, MD_LINK = 2, MD_BREAK = 3, MD_DELIM = 4;
+
+const mdBlen = s => Buffer.byteLength(s); // len(s) in Go: UTF-8 bytes
+// mdUnitBytes is the UTF-8 bytes of the UTF-16 unit s[i]: half of a surrogate pair's four.
+const mdUnitBytes = (s, i) => {
+  const c = s.charCodeAt(i);
+  if (c < 0x80) return 1;
+  if (c < 0x800) return 2;
+  const pair = c < 0xdc00 ? /[\udc00-\udfff]/.test(s[i + 1] || '') : /[\ud800-\udbff]/.test(s[i - 1] || '');
+  return c >= 0xd800 && c <= 0xdfff && pair ? 2 : 3;
 };
-const mdPunct = c => c !== ' ' && (/[!-/:-@[-`{-~]/.test(c) || /[\p{P}\p{S}]/u.test(c));
-const mdIndent = line => line.length - line.replace(/^ +/, '').length;
-const mdCells = line => {
-  let t = line.trim();
+const mdIsSpace = c => c !== '' && MD_SPACE.includes(c); // unicode.IsSpace
+const mdIsPunctRune = c => c < '\x80' ? MD_PUNCT.includes(c) : /^[\p{P}\p{S}]/u.test(c); // isPunctRune
+const mdIsWord = c => /^[\p{L}\p{Nd}]/u.test(c); // isWord
+const mdIsPrint = c => /^[\p{L}\p{M}\p{N}\p{P}\p{S}]/u.test(c); // unicode.IsPrint, for a non-ASCII rune
+const mdBidiControl = c => { // bidiControl
+  const o = c.codePointAt(0);
+  return (o >= 0x202a && o <= 0x202e) || (o >= 0x2066 && o <= 0x2069) || o === 0x200e || o === 0x200f || o === 0x061c;
+};
+// prevRune and nextRune: the rune before or at i (a JS index), space at the ends.
+const mdPrevRune = (s, i) => {
+  if (i <= 0) return ' ';
+  const low = s.charCodeAt(i - 1);
+  return low >= 0xdc00 && low <= 0xdfff && i >= 2 && /[\ud800-\udbff]/.test(s[i - 2]) ? s.slice(i - 2, i) : s[i - 1];
+};
+const mdNextRune = (s, i) => i < s.length ? String.fromCodePoint(s.codePointAt(i)) : ' ';
+// strings.Trim / TrimLeft / TrimRight with an ASCII or MD_SPACE cutset.
+const mdTrimLeft = (s, cut) => { let i = 0; while (i < s.length && cut.includes(s[i])) i++; return s.slice(i); };
+const mdTrimRight = (s, cut) => { let j = s.length; while (j > 0 && cut.includes(s[j - 1])) j--; return s.slice(0, j); };
+const mdTrim = (s, cut) => mdTrimRight(mdTrimLeft(s, cut), cut);
+const mdTrimSpace = s => mdTrim(s, MD_SPACE); // strings.TrimSpace
+const mdRunLength = (s, i, c) => { let n = i; while (n < s.length && s[n] === c) n++; return n - i; }; // runLength
+const mdCut = (s, sep) => { const k = s.indexOf(sep); return k < 0 ? [s, '', false] : [s.slice(0, k), s.slice(k + sep.length), true]; }; // strings.Cut
+
+// ---------- lines (markdown.go) ----------
+
+const mdSplitLines = src => src.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n'); // splitLines
+const mdIsBlank = line => mdTrimSpace(line) === ''; // isBlank
+function mdIndent(line) { // indent
+  let col = 0;
+  for (const c of line) {
+    if (c === ' ') col++;
+    else if (c === '\t') col += 4 - col % 4;
+    else break;
+  }
+  return col;
+}
+function mdDedent(line, n) { // dedent
+  let col = 0;
+  for (let i = 0; i < line.length; i++) {
+    if (col >= n) return line.slice(i);
+    const c = line[i];
+    if (c === ' ') col++;
+    else if (c === '\t') {
+      const next = col + 4 - col % 4;
+      if (next > n) return ' '.repeat(next - n) + line.slice(i + 1);
+      col = next;
+    } else return line.slice(i);
+  }
+  return '';
+}
+
+// ---------- block recognisers ----------
+
+function mdFenceOpen(line) { // fenceOpen: the marker, or null
+  if (mdIndent(line) > 3) return null;
+  const t = mdTrimLeft(line, ' \t');
+  if (t.length < 3 || (t[0] !== '`' && t[0] !== '~')) return null;
+  const n = mdRunLength(t, 0, t[0]);
+  if (n < 3 || (t[0] === '`' && t.slice(n).includes('`'))) return null;
+  return t.slice(0, n);
+}
+function mdFenceClose(line, marker) { // fenceClose
+  if (mdIndent(line) > 3) return false;
+  const t = mdTrimSpace(line);
+  return t.length >= marker.length && mdTrim(t, marker[0]) === '';
+}
+function mdFence(lines, i) { // fence: [lang, body, next] or null
+  const marker = mdFenceOpen(lines[i]);
+  if (marker === null) return null;
+  const width = mdIndent(lines[i]);
+  let end = i + 1;
+  while (end < lines.length && !mdFenceClose(lines[end], marker)) end++;
+  const body = lines.slice(i + 1, end).map(line => mdDedent(line, width)).join('\n');
+  const info = mdTrimLeft(lines[i], ' \t').slice(marker.length);
+  return [mdFenceLang(info), body, Math.min(end + 1, lines.length)];
+}
+function mdFenceLang(info) { // fenceLang
+  const fields = info.split(MD_FIELDS).filter(Boolean);
+  if (!fields.length || mdBlen(fields[0]) > MD_MAX_LANG_BYTES) return '';
+  const lang = fields[0].toLowerCase();
+  return /^[a-z0-9+#._-]*$/.test(lang) ? lang : '';
+}
+function mdAtxHeading(line) { // atxHeading: [level, text] or null
+  if (mdIndent(line) > 3) return null;
+  const t = mdTrimLeft(line, ' \t');
+  const n = mdRunLength(t, 0, '#');
+  if (n === 0 || n > 6 || (n < t.length && t[n] !== ' ' && t[n] !== '\t')) return null;
+  let text = mdTrimSpace(t.slice(n));
+  // An optional closing run of # preceded by a space is not content.
+  const trimmed = mdTrimRight(text, '#');
+  if (trimmed !== text && (trimmed === '' || trimmed.endsWith(' ') || trimmed.endsWith('\t'))) text = mdTrimSpace(trimmed);
+  return [n, text];
+}
+function mdThematicBreak(line) { // thematicBreak
+  if (mdIndent(line) > 3) return false;
+  const t = mdTrimSpace(line);
+  if (t.length < 3 || !'-*_'.includes(t[0])) return false;
+  let count = 0;
+  for (const c of t) {
+    if (c === t[0]) count++;
+    else if (c !== ' ' && c !== '\t') return false;
+  }
+  return count >= 3;
+}
+function mdQuoteLine(line) { // quoteLine: the quoted text, or null
+  if (mdIndent(line) > 3) return null;
+  let t = mdTrimLeft(line, ' \t');
+  if (!t.startsWith('>')) return null;
+  t = t.slice(1);
+  return t.startsWith(' ') ? t.slice(1) : t;
+}
+function mdListMarker(line) { // listMarker: a marker, or null
+  const col = mdIndent(line);
+  if (col > 3) return null;
+  const t = mdTrimLeft(line, ' \t');
+  const m = {ordered: false, bullet: '', start: 0, content: 0, text: '', markerAt: col};
+  let width;
+  if (t && '-*+'.includes(t[0])) {
+    m.bullet = t[0]; width = 1;
+  } else {
+    let n = 0;
+    while (n < t.length && n < 9 && t[n] >= '0' && t[n] <= '9') n++;
+    if (n === 0 || n >= t.length || (t[n] !== '.' && t[n] !== ')')) return null;
+    m.ordered = true; m.bullet = t[n]; width = n + 1; m.start = Number(t.slice(0, n));
+  }
+  const rest = t.slice(width);
+  if (rest && rest[0] !== ' ' && rest[0] !== '\t') return null;
+  let spaces = mdIndent(rest);
+  const body = mdTrimLeft(rest, ' \t');
+  if (body === '' || spaces > 4) spaces = 1;
+  m.content = col + width + spaces; m.text = body;
+  return m;
+}
+const mdSameList = (a, b) => a.ordered === b.ordered && a.bullet === b.bullet; // sameList
+
+// tickIndex, built by backtickRuns.
+function mdBacktickRuns(s) {
+  const runs = new Map();
+  for (let i = 0; i < s.length;) {
+    if (s[i] !== '`') { i++; continue; }
+    const n = mdRunLength(s, i, '`');
+    if (!runs.has(n)) runs.set(n, []);
+    runs.get(n).push(i);
+    i += n;
+  }
+  return {
+    next(n, from) { // (tickIndex).next
+      const positions = runs.get(n) || [];
+      let lo = 0, hi = positions.length;
+      while (lo < hi) { const mid = (lo + hi) >> 1; if (positions[mid] < from) lo = mid + 1; else hi = mid; }
+      return lo < positions.length ? positions[lo] : -1;
+    },
+  };
+}
+// The backtick case of splitRow, trailingDelimiter and matchBrackets.
+function mdSkipCode(s, i, ticks) {
+  const n = mdRunLength(s, i, '`'), end = ticks.next(n, i + n);
+  return end >= 0 ? end + n - 1 : i + n - 1;
+}
+function mdSplitRow(line) { // splitRow
+  let t = mdTrimSpace(line);
   if (t.startsWith('|')) t = t.slice(1);
-  if (t.endsWith('|') && !t.endsWith('\\|')) t = t.slice(0, -1);
-  return t.split(/(?<!\\)\|/);
-};
-// A * run that could both open and close (2*3*4, src/*.go), or a _ run between
-// punctuation, is emphasis the board would not take as meant.
-function mdDoubtfulRuns(text) {
-  for (const m of text.matchAll(/\*+|_+/g)) {
-    const before = m.index ? [...text.slice(0, m.index)].at(-1) : ' ', end = m.index + m[0].length;
-    const after = end < text.length ? String.fromCodePoint(text.codePointAt(end)) : ' ';
-    const spaceB = /\s/u.test(before), spaceA = /\s/u.test(after), punctB = mdPunct(before), punctA = mdPunct(after);
-    const left = !spaceA && (!punctA || spaceB || punctB), right = !spaceB && (!punctB || spaceA || punctA);
-    if (left && right && (m[0][0] === '*' || (punctB && punctA))) return true;
+  if (t.endsWith('|') && mdTrailingDelimiter(t)) t = t.slice(0, -1);
+  const cells = [], ticks = mdBacktickRuns(t);
+  let start = 0;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (c === '\\') i++;
+    else if (c === '`') i = mdSkipCode(t, i, ticks);
+    else if (c === '|') { cells.push(mdTrimSpace(t.slice(start, i))); start = i + 1; }
+  }
+  if (start < t.length || cells.length || t !== '') cells.push(mdTrimSpace(t.slice(start)));
+  return cells;
+}
+function mdTrailingDelimiter(t) { // trailingDelimiter
+  const ticks = mdBacktickRuns(t), last = t.length - 1;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (c === '\\') i++;
+    else if (c === '`') i = mdSkipCode(t, i, ticks);
+    else if (c === '|' && i === last) return true;
+  }
+  return false;
+}
+function mdDelimiterRow(line) { // delimiterRow: its cell count (the alignments' only use here), or null
+  if (!line.includes('-')) return null;
+  const cells = mdSplitRow(line);
+  for (const cell of cells) {
+    const c = mdTrim(mdTrimSpace(cell), ':');
+    if (c === '' || mdTrim(c, '-') !== '') return null;
+  }
+  return cells.length;
+}
+function mdTableStart(lines, i) { // tableStart: the header cells, or null
+  if (i + 1 >= lines.length || !lines[i].includes('|') || mdIndent(lines[i]) > 3) return null;
+  const header = mdSplitRow(lines[i]), width = mdDelimiterRow(lines[i + 1]);
+  if (width === null || header.length !== width || header.length === 0 || header.length > MD_MAX_TABLE_COLS) return null;
+  return header;
+}
+function mdStartsBlock(lines, i) { // startsBlock
+  const line = lines[i];
+  return mdFenceOpen(line) !== null || mdAtxHeading(line) !== null || mdThematicBreak(line) ||
+    mdQuoteLine(line) !== null || mdListMarker(line) !== null || mdTableStart(lines, i) !== null;
+}
+function mdInterruptsParagraph(lines, i) { // interruptsParagraph
+  if (!mdThematicBreak(lines[i])) {
+    const m = mdListMarker(lines[i]);
+    if (m !== null) return m.text !== '' && (!m.ordered || m.start === 1);
+  }
+  return mdStartsBlock(lines, i);
+}
+
+// ---------- blocks: the renderer in AutoRender's plain-text audit pass ----------
+
+// newRenderer(true, Options{}) with audit set: out is the visible text, and
+// structure, spans, doubtful and labelled are the audit's fields.
+class MdAudit {
+  constructor() { this.out = []; this.structure = false; this.spans = 0; this.doubtful = false; this.labelled = false; }
+
+  blocks(lines, depth) { // (*renderer).blocks; after() is the "\n" each block ends with
+    for (let i = 0; i < lines.length;) {
+      const line = lines[i];
+      if (mdIsBlank(line)) { i++; continue; }
+      if (depth > MD_MAX_DEPTH) { this.paragraph(lines.slice(i).join('\n')); return; }
+      const fenced = mdFence(lines, i);
+      if (fenced !== null) {
+        const [lang, body, next] = fenced;
+        this.structure = true; // auditFence
+        this.out.push(lang + '\n' + body + '\n');
+        i = next;
+        continue;
+      }
+      const heading = mdAtxHeading(line);
+      if (heading !== null) {
+        this.structure = true;
+        i++;
+        this.inline(heading[1], true); // heading
+        this.out.push('\n');
+        continue;
+      }
+      if (mdThematicBreak(line)) { i++; this.out.push('\n'); continue; }
+      if (mdQuoteLine(line) !== null) {
+        const inner = [];
+        for (; i < lines.length; i++) {
+          const q = mdQuoteLine(lines[i]);
+          if (q !== null) inner.push(q);
+          else if (!mdIsBlank(lines[i]) && inner.length && !mdIsBlank(inner.at(-1)) && !mdStartsBlock(lines, i)) inner.push(lines[i]); // lazy continuation
+          else break;
+        }
+        this.blocks(inner, depth + 1);
+        this.out.push('\n');
+        continue;
+      }
+      const m = mdListMarker(line);
+      if (m !== null) { i = this.list(lines, i, m, depth); this.out.push('\n'); continue; }
+      const header = mdTableStart(lines, i);
+      if (header !== null) { i = this.table(lines, i, header); this.out.push('\n'); continue; }
+      const start = i;
+      for (i++; i < lines.length && !mdIsBlank(lines[i]) && !mdInterruptsParagraph(lines, i); i++);
+      this.paragraph(lines.slice(start, i).map(l => mdTrimLeft(l, ' \t')).join('\n'));
+      this.out.push('\n');
+    }
+  }
+
+  paragraph(text) { this.inline(mdTrimRight(text, ' \t'), true); } // (*renderer).paragraph
+
+  list(lines, i, m, depth) { // (*renderer).list
+    let current = m;
+    for (let item = 0; ; item++) {
+      const body = [current.text];
+      i++;
+      while (i < lines.length) {
+        const line = lines[i];
+        if (mdIsBlank(line)) {
+          // A blank line continues the item only if indented content follows.
+          let j = i;
+          while (j < lines.length && mdIsBlank(lines[j])) j++;
+          if (j < lines.length && mdIndent(lines[j]) >= current.content) {
+            for (; i < j; i++) body.push('');
+            continue;
+          }
+          if (j < lines.length && !mdThematicBreak(lines[j])) {
+            const next = mdListMarker(lines[j]);
+            if (next !== null && mdSameList(next, m) && next.markerAt < current.content) i = j;
+          }
+          break;
+        }
+        if (mdIndent(line) >= current.content) { body.push(mdDedent(line, current.content)); i++; continue; }
+        if (mdStartsBlock(lines, i) || mdIsBlank(body.at(-1))) break;
+        body.push(mdTrimLeft(line, ' \t')); // lazy continuation
+        i++;
+      }
+      if (item >= 1) this.structure = true; // auditItem
+      if (m.ordered) this.out.push(String(m.start + item) + m.bullet + ' ');
+      this.blocks(body, depth + 1);
+      if (i >= lines.length || mdThematicBreak(lines[i])) break;
+      const next = mdListMarker(lines[i]);
+      if (next === null || !mdSameList(next, m)) break;
+      current = next;
+    }
+    return i;
+  }
+
+  table(lines, i, header) { // (*renderer).table
+    this.structure = true;
+    for (const text of header) { this.inline(text, true); this.out.push(' '); }
+    for (i += 2; i < lines.length && !mdIsBlank(lines[i]) && !mdStartsBlock(lines, i); i++) {
+      for (const text of mdSplitRow(lines[i]).slice(0, header.length)) { this.inline(text, true); this.out.push(' '); }
+      this.out.push('\n');
+    }
+    return i;
+  }
+
+  inline(s, links) { // (*renderer).inline; no Mentions, so splitMentions keeps toks
+    const toks = mdTokenize(s, links);
+    const [spans, doubtful] = mdResolveEmphasis(toks);
+    this.spans += spans;
+    this.doubtful = this.doubtful || doubtful;
+    for (const t of toks) {
+      if (t.kind === MD_DELIM) this.out.push(t.ch.repeat(t.count));
+      else if (t.kind === MD_BREAK) this.out.push('\n');
+      else if (t.kind === MD_LINK) this.link(t);
+      else this.out.push(t.text);
+    }
+  }
+
+  link(t) { // (*renderer).link in plain text
+    if (t.auto) { this.out.push(t.text); return; }
+    this.inline(t.text, false);
+    this.out.push(' ' + t.href); // the page links the label to it
+    this.labelled = true;
+  }
+}
+
+// ---------- inline ----------
+
+// token
+const mdToken = (kind, {text = '', href = '', host = '', auto = false, ch = '', count = 0, open = false, close = false} = {}) =>
+  ({kind, text, href, host, auto, ch, count, orig: count, open, close});
+
+function mdTokenize(s, links) { // tokenize
+  const toks = [], text = [];
+  const flush = () => { if (text.length) { toks.push(mdToken(MD_TEXT, {text: text.join('')})); text.length = 0; } };
+  const ticks = mdBacktickRuns(s), brackets = links ? mdMatchBrackets(s) : new Map(), n = s.length;
+  for (let i = 0; i < n;) {
+    const c = s[i];
+    if (c === '\\' && i + 1 < n && s[i + 1] === '\n') { flush(); toks.push(mdToken(MD_BREAK)); i += 2; continue; }
+    if (c === '\\' && i + 1 < n && MD_PUNCT.includes(s[i + 1])) { text.push(s[i + 1]); i += 2; continue; }
+    if (c === '\n') {
+      // Two trailing spaces make a hard break; otherwise a soft one.
+      let end = text.length;
+      while (end > 0 && text[end - 1] === ' ') end--;
+      const hard = text.length - end >= 2;
+      text.length = end;
+      if (hard) { flush(); toks.push(mdToken(MD_BREAK)); } else text.push('\n');
+      i++;
+      continue;
+    }
+    if (c === '`') {
+      const k = mdRunLength(s, i, '`'), end = ticks.next(k, i + k);
+      if (end >= 0) { flush(); toks.push(mdToken(MD_CODE, {text: mdCodeSpan(s.slice(i + k, end))})); i = end + k; }
+      else { text.push(s.slice(i, i + k)); i += k; }
+      continue;
+    }
+    if (c === '*' || c === '_') {
+      const k = mdRunLength(s, i, c);
+      flush();
+      const [open, close] = mdFlanking(c, mdPrevRune(s, i), mdNextRune(s, i + k));
+      toks.push(mdToken(MD_DELIM, {ch: c, count: k, open, close}));
+      i += k;
+      continue;
+    }
+    if (links && c === '<') {
+      const end = s.slice(i, i + MD_MAX_URL_BYTES + 2).indexOf('>');
+      if (end > 1 && mdBlen(s.slice(i, i + end)) < MD_MAX_URL_BYTES + 2) {
+        const raw = s.slice(i + 1, i + end), safe = mdSafeURL(raw);
+        if (safe !== null && safe[1] && !/[ <\n]/.test(raw)) {
+          flush();
+          toks.push(mdToken(MD_LINK, {text: raw, href: safe[0], host: safe[1], auto: true}));
+          i += end + 1;
+          continue;
+        }
+      }
+    } else if (links && (c === '[' || (c === '!' && i + 1 < n && s[i + 1] === '['))) {
+      const open = c === '!' ? i + 1 : i; // an image is shown as a link to it, never embedded
+      const close = brackets.has(open) ? brackets.get(open) : -1;
+      if (close > open && close + 1 < n && s[close + 1] === '(') {
+        const dest = mdDestination(s, close + 2);
+        if (dest !== null) {
+          const label = s.slice(open + 1, close);
+          flush();
+          const safe = mdSafeURL(dest[0]);
+          if (safe !== null) toks.push(mdToken(MD_LINK, {text: label, href: safe[0], host: safe[1]}));
+          else toks.push(...mdTokenize(label, false)); // a refused destination keeps its words
+          i = dest[1];
+          continue;
+        }
+      }
+    } else if (links && (c === 'h' || c === 'H' || c === '/')) {
+      const [t, k] = mdAutolink(s, i);
+      if (t !== null) { flush(); toks.push(t); i += k; continue; }
+    }
+    text.push(c);
+    i++;
+  }
+  flush();
+  return toks;
+}
+
+function mdFlanking(c, before, after) { // flanking (CommonMark 0.31.2 6.2)
+  const spaceB = mdIsSpace(before), spaceA = mdIsSpace(after);
+  const punctB = mdIsPunctRune(before), punctA = mdIsPunctRune(after);
+  const left = !spaceA && after !== '�' && (!punctA || spaceB || punctB);
+  const right = !spaceB && (!punctB || spaceA || punctA);
+  if (c === '_') return [left && (!right || punctB), right && (!left || punctA)];
+  return [left, right];
+}
+
+function mdCodeSpan(s) { // codeSpan
+  s = s.replace(/\n/g, ' ');
+  if (s.length >= 2 && s[0] === ' ' && s.at(-1) === ' ' && mdTrim(s, ' ') !== '') s = s.slice(1, -1);
+  return s;
+}
+
+function mdMatchBrackets(s) { // matchBrackets
+  const pairs = new Map(), stack = [], ticks = mdBacktickRuns(s);
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === '\\') i++;
+    else if (c === '`') i = mdSkipCode(s, i, ticks);
+    else if (c === '[') stack.push(i);
+    else if (c === ']' && stack.length) pairs.set(stack.pop(), i);
+  }
+  return pairs;
+}
+
+function mdDestination(s, i) { // destination: [dest, next] or null
+  const n = s.length;
+  while (i < n && (s[i] === ' ' || s[i] === '\t')) i++;
+  const start = i;
+  let depth = 0, escaped = false, used = 0;
+  while (i < n && used <= MD_MAX_URL_BYTES) {
+    const c = s[i];
+    if (c === '\\' && i + 1 < n && MD_PUNCT.includes(s[i + 1])) { i++; used++; escaped = true; }
+    else if (c === '(') { if (++depth > MD_MAX_PAREN_DEPTH) return null; }
+    else if (c === ')') { if (depth === 0) break; depth--; }
+    else if (c === ' ' || c === '\t' || c === '\n' || c === '<') break;
+    used += mdUnitBytes(s, i);
+    i++;
+  }
+  let dest = s.slice(start, i);
+  if (escaped) dest = mdUnescapePunct(dest);
+  while (i < n && (s[i] === ' ' || s[i] === '\t' || s[i] === '\n')) i++;
+  if (i < n && (s[i] === '"' || s[i] === "'")) {
+    const k = s.slice(i + 1, i + 1 + MD_MAX_URL_BYTES).indexOf(s[i]);
+    if (k < 0 || mdBlen(s.slice(i + 1, i + 1 + k)) >= MD_MAX_URL_BYTES) return null;
+    i += k + 2;
+    while (i < n && (s[i] === ' ' || s[i] === '\t')) i++;
+  }
+  if (i >= n || s[i] !== ')' || dest === '') return null;
+  return [dest, i + 1];
+}
+
+function mdUnescapePunct(s) { // unescapePunct
+  const out = [];
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '\\' && i + 1 < s.length && MD_PUNCT.includes(s[i + 1])) i++;
+    out.push(s[i]);
+  }
+  return out.join('');
+}
+
+function mdBareURL(s, i) { // bareURL of s.slice(i): its length, 0 if none
+  const lower = s.slice(i, i + 8).toLowerCase();
+  if (!lower.startsWith('http://') && !lower.startsWith('https://')) return 0;
+  let n = i, used = 0;
+  while (n < s.length) {
+    const c = String.fromCodePoint(s.codePointAt(n)), size = mdBlen(c);
+    if (used + size > MD_MAX_URL_BYTES || c <= ' ' || '<>"`'.includes(c) || !mdURLRune(c)) break;
+    n += c.length; used += size;
+  }
+  let opens = 0, closes = 0;
+  for (let k = i; k < n; k++) { if (s[k] === '(') opens++; else if (s[k] === ')') closes++; }
+  while (n > i) {
+    const c = s[n - 1];
+    if ('.,:;!?\'*_~'.includes(c)) { n--; continue; }
+    if (c === ')' && opens < closes) { n--; closes--; continue; }
+    break;
+  }
+  return mdBlen(s.slice(i, n)) <= 'https://'.length ? 0 : n - i;
+}
+
+function mdURLRune(c) { // urlRune
+  if (c < '\x80') return true;
+  if (!mdIsPrint(c) || mdBidiControl(c)) return false;
+  return !/^[\p{Ps}\p{Pe}\p{Pi}\p{Pf}\p{Po}]/u.test(c);
+}
+
+function mdAutolink(s, i) { // autolink: [token or null, length of the URL-shaped run]
+  const external = s[i] !== '/';
+  let n = 0;
+  if (external) {
+    if (i > 0 && mdIsWord(mdPrevRune(s, i))) return [null, 0];
+    n = mdBareURL(s, i);
+  } else if (mdRefBoundary(s, i)) n = mdSiteRef(s, i);
+  if (n === 0) return [null, 0];
+  const safe = mdSafeURL(s.slice(i, i + n));
+  if (safe !== null && Boolean(safe[1]) === external) return [mdToken(MD_LINK, {text: s.slice(i, i + n), href: safe[0], host: safe[1], auto: true}), n];
+  return [null, n];
+}
+
+function mdRefBoundary(s, i) { // refBoundary
+  if (i === 0) return true;
+  const p = mdPrevRune(s, i);
+  return mdIsSpace(p) || '([{"\'<*_~'.includes(p);
+}
+
+function mdSiteRef(s, i) { // siteRef of s.slice(i)
+  let n;
+  if (s.startsWith('/e/', i)) {
+    if ((n = 3 + mdHexRun(s, i + 3, 32)) !== 3 + 32) return 0;
+  } else if (s.startsWith('/r/', i)) {
+    if ((n = 3 + mdSlugRun(s, i + 3)) === 3) return 0;
+  } else if (s.startsWith('/agent/', i)) {
+    n = 7 + mdHexRun(s, i + 7, 64);
+    return n === 7 + 64 ? mdEndRef(s, i, n) : 0;
+  } else return 0;
+  // An article's slug or a room's page.
+  if (i + n < s.length && s[i + n] === '/') {
+    const m = mdSlugRun(s, i + n + 1);
+    if (m > 0) n += 1 + m;
+  }
+  return mdEndRef(s, i, n);
+}
+const mdEndRef = (s, i, n) => i + n < s.length && mdIsWord(mdNextRune(s, i + n)) ? 0 : n; // endRef
+function mdHexRun(s, j, want) { // hexRun of s.slice(j)
+  let n = 0;
+  while (j + n < s.length && n <= want && '0123456789abcdef'.includes(s[j + n])) n++;
+  return n;
+}
+function mdSlugRun(s, j) { // slugRun of s.slice(j)
+  let n = 0;
+  while (j + n < s.length && n <= 64) {
+    const c = s[j + n];
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || (n > 0 && (c === '-' || c === '_')))) break;
+    n++;
+  }
+  return n > 64 ? 0 : n;
+}
+
+function mdResolveEmphasis(toks) { // resolveEmphasis: [spans, doubtful]
+  let spans = 0, doubtful = false, spaced = null;
+  const stack = [];
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i];
+    if (t.kind !== MD_DELIM) continue;
+    while (t.close && t.count > 0) {
+      let found = -1;
+      for (let k = stack.length - 1; k >= 0 && stack.length - k <= MD_MAX_STACK_SCAN; k--) {
+        const o = toks[stack[k]];
+        // CommonMark's rule of 3 ("*a**b" stays literal).
+        if (o.ch === t.ch && o.count > 0 && !(((o.open && o.close) || (t.open && t.close)) && (o.orig + t.orig) % 3 === 0 && (o.orig % 3 !== 0 || t.orig % 3 !== 0))) {
+          found = k;
+          break;
+        }
+      }
+      if (found < 0) break;
+      const o = toks[stack[found]];
+      const use = o.count >= 2 && t.count >= 2 ? 2 : 1;
+      spans++;
+      if ((o.open && o.close) || (t.open && t.close)) doubtful = true;
+      if (t.ch === '_') {
+        if (spaced === null) spaced = mdSpacedTokens(toks);
+        if (spaced[i] === spaced[stack[found] + 1]) doubtful = true;
+      }
+      o.count -= use;
+      t.count -= use;
+      stack.length = found + 1;
+      if (o.count === 0) stack.length = found;
+    }
+    if (t.open && t.count > 0) stack.push(i);
+  }
+  return [spans, doubtful];
+}
+
+function mdSpacedTokens(toks) { // spacedTokens
+  const out = [0];
+  for (const t of toks) out.push(out.at(-1) + (t.kind === MD_BREAK || [...t.text].some(mdIsSpace) ? 1 : 0));
+  return out;
+}
+
+// ---------- URLs: SafeURL and the parts of Go's net/url (1.27) it relies on ----------
+
+const mdLatin1 = s => Buffer.from(s, 'utf8').toString('latin1'); // net/url reads bytes
+const mdFromLatin1 = s => Buffer.from(s, 'latin1').toString('utf8');
+
+function mdSafeURL(raw) { // SafeURL: [href, host] or null; host is '' for a same-site link
+  if (raw === '' || mdBlen(raw) > MD_MAX_URL_BYTES) return null;
+  for (const c of raw) {
+    if (c <= ' ' || c === '\x7f' || c === '\\' || (c >= '\x80' && !mdIsPrint(c)) || mdBidiControl(c)) return null;
+  }
+  if (raw.startsWith('#')) {
+    const frag = raw.slice(1);
+    if (frag === '' || mdBlen(frag) > MD_MAX_ANCHOR_SLUG || mdTrim(frag.toLowerCase(), 'abcdefghijklmnopqrstuvwxyz0123456789-_') !== '') return null;
+    const slug = mdSlug(frag, MD_MAX_ANCHOR_SLUG);
+    return slug ? ['#md-' + slug, ''] : null;
+  }
+  const b = mdLatin1(raw);
+  if (raw.startsWith('/')) {
+    if (raw.startsWith('//')) return null;
+    const u = mdURLParse(b);
+    if (u === null || u.scheme || u.host || mdRefusedPath(u.path)) return null;
+    const href = mdURLString(u);
+    if (!href.startsWith('/') || href.startsWith('//')) return null;
+    return [mdFromLatin1(href), ''];
+  }
+  const u = mdURLParse(b);
+  if (u === null || u.opaque || (u.scheme !== 'http' && u.scheme !== 'https')) return null;
+  let [name, port] = mdURLSplitHostPort(u.host);
+  name = name.toLowerCase();
+  if (name === '' || name.length > 253 || mdTrim(name, 'abcdefghijklmnopqrstuvwxyz0123456789.-') !== '' || name.startsWith('.') || name.includes('..')) return null;
+  if (port && !(Number(port) >= 1 && Number(port) <= 65535)) return null;
+  if (mdRefusedPath(u.path)) return null;
+  u.host = u.host.toLowerCase();
+  return [mdFromLatin1(mdURLString(u)), name];
+}
+
+function mdRefusedPath(p) { // refusedPath
+  for (let candidate of [p, mdCleanPath('/' + p)]) {
+    if (!candidate.endsWith('/') && candidate.split('/').length - 1 === 1) candidate += '/';
+    if (MD_WRITE_PATHS.some(prefix => candidate.startsWith(prefix))) return true;
   }
   return false;
 }
 
-export function markdownAuto(text) {
-  if (typeof text !== 'string' || Buffer.byteLength(text) > MARKDOWN_AUTO_BYTES) return false;
-  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
-  const prose = [];
-  let structure = false, fence = null, listKind = null, items = 0, number = 0, blank = false;
-  for (let i = 0; i < lines.length;) {
-    let line = lines[i];
-    if (fence) {
-      const stripped = line.trim();
-      if (mdIndent(line) <= 3 && stripped.length >= fence.length && !stripped.split(fence[0]).join('')) fence = null;
-      i++;
+function mdCleanPath(p) { // path.Clean
+  if (p === '') return '.';
+  const rooted = p[0] === '/', out = [], n = p.length;
+  let r = 0, dotdot = 0;
+  if (rooted) { out.push('/'); r = dotdot = 1; }
+  while (r < n) {
+    if (p[r] === '/') r++;
+    else if (p[r] === '.' && (r + 1 === n || p[r + 1] === '/')) r++;
+    else if (p[r] === '.' && p[r + 1] === '.' && (r + 2 === n || p[r + 2] === '/')) {
+      r += 2;
+      if (out.length > dotdot) {
+        let w = out.length - 1;
+        while (w > dotdot && out[w] !== '/') w--;
+        out.length = w;
+      } else if (!rooted) {
+        if (out.length) out.push('/');
+        out.push('.', '.');
+        dotdot = out.length;
+      }
+    } else {
+      if ((rooted && out.length !== 1) || (!rooted && out.length !== 0)) out.push('/');
+      for (; r < n && p[r] !== '/'; r++) out.push(p[r]);
+    }
+  }
+  return out.join('') || '.';
+}
+
+function mdSlug(s, n) { // Slug
+  const b = [];
+  let hyphen = false;
+  for (const c of s.toLowerCase()) {
+    if (b.length >= n) break;
+    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+      if (hyphen && b.length) b.push('-');
+      hyphen = false;
+      b.push(c);
+    } else hyphen = true;
+  }
+  return mdTrim(b.join('').slice(0, n), '-');
+}
+
+function mdURLShouldEscape(c, mode) { // net/url shouldEscape; mode 'path', 'host' or 'fragment'
+  if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) return false;
+  if (mode === 'host' && '!$&\'()*+,;=:[]<>"'.includes(c)) return false;
+  if ('-_.~'.includes(c)) return false;
+  if ('$&+,/:;=?@'.includes(c)) return mode === 'path' ? c === '?' : mode !== 'fragment';
+  return !(mode === 'fragment' && '!()*'.includes(c));
+}
+
+const MD_HEX = '0123456789abcdefABCDEF';
+function mdURLUnescape(s, mode) { // net/url unescape: null on an error
+  const out = [];
+  for (let i = 0; i < s.length;) {
+    const c = s[i];
+    if (c === '%') {
+      if (i + 2 >= s.length || !MD_HEX.includes(s[i + 1]) || !MD_HEX.includes(s[i + 2])) return null;
+      if (mode === 'host' && parseInt(s[i + 1], 16) < 8 && s.slice(i, i + 3) !== '%25') return null;
+      out.push(String.fromCharCode(parseInt(s.slice(i + 1, i + 3), 16)));
+      i += 3;
       continue;
     }
-    const f = MD.fence.exec(line);
-    if (f && !(f[1][0] === '`' && f[2].includes('`'))) {
-      const info = f[2].trim();
-      if (info && !/^[a-z0-9+#._-]{1,24}$/.test(info)) return false; // the page keeps only a plain language name
-      fence = f[1]; structure = true; listKind = null;
-      i++;
-      continue;
-    }
-    prose.push(line);
-    if (!line.trim()) { blank = true; i++; continue; }
-    line = line.replace(MD.quote, ''); // a quote holds the same blocks
-    const item = MD.break.test(line) ? null : MD.item.exec(line);
-    if (item) {
-      const kind = item[1] || item[3];
-      if (kind === listKind) {
-        items++;
-        if (item[2] !== undefined && Number(item[2]) !== ++number) return false; // the list would renumber it
-        if (items >= 2) structure = true;
-      } else {
-        listKind = kind; items = 1; number = item[2] !== undefined ? Number(item[2]) : 0;
-      }
-    } else if (MD.heading.test(line)) {
-      structure = true; listKind = null;
-    } else if (line.includes('|') && i + 1 < lines.length && lines[i + 1].includes('-') && MD.delimiter.test(lines[i + 1].trim())) {
-      const width = mdCells(line).length;
-      if (width === mdCells(lines[i + 1]).length) {
-        structure = true; listKind = null;
-        prose.push(lines[i + 1]);
-        for (i += 2; i < lines.length && lines[i].trim(); i++) {
-          if (mdCells(lines[i]).length > width) return false; // the table would drop a cell
-          prose.push(lines[i]);
-        }
-        continue;
-      }
-    } else if (blank && mdIndent(line) < 2) listKind = null;
-    blank = false;
+    if (mode === 'host' && c < '\x80' && mdURLShouldEscape(c, mode)) return null;
+    out.push(c);
     i++;
   }
-  const body = prose.join('\n').replace(MD.codeSpan, m => '\0'.repeat(m.length));
-  if (MD.escape.test(body) || mdDoubtfulRuns(body) || MD.underscoreWord.test(body)) return false;
-  if ((body.match(MD.link) || []).length !== (body.match(MD.dest) || []).length || MD.writePath.test(body)) return false;
-  return structure || body.split(MD.paragraph).reduce((n, p) => n + (p.match(MD.emphasis) || []).length, 0) >= 2;
+  return out.join('');
+}
+const mdURLEscape = (s, mode) => [...s].map(c => mdURLShouldEscape(c, mode) ? '%' + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0') : c).join(''); // net/url escape
+const mdURLValidEncoded = (s, mode) => [...s].every(c => '!$&\'()*+,;=:@[]%'.includes(c) || !mdURLShouldEscape(c, mode)); // net/url validEncoded
+const mdURLValidPort = port => port === '' || (port[0] === ':' && /^[0-9]*$/.test(port.slice(1))); // net/url validOptionalPort
+function mdURLSplitHostPort(hostPort) { // net/url splitHostPort (Hostname and Port)
+  let host = hostPort, port = '';
+  const colon = host.lastIndexOf(':');
+  if (colon !== -1 && mdURLValidPort(host.slice(colon))) { port = host.slice(colon + 1); host = host.slice(0, colon); }
+  if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1);
+  return [host, port];
+}
+
+function mdURLParse(raw) { // net/url Parse of a byte string: an object, or null on an error
+  let [rest, frag] = mdCut(raw, '#');
+  const u = {scheme: '', opaque: '', host: '', path: '', rawPath: '', query: '', forceQuery: false, omitHost: false, fragment: '', rawFragment: ''};
+  if (/[\x00-\x1f\x7f]/.test(rest)) return null;
+  if (rest === '*') { u.path = '*'; return u; }
+  for (let k = 0; k < rest.length; k++) { // getScheme
+    const c = rest[k];
+    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) continue;
+    if ((c >= '0' && c <= '9') || '+-.'.includes(c)) { if (k === 0) break; continue; }
+    if (c === ':') {
+      if (k === 0) return null;
+      u.scheme = rest.slice(0, k).toLowerCase();
+      rest = rest.slice(k + 1);
+    }
+    break;
+  }
+  if (rest.endsWith('?') && rest.split('?').length === 2) { u.forceQuery = true; rest = rest.slice(0, -1); }
+  else [rest, u.query] = mdCut(rest, '?');
+  if (!rest.startsWith('/')) {
+    if (u.scheme) { u.opaque = rest; return mdURLFragment(u, frag); } // a rootless path is opaque
+    if (mdCut(rest, '/')[0].includes(':')) return null;
+  }
+  if ((u.scheme || !rest.startsWith('///')) && rest.startsWith('//')) {
+    let authority = rest.slice(2);
+    rest = '';
+    const k = authority.indexOf('/');
+    if (k >= 0) { rest = authority.slice(k); authority = authority.slice(0, k); }
+    // userinfo, or an IP literal: SafeURL refuses either (parseAuthority, parseHost)
+    if (authority.includes('@') || authority.includes('[')) return null;
+    let colon = authority.indexOf(':');
+    if (colon !== -1) {
+      if (authority.lastIndexOf(':') !== colon && u.scheme !== 'http' && u.scheme !== 'https') colon = authority.lastIndexOf(':');
+      if (!mdURLValidPort(authority.slice(colon))) return null;
+    }
+    u.host = mdURLUnescape(authority, 'host');
+    if (u.host === null) return null;
+  } else if (u.scheme && rest.startsWith('/')) u.omitHost = true;
+  u.path = mdURLUnescape(rest, 'path'); // setPath
+  if (u.path === null) return null;
+  u.rawPath = mdURLEscape(u.path, 'path') === rest ? '' : rest;
+  return mdURLFragment(u, frag);
+}
+
+function mdURLFragment(u, frag) { // net/url setFragment, as Parse applies it
+  if (frag === '') return u;
+  u.fragment = mdURLUnescape(frag, 'fragment');
+  if (u.fragment === null) return null;
+  u.rawFragment = mdURLEscape(u.fragment, 'fragment') === frag ? '' : frag;
+  return u;
+}
+
+function mdURLEscaped(raw, decoded, mode) { // net/url EscapedPath and EscapedFragment
+  if (raw && mdURLValidEncoded(raw, mode) && mdURLUnescape(raw, mode) === decoded) return raw;
+  if (mode === 'path' && decoded === '*') return '*';
+  return mdURLEscape(decoded, mode);
+}
+
+function mdURLString(u) { // net/url (*URL).String, for a URL without userinfo
+  let out = u.scheme ? u.scheme + ':' : '';
+  if (u.opaque) out += u.opaque;
+  else {
+    if ((u.scheme || u.host) && !(u.omitHost && !u.host)) {
+      if (u.host || u.path) out += '//';
+      out += mdURLEscape(u.host, 'host');
+    }
+    let path = mdURLEscaped(u.rawPath, u.path, 'path');
+    if (u.omitHost && !u.host && path.startsWith('//')) { out += '%2F'; path = path.slice(1); }
+    if (path && path[0] !== '/' && u.host) out += '/';
+    if (out === '' && mdCut(path, '/')[0].includes(':')) out += './';
+    out += path;
+  }
+  if (u.forceQuery || u.query) out += '?' + u.query;
+  if (u.fragment) out += '#' + mdURLEscaped(u.rawFragment, u.fragment, 'fragment');
+  return out;
+}
+
+// ---------- auto.go ----------
+
+function mdMayHaveStructure(text) { // mayHaveStructure
+  if (/[#|`~]/.test(text) || text.split('*').length + text.split('_').length - 2 >= 4) return true;
+  let items = 0;
+  for (const line of mdSplitLines(text)) {
+    if (mdListMarker(mdTrimLeft(line, ' \t>')) !== null && ++items >= 2) return true;
+  }
+  return false;
+}
+
+// sameSkeleton's nextKept over the whole text.
+const mdSkeleton = s => [...s].filter(c => !mdIsSpace(c) && !(c < '\x80' && MD_SKELETON.includes(c))).join('');
+
+// markdownAuto is true when text sent without a format is shown as Markdown by
+// the board (AutoRender): it has Markdown structure (a pipe table, heading,
+// fenced code, a list of 2+ items or 2+ emphasis spans), no emphasis plain
+// text more likely meant as written, and renders without losing a character.
+export function markdownAuto(text) {
+  if (typeof text !== 'string' || mdBlen(text) > MARKDOWN_AUTO_BYTES || !mdMayHaveStructure(text)) return false;
+  const audit = new MdAudit();
+  audit.blocks(mdSplitLines(text), 0);
+  if (audit.doubtful || (!audit.structure && audit.spans < 2)) return false;
+  return mdSkeleton(text) === mdSkeleton(audit.out.join(''));
 }
 
 // listOf takes one value or a list and returns a list: a lone string is one

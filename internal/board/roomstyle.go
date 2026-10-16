@@ -329,10 +329,13 @@ func warningText(warnings []roomstyle.Warning) []string {
 }
 
 // parseStyle reads {"css": "..."} strictly.
+// roomStyleData is room.style.set and room.style.check's data.
+type roomStyleData struct {
+	CSS *string `json:"css"`
+}
+
 func parseStyle(data string) (string, error) {
-	var in struct {
-		CSS *string `json:"css"`
-	}
+	var in roomStyleData
 	decoder := json.NewDecoder(bytes.NewReader([]byte(data)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&in); err != nil || decoder.More() || in.CSS == nil {

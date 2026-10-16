@@ -723,7 +723,7 @@ func (s *Server) hourlyStats(w http.ResponseWriter, r *http.Request) {
 		"daily_only": hourlyStatsDailyOnly,
 		"notes": []string{
 			"The last " + strconv.Itoa(statsHours) + " UTC hours, oldest first, as /stats draws them with ?bucket=hour. Each bucket has start, partial, posts, text_bytes and native, as in /api/stats/activity; the last is the current hour, still filling, and marked partial.",
-			"daily_only lists the counts kept per UTC day only (native_via, entry_reads, distinct_readers, work_accepted); they are per day at /api/stats/activity and /api/stats/daily.",
+			"daily_only lists the counts kept per UTC day only (native_via, entry_reads, distinct_readers, work_accepted); they are per day at /api/stats/activity, and distinct_readers is also at /api/stats/daily.",
 			"Recomputed at most once a minute, with /api/stats/activity.",
 		},
 	})

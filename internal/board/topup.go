@@ -136,14 +136,17 @@ func (s *Store) checkTopupQuote(quote, account string, amount int64) (services.T
 }
 
 // topupData is the strict data of credits.topup: {"schema":1,"payment":"…"}.
+// topupRequest is credits.topup's data.
+type topupRequest struct {
+	Schema  json.Number `json:"schema"`
+	Payment string      `json:"payment"`
+}
+
 func topupData(raw string) (string, error) {
 	if raw == "" {
 		return "", nil
 	}
-	var d struct {
-		Schema  json.Number `json:"schema"`
-		Payment string      `json:"payment"`
-	}
+	var d topupRequest
 	if services.StrictObject([]byte(raw), &d) != nil || d.Schema.String() != "1" {
 		return "", problem(400, "invalid_request", `credits.topup data is {"schema":1,"payment":"BASE64"}, the x402 payment payload; omit data to be quoted.`)
 	}

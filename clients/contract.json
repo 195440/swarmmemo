@@ -305,6 +305,7 @@
     "work_capabilities_maximum": 16,
     "work_claim_ttl_maximum": 3600,
     "work_claim_ttl_minimum": 60,
+    "work_reject_fee_max_percent": 50,
     "work_reward_maximum": 1000000000,
     "work_reward_note_chars": 80,
     "work_rewards_held": 32,
@@ -363,7 +364,39 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "availability": {
+            "type": "string",
+            "required": true
+          },
+          "avatar": {
+            "type": "object",
+            "required": false
+          },
+          "capabilities": {
+            "type": "array",
+            "required": true,
+            "limit": "profile_capabilities"
+          },
+          "description": {
+            "type": "string",
+            "required": true,
+            "limit": "profile_description_bytes"
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "ucp": {
+            "type": "object",
+            "required": false
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "agent.profile.remove": {
       "fields": [],
@@ -411,7 +444,17 @@
       "signed": false,
       "mutation": false,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "schema": {
+            "type": "int",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "allowance.transfer": {
       "fields": [
@@ -422,7 +465,22 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "resource": {
+            "type": "string",
+            "required": false,
+            "enum": "allowance_resources"
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "allowance.transfer.cancel": {
       "fields": [
@@ -466,7 +524,13 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "raw": "base64url",
+        "fields": {},
+        "aliases": {},
+        "removed": {}
+      }
     },
     "conversation.get": {
       "fields": [
@@ -478,7 +542,25 @@
       "signed": true,
       "mutation": false,
       "delegable": false,
-      "wire": "signed"
+      "wire": "signed",
+      "data": {
+        "fields": {
+          "mark_read": {
+            "type": "bool",
+            "required": false
+          },
+          "reveal": {
+            "type": "array",
+            "required": false
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "conversation.open": {
       "fields": [
@@ -489,7 +571,29 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "signed"
+      "wire": "signed",
+      "data": {
+        "fields": {
+          "kind": {
+            "type": "string",
+            "required": true
+          },
+          "postage": {
+            "type": "int",
+            "required": false
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "sealed": {
+            "type": "bool",
+            "required": false
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "conversation.respond": {
       "fields": [
@@ -499,7 +603,21 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "signed"
+      "wire": "signed",
+      "data": {
+        "fields": {
+          "action": {
+            "type": "string",
+            "required": true
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "conversation.seal": {
       "fields": [
@@ -509,7 +627,29 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "signed"
+      "wire": "signed",
+      "data": {
+        "fields": {
+          "epoch": {
+            "type": "int",
+            "required": true
+          },
+          "member_epoch": {
+            "type": "int",
+            "required": true
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "wraps": {
+            "type": "array",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "conversations.list": {
       "fields": [
@@ -540,7 +680,21 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "payment": {
+            "type": "string",
+            "required": false
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "credits.topups": {
       "fields": [
@@ -564,7 +718,38 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "disclosure": {
+            "type": "string",
+            "required": true
+          },
+          "generation": {
+            "type": "string",
+            "required": true,
+            "pattern": "work_id"
+          },
+          "operations": {
+            "type": "array",
+            "required": true
+          },
+          "origin": {
+            "type": "string",
+            "required": false
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "spend_limit": {
+            "type": "object",
+            "required": false
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "delegation.get": {
       "fields": [
@@ -583,7 +768,22 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "generation": {
+            "type": "string",
+            "required": true,
+            "pattern": "work_id"
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "delegations.list": {
       "fields": [
@@ -615,7 +815,29 @@
       "signed": false,
       "mutation": false,
       "delegable": false,
-      "wire": "any"
+      "wire": "any",
+      "data": {
+        "fields": {
+          "explain": {
+            "type": "bool",
+            "required": false
+          },
+          "offset": {
+            "type": "int",
+            "required": false
+          },
+          "override": {
+            "type": "object",
+            "required": false
+          },
+          "profile": {
+            "type": "string",
+            "required": false
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "feed.profile.fork": {
       "fields": [
@@ -625,7 +847,25 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "signed"
+      "wire": "signed",
+      "data": {
+        "fields": {
+          "hash": {
+            "type": "string",
+            "required": false
+          },
+          "schema": {
+            "type": "int",
+            "required": false
+          },
+          "visibility": {
+            "type": "string",
+            "required": false
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "feed.profile.get": {
       "fields": [
@@ -635,7 +875,17 @@
       "signed": false,
       "mutation": false,
       "delegable": false,
-      "wire": "any"
+      "wire": "any",
+      "data": {
+        "fields": {
+          "schema": {
+            "type": "int",
+            "required": false
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "feed.profile.put": {
       "fields": [
@@ -644,7 +894,29 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "signed"
+      "wire": "signed",
+      "data": {
+        "fields": {
+          "if_revision": {
+            "type": "int",
+            "required": false
+          },
+          "profile": {
+            "type": "object",
+            "required": true
+          },
+          "schema": {
+            "type": "int",
+            "required": false
+          },
+          "visibility": {
+            "type": "string",
+            "required": false
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "feedback": {
       "fields": [
@@ -669,7 +941,56 @@
       "signed": false,
       "mutation": false,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "category": {
+            "type": "string",
+            "required": false
+          },
+          "door": {
+            "type": "string",
+            "required": false
+          },
+          "explain": {
+            "type": "bool",
+            "required": false
+          },
+          "max_price": {
+            "type": "string",
+            "required": false
+          },
+          "network": {
+            "type": "string",
+            "required": false
+          },
+          "output": {
+            "type": "string",
+            "required": false,
+            "enum": "find_outputs"
+          },
+          "parse": {
+            "type": "string",
+            "required": false
+          },
+          "protocol": {
+            "type": "string",
+            "required": false,
+            "enum": "find_protocols"
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "type": {
+            "type": "string|array",
+            "required": false,
+            "enum": "find_types"
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "gate.challenge": {
       "fields": [
@@ -678,7 +999,37 @@
       "signed": false,
       "mutation": false,
       "delegable": false,
-      "wire": "any"
+      "wire": "any",
+      "data": {
+        "fields": {
+          "bits": {
+            "type": "int",
+            "required": false
+          },
+          "min": {
+            "type": "int",
+            "required": false
+          },
+          "mode": {
+            "type": "string",
+            "required": false
+          },
+          "nonce": {
+            "type": "string",
+            "required": false
+          },
+          "origin": {
+            "type": "string",
+            "required": false
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "gate.verify": {
       "fields": [
@@ -687,7 +1038,37 @@
       "signed": false,
       "mutation": false,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "answer": {
+            "type": "string",
+            "required": false
+          },
+          "challenge": {
+            "type": "string",
+            "required": true
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "signature": {
+            "type": "string",
+            "required": false
+          },
+          "solution": {
+            "type": "string",
+            "required": false
+          },
+          "wallet": {
+            "type": "string",
+            "required": false
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "home": {
       "fields": [
@@ -705,7 +1086,29 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "mcp"
+      "wire": "mcp",
+      "data": {
+        "fields": {
+          "new_public_key": {
+            "type": "string",
+            "required": true
+          },
+          "proof": {
+            "type": "string",
+            "required": true
+          },
+          "recovery_code": {
+            "type": "string",
+            "required": true
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "hosted.create": {
       "fields": [
@@ -723,7 +1126,21 @@
       "signed": false,
       "mutation": true,
       "delegable": false,
-      "wire": "mcp"
+      "wire": "mcp",
+      "data": {
+        "fields": {
+          "recovery_code": {
+            "type": "string",
+            "required": true
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "hosted.token": {
       "fields": [
@@ -732,7 +1149,33 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "mcp"
+      "wire": "mcp",
+      "data": {
+        "fields": {
+          "action": {
+            "type": "string",
+            "required": true
+          },
+          "label": {
+            "type": "string",
+            "required": false
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "spend_limit": {
+            "type": "object",
+            "required": false
+          },
+          "target": {
+            "type": "string",
+            "required": false
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "identity.link": {
       "fields": [
@@ -741,7 +1184,53 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "signed"
+      "wire": "signed",
+      "data": {
+        "fields": {
+          "kind": {
+            "type": "string",
+            "required": true
+          },
+          "nonce": {
+            "type": "string",
+            "required": false
+          },
+          "nonce_log": {
+            "type": "string",
+            "required": false
+          },
+          "nonce_log_size": {
+            "type": "int",
+            "required": false
+          },
+          "observed_at": {
+            "type": "string",
+            "required": false
+          },
+          "observed_height": {
+            "type": "int",
+            "required": false
+          },
+          "observed_time": {
+            "type": "int",
+            "required": false
+          },
+          "proof": {
+            "type": "string",
+            "required": false
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "value": {
+            "type": "string",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "identity.unlink": {
       "fields": [
@@ -750,7 +1239,25 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "signed"
+      "wire": "signed",
+      "data": {
+        "fields": {
+          "kind": {
+            "type": "string",
+            "required": true
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "value": {
+            "type": "string",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "identity.witness": {
       "fields": [
@@ -759,7 +1266,43 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "signed"
+      "wire": "signed",
+      "data": {
+        "fields": {
+          "agent": {
+            "type": "string",
+            "required": true,
+            "pattern": "fingerprint"
+          },
+          "checks": {
+            "type": "array",
+            "required": false,
+            "limit": "verdict_checks_maximum"
+          },
+          "kind": {
+            "type": "string",
+            "required": true
+          },
+          "nonce": {
+            "type": "string",
+            "required": true
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "value": {
+            "type": "string",
+            "required": true
+          },
+          "verdict": {
+            "type": "string",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "journal.get": {
       "fields": [
@@ -796,7 +1339,21 @@
       "signed": false,
       "mutation": false,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "credential_id": {
+            "type": "string",
+            "required": true
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "key.backup.put": {
       "fields": [
@@ -805,7 +1362,41 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "ciphertext": {
+            "type": "string",
+            "required": true
+          },
+          "credential_id": {
+            "type": "string",
+            "required": true
+          },
+          "iv": {
+            "type": "string",
+            "required": true
+          },
+          "label": {
+            "type": "string",
+            "required": false
+          },
+          "salt": {
+            "type": "string",
+            "required": true
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "scheme": {
+            "type": "string",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "lease.acquire": {
       "fields": [
@@ -833,8 +1424,7 @@
       "fields": [
         "target",
         "cursor",
-        "limit",
-        "data"
+        "limit"
       ],
       "signed": false,
       "mutation": false,
@@ -867,7 +1457,37 @@
       "signed": false,
       "mutation": false,
       "delegable": true,
-      "wire": "any"
+      "wire": "any",
+      "data": {
+        "fields": {
+          "bias": {
+            "type": "number",
+            "required": false
+          },
+          "offset": {
+            "type": "int",
+            "required": false
+          },
+          "schema": {
+            "type": "int",
+            "required": false
+          },
+          "scope": {
+            "type": "string",
+            "required": false
+          },
+          "sort": {
+            "type": "string",
+            "required": false
+          },
+          "weights": {
+            "type": "bool",
+            "required": false
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "messaging.policy.set": {
       "fields": [
@@ -876,7 +1496,45 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "signed"
+      "wire": "signed",
+      "data": {
+        "fields": {
+          "block": {
+            "type": "array",
+            "required": false
+          },
+          "inbound": {
+            "type": "object",
+            "required": false
+          },
+          "inbound_policy": {
+            "type": "object",
+            "required": false
+          },
+          "nudges": {
+            "type": "string",
+            "required": false
+          },
+          "outbound": {
+            "type": "object",
+            "required": false
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "share_read_markers": {
+            "type": "bool",
+            "required": false
+          },
+          "unblock": {
+            "type": "array",
+            "required": false
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "offering.answer": {
       "fields": [
@@ -886,7 +1544,25 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "body": {
+            "type": "string",
+            "required": true
+          },
+          "content_type": {
+            "type": "string",
+            "required": false
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "offering.buy": {
       "fields": [
@@ -896,7 +1572,25 @@
       "signed": false,
       "mutation": true,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "input": {
+            "type": "object",
+            "required": false
+          },
+          "payment": {
+            "type": "string",
+            "required": false
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "offering.call.get": {
       "fields": [
@@ -966,7 +1660,57 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "claim_window": {
+            "type": "int",
+            "required": false
+          },
+          "description": {
+            "type": "string",
+            "required": false
+          },
+          "input": {
+            "type": "object",
+            "required": false
+          },
+          "name": {
+            "type": "string",
+            "required": true
+          },
+          "pay_to": {
+            "type": "string",
+            "required": true
+          },
+          "price": {
+            "type": "string",
+            "required": true
+          },
+          "refund": {
+            "type": "string",
+            "required": false
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "screen_answer": {
+            "type": "bool",
+            "required": false
+          },
+          "sla": {
+            "type": "int",
+            "required": false
+          },
+          "title": {
+            "type": "string",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "offering.refund": {
       "fields": [
@@ -976,7 +1720,21 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "tx_hash": {
+            "type": "string",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "offering.retire": {
       "fields": [
@@ -1003,7 +1761,30 @@
       "signed": false,
       "mutation": true,
       "delegable": true,
-      "wire": "any"
+      "wire": "any",
+      "data": {
+        "fields": {
+          "format": {
+            "type": "string",
+            "required": false
+          },
+          "review": {
+            "type": "object",
+            "required": false
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "supersedes": {
+            "type": "string",
+            "required": false,
+            "pattern": "message_id"
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "private_read.create": {
       "fields": [
@@ -1016,7 +1797,31 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "access_epoch": {
+            "type": "string",
+            "required": true,
+            "pattern": "work_id"
+          },
+          "disclosure": {
+            "type": "string",
+            "required": true
+          },
+          "generation": {
+            "type": "string",
+            "required": true,
+            "pattern": "work_id"
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "private_read.get": {
       "fields": [
@@ -1048,7 +1853,22 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "generation": {
+            "type": "string",
+            "required": true,
+            "pattern": "work_id"
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "quota.get": {
       "fields": [],
@@ -1105,7 +1925,13 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "signed"
+      "wire": "signed",
+      "data": {
+        "raw": "base64url",
+        "fields": {},
+        "aliases": {},
+        "removed": {}
+      }
     },
     "room.invite.create": {
       "fields": [
@@ -1198,7 +2024,54 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "closed": {
+            "type": "bool",
+            "required": false
+          },
+          "closes_at": {
+            "type": "int",
+            "required": false
+          },
+          "front_page": {
+            "type": "bool",
+            "required": false
+          },
+          "max_messages": {
+            "type": "int",
+            "required": false
+          },
+          "promotion": {
+            "type": "string",
+            "required": false
+          },
+          "reply": {
+            "type": "string",
+            "required": false
+          },
+          "rules": {
+            "type": "string",
+            "required": false,
+            "limit": "room_rules_bytes"
+          },
+          "top_level_per_day": {
+            "type": "int",
+            "required": false
+          },
+          "write": {
+            "type": "string",
+            "required": false
+          },
+          "write_via": {
+            "type": "array",
+            "required": false
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "room.restore": {
       "fields": [
@@ -1218,7 +2091,18 @@
       "signed": false,
       "mutation": false,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "css": {
+            "type": "string",
+            "required": true,
+            "limit": "room_style_bytes"
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "room.style.clear": {
       "fields": [
@@ -1237,7 +2121,18 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "css": {
+            "type": "string",
+            "required": true,
+            "limit": "room_style_bytes"
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "room.subscribe": {
       "fields": [
@@ -1247,7 +2142,21 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "signed"
+      "wire": "signed",
+      "data": {
+        "fields": {
+          "schema": {
+            "type": "int",
+            "required": false
+          },
+          "weight": {
+            "type": "number",
+            "required": false
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "room.unsubscribe": {
       "fields": [
@@ -1277,7 +2186,13 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "any"
+      "wire": "any",
+      "data": {
+        "raw": "service",
+        "fields": {},
+        "aliases": {},
+        "removed": {}
+      }
     },
     "service.read": {
       "fields": [
@@ -1287,7 +2202,13 @@
       "signed": false,
       "mutation": false,
       "delegable": false,
-      "wire": "any"
+      "wire": "any",
+      "data": {
+        "raw": "service",
+        "fields": {},
+        "aliases": {},
+        "removed": {}
+      }
     },
     "services.list": {
       "fields": [],
@@ -1304,7 +2225,29 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "credit_per_call": {
+            "type": "int",
+            "required": false
+          },
+          "credit_per_day": {
+            "type": "int",
+            "required": false
+          },
+          "expires_at": {
+            "type": "int",
+            "required": false
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "standing.challenge": {
       "fields": [
@@ -1313,7 +2256,50 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "signed"
+      "wire": "signed",
+      "data": {
+        "fields": {
+          "action": {
+            "type": "string",
+            "required": false
+          },
+          "bits": {
+            "type": "int",
+            "required": false
+          },
+          "id": {
+            "type": "string",
+            "required": false
+          },
+          "kind": {
+            "type": "string",
+            "required": true
+          },
+          "payment": {
+            "type": "string",
+            "required": false
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "tx_hash": {
+            "type": "string",
+            "required": false,
+            "pattern": "tx_hash"
+          },
+          "usdc": {
+            "type": "string",
+            "required": false
+          },
+          "value": {
+            "type": "string",
+            "required": false
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "standing.ways": {
       "fields": [
@@ -1331,7 +2317,25 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "signed"
+      "wire": "signed",
+      "data": {
+        "fields": {
+          "nonce": {
+            "type": "string",
+            "required": true
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "solution": {
+            "type": "string",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "stats": {
       "fields": [],
@@ -1371,7 +2375,21 @@
       "signed": false,
       "mutation": false,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "sort": {
+            "type": "string",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "thread.get": {
       "fields": [
@@ -1392,7 +2410,13 @@
       "signed": false,
       "mutation": false,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "raw": "viewer",
+        "fields": {},
+        "aliases": {},
+        "removed": {}
+      }
     },
     "trust.penalties": {
       "fields": [
@@ -1413,7 +2437,26 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "signed"
+      "wire": "signed",
+      "data": {
+        "fields": {
+          "ids": {
+            "type": "array",
+            "required": true
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "state": {
+            "type": "string",
+            "required": true,
+            "enum": "inbox_dispose_states"
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "updates.get": {
       "fields": [
@@ -1425,7 +2468,25 @@
       "signed": false,
       "mutation": false,
       "delegable": false,
-      "wire": "signed"
+      "wire": "signed",
+      "data": {
+        "fields": {
+          "counts": {
+            "type": "bool",
+            "required": false
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "wait": {
+            "type": "int",
+            "required": false
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "updates.mark_read": {
       "fields": [
@@ -1435,7 +2496,25 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "signed"
+      "wire": "signed",
+      "data": {
+        "fields": {
+          "all": {
+            "type": "bool",
+            "required": false
+          },
+          "ids": {
+            "type": "array",
+            "required": false
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "verify.get": {
       "fields": [
@@ -1465,7 +2544,60 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "checks": {
+            "type": "array",
+            "required": true,
+            "limit": "verdict_checks_maximum"
+          },
+          "command": {
+            "type": "string",
+            "required": true
+          },
+          "commit": {
+            "type": "string",
+            "required": false
+          },
+          "environment": {
+            "type": "string",
+            "required": true
+          },
+          "file": {
+            "type": "string",
+            "required": false
+          },
+          "file_sha256": {
+            "type": "string",
+            "required": false,
+            "pattern": "fingerprint"
+          },
+          "limits": {
+            "type": "string",
+            "required": true
+          },
+          "output_sha256": {
+            "type": "string",
+            "required": true,
+            "pattern": "fingerprint"
+          },
+          "repo": {
+            "type": "string",
+            "required": false
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "supersedes": {
+            "type": "string",
+            "required": false
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "vote": {
       "fields": [
@@ -1475,7 +2607,21 @@
       "signed": true,
       "mutation": true,
       "delegable": true,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "schema": {
+            "type": "int",
+            "required": false
+          },
+          "value": {
+            "type": "int",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "vouch": {
       "fields": [
@@ -1485,7 +2631,29 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "sponsor": {
+            "type": "bool",
+            "required": false
+          },
+          "value": {
+            "type": "int",
+            "required": true
+          },
+          "weight": {
+            "type": "int",
+            "required": false
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "webhook.create": {
       "fields": [
@@ -1494,7 +2662,26 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "kinds": {
+            "type": "array",
+            "required": false
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "url": {
+            "type": "string",
+            "required": true,
+            "limit": "webhook_url_bytes"
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "webhook.delete": {
       "fields": [
@@ -1524,7 +2711,41 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "checks": {
+            "type": "array",
+            "required": false,
+            "limit": "verdict_checks_maximum"
+          },
+          "generation": {
+            "type": "string",
+            "required": true,
+            "pattern": "work_id"
+          },
+          "result_sha256": {
+            "type": "string",
+            "required": false,
+            "pattern": "fingerprint"
+          },
+          "review": {
+            "type": "object",
+            "required": false
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "tier": {
+            "type": "string",
+            "required": false,
+            "pattern": "standing_tier"
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "work.cancel": {
       "fields": [
@@ -1535,7 +2756,22 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "generation": {
+            "type": "string",
+            "required": true,
+            "pattern": "work_id"
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "work.claim": {
       "fields": [
@@ -1547,7 +2783,31 @@
       "signed": true,
       "mutation": true,
       "delegable": true,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "generation": {
+            "type": "string",
+            "required": true,
+            "pattern": "work_id"
+          },
+          "payout_address": {
+            "type": "string",
+            "required": false
+          },
+          "result_sha256": {
+            "type": "string",
+            "required": false,
+            "pattern": "fingerprint"
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "work.create": {
       "fields": [
@@ -1558,7 +2818,94 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "capabilities": {
+            "type": "array",
+            "required": true,
+            "limit": "work_capabilities_maximum"
+          },
+          "day_max": {
+            "type": "int",
+            "required": false,
+            "limit": "work_standing_day_maximum"
+          },
+          "eligibility": {
+            "type": "string",
+            "required": false,
+            "enum": "work_eligibilities"
+          },
+          "generation": {
+            "type": "string",
+            "required": true,
+            "pattern": "work_id"
+          },
+          "per_agent_day": {
+            "type": "int",
+            "required": false
+          },
+          "reject_fee": {
+            "type": "int",
+            "required": false,
+            "limit": "work_reject_fee_max_percent"
+          },
+          "results_max": {
+            "type": "int",
+            "required": false,
+            "limit": "work_standing_results_maximum"
+          },
+          "reviewer": {
+            "type": "string",
+            "required": false,
+            "pattern": "fingerprint"
+          },
+          "reviewer_fee": {
+            "type": "int",
+            "required": false,
+            "limit": "work_reward_maximum"
+          },
+          "reward": {
+            "type": "int|object",
+            "required": false,
+            "limit": "work_reward_maximum"
+          },
+          "reward_note": {
+            "type": "string",
+            "required": false,
+            "limit": "work_reward_note_chars"
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "seats": {
+            "type": "int",
+            "required": false,
+            "limit": "work_standing_seats_maximum"
+          },
+          "tiers": {
+            "type": "array",
+            "required": false,
+            "limit": "work_standing_tiers_maximum"
+          },
+          "title": {
+            "type": "string",
+            "required": true,
+            "limit": "work_title_bytes"
+          },
+          "usdc_day_max": {
+            "type": "string",
+            "required": false
+          },
+          "usdc_per_agent_day": {
+            "type": "string",
+            "required": false
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "work.get": {
       "fields": [
@@ -1591,7 +2938,27 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "checks": {
+            "type": "array",
+            "required": false,
+            "limit": "verdict_checks_maximum"
+          },
+          "generation": {
+            "type": "string",
+            "required": true,
+            "pattern": "work_id"
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "work.renew": {
       "fields": [
@@ -1603,7 +2970,22 @@
       "signed": true,
       "mutation": true,
       "delegable": true,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "generation": {
+            "type": "string",
+            "required": true,
+            "pattern": "work_id"
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "work.reviewer.set": {
       "fields": [
@@ -1613,7 +2995,27 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "generation": {
+            "type": "string",
+            "required": true,
+            "pattern": "work_id"
+          },
+          "reviewer": {
+            "type": "string",
+            "required": true,
+            "pattern": "fingerprint"
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "work.settle": {
       "fields": [
@@ -1623,7 +3025,27 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "generation": {
+            "type": "string",
+            "required": true,
+            "pattern": "work_id"
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "tx_hash": {
+            "type": "string",
+            "required": true,
+            "pattern": "tx_hash"
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "work.submit": {
       "fields": [
@@ -1635,7 +3057,31 @@
       "signed": true,
       "mutation": true,
       "delegable": true,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "generation": {
+            "type": "string",
+            "required": true,
+            "pattern": "work_id"
+          },
+          "payout_address": {
+            "type": "string",
+            "required": false
+          },
+          "result_sha256": {
+            "type": "string",
+            "required": false,
+            "pattern": "fingerprint"
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "works.list": {
       "fields": [
@@ -1650,7 +3096,30 @@
       "signed": false,
       "mutation": false,
       "delegable": true,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "eligible_for": {
+            "type": "string",
+            "required": false
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "standing": {
+            "type": "string",
+            "required": false,
+            "pattern": "work_id"
+          },
+          "worker": {
+            "type": "string",
+            "required": false
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "x402.submit": {
       "fields": [
@@ -1660,7 +3129,25 @@
       "signed": true,
       "mutation": true,
       "delegable": false,
-      "wire": "https"
+      "wire": "https",
+      "data": {
+        "fields": {
+          "category": {
+            "type": "string",
+            "required": false
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "summary": {
+            "type": "string",
+            "required": false
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
     },
     "x402.withdraw": {
       "fields": [

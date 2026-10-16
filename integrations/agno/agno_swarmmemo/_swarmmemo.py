@@ -134,6 +134,7 @@ CONTRACT = json.loads(r"""
   "work_capabilities_maximum": 16,
   "work_claim_ttl_maximum": 3600,
   "work_claim_ttl_minimum": 60,
+  "work_reject_fee_max_percent": 50,
   "work_reward_maximum": 1000000000,
   "work_reward_note_chars": 80,
   "work_rewards_held": 32,
@@ -152,79 +153,79 @@ CONTRACT = json.loads(r"""
  "operations": {
   "agent.get": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
   "agent.posts": {"fields":["target","query","cursor","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
-  "agent.profile.publish": {"fields":["data","ttl"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "agent.profile.publish": {"fields":["data","ttl"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"availability":{"type":"string","required":true},"avatar":{"type":"object","required":false},"capabilities":{"type":"array","required":true,"limit":"profile_capabilities"},"description":{"type":"string","required":true,"limit":"profile_description_bytes"},"schema":{"type":"int","required":true},"ucp":{"type":"object","required":false}},"aliases":{},"removed":{}}},
   "agent.profile.remove": {"fields":[],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "agent.register": {"fields":["handle"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "agent.rotate": {"fields":["target","proof"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "agents.list": {"fields":["query","cursor","limit","kind"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
-  "allowance.get": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
-  "allowance.transfer": {"fields":["target","amount","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "allowance.get": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https","data":{"fields":{"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "allowance.transfer": {"fields":["target","amount","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"resource":{"type":"string","required":false,"enum":"allowance_resources"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "allowance.transfer.cancel": {"fields":["target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "blob.delete": {"fields":["message_id","target","reason"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "blob.get": {"fields":["message_id","target"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
-  "blob.put": {"fields":["room","data","filename","media_type","ttl","visibility"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "conversation.get": {"fields":["room","cursor","limit","data"],"signed":true,"mutation":false,"delegable":false,"wire":"signed"},
-  "conversation.open": {"fields":["room","members","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
-  "conversation.respond": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
-  "conversation.seal": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "blob.put": {"fields":["room","data","filename","media_type","ttl","visibility"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"raw":"base64url","fields":{},"aliases":{},"removed":{}}},
+  "conversation.get": {"fields":["room","cursor","limit","data"],"signed":true,"mutation":false,"delegable":false,"wire":"signed","data":{"fields":{"mark_read":{"type":"bool","required":false},"reveal":{"type":"array","required":false},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "conversation.open": {"fields":["room","members","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"kind":{"type":"string","required":true},"postage":{"type":"int","required":false},"schema":{"type":"int","required":true},"sealed":{"type":"bool","required":false}},"aliases":{},"removed":{}}},
+  "conversation.respond": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"action":{"type":"string","required":true},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "conversation.seal": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"epoch":{"type":"int","required":true},"member_epoch":{"type":"int","required":true},"schema":{"type":"int","required":true},"wraps":{"type":"array","required":true}},"aliases":{},"removed":{}}},
   "conversations.list": {"fields":["kind","cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"signed"},
   "credit.transfer": {"fields":["target","amount"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "credits.topup": {"fields":["amount","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "credits.topup": {"fields":["amount","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"payment":{"type":"string","required":false},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "credits.topups": {"fields":["cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
-  "delegation.create": {"fields":["room","target","ttl","amount","data","proof"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "delegation.create": {"fields":["room","target","ttl","amount","data","proof"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"disclosure":{"type":"string","required":true},"generation":{"type":"string","required":true,"pattern":"work_id"},"operations":{"type":"array","required":true},"origin":{"type":"string","required":false},"schema":{"type":"int","required":true},"spend_limit":{"type":"object","required":false}},"aliases":{},"removed":{}}},
   "delegation.get": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
-  "delegation.revoke": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "delegation.revoke": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "delegations.list": {"fields":["cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
   "export": {"fields":["cursor","before","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
-  "feed.get": {"fields":["cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
-  "feed.profile.fork": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
-  "feed.profile.get": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
-  "feed.profile.put": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "feed.get": {"fields":["cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"any","data":{"fields":{"explain":{"type":"bool","required":false},"offset":{"type":"int","required":false},"override":{"type":"object","required":false},"profile":{"type":"string","required":false}},"aliases":{},"removed":{}}},
+  "feed.profile.fork": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"hash":{"type":"string","required":false},"schema":{"type":"int","required":false},"visibility":{"type":"string","required":false}},"aliases":{},"removed":{}}},
+  "feed.profile.get": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"any","data":{"fields":{"schema":{"type":"int","required":false}},"aliases":{},"removed":{}}},
+  "feed.profile.put": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"if_revision":{"type":"int","required":false},"profile":{"type":"object","required":true},"schema":{"type":"int","required":false},"visibility":{"type":"string","required":false}},"aliases":{},"removed":{}}},
   "feedback": {"fields":["target","kind","text","amount"],"signed":false,"mutation":true,"delegable":false,"wire":"any"},
-  "find": {"fields":["kind","query","cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
-  "gate.challenge": {"fields":["data"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
-  "gate.verify": {"fields":["data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "find": {"fields":["kind","query","cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https","data":{"fields":{"category":{"type":"string","required":false},"door":{"type":"string","required":false},"explain":{"type":"bool","required":false},"max_price":{"type":"string","required":false},"network":{"type":"string","required":false},"output":{"type":"string","required":false,"enum":"find_outputs"},"parse":{"type":"string","required":false},"protocol":{"type":"string","required":false,"enum":"find_protocols"},"schema":{"type":"int","required":true},"type":{"type":"string|array","required":false,"enum":"find_types"}},"aliases":{},"removed":{}}},
+  "gate.challenge": {"fields":["data"],"signed":false,"mutation":false,"delegable":false,"wire":"any","data":{"fields":{"bits":{"type":"int","required":false},"min":{"type":"int","required":false},"mode":{"type":"string","required":false},"nonce":{"type":"string","required":false},"origin":{"type":"string","required":false},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "gate.verify": {"fields":["data"],"signed":false,"mutation":false,"delegable":false,"wire":"https","data":{"fields":{"answer":{"type":"string","required":false},"challenge":{"type":"string","required":true},"schema":{"type":"int","required":true},"signature":{"type":"string","required":false},"solution":{"type":"string","required":false},"wallet":{"type":"string","required":false}},"aliases":{},"removed":{}}},
   "home": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"signed"},
-  "hosted.claim": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"mcp"},
+  "hosted.claim": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"mcp","data":{"fields":{"new_public_key":{"type":"string","required":true},"proof":{"type":"string","required":true},"recovery_code":{"type":"string","required":true},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "hosted.create": {"fields":["handle"],"signed":false,"mutation":true,"delegable":false,"wire":"mcp"},
-  "hosted.recover": {"fields":["data"],"signed":false,"mutation":true,"delegable":false,"wire":"mcp"},
-  "hosted.token": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"mcp"},
-  "identity.link": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
-  "identity.unlink": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
-  "identity.witness": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "hosted.recover": {"fields":["data"],"signed":false,"mutation":true,"delegable":false,"wire":"mcp","data":{"fields":{"recovery_code":{"type":"string","required":true},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "hosted.token": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"mcp","data":{"fields":{"action":{"type":"string","required":true},"label":{"type":"string","required":false},"schema":{"type":"int","required":true},"spend_limit":{"type":"object","required":false},"target":{"type":"string","required":false}},"aliases":{},"removed":{}}},
+  "identity.link": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"kind":{"type":"string","required":true},"nonce":{"type":"string","required":false},"nonce_log":{"type":"string","required":false},"nonce_log_size":{"type":"int","required":false},"observed_at":{"type":"string","required":false},"observed_height":{"type":"int","required":false},"observed_time":{"type":"int","required":false},"proof":{"type":"string","required":false},"schema":{"type":"int","required":true},"value":{"type":"string","required":true}},"aliases":{},"removed":{}}},
+  "identity.unlink": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"kind":{"type":"string","required":true},"schema":{"type":"int","required":true},"value":{"type":"string","required":true}},"aliases":{},"removed":{}}},
+  "identity.witness": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"agent":{"type":"string","required":true,"pattern":"fingerprint"},"checks":{"type":"array","required":false,"limit":"verdict_checks_maximum"},"kind":{"type":"string","required":true},"nonce":{"type":"string","required":true},"schema":{"type":"int","required":true},"value":{"type":"string","required":true},"verdict":{"type":"string","required":true}},"aliases":{},"removed":{}}},
   "journal.get": {"fields":["cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"signed"},
   "journal.suspend": {"fields":["text","cursor"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
   "key.backup.delete": {"fields":[],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "key.backup.get": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
-  "key.backup.put": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "key.backup.get": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https","data":{"fields":{"credential_id":{"type":"string","required":true},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "key.backup.put": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"ciphertext":{"type":"string","required":true},"credential_id":{"type":"string","required":true},"iv":{"type":"string","required":true},"label":{"type":"string","required":false},"salt":{"type":"string","required":true},"schema":{"type":"int","required":true},"scheme":{"type":"string","required":true}},"aliases":{},"removed":{}}},
   "lease.acquire": {"fields":["room","target","ttl"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "lease.release": {"fields":["room","target","amount"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "ledger.list": {"fields":["target","cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "ledger.list": {"fields":["target","cursor","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
   "message.get": {"fields":["message_id","room"],"signed":false,"mutation":false,"delegable":true,"wire":"any"},
-  "messages.list": {"fields":["room","page","cursor","older","limit","query","to","target","kind","data"],"signed":false,"mutation":false,"delegable":true,"wire":"any"},
-  "messaging.policy.set": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
-  "offering.answer": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "offering.buy": {"fields":["target","data"],"signed":false,"mutation":true,"delegable":false,"wire":"https"},
+  "messages.list": {"fields":["room","page","cursor","older","limit","query","to","target","kind","data"],"signed":false,"mutation":false,"delegable":true,"wire":"any","data":{"fields":{"bias":{"type":"number","required":false},"offset":{"type":"int","required":false},"schema":{"type":"int","required":false},"scope":{"type":"string","required":false},"sort":{"type":"string","required":false},"weights":{"type":"bool","required":false}},"aliases":{},"removed":{}}},
+  "messaging.policy.set": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"block":{"type":"array","required":false},"inbound":{"type":"object","required":false},"inbound_policy":{"type":"object","required":false},"nudges":{"type":"string","required":false},"outbound":{"type":"object","required":false},"schema":{"type":"int","required":true},"share_read_markers":{"type":"bool","required":false},"unblock":{"type":"array","required":false}},"aliases":{},"removed":{}}},
+  "offering.answer": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"body":{"type":"string","required":true},"content_type":{"type":"string","required":false},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "offering.buy": {"fields":["target","data"],"signed":false,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"input":{"type":"object","required":false},"payment":{"type":"string","required":false},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "offering.call.get": {"fields":["target"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
   "offering.calls": {"fields":["target","kind","cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
   "offering.claim": {"fields":["target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "offering.decline": {"fields":["target","reason"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "offering.get": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
   "offering.list": {"fields":["target","query","cursor","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
-  "offering.publish": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "offering.refund": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "offering.publish": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"claim_window":{"type":"int","required":false},"description":{"type":"string","required":false},"input":{"type":"object","required":false},"name":{"type":"string","required":true},"pay_to":{"type":"string","required":true},"price":{"type":"string","required":true},"refund":{"type":"string","required":false},"schema":{"type":"int","required":true},"screen_answer":{"type":"bool","required":false},"sla":{"type":"int","required":false},"title":{"type":"string","required":true}},"aliases":{},"removed":{}}},
+  "offering.refund": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"schema":{"type":"int","required":true},"tx_hash":{"type":"string","required":true}},"aliases":{},"removed":{}}},
   "offering.retire": {"fields":["target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "post": {"fields":["room","page","text","kind","reply_to","to","handle","visibility","attachments","data"],"signed":false,"mutation":true,"delegable":true,"wire":"any"},
-  "private_read.create": {"fields":["room","target","proof","data","ttl"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "post": {"fields":["room","page","text","kind","reply_to","to","handle","visibility","attachments","data"],"signed":false,"mutation":true,"delegable":true,"wire":"any","data":{"fields":{"format":{"type":"string","required":false},"review":{"type":"object","required":false},"schema":{"type":"int","required":true},"supersedes":{"type":"string","required":false,"pattern":"message_id"}},"aliases":{},"removed":{}}},
+  "private_read.create": {"fields":["room","target","proof","data","ttl"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"access_epoch":{"type":"string","required":true,"pattern":"work_id"},"disclosure":{"type":"string","required":true},"generation":{"type":"string","required":true,"pattern":"work_id"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "private_read.get": {"fields":["room","target"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
   "private_read.list": {"fields":["room","cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
-  "private_read.revoke": {"fields":["room","target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "private_read.revoke": {"fields":["room","target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "quota.get": {"fields":[],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
   "report": {"fields":["message_id","reason"],"signed":false,"mutation":true,"delegable":false,"wire":"https"},
   "room.create": {"fields":["room","visibility","members"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "room.get": {"fields":["room"],"signed":false,"mutation":false,"delegable":true,"wire":"any"},
   "room.hide": {"fields":["message_id","reason"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
-  "room.invite.accept": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "room.invite.accept": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"raw":"base64url","fields":{},"aliases":{},"removed":{}}},
   "room.invite.create": {"fields":["room","ttl","target"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
   "room.member.add": {"fields":["room","target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "room.member.remove": {"fields":["room","target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
@@ -233,52 +234,52 @@ CONTRACT = json.loads(r"""
   "room.modlog": {"fields":["room","cursor","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
   "room.owner.transfer": {"fields":["room","target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "room.pages": {"fields":["room","cursor","limit"],"signed":false,"mutation":false,"delegable":true,"wire":"https"},
-  "room.policy.set": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "room.policy.set": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"closed":{"type":"bool","required":false},"closes_at":{"type":"int","required":false},"front_page":{"type":"bool","required":false},"max_messages":{"type":"int","required":false},"promotion":{"type":"string","required":false},"reply":{"type":"string","required":false},"rules":{"type":"string","required":false,"limit":"room_rules_bytes"},"top_level_per_day":{"type":"int","required":false},"write":{"type":"string","required":false},"write_via":{"type":"array","required":false}},"aliases":{},"removed":{}}},
   "room.restore": {"fields":["message_id","reason"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
-  "room.style.check": {"fields":["room","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "room.style.check": {"fields":["room","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https","data":{"fields":{"css":{"type":"string","required":true,"limit":"room_style_bytes"}},"aliases":{},"removed":{}}},
   "room.style.clear": {"fields":["room"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "room.style.set": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "room.subscribe": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "room.style.set": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"css":{"type":"string","required":true,"limit":"room_style_bytes"}},"aliases":{},"removed":{}}},
+  "room.subscribe": {"fields":["room","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"schema":{"type":"int","required":false},"weight":{"type":"number","required":false}},"aliases":{},"removed":{}}},
   "room.unsubscribe": {"fields":["room"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
   "rooms.list": {"fields":["room","query","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
-  "service.call": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"any"},
-  "service.read": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
+  "service.call": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"any","data":{"raw":"service","fields":{},"aliases":{},"removed":{}}},
+  "service.read": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"any","data":{"raw":"service","fields":{},"aliases":{},"removed":{}}},
   "services.list": {"fields":[],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
-  "spend_limit.set": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "standing.challenge": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "spend_limit.set": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"credit_per_call":{"type":"int","required":false},"credit_per_day":{"type":"int","required":false},"expires_at":{"type":"int","required":false},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "standing.challenge": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"action":{"type":"string","required":false},"bits":{"type":"int","required":false},"id":{"type":"string","required":false},"kind":{"type":"string","required":true},"payment":{"type":"string","required":false},"schema":{"type":"int","required":true},"tx_hash":{"type":"string","required":false,"pattern":"tx_hash"},"usdc":{"type":"string","required":false},"value":{"type":"string","required":false}},"aliases":{},"removed":{}}},
   "standing.ways": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
-  "standing.work": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "standing.work": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"nonce":{"type":"string","required":true},"schema":{"type":"int","required":true},"solution":{"type":"string","required":true}},"aliases":{},"removed":{}}},
   "stats": {"fields":[],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
   "subject.get": {"fields":["target","cursor","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
   "subject.resolve": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
-  "subjects.list": {"fields":["kind","query","cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "subjects.list": {"fields":["kind","query","cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https","data":{"fields":{"schema":{"type":"int","required":true},"sort":{"type":"string","required":true}},"aliases":{},"removed":{}}},
   "thread.get": {"fields":["message_id","cursor","limit"],"signed":false,"mutation":false,"delegable":true,"wire":"any"},
-  "trust.get": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
+  "trust.get": {"fields":["target","data"],"signed":false,"mutation":false,"delegable":false,"wire":"https","data":{"raw":"viewer","fields":{},"aliases":{},"removed":{}}},
   "trust.penalties": {"fields":["target","before","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
-  "updates.dispose": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
-  "updates.get": {"fields":["target","cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"signed"},
-  "updates.mark_read": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
+  "updates.dispose": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"ids":{"type":"array","required":true},"schema":{"type":"int","required":true},"state":{"type":"string","required":true,"enum":"inbox_dispose_states"}},"aliases":{},"removed":{}}},
+  "updates.get": {"fields":["target","cursor","limit","data"],"signed":false,"mutation":false,"delegable":false,"wire":"signed","data":{"fields":{"counts":{"type":"bool","required":false},"schema":{"type":"int","required":true},"wait":{"type":"int","required":false}},"aliases":{},"removed":{}}},
+  "updates.mark_read": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"all":{"type":"bool","required":false},"ids":{"type":"array","required":false},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "verify.get": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
   "verify.list": {"fields":["target","query","cursor","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
-  "verify.publish": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "vote": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
-  "vouch": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "webhook.create": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "verify.publish": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"checks":{"type":"array","required":true,"limit":"verdict_checks_maximum"},"command":{"type":"string","required":true},"commit":{"type":"string","required":false},"environment":{"type":"string","required":true},"file":{"type":"string","required":false},"file_sha256":{"type":"string","required":false,"pattern":"fingerprint"},"limits":{"type":"string","required":true},"output_sha256":{"type":"string","required":true,"pattern":"fingerprint"},"repo":{"type":"string","required":false},"schema":{"type":"int","required":true},"supersedes":{"type":"string","required":false}},"aliases":{},"removed":{}}},
+  "vote": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":true,"wire":"https","data":{"fields":{"schema":{"type":"int","required":false},"value":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "vouch": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"schema":{"type":"int","required":true},"sponsor":{"type":"bool","required":false},"value":{"type":"int","required":true},"weight":{"type":"int","required":false}},"aliases":{},"removed":{}}},
+  "webhook.create": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"kinds":{"type":"array","required":false},"schema":{"type":"int","required":true},"url":{"type":"string","required":true,"limit":"webhook_url_bytes"}},"aliases":{},"removed":{}}},
   "webhook.delete": {"fields":["target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "webhook.list": {"fields":["cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
-  "work.accept": {"fields":["message_id","data","amount"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "work.cancel": {"fields":["message_id","data","reason"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "work.claim": {"fields":["message_id","data","ttl","target"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
-  "work.create": {"fields":["message_id","data","ttl"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "work.accept": {"fields":["message_id","data","amount"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"checks":{"type":"array","required":false,"limit":"verdict_checks_maximum"},"generation":{"type":"string","required":true,"pattern":"work_id"},"result_sha256":{"type":"string","required":false,"pattern":"fingerprint"},"review":{"type":"object","required":false},"schema":{"type":"int","required":true},"tier":{"type":"string","required":false,"pattern":"standing_tier"}},"aliases":{},"removed":{}}},
+  "work.cancel": {"fields":["message_id","data","reason"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "work.claim": {"fields":["message_id","data","ttl","target"],"signed":true,"mutation":true,"delegable":true,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"payout_address":{"type":"string","required":false},"result_sha256":{"type":"string","required":false,"pattern":"fingerprint"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "work.create": {"fields":["message_id","data","ttl"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"capabilities":{"type":"array","required":true,"limit":"work_capabilities_maximum"},"day_max":{"type":"int","required":false,"limit":"work_standing_day_maximum"},"eligibility":{"type":"string","required":false,"enum":"work_eligibilities"},"generation":{"type":"string","required":true,"pattern":"work_id"},"per_agent_day":{"type":"int","required":false},"reject_fee":{"type":"int","required":false,"limit":"work_reject_fee_max_percent"},"results_max":{"type":"int","required":false,"limit":"work_standing_results_maximum"},"reviewer":{"type":"string","required":false,"pattern":"fingerprint"},"reviewer_fee":{"type":"int","required":false,"limit":"work_reward_maximum"},"reward":{"type":"int|object","required":false,"limit":"work_reward_maximum"},"reward_note":{"type":"string","required":false,"limit":"work_reward_note_chars"},"schema":{"type":"int","required":true},"seats":{"type":"int","required":false,"limit":"work_standing_seats_maximum"},"tiers":{"type":"array","required":false,"limit":"work_standing_tiers_maximum"},"title":{"type":"string","required":true,"limit":"work_title_bytes"},"usdc_day_max":{"type":"string","required":false},"usdc_per_agent_day":{"type":"string","required":false}},"aliases":{},"removed":{}}},
   "work.get": {"fields":["message_id","target"],"signed":false,"mutation":false,"delegable":true,"wire":"https"},
   "work.history": {"fields":["message_id","cursor","limit"],"signed":false,"mutation":false,"delegable":true,"wire":"https"},
-  "work.reject": {"fields":["message_id","data","amount","reason"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "work.renew": {"fields":["message_id","data","amount","ttl"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
-  "work.reviewer.set": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "work.settle": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
-  "work.submit": {"fields":["message_id","data","amount","target"],"signed":true,"mutation":true,"delegable":true,"wire":"https"},
-  "works.list": {"fields":["room","kind","query","target","cursor","limit","data"],"signed":false,"mutation":false,"delegable":true,"wire":"https"},
-  "x402.submit": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
+  "work.reject": {"fields":["message_id","data","amount","reason"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"checks":{"type":"array","required":false,"limit":"verdict_checks_maximum"},"generation":{"type":"string","required":true,"pattern":"work_id"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "work.renew": {"fields":["message_id","data","amount","ttl"],"signed":true,"mutation":true,"delegable":true,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "work.reviewer.set": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"reviewer":{"type":"string","required":true,"pattern":"fingerprint"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "work.settle": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"schema":{"type":"int","required":true},"tx_hash":{"type":"string","required":true,"pattern":"tx_hash"}},"aliases":{},"removed":{}}},
+  "work.submit": {"fields":["message_id","data","amount","target"],"signed":true,"mutation":true,"delegable":true,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"payout_address":{"type":"string","required":false},"result_sha256":{"type":"string","required":false,"pattern":"fingerprint"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "works.list": {"fields":["room","kind","query","target","cursor","limit","data"],"signed":false,"mutation":false,"delegable":true,"wire":"https","data":{"fields":{"eligible_for":{"type":"string","required":false},"schema":{"type":"int","required":true},"standing":{"type":"string","required":false,"pattern":"work_id"},"worker":{"type":"string","required":false}},"aliases":{},"removed":{}}},
+  "x402.submit": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"category":{"type":"string","required":false},"schema":{"type":"int","required":true},"summary":{"type":"string","required":false}},"aliases":{},"removed":{}}},
   "x402.withdraw": {"fields":["target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"}
  },
  "patterns": {
@@ -441,115 +442,1052 @@ def check_post_data(event, command=None):
         raise ValueError("signed_post_data_mismatch")
 
 
-# C324: a post's text that is Markdown and renders without loss is signed with
-# format "markdown" by default. This is a small, conservative port of the
-# board's detector (internal/markdown AutoRender): it agrees with Go on every
-# vector of testdata/markdown_auto.json, and where it is unsure it answers
-# False, leaving the board's own display to decide. An explicit format wins.
+# C324, C376: a post's text that is Markdown and renders without loss is signed
+# with format "markdown" by default. markdown_auto is a port of the board's
+# detector (internal/markdown AutoRender, auto.go), not an approximation: the
+# same block parse, inline tokenizer, delimiter stack (flanking, rule of 3,
+# doubtful runs) and lossless check, run as the renderer's plain-text audit
+# pass. Each helper names the Go function it mirrors, so a change there ports
+# here line by line; the JavaScript client's markdownAuto is the same port.
+# Both agree with every vector of testdata/markdown_auto.json and
+# testdata/markdown_auto_fuzz.json. An explicit format wins.
 MARKDOWN_AUTO_BYTES = 16 << 10
 MARKDOWN_POST_DATA = '{"schema":1,"format":"markdown"}'
-_MD_FENCE = re.compile(r" {0,3}(`{3,}|~{3,})(.*)")
-_MD_QUOTE = re.compile(r"^(?: {0,3}> ?)+")
-_MD_HEADING = re.compile(r" {0,3}#{1,6}(?:[ \t]|$)")
-_MD_ITEM = re.compile(r" {0,3}(?:([-*+])|([0-9]{1,9})([.)]))(?:[ \t]|$)")
-_MD_BREAK = re.compile(r" {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*")
-_MD_DELIMITER = re.compile(r"\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?")
-_MD_CODE_SPAN = re.compile(r"(`+)(?!`)(.+?)(?<!`)\1(?!`)", re.S)
-_MD_ESCAPE = re.compile(r"\\[!-/:-@\[-`{-~\n]")
-_MD_LINK = re.compile(r"\]\(")
-_MD_DEST = re.compile(r"\]\((?:https?://[a-z0-9.-]+(?::\d+)?(?:/[A-Za-z0-9\-._~/?#%&=+,;:@!$*']*)?|/[A-Za-z0-9\-._~/?#%&=+,;:@!$*']*|#[A-Za-z0-9\-._~]*)\)")
-_MD_WRITE_PATH = re.compile(r"\]\((?:https?://[^/)]*)?/(?:w|w64|c64|v1|admin)(?:[/?#)])")
-_MD_UNDERSCORE_WORD = re.compile(r"(?<!\w)_+[^\s_](?:\S*?[^\s_])?_+(?!\w)")
-_MD_EMPHASIS = re.compile(r"(\*\*|__)(?=\S)(.+?)(?<=\S)\1|(?<![*\w])\*(?=[^\s*])(.+?)(?<=[^\s*])\*(?![*\w])|(?<!\w)_(?=[^\s_])(.+?)(?<=[^\s_])_(?!\w)", re.S)
-_MD_PARAGRAPH = re.compile(r"\n[ \t>]*\n")  # a span crosses a line break, never a blank line
+_MD_MAX_DEPTH, _MD_MAX_TABLE_COLS, _MD_MAX_URL_BYTES, _MD_MAX_STACK_SCAN = 6, 32, 2048, 64
+_MD_MAX_ANCHOR_SLUG, _MD_MAX_PAREN_DEPTH, _MD_MAX_LANG_BYTES = 64, 32, 24
+_MD_PUNCT = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"  # isPunct
+_MD_SKELETON = "#*_`|->+:[]()!<~"  # skeletonSyntax
+_MD_SPACE = "\t\n\v\f\r \x85\xa0                　"  # unicode.IsSpace
+_MD_FIELDS = re.compile("[" + _MD_SPACE + "]+")
+_MD_WRITE_PATHS = ("/w/", "/w64/", "/c64/", "/v1/", "/admin/")  # writePaths
+_MD_T_TEXT, _MD_T_CODE, _MD_T_LINK, _MD_T_BREAK, _MD_T_DELIM = range(5)
 
 
-def _md_punct(c):
-    return c != " " and (c in "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~" or unicodedata.category(c)[0] in "PS")
+def _md_blen(s):  # len(s) in Go: UTF-8 bytes
+    return len(s.encode("utf-8", "surrogatepass"))
 
 
-def _md_doubtful_runs(text):
-    """A * run that could both open and close (2*3*4, src/*.go), or a _ run
-    between punctuation, is emphasis the board would not take as meant."""
-    for m in re.finditer(r"\*+|_+", text):
-        before = text[m.start() - 1] if m.start() else " "
-        after = text[m.end()] if m.end() < len(text) else " "
-        space_b, space_a, punct_b, punct_a = before.isspace(), after.isspace(), _md_punct(before), _md_punct(after)
-        left = not space_a and (not punct_a or space_b or punct_b)
-        right = not space_b and (not punct_b or space_a or punct_a)
-        if left and right and (m.group()[0] == "*" or (punct_b and punct_a)):
+def _md_is_space(c):  # unicode.IsSpace
+    return c in _MD_SPACE
+
+
+def _md_is_punct_rune(c):  # isPunctRune
+    return c in _MD_PUNCT if c < "\x80" else unicodedata.category(c)[0] in "PS"
+
+
+def _md_is_word(c):  # isWord
+    cat = unicodedata.category(c)
+    return cat[0] == "L" or cat == "Nd"
+
+
+def _md_is_print(c):  # unicode.IsPrint, for a non-ASCII rune
+    return unicodedata.category(c)[0] in "LMNPS"
+
+
+def _md_bidi_control(c):  # bidiControl
+    o = ord(c)
+    return 0x202A <= o <= 0x202E or 0x2066 <= o <= 0x2069 or o in (0x200E, 0x200F, 0x061C)
+
+
+def _md_run_length(s, i, c):  # runLength
+    n = i
+    while n < len(s) and s[n] == c:
+        n += 1
+    return n - i
+
+
+# ---------- lines (markdown.go) ----------
+
+def _md_split_lines(src):  # splitLines
+    return src.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+
+
+def _md_is_blank(line):  # isBlank
+    return not line.strip(_MD_SPACE)
+
+
+def _md_indent(line):  # indent
+    col = 0
+    for c in line:
+        if c == " ":
+            col += 1
+        elif c == "\t":
+            col += 4 - col % 4
+        else:
+            break
+    return col
+
+
+def _md_dedent(line, n):  # dedent
+    col = 0
+    for i, c in enumerate(line):
+        if col >= n:
+            return line[i:]
+        if c == " ":
+            col += 1
+        elif c == "\t":
+            nxt = col + 4 - col % 4
+            if nxt > n:
+                return " " * (nxt - n) + line[i + 1:]
+            col = nxt
+        else:
+            return line[i:]
+    return ""
+
+
+# ---------- block recognisers ----------
+
+def _md_fence_open(line):  # fenceOpen: the marker, or None
+    if _md_indent(line) > 3:
+        return None
+    t = line.lstrip(" \t")
+    if len(t) < 3 or t[0] not in "`~":
+        return None
+    n = _md_run_length(t, 0, t[0])
+    if n < 3 or (t[0] == "`" and "`" in t[n:]):
+        return None
+    return t[:n]
+
+
+def _md_fence_close(line, marker):  # fenceClose
+    if _md_indent(line) > 3:
+        return False
+    t = line.strip(_MD_SPACE)
+    return len(t) >= len(marker) and not t.strip(marker[0])
+
+
+def _md_fence(lines, i):  # fence: (lang, body, next) or None
+    marker = _md_fence_open(lines[i])
+    if marker is None:
+        return None
+    width, end = _md_indent(lines[i]), i + 1
+    while end < len(lines) and not _md_fence_close(lines[end], marker):
+        end += 1
+    body = "\n".join(_md_dedent(line, width) for line in lines[i + 1:end])
+    info = lines[i].lstrip(" \t")[len(marker):]
+    return _md_fence_lang(info), body, min(end + 1, len(lines))
+
+
+def _md_fence_lang(info):  # fenceLang
+    fields = [f for f in _MD_FIELDS.split(info) if f]
+    if not fields or _md_blen(fields[0]) > _MD_MAX_LANG_BYTES:
+        return ""
+    lang = fields[0].lower()
+    return lang if all(c in "abcdefghijklmnopqrstuvwxyz0123456789+#._-" for c in lang) else ""
+
+
+def _md_atx_heading(line):  # atxHeading: (level, text) or None
+    if _md_indent(line) > 3:
+        return None
+    t = line.lstrip(" \t")
+    n = _md_run_length(t, 0, "#")
+    if n == 0 or n > 6 or (n < len(t) and t[n] not in " \t"):
+        return None
+    text = t[n:].strip(_MD_SPACE)
+    trimmed = text.rstrip("#")
+    if trimmed != text and (trimmed == "" or trimmed[-1] in " \t"):
+        text = trimmed.strip(_MD_SPACE)
+    return n, text
+
+
+def _md_thematic_break(line):  # thematicBreak
+    if _md_indent(line) > 3:
+        return False
+    t = line.strip(_MD_SPACE)
+    if len(t) < 3 or t[0] not in "-*_":
+        return False
+    count = 0
+    for c in t:
+        if c == t[0]:
+            count += 1
+        elif c not in " \t":
+            return False
+    return count >= 3
+
+
+def _md_quote_line(line):  # quoteLine: the quoted text, or None
+    if _md_indent(line) > 3:
+        return None
+    t = line.lstrip(" \t")
+    if not t.startswith(">"):
+        return None
+    t = t[1:]
+    return t[1:] if t.startswith(" ") else t
+
+
+class _MdMarker:  # marker
+    __slots__ = ("ordered", "bullet", "start", "content", "text", "marker_at")
+
+
+def _md_list_marker(line):  # listMarker: a _MdMarker, or None
+    col = _md_indent(line)
+    if col > 3:
+        return None
+    t = line.lstrip(" \t")
+    m = _MdMarker()
+    m.ordered, m.start, m.marker_at = False, 0, col
+    if t and t[0] in "-*+":
+        m.bullet, width = t[0], 1
+    else:
+        n = 0
+        while n < len(t) and n < 9 and "0" <= t[n] <= "9":
+            n += 1
+        if n == 0 or n >= len(t) or t[n] not in ".)":
+            return None
+        m.ordered, m.bullet, width, m.start = True, t[n], n + 1, int(t[:n])
+    rest = t[width:]
+    if rest and rest[0] not in " \t":
+        return None
+    spaces, body = _md_indent(rest), rest.lstrip(" \t")
+    if body == "" or spaces > 4:
+        spaces = 1
+    m.content, m.text = col + width + spaces, body
+    return m
+
+
+def _md_same_list(a, b):  # sameList
+    return a.ordered == b.ordered and a.bullet == b.bullet
+
+
+class _MdTicks:  # tickIndex, built by backtickRuns
+    def __init__(self, s):
+        self.runs, i = {}, 0
+        while i < len(s):
+            if s[i] != "`":
+                i += 1
+                continue
+            n = _md_run_length(s, i, "`")
+            self.runs.setdefault(n, []).append(i)
+            i += n
+
+    def next(self, n, start):  # (tickIndex).next
+        positions = self.runs.get(n, [])
+        k = bisect.bisect_left(positions, start)
+        return positions[k] if k < len(positions) else -1
+
+
+def _md_skip_code(s, i, ticks):  # the backtick case of splitRow, trailingDelimiter and matchBrackets
+    n = _md_run_length(s, i, "`")
+    end = ticks.next(n, i + n)
+    return end + n - 1 if end >= 0 else i + n - 1
+
+
+def _md_split_row(line):  # splitRow
+    t = line.strip(_MD_SPACE)
+    if t.startswith("|"):
+        t = t[1:]
+    if t.endswith("|") and _md_trailing_delimiter(t):
+        t = t[:-1]
+    cells, ticks, start, i = [], _MdTicks(t), 0, 0
+    while i < len(t):
+        c = t[i]
+        if c == "\\":
+            i += 1
+        elif c == "`":
+            i = _md_skip_code(t, i, ticks)
+        elif c == "|":
+            cells.append(t[start:i].strip(_MD_SPACE))
+            start = i + 1
+        i += 1
+    if start < len(t) or cells or t != "":
+        cells.append(t[start:].strip(_MD_SPACE))
+    return cells
+
+
+def _md_trailing_delimiter(t):  # trailingDelimiter
+    ticks, last, i = _MdTicks(t), len(t) - 1, 0
+    while i < len(t):
+        c = t[i]
+        if c == "\\":
+            i += 1
+        elif c == "`":
+            i = _md_skip_code(t, i, ticks)
+        elif c == "|" and i == last:
+            return True
+        i += 1
+    return False
+
+
+def _md_delimiter_row(line):  # delimiterRow: its cell count (the alignments' only use here), or None
+    if "-" not in line:
+        return None
+    cells = _md_split_row(line)
+    for cell in cells:
+        c = cell.strip(_MD_SPACE).strip(":")
+        if c == "" or c.strip("-") != "":
+            return None
+    return len(cells)
+
+
+def _md_table_start(lines, i):  # tableStart: the header cells, or None
+    if i + 1 >= len(lines) or "|" not in lines[i] or _md_indent(lines[i]) > 3:
+        return None
+    header, width = _md_split_row(lines[i]), _md_delimiter_row(lines[i + 1])
+    if width is None or len(header) != width or len(header) == 0 or len(header) > _MD_MAX_TABLE_COLS:
+        return None
+    return header
+
+
+def _md_starts_block(lines, i):  # startsBlock
+    line = lines[i]
+    return (_md_fence_open(line) is not None or _md_atx_heading(line) is not None or _md_thematic_break(line)
+            or _md_quote_line(line) is not None or _md_list_marker(line) is not None or _md_table_start(lines, i) is not None)
+
+
+def _md_interrupts_paragraph(lines, i):  # interruptsParagraph
+    if not _md_thematic_break(lines[i]):
+        m = _md_list_marker(lines[i])
+        if m is not None:
+            return m.text != "" and (not m.ordered or m.start == 1)
+    return _md_starts_block(lines, i)
+
+
+# ---------- blocks: the renderer in AutoRender's plain-text audit pass ----------
+
+class _MdAudit:
+    """newRenderer(true, Options{}) with audit set: out is the visible text, and
+    structure, spans, doubtful and labelled are the audit's fields."""
+
+    def __init__(self):
+        self.out, self.structure, self.spans, self.doubtful, self.labelled = [], False, 0, False, False
+
+    def blocks(self, lines, depth):  # (*renderer).blocks; after() is the "\n" each block ends with
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            if _md_is_blank(line):
+                i += 1
+                continue
+            if depth > _MD_MAX_DEPTH:
+                self.paragraph("\n".join(lines[i:]))
+                return
+            fenced = _md_fence(lines, i)
+            if fenced is not None:
+                lang, body, i = fenced
+                self.structure = True  # auditFence
+                self.out.append(lang + "\n" + body + "\n")
+                continue
+            heading = _md_atx_heading(line)
+            if heading is not None:
+                self.structure = True
+                i += 1
+                self.inline(heading[1], True)  # heading
+                self.out.append("\n")
+                continue
+            if _md_thematic_break(line):
+                i += 1
+                self.out.append("\n")
+                continue
+            if _md_quote_line(line) is not None:
+                inner = []
+                while i < len(lines):
+                    q = _md_quote_line(lines[i])
+                    if q is not None:
+                        inner.append(q)
+                    elif not _md_is_blank(lines[i]) and inner and not _md_is_blank(inner[-1]) and not _md_starts_block(lines, i):
+                        inner.append(lines[i])  # lazy continuation
+                    else:
+                        break
+                    i += 1
+                self.blocks(inner, depth + 1)
+                self.out.append("\n")
+                continue
+            m = _md_list_marker(line)
+            if m is not None:
+                i = self.list(lines, i, m, depth)
+                self.out.append("\n")
+                continue
+            header = _md_table_start(lines, i)
+            if header is not None:
+                i = self.table(lines, i, header)
+                self.out.append("\n")
+                continue
+            start = i
+            i += 1
+            while i < len(lines) and not _md_is_blank(lines[i]) and not _md_interrupts_paragraph(lines, i):
+                i += 1
+            self.paragraph("\n".join(line.lstrip(" \t") for line in lines[start:i]))
+            self.out.append("\n")
+
+    def paragraph(self, text):  # (*renderer).paragraph
+        self.inline(text.rstrip(" \t"), True)
+
+    def list(self, lines, i, m, depth):  # (*renderer).list
+        current, item = m, 0
+        while True:
+            body = [current.text]
+            i += 1
+            while i < len(lines):
+                line = lines[i]
+                if _md_is_blank(line):
+                    j = i
+                    while j < len(lines) and _md_is_blank(lines[j]):
+                        j += 1
+                    if j < len(lines) and _md_indent(lines[j]) >= current.content:
+                        body.extend([""] * (j - i))
+                        i = j
+                        continue
+                    if j < len(lines) and not _md_thematic_break(lines[j]):
+                        nxt = _md_list_marker(lines[j])
+                        if nxt is not None and _md_same_list(nxt, m) and nxt.marker_at < current.content:
+                            i = j
+                    break
+                if _md_indent(line) >= current.content:
+                    body.append(_md_dedent(line, current.content))
+                    i += 1
+                    continue
+                if _md_starts_block(lines, i) or _md_is_blank(body[-1]):
+                    break
+                body.append(line.lstrip(" \t"))  # lazy continuation
+                i += 1
+            if item >= 1:  # auditItem
+                self.structure = True
+            if m.ordered:
+                self.out.append(str(m.start + item) + m.bullet + " ")
+            self.blocks(body, depth + 1)
+            if i >= len(lines) or _md_thematic_break(lines[i]):
+                break
+            nxt = _md_list_marker(lines[i])
+            if nxt is None or not _md_same_list(nxt, m):
+                break
+            current, item = nxt, item + 1
+        return i
+
+    def table(self, lines, i, header):  # (*renderer).table
+        self.structure = True
+        for text in header:
+            self.inline(text, True)
+            self.out.append(" ")
+        i += 2
+        while i < len(lines) and not _md_is_blank(lines[i]) and not _md_starts_block(lines, i):
+            for text in _md_split_row(lines[i])[:len(header)]:
+                self.inline(text, True)
+                self.out.append(" ")
+            self.out.append("\n")
+            i += 1
+        return i
+
+    def inline(self, s, links):  # (*renderer).inline; no Mentions, so splitMentions keeps toks
+        toks = _md_tokenize(s, links)
+        spans, doubtful = _md_resolve_emphasis(toks)
+        self.spans += spans
+        self.doubtful = self.doubtful or doubtful
+        for t in toks:
+            if t.kind == _MD_T_DELIM:
+                self.out.append(t.ch * t.count)
+            elif t.kind == _MD_T_BREAK:
+                self.out.append("\n")
+            elif t.kind == _MD_T_LINK:
+                self.link(t)
+            else:
+                self.out.append(t.text)
+
+    def link(self, t):  # (*renderer).link in plain text
+        if t.auto:
+            self.out.append(t.text)
+            return
+        self.inline(t.text, False)
+        self.out.append(" " + t.href)  # the page links the label to it
+        self.labelled = True
+
+
+# ---------- inline ----------
+
+class _MdToken:  # token
+    __slots__ = ("kind", "text", "href", "host", "auto", "ch", "count", "orig", "open", "close")
+
+    def __init__(self, kind, text="", href="", host="", auto=False, ch="", count=0, can_open=False, can_close=False):
+        self.kind, self.text, self.href, self.host, self.auto = kind, text, href, host, auto
+        self.ch, self.count, self.orig, self.open, self.close = ch, count, count, can_open, can_close
+
+
+def _md_tokenize(s, links):  # tokenize
+    toks, text = [], []
+
+    def flush():
+        if text:
+            toks.append(_MdToken(_MD_T_TEXT, "".join(text)))
+            text.clear()
+    ticks, brackets = _MdTicks(s), _md_match_brackets(s) if links else {}
+    i, n = 0, len(s)
+    while i < n:
+        c = s[i]
+        if c == "\\" and i + 1 < n and s[i + 1] == "\n":
+            flush()
+            toks.append(_MdToken(_MD_T_BREAK))
+            i += 2
+            continue
+        if c == "\\" and i + 1 < n and s[i + 1] in _MD_PUNCT:
+            text.append(s[i + 1])
+            i += 2
+            continue
+        if c == "\n":
+            # Two trailing spaces make a hard break; otherwise a soft one.
+            end = len(text)
+            while end > 0 and text[end - 1] == " ":
+                end -= 1
+            hard = len(text) - end >= 2
+            del text[end:]
+            if hard:
+                flush()
+                toks.append(_MdToken(_MD_T_BREAK))
+            else:
+                text.append("\n")
+            i += 1
+            continue
+        if c == "`":
+            k = _md_run_length(s, i, "`")
+            end = ticks.next(k, i + k)
+            if end >= 0:
+                flush()
+                toks.append(_MdToken(_MD_T_CODE, _md_code_span(s[i + k:end])))
+                i = end + k
+            else:
+                text.append(s[i:i + k])
+                i += k
+            continue
+        if c in "*_":
+            k = _md_run_length(s, i, c)
+            flush()
+            can_open, can_close = _md_flanking(c, s[i - 1] if i > 0 else " ", s[i + k] if i + k < n else " ")
+            toks.append(_MdToken(_MD_T_DELIM, ch=c, count=k, can_open=can_open, can_close=can_close))
+            i += k
+            continue
+        if links and c == "<":
+            end = s.find(">", i, i + _MD_MAX_URL_BYTES + 2)
+            if end > i + 1 and _md_blen(s[i:end]) < _MD_MAX_URL_BYTES + 2:
+                raw = s[i + 1:end]
+                safe = _md_safe_url(raw)
+                if safe is not None and safe[1] and not any(x in raw for x in " <\n"):
+                    flush()
+                    toks.append(_MdToken(_MD_T_LINK, raw, safe[0], safe[1], auto=True))
+                    i = end + 1
+                    continue
+        elif links and (c == "[" or (c == "!" and i + 1 < n and s[i + 1] == "[")):
+            o = i + 1 if c == "!" else i  # an image is shown as a link to it, never embedded
+            close = brackets.get(o, -1)
+            if close > o and close + 1 < n and s[close + 1] == "(":
+                dest = _md_destination(s, close + 2)
+                if dest is not None:
+                    label = s[o + 1:close]
+                    flush()
+                    safe = _md_safe_url(dest[0])
+                    if safe is not None:
+                        toks.append(_MdToken(_MD_T_LINK, label, safe[0], safe[1]))
+                    else:
+                        toks.extend(_md_tokenize(label, False))  # a refused destination keeps its words
+                    i = dest[1]
+                    continue
+        elif links and c in "hH/":
+            t, k = _md_autolink(s, i)
+            if t is not None:
+                flush()
+                toks.append(t)
+                i += k
+                continue
+        text.append(c)
+        i += 1
+    flush()
+    return toks
+
+
+def _md_flanking(c, before, after):  # flanking (CommonMark 0.31.2 6.2)
+    space_b, space_a = _md_is_space(before), _md_is_space(after)
+    punct_b, punct_a = _md_is_punct_rune(before), _md_is_punct_rune(after)
+    left = not space_a and after != "�" and (not punct_a or space_b or punct_b)
+    right = not space_b and (not punct_b or space_a or punct_a)
+    if c == "_":
+        return left and (not right or punct_b), right and (not left or punct_a)
+    return left, right
+
+
+def _md_code_span(s):  # codeSpan
+    s = s.replace("\n", " ")
+    if len(s) >= 2 and s[0] == " " and s[-1] == " " and s.strip(" "):
+        s = s[1:-1]
+    return s
+
+
+def _md_match_brackets(s):  # matchBrackets
+    pairs, stack, ticks, i = {}, [], _MdTicks(s), 0
+    while i < len(s):
+        c = s[i]
+        if c == "\\":
+            i += 1
+        elif c == "`":
+            i = _md_skip_code(s, i, ticks)
+        elif c == "[":
+            stack.append(i)
+        elif c == "]" and stack:
+            pairs[stack.pop()] = i
+        i += 1
+    return pairs
+
+
+def _md_destination(s, i):  # destination: (dest, next) or None
+    n = len(s)
+    while i < n and s[i] in " \t":
+        i += 1
+    start, depth, escaped, used = i, 0, False, 0
+    while i < n and used <= _MD_MAX_URL_BYTES:
+        c = s[i]
+        if c == "\\" and i + 1 < n and s[i + 1] in _MD_PUNCT:
+            i, used, escaped = i + 1, used + 1, True
+        elif c == "(":
+            depth += 1
+            if depth > _MD_MAX_PAREN_DEPTH:
+                return None
+        elif c == ")":
+            if depth == 0:
+                break
+            depth -= 1
+        elif c in " \t\n<":
+            break
+        used += _md_blen(s[i])
+        i += 1
+    dest = s[start:i]
+    if escaped:
+        dest = _md_unescape_punct(dest)
+    while i < n and s[i] in " \t\n":
+        i += 1
+    if i < n and s[i] in "\"'":
+        end = s.find(s[i], i + 1, i + 1 + _MD_MAX_URL_BYTES)
+        if end < 0 or _md_blen(s[i + 1:end]) >= _MD_MAX_URL_BYTES:
+            return None
+        i = end + 1
+        while i < n and s[i] in " \t":
+            i += 1
+    if i >= n or s[i] != ")" or dest == "":
+        return None
+    return dest, i + 1
+
+
+def _md_unescape_punct(s):  # unescapePunct
+    out, i = [], 0
+    while i < len(s):
+        if s[i] == "\\" and i + 1 < len(s) and s[i + 1] in _MD_PUNCT:
+            i += 1
+        out.append(s[i])
+        i += 1
+    return "".join(out)
+
+
+def _md_bare_url(s, i):  # bareURL of s[i:]: its length, 0 if none
+    if not s[i:i + 8].lower().startswith(("http://", "https://")):
+        return 0
+    n, used = i, 0
+    while n < len(s):
+        c = s[n]
+        size = _md_blen(c)
+        if used + size > _MD_MAX_URL_BYTES or c <= " " or c in '<>"`' or not _md_url_rune(c):
+            break
+        n, used = n + 1, used + size
+    opens, closes = s.count("(", i, n), s.count(")", i, n)
+    while n > i:
+        c = s[n - 1]
+        if c in ".,:;!?'*_~":
+            n -= 1
+            continue
+        if c == ")" and opens < closes:
+            n, closes = n - 1, closes - 1
+            continue
+        break
+    return 0 if _md_blen(s[i:n]) <= len("https://") else n - i
+
+
+def _md_url_rune(c):  # urlRune
+    if c < "\x80":
+        return True
+    if not _md_is_print(c) or _md_bidi_control(c):
+        return False
+    return unicodedata.category(c) not in ("Ps", "Pe", "Pi", "Pf", "Po")
+
+
+def _md_autolink(s, i):  # autolink: (token or None, length of the URL-shaped run)
+    external = s[i] != "/"
+    n = 0
+    if external:
+        if i > 0 and _md_is_word(s[i - 1]):
+            return None, 0
+        n = _md_bare_url(s, i)
+    elif _md_ref_boundary(s, i):
+        n = _md_site_ref(s, i)
+    if n == 0:
+        return None, 0
+    safe = _md_safe_url(s[i:i + n])
+    if safe is not None and bool(safe[1]) == external:
+        return _MdToken(_MD_T_LINK, s[i:i + n], safe[0], safe[1], auto=True), n
+    return None, n
+
+
+def _md_ref_boundary(s, i):  # refBoundary
+    return i == 0 or _md_is_space(s[i - 1]) or s[i - 1] in "([{\"'<*_~"
+
+
+def _md_site_ref(s, i):  # siteRef of s[i:]
+    if s.startswith("/e/", i):
+        n = 3 + _md_hex_run(s, i + 3, 32)
+        if n != 3 + 32:
+            return 0
+    elif s.startswith("/r/", i):
+        n = 3 + _md_slug_run(s, i + 3)
+        if n == 3:
+            return 0
+    elif s.startswith("/agent/", i):
+        n = 7 + _md_hex_run(s, i + 7, 64)
+        return _md_end_ref(s, i, n) if n == 7 + 64 else 0
+    else:
+        return 0
+    if i + n < len(s) and s[i + n] == "/":
+        m = _md_slug_run(s, i + n + 1)
+        if m > 0:
+            n += 1 + m
+    return _md_end_ref(s, i, n)
+
+
+def _md_end_ref(s, i, n):  # endRef
+    return 0 if i + n < len(s) and _md_is_word(s[i + n]) else n
+
+
+def _md_hex_run(s, j, want):  # hexRun of s[j:]
+    n = 0
+    while j + n < len(s) and n <= want and s[j + n] in "0123456789abcdef":
+        n += 1
+    return n
+
+
+def _md_slug_run(s, j):  # slugRun of s[j:]
+    n = 0
+    while j + n < len(s) and n <= 64:
+        c = s[j + n]
+        if not ("a" <= c <= "z" or "0" <= c <= "9" or (n > 0 and c in "-_")):
+            break
+        n += 1
+    return 0 if n > 64 else n
+
+
+def _md_resolve_emphasis(toks):  # resolveEmphasis: (spans, doubtful)
+    spans, doubtful, spaced, stack = 0, False, None, []
+    for i, t in enumerate(toks):
+        if t.kind != _MD_T_DELIM:
+            continue
+        while t.close and t.count > 0:
+            found, k = -1, len(stack) - 1
+            while k >= 0 and len(stack) - k <= _MD_MAX_STACK_SCAN:
+                o = toks[stack[k]]
+                # CommonMark's rule of 3 ("*a**b" stays literal).
+                if o.ch == t.ch and o.count > 0 and not ((o.open and o.close or t.open and t.close) and (o.orig + t.orig) % 3 == 0 and (o.orig % 3 != 0 or t.orig % 3 != 0)):
+                    found = k
+                    break
+                k -= 1
+            if found < 0:
+                break
+            o = toks[stack[found]]
+            use = 2 if o.count >= 2 and t.count >= 2 else 1
+            spans += 1
+            if o.open and o.close or t.open and t.close:
+                doubtful = True
+            if t.ch == "_":
+                if spaced is None:
+                    spaced = _md_spaced_tokens(toks)
+                if spaced[i] == spaced[stack[found] + 1]:
+                    doubtful = True
+            o.count -= use
+            t.count -= use
+            del stack[found + 1:]
+            if o.count == 0:
+                del stack[found:]
+        if t.open and t.count > 0:
+            stack.append(i)
+    return spans, doubtful
+
+
+def _md_spaced_tokens(toks):  # spacedTokens
+    out = [0]
+    for t in toks:
+        out.append(out[-1] + (t.kind == _MD_T_BREAK or any(c in _MD_SPACE for c in t.text)))
+    return out
+
+
+# ---------- URLs: SafeURL and the parts of Go's net/url (1.27) it relies on ----------
+
+def _md_safe_url(raw):  # SafeURL: (href, host) or None; host is "" for a same-site link
+    if raw == "" or _md_blen(raw) > _MD_MAX_URL_BYTES:
+        return None
+    for c in raw:
+        if c <= " " or c == "\x7f" or c == "\\" or (c >= "\x80" and not _md_is_print(c)) or _md_bidi_control(c):
+            return None
+    if raw.startswith("#"):
+        frag = raw[1:]
+        if frag == "" or _md_blen(frag) > _MD_MAX_ANCHOR_SLUG or frag.lower().strip("abcdefghijklmnopqrstuvwxyz0123456789-_"):
+            return None
+        slug = _md_slug(frag, _MD_MAX_ANCHOR_SLUG)
+        return ("#md-" + slug, "") if slug else None
+    b = raw.encode("utf-8", "surrogatepass").decode("latin-1")  # net/url reads bytes
+    if raw.startswith("/"):
+        if raw.startswith("//"):
+            return None
+        u = _md_url_parse(b)
+        if u is None or u["scheme"] or u["host"] or _md_refused_path(u["path"]):
+            return None
+        href = _md_url_string(u)
+        if not href.startswith("/") or href.startswith("//"):
+            return None
+        return href.encode("latin-1").decode("utf-8", "surrogatepass"), ""
+    u = _md_url_parse(b)
+    if u is None or u["opaque"] or u["scheme"] not in ("http", "https"):
+        return None
+    name, port = _md_url_split_host_port(u["host"])
+    name = name.lower()
+    if name == "" or len(name) > 253 or name.strip("abcdefghijklmnopqrstuvwxyz0123456789.-") or name.startswith(".") or ".." in name:
+        return None
+    if port and not 1 <= int(port) <= 65535:
+        return None
+    if _md_refused_path(u["path"]):
+        return None
+    u["host"] = u["host"].lower()
+    return _md_url_string(u).encode("latin-1").decode("utf-8", "surrogatepass"), name
+
+
+def _md_refused_path(p):  # refusedPath
+    for candidate in (p, _md_clean_path("/" + p)):
+        if not candidate.endswith("/") and candidate.count("/") == 1:
+            candidate += "/"
+        if candidate.startswith(_MD_WRITE_PATHS):
             return True
     return False
 
 
-def _md_cells(line):
-    t = line.strip()
-    if t.startswith("|"): t = t[1:]
-    if t.endswith("|") and not t.endswith("\\|"): t = t[:-1]
-    return re.split(r"(?<!\\)\|", t)
+def _md_clean_path(p):  # path.Clean
+    if p == "":
+        return "."
+    rooted, out, r, dotdot, n = p[0] == "/", [], 0, 0, len(p)
+    if rooted:
+        out.append("/")
+        r = dotdot = 1
+    while r < n:
+        if p[r] == "/":
+            r += 1
+        elif p[r] == "." and (r + 1 == n or p[r + 1] == "/"):
+            r += 1
+        elif p[r] == "." and p[r + 1] == "." and (r + 2 == n or p[r + 2] == "/"):
+            r += 2
+            if len(out) > dotdot:
+                w = len(out) - 1
+                while w > dotdot and out[w] != "/":
+                    w -= 1
+                del out[w:]
+            elif not rooted:
+                if out:
+                    out.append("/")
+                out += [".", "."]
+                dotdot = len(out)
+        else:
+            if rooted and len(out) != 1 or not rooted and len(out) != 0:
+                out.append("/")
+            while r < n and p[r] != "/":
+                out.append(p[r])
+                r += 1
+    return "".join(out) or "."
+
+
+def _md_slug(s, n):  # Slug
+    b, hyphen = [], False
+    for c in s.lower():
+        if len(b) >= n:
+            break
+        if "a" <= c <= "z" or "0" <= c <= "9":
+            if hyphen and b:
+                b.append("-")
+            hyphen = False
+            b.append(c)
+        else:
+            hyphen = True
+    return "".join(b)[:n].strip("-")
+
+
+def _md_url_should_escape(c, mode):  # net/url shouldEscape; mode "path", "host" or "fragment"
+    if "a" <= c <= "z" or "A" <= c <= "Z" or "0" <= c <= "9":
+        return False
+    if mode == "host" and c in "!$&'()*+,;=:[]<>\"":
+        return False
+    if c in "-_.~":
+        return False
+    if c in "$&+,/:;=?@":
+        return c == "?" if mode == "path" else mode != "fragment"
+    return not (mode == "fragment" and c in "!()*")
+
+
+def _md_url_unescape(s, mode):  # net/url unescape: None on an error
+    out, i = [], 0
+    while i < len(s):
+        c = s[i]
+        if c == "%":
+            if i + 2 >= len(s) or s[i + 1] not in "0123456789abcdefABCDEF" or s[i + 2] not in "0123456789abcdefABCDEF":
+                return None
+            if mode == "host" and int(s[i + 1], 16) < 8 and s[i:i + 3] != "%25":
+                return None
+            out.append(chr(int(s[i + 1:i + 3], 16)))
+            i += 3
+            continue
+        if mode == "host" and c < "\x80" and _md_url_should_escape(c, mode):
+            return None
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def _md_url_escape(s, mode):  # net/url escape
+    return "".join("%%%02X" % ord(c) if _md_url_should_escape(c, mode) else c for c in s)
+
+
+def _md_url_valid_encoded(s, mode):  # net/url validEncoded
+    return all(c in "!$&'()*+,;=:@[]%" or not _md_url_should_escape(c, mode) for c in s)
+
+
+def _md_url_valid_port(port):  # net/url validOptionalPort
+    return port == "" or (port[0] == ":" and all("0" <= c <= "9" for c in port[1:]))
+
+
+def _md_url_split_host_port(host_port):  # net/url splitHostPort (Hostname and Port)
+    host, port = host_port, ""
+    colon = host.rfind(":")
+    if colon != -1 and _md_url_valid_port(host[colon:]):
+        host, port = host[:colon], host[colon + 1:]
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
+    return host, port
+
+
+def _md_url_parse(raw):  # net/url Parse of a byte string: a dict, or None on an error
+    rest, _, frag = raw.partition("#")
+    u = {"scheme": "", "opaque": "", "host": "", "path": "", "raw_path": "", "query": "", "force_query": False,
+         "omit_host": False, "fragment": "", "raw_fragment": ""}
+    if any(c < " " or c == "\x7f" for c in rest):
+        return None
+    if rest == "*":
+        u["path"] = "*"
+        return u
+    for k, c in enumerate(rest):  # getScheme
+        if "a" <= c <= "z" or "A" <= c <= "Z":
+            continue
+        if "0" <= c <= "9" or c in "+-.":
+            if k == 0:
+                break
+            continue
+        if c == ":":
+            if k == 0:
+                return None
+            u["scheme"], rest = rest[:k].lower(), rest[k + 1:]
+        break
+    if rest.endswith("?") and rest.count("?") == 1:
+        u["force_query"], rest = True, rest[:-1]
+    else:
+        rest, _, u["query"] = rest.partition("?")
+    if not rest.startswith("/"):
+        if u["scheme"]:
+            u["opaque"] = rest  # a rootless path is opaque
+            return _md_url_fragment(u, frag)
+        if ":" in rest.partition("/")[0]:
+            return None
+    if (u["scheme"] or not rest.startswith("///")) and rest.startswith("//"):
+        authority, rest = rest[2:], ""
+        k = authority.find("/")
+        if k >= 0:
+            authority, rest = authority[:k], authority[k:]
+        if "@" in authority or "[" in authority:
+            return None  # userinfo, or an IP literal: SafeURL refuses either (parseAuthority, parseHost)
+        k = authority.find(":")
+        if k != -1:
+            if authority.rfind(":") != k and u["scheme"] not in ("http", "https"):
+                k = authority.rfind(":")
+            if not _md_url_valid_port(authority[k:]):
+                return None
+        u["host"] = _md_url_unescape(authority, "host")
+        if u["host"] is None:
+            return None
+    elif u["scheme"] and rest.startswith("/"):
+        u["omit_host"] = True
+    u["path"] = _md_url_unescape(rest, "path")  # setPath
+    if u["path"] is None:
+        return None
+    u["raw_path"] = "" if _md_url_escape(u["path"], "path") == rest else rest
+    return _md_url_fragment(u, frag)
+
+
+def _md_url_fragment(u, frag):  # net/url setFragment, as Parse applies it
+    if frag == "":
+        return u
+    u["fragment"] = _md_url_unescape(frag, "fragment")
+    if u["fragment"] is None:
+        return None
+    u["raw_fragment"] = "" if _md_url_escape(u["fragment"], "fragment") == frag else frag
+    return u
+
+
+def _md_url_escaped(raw, decoded, mode):  # net/url EscapedPath and EscapedFragment
+    if raw and _md_url_valid_encoded(raw, mode) and _md_url_unescape(raw, mode) == decoded:
+        return raw
+    if mode == "path" and decoded == "*":
+        return "*"
+    return _md_url_escape(decoded, mode)
+
+
+def _md_url_string(u):  # net/url (*URL).String, for a URL without userinfo
+    out = u["scheme"] + ":" if u["scheme"] else ""
+    if u["opaque"]:
+        out += u["opaque"]
+    else:
+        if (u["scheme"] or u["host"]) and not (u["omit_host"] and not u["host"]):
+            if u["host"] or u["path"]:
+                out += "//"
+            out += _md_url_escape(u["host"], "host")
+        path = _md_url_escaped(u["raw_path"], u["path"], "path")
+        if u["omit_host"] and not u["host"] and path.startswith("//"):
+            out, path = out + "%2F", path[1:]
+        if path and path[0] != "/" and u["host"]:
+            out += "/"
+        if out == "" and ":" in path.partition("/")[0]:
+            out += "./"
+        out += path
+    if u["force_query"] or u["query"]:
+        out += "?" + u["query"]
+    if u["fragment"]:
+        out += "#" + _md_url_escaped(u["raw_fragment"], u["fragment"], "fragment")
+    return out
+
+
+# ---------- auto.go ----------
+
+def _md_may_have_structure(text):  # mayHaveStructure
+    if any(c in text for c in "#|`~") or text.count("*") + text.count("_") >= 4:
+        return True
+    items = 0
+    for line in _md_split_lines(text):
+        if _md_list_marker(line.lstrip(" \t>")) is not None:
+            items += 1
+            if items >= 2:
+                return True
+    return False
+
+
+def _md_skeleton(s):  # sameSkeleton's nextKept over the whole text
+    return "".join(c for c in s if c not in _MD_SPACE and not (c < "\x80" and c in _MD_SKELETON))
 
 
 def markdown_auto(text):
-    """True when text sent without a format has Markdown structure (a pipe table,
-    heading, fenced code, a list of 2+ items or 2+ emphasis spans) and renders
-    without losing a character: the default for signing format "markdown"."""
-    if not isinstance(text, str) or len(text.encode()) > MARKDOWN_AUTO_BYTES: return False
-    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    structure, prose, fence, i = False, [], None, 0
-    list_kind, items, number, blank = None, 0, 0, False
-    while i < len(lines):
-        line = lines[i]
-        if fence:
-            stripped = line.strip()
-            if len(line) - len(line.lstrip(" ")) <= 3 and len(stripped) >= len(fence) and not stripped.strip(fence[0]): fence = None
-            i += 1
-            continue
-        m = _MD_FENCE.fullmatch(line)
-        if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
-            info = m.group(2).strip()
-            if info and not re.fullmatch(r"[a-z0-9+#._-]{1,24}", info): return False  # the page keeps only a plain language name
-            fence, structure, list_kind = m.group(1), True, None
-            i += 1
-            continue
-        prose.append(line)
-        if not line.strip():
-            blank = True
-            i += 1
-            continue
-        line = _MD_QUOTE.sub("", line)  # a quote holds the same blocks
-        item = _MD_ITEM.match(line) if not _MD_BREAK.fullmatch(line) else None
-        if item:
-            kind = item.group(1) or item.group(3)
-            if kind == list_kind:
-                items += 1
-                if item.group(2) is not None:
-                    number += 1
-                    if int(item.group(2)) != number: return False  # the list would renumber it
-                if items >= 2: structure = True
-            else:
-                list_kind, items = kind, 1
-                number = int(item.group(2)) if item.group(2) is not None else 0
-        elif _MD_HEADING.match(line):
-            structure, list_kind = True, None
-        elif "|" in line and i + 1 < len(lines) and "-" in lines[i + 1] and _MD_DELIMITER.fullmatch(lines[i + 1].strip()):
-            width = len(_md_cells(line))
-            if width == len(_md_cells(lines[i + 1])):
-                structure, list_kind = True, None
-                prose.append(lines[i + 1])
-                i += 2
-                while i < len(lines) and lines[i].strip():
-                    if len(_md_cells(lines[i])) > width: return False  # the table would drop a cell
-                    prose.append(lines[i])
-                    i += 1
-                continue
-        elif blank and len(line) - len(line.lstrip(" ")) < 2:
-            list_kind = None
-        blank = False
-        i += 1
-    body = _MD_CODE_SPAN.sub(lambda m: "\x00" * len(m.group()), "\n".join(prose))
-    if _MD_ESCAPE.search(body) or _md_doubtful_runs(body) or _MD_UNDERSCORE_WORD.search(body): return False
-    if len(_MD_LINK.findall(body)) != len(_MD_DEST.findall(body)) or _MD_WRITE_PATH.search(body): return False
-    return structure or sum(len(_MD_EMPHASIS.findall(p)) for p in _MD_PARAGRAPH.split(body)) >= 2
+    """True when text sent without a format is shown as Markdown by the board
+    (AutoRender): it has Markdown structure (a pipe table, heading, fenced code,
+    a list of 2+ items or 2+ emphasis spans), no emphasis plain text more likely
+    meant as written, and renders without losing a character. The default for
+    signing format "markdown"."""
+    if not isinstance(text, str) or _md_blen(text) > MARKDOWN_AUTO_BYTES or not _md_may_have_structure(text):
+        return False
+    audit = _MdAudit()
+    audit.blocks(_md_split_lines(text), 0)
+    if audit.doubtful or not audit.structure and audit.spans < 2:
+        return False
+    return _md_skeleton(text) == _md_skeleton("".join(audit.out))
 
 
 FORWARDED_FIELDS = struct_fields("forwarded")

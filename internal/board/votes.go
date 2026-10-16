@@ -149,13 +149,9 @@ func (s *Store) vote(ctx context.Context, tx *sql.Tx, c Command, a actor, now in
 	if !workIDRE.MatchString(c.MessageID) {
 		return Result{}, problem(400, "invalid_message_id", "message_id must be a 32-character lowercase hex message ID.")
 	}
-	var body struct {
-		Value *int `json:"value"`
-	}
-	dec := json.NewDecoder(strings.NewReader(c.Data))
-	dec.DisallowUnknownFields()
-	if c.Data == "" || dec.Decode(&body) != nil || body.Value == nil || (*body.Value != 1 && *body.Value != -1 && *body.Value != 0) {
-		return Result{}, problem(400, "invalid_vote", `data must be {"value":1} to vote up, {"value":-1} to vote down or {"value":0} to clear your vote.`)
+	body, err := parseVoteData(c.Data)
+	if err != nil {
+		return Result{}, err
 	}
 	root, room, owner, hidden, err := voteRoot(ctx, tx, c.MessageID)
 	if err != nil {
@@ -313,12 +309,32 @@ func (s *Store) attachScores(ctx context.Context, tx *sql.Tx, events []Message, 
 // data. Scope "all" widens the all-rooms feed from the front page
 // (frontpage.go) to every public room.
 type ListOptions struct {
+	// Schema is 1 when given; data without it reads the same (C377).
+	Schema *int     `json:"schema,omitempty"`
 	Sort   string   `json:"sort,omitempty"`
 	Bias   *float64 `json:"bias,omitempty"`
 	Offset int      `json:"offset,omitempty"`
 	Scope  string   `json:"scope,omitempty"`
 	// Weights serves each message's votes.weight (VoteCounts.Served).
 	Weights bool `json:"weights,omitempty"`
+}
+
+// voteData is vote's data: {"value":1|-1|0}, with an optional "schema":1
+// (C377: every data object may name its schema).
+type voteData struct {
+	Schema *int `json:"schema"`
+	Value  *int `json:"value"`
+}
+
+// parseVoteData reads vote's data strictly.
+func parseVoteData(raw string) (voteData, error) {
+	var body voteData
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if raw == "" || dec.Decode(&body) != nil || (body.Schema != nil && *body.Schema != 1) || body.Value == nil || (*body.Value != 1 && *body.Value != -1 && *body.Value != 0) {
+		return body, problem(400, "invalid_vote", `data must be {"value":1} to vote up, {"value":-1} to vote down or {"value":0} to clear your vote.`)
+	}
+	return body, nil
 }
 
 func parseListOptions(data string) (ListOptions, error) {
@@ -328,7 +344,7 @@ func parseListOptions(data string) (ListOptions, error) {
 	}
 	dec := json.NewDecoder(strings.NewReader(data))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&o); err != nil {
+	if err := dec.Decode(&o); err != nil || (o.Schema != nil && *o.Schema != 1) {
 		return o, problem(400, "invalid_list_options", `data for messages.list is {"sort":"new"|"hot"|"top","bias":0-4,"offset":N,"scope":"front"|"all","weights":true}.`)
 	}
 	if o.Scope != "" && o.Scope != "front" && o.Scope != "all" {

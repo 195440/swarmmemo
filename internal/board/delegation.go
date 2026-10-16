@@ -321,13 +321,13 @@ func (s *Store) authorizeDelegation(ctx context.Context, tx *sql.Tx, c Command, 
 }
 
 func parseDelegationData(raw string, create bool) (string, []string, *spendLimitData, error) {
-	fields := []string{"schema", "generation"}
+	op := "delegation.revoke"
 	if create {
-		fields = append(fields, "operations", "disclosure", "spend_limit?", "origin?")
+		op = "delegation.create"
 	} else if len(raw) > 512 {
 		return "", nil, nil, delegationError("invalid_delegation_data")
 	}
-	values, err := strictDelegationObject([]byte(raw), fields...)
+	values, err := strictDelegationObject([]byte(raw), dataSpecs[op].marked()...)
 	if err != nil {
 		return "", nil, nil, err
 	}

@@ -505,6 +505,32 @@ func applyGovernance(ctx context.Context, tx *sql.Tx, c Command, r Room, operato
 	return logEntry{}, Result{}, ErrUnknownOperation()
 }
 
+// roomPolicyData is room.policy.set's data; a nil field is not sent.
+type roomPolicyData struct {
+	Write       *string         `json:"write"`
+	Reply       *string         `json:"reply"`
+	Rules       *string         `json:"rules"`
+	WriteVia    json.RawMessage `json:"write_via"`
+	FrontPage   json.RawMessage `json:"front_page"`
+	Closed      *bool           `json:"closed"`
+	ClosesAt    *int64          `json:"closes_at"`
+	MaxMessages *int64          `json:"max_messages"`
+	TopLevel    *int64          `json:"top_level_per_day"`
+	Promotion   *string         `json:"promotion"`
+}
+
+// decodePolicyData reads room.policy.set data strictly: known fields only,
+// at least one of them.
+func decodePolicyData(data string) (roomPolicyData, error) {
+	var in roomPolicyData
+	decoder := json.NewDecoder(bytes.NewReader([]byte(data)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&in); err != nil || decoder.More() || (in.Write == nil && in.Reply == nil && in.Rules == nil && in.WriteVia == nil && in.FrontPage == nil && in.Closed == nil && in.ClosesAt == nil && in.MaxMessages == nil && in.TopLevel == nil && in.Promotion == nil) {
+		return in, problem(400, "invalid_policy", `data must be a JSON object with at least one of "write", "reply", "rules", "write_via", "front_page", "closed", "closes_at", "max_messages", "top_level_per_day", "promotion".`)
+	}
+	return in, nil
+}
+
 // parsePolicy reads room.policy.set data. Omitted fields keep their current
 // value, so an owner can change one setting without restating the others.
 // front_page is true, false or null (the default, frontpage.go). Without the
@@ -512,22 +538,9 @@ func applyGovernance(ctx context.Context, tx *sql.Tx, c Command, r Room, operato
 // did); true or null put it back to its default, unless the operator took it
 // off; true on a room whose default is off needs the operator.
 func parsePolicy(ctx context.Context, tx *sql.Tx, room, data string, operator bool) (RoomPolicy, error) {
-	var in struct {
-		Write       *string         `json:"write"`
-		Reply       *string         `json:"reply"`
-		Rules       *string         `json:"rules"`
-		WriteVia    json.RawMessage `json:"write_via"`
-		FrontPage   json.RawMessage `json:"front_page"`
-		Closed      *bool           `json:"closed"`
-		ClosesAt    *int64          `json:"closes_at"`
-		MaxMessages *int64          `json:"max_messages"`
-		TopLevel    *int64          `json:"top_level_per_day"`
-		Promotion   *string         `json:"promotion"`
-	}
-	decoder := json.NewDecoder(bytes.NewReader([]byte(data)))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&in); err != nil || decoder.More() || (in.Write == nil && in.Reply == nil && in.Rules == nil && in.WriteVia == nil && in.FrontPage == nil && in.Closed == nil && in.ClosesAt == nil && in.MaxMessages == nil && in.TopLevel == nil && in.Promotion == nil) {
-		return RoomPolicy{}, problem(400, "invalid_policy", `data must be a JSON object with at least one of "write", "reply", "rules", "write_via", "front_page", "closed", "closes_at", "max_messages", "top_level_per_day", "promotion".`)
+	in, err := decodePolicyData(data)
+	if err != nil {
+		return RoomPolicy{}, err
 	}
 	p, err := loadPolicy(ctx, tx, room)
 	if err != nil {
