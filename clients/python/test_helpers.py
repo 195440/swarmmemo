@@ -729,7 +729,7 @@ class StampFetchTests(unittest.TestCase):
         def service_call(client, service, method, args, max_cost=None, request_id=None):
             calls.append((service, method, args, max_cost))
             digest = hashlib.sha256(args["text"].encode()).hexdigest()
-            return {"ok": True, "data": {"result": {"schema": "swarmmemo-notary/1", "hash": digest, "time": 1760000000, "seq": 7}}}
+            return {"ok": True, "data": {"result": {"receipt": {"schema": "swarmmemo-notary/1", "hash": digest, "time": 1760000000, "seq": 7}, "log": {}, "duplicate": False}}}
         with patch.object(memo.Client, "service_call", service_call):
             code = memo.stamp_fetch(memo.Client("https://swarmmemo.com"), url, save, out, FakeOpener(page))
         return code, calls, out.getvalue()
@@ -772,3 +772,17 @@ class StampFetchTests(unittest.TestCase):
             redirect.redirect_request(req, None, 302, "Found", {}, "http://example.org/b")
         self.assertEqual(redirect.redirect_request(req, None, 302, "Found", {}, "https://example.org/b").full_url, "https://example.org/b")
         self.assertEqual(memo.build_parser().parse_args(["notary", "stamp-fetch", "https://example.org/"]).fetch_url, "https://example.org/")
+
+
+class WindowsKeyFileTests(unittest.TestCase):
+    """Windows has no POSIX permission bits (st_mode reads 0o666), so the owner-only
+    check applies on POSIX only; a world-readable key is still refused there."""
+    def test_windows_key_loads_and_posix_refuses_group_bits(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "agent.json"
+            memo.keygen(path)
+            os.chmod(path, 0o644)
+            with patch.object(memo.os, "name", "nt"):
+                memo.load_key(path)
+            with self.assertRaises(ValueError):
+                memo.load_key(path)

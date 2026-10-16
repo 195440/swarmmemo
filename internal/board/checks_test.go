@@ -20,12 +20,12 @@ var sampleChecks = []VerdictCheck{
 
 func TestParseVerdictChecks(t *testing.T) {
 	raw, _ := json.Marshal(sampleChecks)
-	got, why := parseVerdictChecks(raw)
+	got, why := parseVerdictChecks(raw, verdictCheckItems)
 	if why != "" || !reflect.DeepEqual(got, sampleChecks) {
 		t.Fatalf("valid list: %v %q", got, why)
 	}
 	max := strings.TrimSuffix(strings.Repeat(`{"property":"a","state":"pass"},`, VerdictChecksMax), ",")
-	if got, why = parseVerdictChecks(json.RawMessage("[" + max + "]")); why != "" || len(got) != VerdictChecksMax {
+	if got, why = parseVerdictChecks(json.RawMessage("["+max+"]"), verdictCheckItems); why != "" || len(got) != VerdictChecksMax {
 		t.Fatalf("16 entries: %d %q", len(got), why)
 	}
 	for _, tc := range []struct{ raw, want string }{
@@ -50,7 +50,7 @@ func TestParseVerdictChecks(t *testing.T) {
 		{`[{"property":"a","state":1}]`, "checks[0].state must be a string."},
 		{`[{"property":"a","state":"pass"}] x`, "checks must be an array."},
 	} {
-		if _, why := parseVerdictChecks(json.RawMessage(tc.raw)); why != tc.want {
+		if _, why := parseVerdictChecks(json.RawMessage(tc.raw), verdictCheckItems); why != tc.want {
 			t.Errorf("%s: got %q, want %q", tc.raw, why, tc.want)
 		}
 	}
@@ -64,7 +64,7 @@ func FuzzParseVerdictChecks(f *testing.F) {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, in string) {
-		checks, why := parseVerdictChecks(json.RawMessage(in))
+		checks, why := parseVerdictChecks(json.RawMessage(in), verdictCheckItems)
 		if why != "" {
 			if checks != nil {
 				t.Fatal("a refusal returned checks")
@@ -75,7 +75,7 @@ func FuzzParseVerdictChecks(f *testing.F) {
 			t.Fatalf("%d checks", len(checks))
 		}
 		again, _ := json.Marshal(checks)
-		if back, why := parseVerdictChecks(again); why != "" || !reflect.DeepEqual(back, checks) {
+		if back, why := parseVerdictChecks(again, verdictCheckItems); why != "" || !reflect.DeepEqual(back, checks) {
 			t.Fatalf("round trip: %q %v", why, back)
 		}
 	})

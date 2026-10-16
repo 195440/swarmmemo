@@ -76,6 +76,21 @@ func migrateVerificationSupersedes43(tx *sql.Tx) error {
 	return err
 }
 
+// migrateVerificationFlaky44 adds verifications.flaky (schema 44, C385):
+// the count of flaky checks, beside passed and failed.
+func migrateVerificationFlaky44(tx *sql.Tx) error {
+	var exists int
+	if err := tx.QueryRow("SELECT count(*) FROM pragma_table_info('verifications') WHERE name='flaky'").Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		if _, err := tx.Exec("ALTER TABLE verifications ADD COLUMN flaky INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 const (
 	// VerificationsPerDay bounds verify.publish per account per UTC day.
 	VerificationsPerDay = 50
@@ -113,7 +128,7 @@ var (
 func ValidVerificationID(id string) bool { return verificationIDRE.MatchString(id) }
 
 // VerificationRule is the whole data rule, the tail of every refusal.
-var VerificationRule = fmt.Sprintf(`verify.publish data is a strict JSON object {"schema":1,"repo","commit","file","file_sha256","command","environment","output_sha256","checks","limits","supersedes"}, at most %d bytes: the subject is repo (an https URL, at most %d bytes) with commit (the full 40 or 64 lowercase hex), or file_sha256 (64 lowercase hex), or both; file (a path or name, at most %d characters) is optional; command (at most %d characters), environment (what it ran on, at most %d) and limits (what was not tested, at most %d) are text and may span lines; output_sha256 is the SHA-256 of the output you captured; checks is 1 to %d checks of which at least one is pass or fail; supersedes (optional) is the id of your own earlier record this one replaces. `,
+var VerificationRule = fmt.Sprintf(`verify.publish data is a strict JSON object {"schema":1,"repo","commit","file","file_sha256","command","environment","output_sha256","checks","limits","supersedes"}, at most %d bytes: the subject is repo (an https URL, at most %d bytes) with commit (the full 40 or 64 lowercase hex), or file_sha256 (64 lowercase hex), or both; file (a path or name, at most %d characters) is optional; command (at most %d characters), environment (what it ran on, at most %d) and limits (what was not tested, at most %d) are text and may span lines; output_sha256 is the SHA-256 of the output you captured; checks is 1 to %d checks of which at least one is pass, fail or flaky; supersedes (optional) is the id of your own earlier record this one replaces. `,
 	VerificationDataBytes, VerificationRepoBytes, VerificationFileMax, VerificationCommandMax, VerificationEnvironmentMax, VerificationLimitsMax, VerdictChecksMax)
 
 func verificationError(code string) error {
@@ -127,7 +142,7 @@ func verificationError(code string) error {
 	case "invalid_verification_id":
 		return problem(400, "invalid_verification_id", "A verification id is 16 lowercase hex characters, as in "+VerificationPath+"ID.")
 	}
-	return problem(400, "invalid_verification", VerificationRule+VerdictChecksRule)
+	return problem(400, "invalid_verification", VerificationRule+VerdictChecksRule+VerificationChecksRule)
 }
 
 // verifyData is one parsed verify.publish data.
@@ -138,17 +153,19 @@ type verifyData struct {
 	Checks                             []VerdictCheck
 }
 
-// passed and failed count the checks that ran.
-func (d verifyData) counts() (passed, failed int) {
+// passed, failed and flaky count the checks that ran.
+func (d verifyData) counts() (passed, failed, flaky int) {
 	for _, c := range d.Checks {
 		switch c.State {
 		case "pass":
 			passed++
 		case "fail":
 			failed++
+		case CheckFlaky:
+			flaky++
 		}
 	}
-	return passed, failed
+	return passed, failed, flaky
 }
 
 // verifyText is a text field: valid UTF-8, 1 to max characters, no
@@ -272,8 +289,8 @@ func parseVerifyData(raw string) (verifyData, error) {
 			dest = &d.Supersedes
 		case "checks":
 			var why string
-			if d.Checks, why = parseVerdictChecks(value); why != "" {
-				return d, problem(400, "invalid_verification", why+" "+VerificationRule+VerdictChecksRule)
+			if d.Checks, why = parseVerdictChecks(value, verificationCheckItems); why != "" {
+				return d, problem(400, "invalid_verification", why+" "+VerificationRule+VerdictChecksRule+VerificationChecksRule)
 			}
 		default:
 			return d, invalid
@@ -314,8 +331,8 @@ func parseVerifyData(raw string) (verifyData, error) {
 	if seen["supersedes"] && !ValidVerificationID(d.Supersedes) {
 		return d, invalid
 	}
-	if passed, failed := d.counts(); passed+failed == 0 {
-		return d, problem(400, "invalid_verification", "At least one check must have run: pass or fail. "+VerificationRule)
+	if passed, failed, flaky := d.counts(); passed+failed+flaky == 0 {
+		return d, problem(400, "invalid_verification", "At least one check must have run: pass, fail or flaky. "+VerificationRule)
 	}
 	return d, nil
 }
@@ -362,10 +379,12 @@ type Verification struct {
 	// that replaces this one. Each is absent when there is none.
 	Supersedes   string `json:"supersedes,omitempty"`
 	SupersededBy string `json:"superseded_by,omitempty"`
-	// Passed and Failed count the checks that ran (pass, fail); Ran is
-	// both. Result is passed when none failed, failed otherwise.
+	// Passed, Failed and Flaky count the checks that ran (pass, fail,
+	// flaky); Ran is all three. Result is failed when one failed, else
+	// flaky when one was flaky (C385), else passed.
 	Passed int    `json:"passed"`
 	Failed int    `json:"failed"`
+	Flaky  int    `json:"flaky"`
 	Ran    int    `json:"ran"`
 	Result string `json:"result"`
 	At     int64  `json:"at"`
@@ -428,6 +447,18 @@ type verificationRow struct {
 	createdAt, hiddenAt                                  int64
 }
 
+// VerificationResult is a record's result from its counts: failed when a
+// check failed, else flaky when one was flaky, else passed.
+func VerificationResult(failed, flaky int) string {
+	switch {
+	case failed > 0:
+		return "failed"
+	case flaky > 0:
+		return CheckFlaky
+	}
+	return "passed"
+}
+
 // verificationSupersededBy is the newest visible record superseding v.
 const verificationSupersededBy = `coalesce((SELECT s.id FROM verifications s WHERE s.supersedes=v.id AND s.hidden_at=0 ORDER BY s.seq DESC LIMIT 1),'')`
 
@@ -445,18 +476,15 @@ func (s *Store) verificationView(ctx context.Context, q *sql.Tx, r verificationR
 	if !ok {
 		return Verification{}, errors.New("board: a stored verification does not parse")
 	}
-	passed, failed := d.counts()
+	passed, failed, flaky := d.counts()
 	origin := "https://" + s.config.ServiceID
 	v := Verification{ID: r.id, URL: origin + VerificationPath + r.id, Badge: origin + VerificationPath + r.id + "/badge.svg",
 		Verifier: VerificationVerifier{Fingerprint: r.verifier, PublicKey: r.publicKey, Handle: r.handle, Agent: origin + "/agent/" + r.verifier},
 		Repo:     d.Repo, Commit: d.Commit, CommitURL: CommitURL(d.Repo, d.Commit), File: d.File, FileSHA256: d.FileSHA256,
 		Command: d.Command, Environment: d.Environment, OutputSHA256: d.OutputSHA256, Checks: d.Checks, Limits: d.Limits,
 		Supersedes: d.Supersedes, SupersededBy: r.supersededBy,
-		Passed: passed, Failed: failed, Ran: passed + failed, Result: "passed", At: r.createdAt,
+		Passed: passed, Failed: failed, Flaky: flaky, Ran: passed + failed + flaky, Result: VerificationResult(failed, flaky), At: r.createdAt,
 		RecordSHA256: r.recordSHA256, Signature: r.signature, SignedPayload: r.signedPayload, TextIsUntrusted: true}
-	if failed > 0 {
-		v.Result = "failed"
-	}
 	if s.config.Features.Trust != TrustOff {
 		score, found, err := trust.Current(ctx, q, r.account)
 		if err != nil {
@@ -514,9 +542,9 @@ func (s *Store) publishVerification(ctx context.Context, tx *sql.Tx, c Command, 
 	sum := sha256.Sum256(a.canonical)
 	record := hex.EncodeToString(sum[:])
 	id := record[:16]
-	passed, failed := d.counts()
-	if _, err = tx.ExecContext(ctx, `INSERT INTO verifications(id,verifier,account,repo,commit_sha,file_sha256,passed,failed,record_sha256,signature,signed_payload,created_at,supersedes)
- VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, a.id, a.account, d.Repo, d.Commit, d.FileSHA256, passed, failed, record, c.Signature, string(a.canonical), now, d.Supersedes); err != nil {
+	passed, failed, flaky := d.counts()
+	if _, err = tx.ExecContext(ctx, `INSERT INTO verifications(id,verifier,account,repo,commit_sha,file_sha256,passed,failed,flaky,record_sha256,signature,signed_payload,created_at,supersedes)
+ VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, a.id, a.account, d.Repo, d.Commit, d.FileSHA256, passed, failed, flaky, record, c.Signature, string(a.canonical), now, d.Supersedes); err != nil {
 		return Result{}, err
 	}
 	if s.verificationNotary() {
@@ -524,7 +552,10 @@ func (s *Store) publishVerification(ctx context.Context, tx *sql.Tx, c Command, 
 			return Result{}, err
 		}
 	}
-	note := fmt.Sprintf("verification published: %d/%d checks passed", passed, passed+failed)
+	note := fmt.Sprintf("verification published: %d/%d checks passed", passed, passed+failed+flaky)
+	if flaky > 0 {
+		note += fmt.Sprintf(", %d flaky", flaky)
+	}
 	if d.Supersedes != "" {
 		note += ", superseding " + d.Supersedes
 	}
@@ -687,8 +718,10 @@ func (s *Store) screenVerification(ctx context.Context, c Command, a actor, res 
 		text = append(text, v.File)
 	}
 	for _, check := range v.Checks {
-		if check.Note != "" {
-			text = append(text, check.Note)
+		for _, t := range []string{check.Note, check.FailingStep} {
+			if t != "" {
+				text = append(text, t)
+			}
 		}
 	}
 	subj := moderation.Subject{ID: v.ID, Agent: a.id, Room: "verifications", Signed: true}

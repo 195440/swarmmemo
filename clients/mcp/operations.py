@@ -251,10 +251,13 @@ def _cursor(value):
 
 
 CHECK_STATES = tuple(ENUMS["verdict_check_states"])
+# A verification's check may also be flaky (C385).
+VERIFICATION_CHECK_STATES = tuple(ENUMS["verification_check_states"])
 
 
-def _valid_checks(checks):
-    """A verdict's signed per-property checks (/protocol.md#verdict-checks): 1 to 16 entries."""
+def _valid_checks(checks, states=CHECK_STATES):
+    """A verdict's signed per-property checks (/protocol.md#verdict-checks): 1 to 16 entries;
+    a verification's with states VERIFICATION_CHECK_STATES."""
     def text(value, limit):
         return isinstance(value, str) and value and value == value.strip() and len(value) <= limit and not any(
             ord(ch) < 32 or 127 <= ord(ch) < 160 or ch in "\u2028\u2029" for ch in value)
@@ -262,12 +265,28 @@ def _valid_checks(checks):
     for check in checks:
         if (not isinstance(check, dict) or set(check) - memo.struct_fields("verdict_check")
                 or not memo.matches("verdict_check_property", check.get("property"))
-                or check.get("state") not in CHECK_STATES
+                or check.get("state") not in states
                 or ("subject_sha256" in check and (not isinstance(check["subject_sha256"], str) or not re.fullmatch(HEX64, check["subject_sha256"])))
                 or ("tool" in check and not text(check["tool"], LIMITS["verdict_check_tool_chars"]))
                 or ("evidence" in check and not text(check["evidence"], LIMITS["verdict_check_evidence_chars"]))
-                or ("note" in check and not text(check["note"], LIMITS["verdict_check_note_chars"]))):
+                or ("note" in check and not text(check["note"], LIMITS["verdict_check_note_chars"]))
+                or not _valid_flaky(check, text)):
             return False
+    return True
+
+
+def _valid_flaky(check, text):
+    """A flaky check's runs and passes (C385): both, and only, with state flaky, 2 <= runs <=
+    the limit and 0 < passes < runs; failing_step only with flaky or fail. A verdict's checks
+    never carry state flaky (it is not in CHECK_STATES), so they never carry runs or passes."""
+    flaky = check.get("state") == "flaky"
+    if ("runs" in check or "passes" in check) != flaky: return False
+    if flaky:
+        runs, passes = check.get("runs"), check.get("passes")
+        if type(runs) is not int or type(passes) is not int: return False
+        if not 2 <= runs <= LIMITS["verification_check_runs_maximum"] or not 0 < passes < runs: return False
+    if "failing_step" in check:
+        return check.get("state") in ("flaky", "fail") and text(check["failing_step"], LIMITS["verification_check_failing_step_chars"])
     return True
 
 

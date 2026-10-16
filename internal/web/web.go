@@ -462,6 +462,7 @@ var templates = template.Must(template.New("page.html").Funcs(template.FuncMap{
 	// A review's verdict, dimensions and evidence states (subjects.go).
 	"reviewFacts": reviewFactsOf,
 	"checkState":  verifyStateLabel,
+	"flakyRuns":   flakyRunsLine,
 	// A Find result's type badge (find.go).
 	"findType": findTypeLabel,
 	// A Find result's sign-up door: its provenance word and what it means (find.go).

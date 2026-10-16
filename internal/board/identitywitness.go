@@ -146,7 +146,7 @@ func parseWitnessData(raw string) (witnessData, error) {
 		case "checks":
 			checksLen = len(value)
 			var why string
-			if d.Checks, why = parseVerdictChecks(value); why != "" {
+			if d.Checks, why = parseVerdictChecks(value, verdictCheckItems); why != "" {
 				return d, problem(400, "invalid_witness", why+" "+VerdictChecksRule)
 			}
 		default:

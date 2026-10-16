@@ -344,7 +344,12 @@ CREATE TABLE IF NOT EXISTS leases (
 // and its index (verifications.go, C371). Additive, but a schema-42 binary
 // cannot read back a record whose signed data names supersedes (its parser
 // refuses the field), so a rollback past 43 fails verify.get on those.
-const SchemaVersion = 43
+//
+// 44: verifications.flaky, the count of flaky checks (verifications.go,
+// C385). Additive, but a schema-43 binary cannot read back a record with a
+// flaky check (its parser refuses the state), so a rollback past 44 fails
+// verify.get on those.
+const SchemaVersion = 44
 
 // connPragmas are the per-connection PRAGMAs, in modernc.org/sqlite's DSN
 // syntax. journal_mode=WAL is stored in the database file and set at Open.

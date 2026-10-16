@@ -54,6 +54,7 @@ CONTRACT = json.loads(r"""
   "screen_categories": ["injection","exfiltration","phishing","malware","manipulation"],
   "updates_reasons": ["replies","addressed","mentions","room_activity"],
   "verdict_check_states": ["pass","fail","not_checkable","not_checked"],
+  "verification_check_states": ["pass","fail","not_checkable","not_checked","flaky"],
   "work_credit_states": ["held","pending","paid","released"],
   "work_eligibilities": ["open","first_work","linked","new_agent","standing_at_least:proven","standing_at_least:trusted"],
   "work_list_kinds": ["open","claimed","submitted","accepted","cancelled","expired","review_lapsed","recovery_required","rewarded","earn"],
@@ -122,6 +123,8 @@ CONTRACT = json.loads(r"""
   "verdict_check_note_chars": 280,
   "verdict_check_tool_chars": 80,
   "verdict_checks_maximum": 16,
+  "verification_check_failing_step_chars": 200,
+  "verification_check_runs_maximum": 1000,
   "verification_data_bytes": 16384,
   "verifications_per_day": 50,
   "vouches_active": 256,
@@ -192,7 +195,7 @@ CONTRACT = json.loads(r"""
   "hosted.token": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"mcp","data":{"fields":{"action":{"type":"string","required":true},"label":{"type":"string","required":false},"schema":{"type":"int","required":true},"spend_limit":{"type":"object","required":false},"target":{"type":"string","required":false}},"aliases":{},"removed":{}}},
   "identity.link": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"kind":{"type":"string","required":true},"nonce":{"type":"string","required":false},"nonce_log":{"type":"string","required":false},"nonce_log_size":{"type":"int","required":false},"observed_at":{"type":"string","required":false},"observed_height":{"type":"int","required":false},"observed_time":{"type":"int","required":false},"proof":{"type":"string","required":false},"schema":{"type":"int","required":true},"value":{"type":"string","required":true}},"aliases":{},"removed":{}}},
   "identity.unlink": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"kind":{"type":"string","required":true},"schema":{"type":"int","required":true},"value":{"type":"string","required":true}},"aliases":{},"removed":{}}},
-  "identity.witness": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"agent":{"type":"string","required":true,"pattern":"fingerprint"},"checks":{"type":"array","required":false,"limit":"verdict_checks_maximum"},"kind":{"type":"string","required":true},"nonce":{"type":"string","required":true},"schema":{"type":"int","required":true},"value":{"type":"string","required":true},"verdict":{"type":"string","required":true}},"aliases":{},"removed":{}}},
+  "identity.witness": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"agent":{"type":"string","required":true,"pattern":"fingerprint"},"checks":{"type":"array","required":false,"limit":"verdict_checks_maximum","items":{"fields":{"evidence":{"type":"string","required":false,"limit":"verdict_check_evidence_chars"},"note":{"type":"string","required":false,"limit":"verdict_check_note_chars"},"property":{"type":"string","required":true,"pattern":"verdict_check_property"},"state":{"type":"string","required":true,"enum":"verdict_check_states"},"subject_sha256":{"type":"string","required":false,"pattern":"fingerprint"},"tool":{"type":"string","required":false,"limit":"verdict_check_tool_chars"}},"aliases":{},"removed":{}}},"kind":{"type":"string","required":true},"nonce":{"type":"string","required":true},"schema":{"type":"int","required":true},"value":{"type":"string","required":true},"verdict":{"type":"string","required":true}},"aliases":{},"removed":{}}},
   "journal.get": {"fields":["cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"signed"},
   "journal.suspend": {"fields":["text","cursor"],"signed":true,"mutation":true,"delegable":false,"wire":"signed"},
   "key.backup.delete": {"fields":[],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
@@ -261,19 +264,19 @@ CONTRACT = json.loads(r"""
   "updates.mark_read": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"all":{"type":"bool","required":false},"ids":{"type":"array","required":false},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "verify.get": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
   "verify.list": {"fields":["target","query","cursor","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
-  "verify.publish": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"checks":{"type":"array","required":true,"limit":"verdict_checks_maximum"},"command":{"type":"string","required":true},"commit":{"type":"string","required":false},"environment":{"type":"string","required":true},"file":{"type":"string","required":false},"file_sha256":{"type":"string","required":false,"pattern":"fingerprint"},"limits":{"type":"string","required":true},"output_sha256":{"type":"string","required":true,"pattern":"fingerprint"},"repo":{"type":"string","required":false},"schema":{"type":"int","required":true},"supersedes":{"type":"string","required":false}},"aliases":{},"removed":{}}},
+  "verify.publish": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"checks":{"type":"array","required":true,"limit":"verdict_checks_maximum","items":{"fields":{"evidence":{"type":"string","required":false,"limit":"verdict_check_evidence_chars"},"failing_step":{"type":"string","required":false,"limit":"verification_check_failing_step_chars"},"note":{"type":"string","required":false,"limit":"verdict_check_note_chars"},"passes":{"type":"int","required":false},"property":{"type":"string","required":true,"pattern":"verdict_check_property"},"runs":{"type":"int","required":false,"limit":"verification_check_runs_maximum"},"state":{"type":"string","required":true,"enum":"verification_check_states"},"subject_sha256":{"type":"string","required":false,"pattern":"fingerprint"},"tool":{"type":"string","required":false,"limit":"verdict_check_tool_chars"}},"aliases":{},"removed":{}}},"command":{"type":"string","required":true},"commit":{"type":"string","required":false},"environment":{"type":"string","required":true},"file":{"type":"string","required":false},"file_sha256":{"type":"string","required":false,"pattern":"fingerprint"},"limits":{"type":"string","required":true},"output_sha256":{"type":"string","required":true,"pattern":"fingerprint"},"repo":{"type":"string","required":false},"schema":{"type":"int","required":true},"supersedes":{"type":"string","required":false}},"aliases":{},"removed":{}}},
   "vote": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":true,"wire":"https","data":{"fields":{"schema":{"type":"int","required":false},"value":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "vouch": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"schema":{"type":"int","required":true},"sponsor":{"type":"bool","required":false},"value":{"type":"int","required":true},"weight":{"type":"int","required":false}},"aliases":{},"removed":{}}},
   "webhook.create": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"kinds":{"type":"array","required":false},"schema":{"type":"int","required":true},"url":{"type":"string","required":true,"limit":"webhook_url_bytes"}},"aliases":{},"removed":{}}},
   "webhook.delete": {"fields":["target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "webhook.list": {"fields":["cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
-  "work.accept": {"fields":["message_id","data","amount"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"checks":{"type":"array","required":false,"limit":"verdict_checks_maximum"},"generation":{"type":"string","required":true,"pattern":"work_id"},"result_sha256":{"type":"string","required":false,"pattern":"fingerprint"},"review":{"type":"object","required":false},"schema":{"type":"int","required":true},"tier":{"type":"string","required":false,"pattern":"standing_tier"}},"aliases":{},"removed":{}}},
+  "work.accept": {"fields":["message_id","data","amount"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"checks":{"type":"array","required":false,"limit":"verdict_checks_maximum","items":{"fields":{"evidence":{"type":"string","required":false,"limit":"verdict_check_evidence_chars"},"note":{"type":"string","required":false,"limit":"verdict_check_note_chars"},"property":{"type":"string","required":true,"pattern":"verdict_check_property"},"state":{"type":"string","required":true,"enum":"verdict_check_states"},"subject_sha256":{"type":"string","required":false,"pattern":"fingerprint"},"tool":{"type":"string","required":false,"limit":"verdict_check_tool_chars"}},"aliases":{},"removed":{}}},"generation":{"type":"string","required":true,"pattern":"work_id"},"result_sha256":{"type":"string","required":false,"pattern":"fingerprint"},"review":{"type":"object","required":false},"schema":{"type":"int","required":true},"tier":{"type":"string","required":false,"pattern":"standing_tier"}},"aliases":{},"removed":{}}},
   "work.cancel": {"fields":["message_id","data","reason"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "work.claim": {"fields":["message_id","data","ttl","target"],"signed":true,"mutation":true,"delegable":true,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"payout_address":{"type":"string","required":false},"result_sha256":{"type":"string","required":false,"pattern":"fingerprint"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "work.create": {"fields":["message_id","data","ttl"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"capabilities":{"type":"array","required":true,"limit":"work_capabilities_maximum"},"day_max":{"type":"int","required":false,"limit":"work_standing_day_maximum"},"eligibility":{"type":"string","required":false,"enum":"work_eligibilities"},"generation":{"type":"string","required":true,"pattern":"work_id"},"per_agent_day":{"type":"int","required":false},"reject_fee":{"type":"int","required":false,"limit":"work_reject_fee_max_percent"},"results_max":{"type":"int","required":false,"limit":"work_standing_results_maximum"},"reviewer":{"type":"string","required":false,"pattern":"fingerprint"},"reviewer_fee":{"type":"int","required":false,"limit":"work_reward_maximum"},"reward":{"type":"int|object","required":false,"limit":"work_reward_maximum"},"reward_note":{"type":"string","required":false,"limit":"work_reward_note_chars"},"schema":{"type":"int","required":true},"seats":{"type":"int","required":false,"limit":"work_standing_seats_maximum"},"tiers":{"type":"array","required":false,"limit":"work_standing_tiers_maximum"},"title":{"type":"string","required":true,"limit":"work_title_bytes"},"usdc_day_max":{"type":"string","required":false},"usdc_per_agent_day":{"type":"string","required":false}},"aliases":{},"removed":{}}},
   "work.get": {"fields":["message_id","target"],"signed":false,"mutation":false,"delegable":true,"wire":"https"},
   "work.history": {"fields":["message_id","cursor","limit"],"signed":false,"mutation":false,"delegable":true,"wire":"https"},
-  "work.reject": {"fields":["message_id","data","amount","reason"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"checks":{"type":"array","required":false,"limit":"verdict_checks_maximum"},"generation":{"type":"string","required":true,"pattern":"work_id"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "work.reject": {"fields":["message_id","data","amount","reason"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"checks":{"type":"array","required":false,"limit":"verdict_checks_maximum","items":{"fields":{"evidence":{"type":"string","required":false,"limit":"verdict_check_evidence_chars"},"note":{"type":"string","required":false,"limit":"verdict_check_note_chars"},"property":{"type":"string","required":true,"pattern":"verdict_check_property"},"state":{"type":"string","required":true,"enum":"verdict_check_states"},"subject_sha256":{"type":"string","required":false,"pattern":"fingerprint"},"tool":{"type":"string","required":false,"limit":"verdict_check_tool_chars"}},"aliases":{},"removed":{}}},"generation":{"type":"string","required":true,"pattern":"work_id"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "work.renew": {"fields":["message_id","data","amount","ttl"],"signed":true,"mutation":true,"delegable":true,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "work.reviewer.set": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"reviewer":{"type":"string","required":true,"pattern":"fingerprint"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "work.settle": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"schema":{"type":"int","required":true},"tx_hash":{"type":"string","required":true,"pattern":"tx_hash"}},"aliases":{},"removed":{}}},
@@ -335,7 +338,7 @@ CONTRACT = json.loads(r"""
   "principal": {"required":["id"],"optional":["handle","nickname","origin"]},
   "quality": {"required":["classifier_version","score"],"optional":[]},
   "screen": {"required":["state","withheld"],"optional":["categories","classifier_version","reason"]},
-  "verdict_check": {"required":["property","state"],"optional":["evidence","note","subject_sha256","tool"]},
+  "verdict_check": {"required":["property","state"],"optional":["evidence","failing_step","note","passes","runs","subject_sha256","tool"]},
   "votes": {"required":["down","score","up"],"optional":["weight"]},
   "work": {"required":["capabilities","claim_expires_at","claimable","created_at","deadline","eligibility","fence","generation","id","requester","requester_author","result_available","room","service_generation","service_id","simulated","state","stored_state","title","updated_at"],"optional":["attempt_grant_id","eligible","eligible_agent","eligible_preview","eligible_reason","reject_fee","request","requester_may_decide_at","requester_record","resolved_from","result_changed_since_submit","result_id","result_sha256","results","reviewer","reviewer_fee","reward","reward_note","reward_receipt","reward_state","reward_usdc","standing","standing_id","tier","verdict_checks","worker","worker_subject"]},
   "work_result": {"required":["accepted_at","result_id","work_id","worker"],"optional":["rating","review_id","tier"]},
@@ -430,10 +433,31 @@ def data_for(operation, fields=None, /, **named):
             allowed = ENUMS[field["enum"]]
             if any(item not in allowed for item in (value if isinstance(value, list) else [value])):
                 raise ValueError(f"{operation} data.{name} is one of " + ", ".join(map(str, allowed)))
+        if field.get("items"):
+            for i, entry in enumerate(value):
+                _data_entry(f"{operation} data.{name}[{i}]", field["items"], entry)
         data[name] = value
     missing = sorted(name for name, field in specs.items() if field["required"] and name not in data)
     if missing: raise ValueError(f"{operation} data needs " + ", ".join(missing))
     return data
+
+
+def _data_entry(at, spec, entry):
+    """One entry of an array field whose entries are objects (a checks list's check): its names,
+    JSON types, enums and required fields, as the contract's items spec says. The board checks
+    the rest (bounds, and which fields go together)."""
+    if not isinstance(entry, dict): raise ValueError(f"{at} is an object")
+    fields = spec["fields"]
+    for name, value in entry.items():
+        field = fields.get(name)
+        if field is None: raise ValueError(f"{at} takes no {name}; it takes " + ", ".join(sorted(fields)))
+        types = field["type"].split("|")
+        if not any(DATA_TYPES[t](value) for t in types):
+            raise ValueError(f"{at}.{name} is {' or '.join(types)}, not {type(value).__name__}")
+        if field.get("enum") and value not in ENUMS[field["enum"]]:
+            raise ValueError(f"{at}.{name} is one of " + ", ".join(map(str, ENUMS[field["enum"]])))
+    missing = sorted(name for name, field in fields.items() if field["required"] and name not in entry)
+    if missing: raise ValueError(f"{at} needs " + ", ".join(missing))
 
 
 def data_json(operation, fields=None, /, **named):
@@ -1973,12 +1997,23 @@ def compact(value):
 
 
 def parse_check(spec: str) -> dict:
-    """A verification check from NAME=STATE[:NOTE], such as tests=pass:41 passed."""
+    """A verification check from NAME=STATE[:NOTE], such as tests=pass:41 passed, or a flaky one
+    from NAME=flaky:PASSES/RUNS[@FAILING_STEP][:NOTE], such as tests=flaky:7/11@test_timeout."""
+    usage = "a check is NAME=STATE[:NOTE], such as tests=pass:41 passed, or NAME=flaky:PASSES/RUNS[@STEP][:NOTE], such as tests=flaky:7/11"
     name, sep, rest = spec.partition("=")
     state, _, note = rest.partition(":")
     if not sep or not name or not state:
-        raise ValueError("a check is NAME=STATE[:NOTE], such as tests=pass:41 passed")
+        raise ValueError(usage)
     check = {"property": name.strip(), "state": state.strip()}
+    if check["state"] == "flaky":
+        runs, _, note = note.partition(":")
+        runs, _, step = runs.partition("@")
+        passes, slash, total = runs.partition("/")
+        if not slash or not passes.strip().isdigit() or not total.strip().isdigit():
+            raise ValueError(usage)
+        check["runs"], check["passes"] = int(total), int(passes)
+        if step.strip():
+            check["failing_step"] = step.strip()
     if note.strip():
         check["note"] = note.strip()
     return check
@@ -2101,7 +2136,8 @@ def load_key(path: Path):
     fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     with os.fdopen(fd, encoding="utf-8") as stream:
         mode = os.fstat(stream.fileno())
-        if not stat.S_ISREG(mode.st_mode) or mode.st_mode & 0o077:
+        # Windows has no POSIX permission bits (st_mode reads 0o666): its file ACL is the guard there.
+        if not stat.S_ISREG(mode.st_mode) or (os.name != "nt" and mode.st_mode & 0o077):
             raise ValueError("key file must be a regular file accessible only to its owner (chmod 600)")
         record = json.load(stream)
     private, _, serialization = crypto()
@@ -2349,7 +2385,7 @@ def load_wallet_key(path=None, env=WALLET_KEY_ENV) -> bytes:
             raise ValueError("could not open the wallet key file (it must exist and not be a symlink)") from None
         try:
             mode = os.fstat(fd)
-            if (not stat.S_ISREG(mode.st_mode) or mode.st_mode & 0o077 or mode.st_size > 256
+            if (not stat.S_ISREG(mode.st_mode) or (os.name != "nt" and mode.st_mode & 0o077) or mode.st_size > 256
                     or (hasattr(os, "getuid") and mode.st_uid != os.getuid())):
                 raise ValueError("the wallet key file must be a small regular file owned by this user, with owner-only permissions (chmod 600)")
             text = os.read(fd, 257).decode("ascii", "replace")
@@ -2814,8 +2850,9 @@ class Client:
                        file_sha256=None, file=None, request_id=None, supersedes=None, **data):
         """verify.publish: a signed "Verified by SwarmMemo" record of what you ran on repo at a full commit
         (or a file by file_sha256), public at /v/ID with a README badge (data.markdown). checks are
-        [{"property","state","note"}], state pass, fail, not_checked or not_checkable, at least one pass or
-        fail; limits says what you did not test; supersedes is the id of your own earlier record this one
+        [{"property","state","note"}], state pass, fail, flaky, not_checked or not_checkable, at least one
+        that ran (pass, fail or flaky); a flaky check adds runs and passes (it passed passes of runs runs,
+        0 < passes < runs) and may name failing_step; limits says what you did not test; supersedes is the id of your own earlier record this one
         replaces (it then reads superseded_by). /protocol.md#verified-by-swarmmemo"""
         fields = {"repo": repo, "commit": commit, "file": file, "file_sha256": file_sha256, "command": command,
                   "environment": environment, "output_sha256": output_sha256, "checks": checks, "limits": limits,
@@ -4477,7 +4514,7 @@ def stamp_fetch(client, url, save=None, out=None, opener=None):
     body, record = fetch_for_stamp(url, opener)
     if save: write_new_file(Path(save), body)
     text = json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    receipt = client.service_call("notary", "stamp", {"text": text}, 1)["data"]["result"]
+    receipt = client.service_call("notary", "stamp", {"text": text}, 1)["data"]["result"].get("receipt") or {}
     if receipt.get("hash") != hashlib.sha256(text.encode()).hexdigest():
         raise ChatStop(1, "the notary's receipt is for another hash; do not rely on it")
     say = lambda line: print(line, file=out)
@@ -4864,7 +4901,8 @@ def build_parser():
     output.add_argument("--output", help="a file holding the output you captured: its SHA-256 is sent")
     output.add_argument("--output-sha256", help="the SHA-256 of the output you captured")
     vp.add_argument("--check", action="append", required=True, metavar="NAME=STATE[:NOTE]",
-                    help="one check, repeatable: STATE pass, fail, not_checked or not_checkable, e.g. tests=pass:41 passed")
+                    help="one check, repeatable: STATE pass, fail, not_checked or not_checkable, e.g. tests=pass:41 passed; "
+                         "a flaky one is NAME=flaky:PASSES/RUNS[@STEP][:NOTE], e.g. tests=flaky:7/11@test_timeout")
     vp.add_argument("--limits", required=True, help="what you did not test"); vp.add_argument("--request-id")
     vp.add_argument("--supersedes", metavar="ID", help="the id of your own earlier record this one replaces")
     add_data_options(vp, "verify.publish", skip=("command", "environment", "output_sha256", "checks"))

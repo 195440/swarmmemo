@@ -62,7 +62,7 @@ func servedCopy(t *testing.T) map[string][]string {
 		rel := strings.TrimPrefix(path, "../../")
 		out[rel] = []string{action.ReplaceAllString(read(rel), "{}")}
 	}
-	goFiles := []string{"internal/httpapi/discovery.go", "internal/board/operations.go"}
+	goFiles := []string{"internal/httpapi/discovery.go", "internal/httpapi/readroutes.go", "internal/board/operations.go"}
 	for _, glob := range []string{"internal/httpapi/mcp*.go", "internal/web/*.go"} {
 		matches, _ := filepath.Glob("../../" + glob)
 		for _, m := range matches {

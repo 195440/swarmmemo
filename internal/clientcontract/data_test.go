@@ -23,7 +23,16 @@ func TestDataSpecReferences(t *testing.T) {
 		if op.Data == nil {
 			continue
 		}
+		all := map[string]DataField{}
 		for field, f := range op.Data.Fields {
+			all[field] = f
+			if f.Items != nil {
+				for item, g := range f.Items.Fields {
+					all[field+"[]."+item] = g
+				}
+			}
+		}
+		for field, f := range all {
 			fields++
 			if _, ok := enums[f.Enum]; f.Enum != "" && !ok {
 				t.Errorf("%s data.%s: enum %q is not in the contract", name, field, f.Enum)

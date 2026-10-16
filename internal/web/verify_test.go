@@ -20,19 +20,25 @@ const verifyTestCommit = "0123456789abcdef0123456789abcdef01234567"
 // failing check.
 func publishTestVerification(t *testing.T, s board.Service, seed byte, failing bool) board.Verification {
 	t.Helper()
+	state := "pass"
+	if failing {
+		state = "fail"
+	}
+	return publishTestChecks(t, s, seed, []map[string]any{{"property": "tests", "state": "pass", "note": "41 passed"}, {"property": "lint", "state": state}, {"property": "fuzz", "state": "not_checked"}})
+}
+
+// publishTestChecks signs and publishes a record with these checks.
+func publishTestChecks(t *testing.T, s board.Service, seed byte, checks []map[string]any) board.Verification {
+	t.Helper()
 	key := ed25519.NewKeyFromSeed(make([]byte, 32))
 	if seed != 0 {
 		raw := make([]byte, 32)
 		raw[0] = seed
 		key = ed25519.NewKeyFromSeed(raw)
 	}
-	state := "pass"
-	if failing {
-		state = "fail"
-	}
 	data, _ := json.Marshal(map[string]any{"schema": 1, "repo": "https://github.com/Owner/Repo", "commit": verifyTestCommit,
 		"command": "pytest -q <script>alert(1)</script>", "environment": "python 3.12\nlinux, network off", "output_sha256": strings.Repeat("ab", 32),
-		"checks": []map[string]any{{"property": "tests", "state": "pass", "note": "41 passed"}, {"property": "lint", "state": state}, {"property": "fuzz", "state": "not_checked"}},
+		"checks": checks,
 		"limits": "Windows was not tested."})
 	c := board.Command{Operation: "verify.publish", Data: string(data), PublicKey: base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey)),
 		Timestamp: time.Now().Unix(), Nonce: "verify-nonce-" + string('a'+rune(seed)), RequestID: "verify-" + string('a'+rune(seed))}
@@ -72,6 +78,28 @@ func TestVerificationPage(t *testing.T) {
 	}
 	if w := gateGet(s, "/v/not-an-id"); w.Code != 404 {
 		t.Fatalf("bad id: %d", w.Code)
+	}
+}
+
+// C385: a flaky check shows as "flaky: k of n runs passed" with its
+// failing step; the record reads flaky, and so does its badge.
+func TestVerificationPageFlaky(t *testing.T) {
+	s := gateStore(t)
+	v := publishTestChecks(t, s, 3, []map[string]any{{"property": "tests", "state": "flaky", "runs": 11, "passes": 7, "failing_step": "test_<timeout>", "note": "3 timeouts"},
+		{"property": "lint", "state": "pass"}})
+	if v.Result != "flaky" || v.Flaky != 1 || v.Passed != 1 || v.Ran != 2 {
+		t.Fatalf("record: %s %d/%d, %d flaky", v.Result, v.Passed, v.Ran, v.Flaky)
+	}
+	body := gateGet(s, "/v/"+v.ID).Body.String()
+	for _, want := range []string{"Flaky: 1 of 2 checks passed, 1 flaky", `<tr class="check-flaky">`, `<span class="badge check-state">flaky</span>`,
+		`<span class="check-runs">flaky: 7 of 11 runs passed</span>. Failing step <code>test_&lt;timeout&gt;</code>. 3 timeouts`, "flaky, 1 of 2 checks passed, 1 flaky"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/v/ID misses %q", want)
+		}
+	}
+	badge := gateGet(s, "/v/"+v.ID+"/badge.svg").Body.String()
+	if !strings.Contains(badge, "flaky · 1/2") {
+		t.Errorf("badge: %s", badge)
 	}
 }
 

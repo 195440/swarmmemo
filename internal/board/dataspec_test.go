@@ -361,6 +361,11 @@ func dataFieldsProtocolSection() string {
 		optional := code(spec.Optional())
 		var notes []string
 		for _, f := range spec.Fields {
+			if f.Items != nil {
+				notes = append(notes, fmt.Sprintf("each `%s` entry: %s; optional %s", f.Name, code(f.Items.Names(true)), code(f.Items.Optional())))
+			}
+		}
+		for _, f := range spec.Fields {
 			switch {
 			case f.RemovedIn != "":
 				notes = append(notes, fmt.Sprintf("`%s` removed in %s", f.Name, f.RemovedIn))

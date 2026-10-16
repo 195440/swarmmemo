@@ -611,14 +611,12 @@ func (s *Server) catalogWithExamples(catalog []services.Entry) []services.Entry 
 }
 
 // addServicesOpenAPI documents the enabled services in /openapi.json, from
-// the catalogue: GET /api/services, the services' own GET routes, and
-// ServiceData, the data string of service.call and service.read, one schema
-// per method with its documented arguments.
+// the catalogue: the keyless /call/ route and ServiceData, the data string of service.call and service.read, one schema
+// per method with its documented arguments. GET /api/services and the
+// services' own GET reads are rows of the read-route table (readroutes.go).
 func addServicesOpenAPI(paths, schemas, commandProps map[string]any, catalog []services.Entry, response map[string]any) {
-	ids := make([]string, 0, len(catalog))
 	variants := []any{}
 	for _, e := range catalog {
-		ids = append(ids, e.ID)
 		for _, m := range e.Methods {
 			required := []string{"schema", "method"}
 			props := map[string]any{"schema": map[string]any{"const": 1}, "method": map[string]any{"const": m.Name}, "args": argsSchema(m.Args)}
@@ -638,41 +636,20 @@ func addServicesOpenAPI(paths, schemas, commandProps map[string]any, catalog []s
 	}
 	schemas["ServiceData"] = map[string]any{"description": "The data of service.call and service.read, as a JSON string; target names the service. Each variant is one method of the catalogue at /api/services.", "anyOf": variants}
 	commandProps["data"] = map[string]any{"type": "string", "description": commandDataDescription + " For service.call and service.read it is components/schemas/ServiceData."}
-	get := func(summary string, params ...map[string]any) map[string]any {
-		op := map[string]any{"summary": summary, "responses": response}
-		if len(params) > 0 {
-			op["parameters"] = params
-		}
-		return map[string]any{"get": op}
-	}
-	pathParam := func(name, pattern string) map[string]any {
-		schema := map[string]any{"type": "string"}
-		if pattern != "" {
-			schema["pattern"] = pattern
-		}
-		return map[string]any{"name": name, "in": "path", "required": true, "schema": schema}
-	}
-	paths["/api/services"] = get("The service catalogue (services.list): " + strings.Join(ids, ", ") + ", each with its methods, current prices, arguments, limits and an example.")
 	if methods := services.AnonymousMethods(catalog); len(methods) > 0 {
 		query := func(name, note string) map[string]any {
 			return map[string]any{"name": name, "in": "query", "required": false, "schema": map[string]any{"type": "string"}, "description": note}
 		}
-		op := get("A service call without a key, as one URL: the method's arguments as query fields (strings as text, numbers and booleans as literals, objects and arrays as JSON), max_cost and request_id. Methods: "+strings.Join(methods, ", ")+"; public reads also work. Billed to your network's free daily credit; the answer is the same JSON as POST /v1/command.",
-			pathParam("service", ""), pathParam("method", ""), query("max_cost", "optional: your ceiling, in the method's resource; left out, the quote for the arguments"), query("request_id", services.NoKeyRequestID))
+		pathParam := func(name string) map[string]any {
+			return map[string]any{"name": name, "in": "path", "required": true, "schema": map[string]any{"type": "string"}}
+		}
+		get := map[string]any{"summary": "A service call without a key, as one URL: the method's arguments as query fields (strings as text, numbers and booleans as literals, objects and arrays as JSON), max_cost and request_id. Methods: " + strings.Join(methods, ", ") + "; public reads also work. Billed to your network's free daily credit; the answer is the same JSON as POST /v1/command.",
+			"parameters": []map[string]any{pathParam("service"), pathParam("method"), query("max_cost", "optional: your ceiling, in the method's resource; left out, the quote for the arguments"), query("request_id", services.NoKeyRequestID)},
+			"responses":  response}
 		post := map[string]any{}
-		for k, v := range op["get"].(map[string]any) {
+		for k, v := range get {
 			post[k] = v
 		}
-		op["post"] = post
-		paths[services.CallPathPrefix+"{service}/{method}"] = op
-	}
-	for _, e := range catalog {
-		switch e.ID {
-		case "memory":
-			paths["/api/memory/{agent}/{key}"] = get("Read one public memory item (memory get, unsigned).", pathParam("agent", "^[a-f0-9]{64}$"), pathParam("key", ""))
-		case "notary":
-			paths["/api/notary/key"] = get("The notary's public key (notary key).")
-			paths["/api/notary/{hash}"] = get("The notary receipt for a SHA-256 hash (notary get).", pathParam("hash", "^[a-f0-9]{64}$"))
-		}
+		paths[services.CallPathPrefix+"{service}/{method}"] = map[string]any{"get": get, "post": post}
 	}
 }

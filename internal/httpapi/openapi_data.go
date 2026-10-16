@@ -96,12 +96,21 @@ func openAPIDataSchema(operation string, spec board.DataSpec) map[string]any {
 		if f.Limit != "" {
 			p["x-limit"] = map[string]any{"name": f.Limit, "value": limits[f.Limit]}
 		}
+		if f.Items != nil {
+			item := openAPIDataSchema(operation+" data "+f.Name+" entry", *f.Items)
+			item["description"] = "One entry of " + operation + " data " + f.Name + "."
+			p["items"] = item
+		}
 		props[f.Name] = p
 		if f.Required {
 			required = append(required, f.Name)
 		}
 	}
-	out := map[string]any{"title": operation + " data", "type": "object", "properties": props, "required": required,
+	title := operation
+	if !strings.Contains(title, " ") {
+		title += " data"
+	}
+	out := map[string]any{"title": title, "type": "object", "properties": props, "required": required,
 		"description": "The JSON object " + operation + "'s data string holds."}
 	if !spec.Lax {
 		out["additionalProperties"] = false

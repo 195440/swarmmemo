@@ -90,7 +90,32 @@ func verifyBadgeFacts(v *board.Verification) badgeFacts {
 		return badgeFacts{Label: "verified by SwarmMemo", Value: fmt.Sprintf("failed · %d/%d · %s", v.Passed, v.Ran, v.ShortHash()), Tone: "bad",
 			Spoken: "Verified by SwarmMemo: failed, " + count + ", at " + v.ShortHash()}
 	}
+	if v.Flaky > 0 {
+		return badgeFacts{Label: "verified by SwarmMemo", Value: fmt.Sprintf("flaky · %d/%d · %s", v.Passed, v.Ran, v.ShortHash()), Tone: "mixed",
+			Spoken: "Verified by SwarmMemo: flaky, " + count + ", " + flakyCount(v) + ", at " + v.ShortHash()}
+	}
 	return badgeFacts{Label: "verified by SwarmMemo", Value: count + " · " + v.ShortHash(), Tone: "good", Spoken: "Verified by SwarmMemo: " + count + ", at " + v.ShortHash()}
+}
+
+// flakyCount says how many checks were flaky: "1 flaky".
+func flakyCount(v *board.Verification) string { return fmt.Sprintf("%d flaky", v.Flaky) }
+
+// verifyVerdict is a record's result in words: "3 of 4 checks passed",
+// "failed, 2 of 3 checks passed" or "flaky, 3 of 4 checks passed, 1 flaky".
+func verifyVerdict(v *board.Verification) string {
+	verdict := fmt.Sprintf("%d of %d checks passed", v.Passed, v.Ran)
+	if v.Result != "passed" {
+		verdict = v.Result + ", " + verdict
+	}
+	if v.Flaky > 0 {
+		verdict += ", " + flakyCount(v)
+	}
+	return verdict
+}
+
+// flakyRunsLine is a flaky check's line (C385): "flaky: 7 of 11 runs passed".
+func flakyRunsLine(c board.VerdictCheck) string {
+	return fmt.Sprintf("flaky: %d of %d runs passed", c.Passes, c.Runs)
 }
 
 // verificationOf reads a verify.get or verify.list answer's record(s).
@@ -292,13 +317,14 @@ func serveBadge(w http.ResponseWriter, r *http.Request, body []byte, cache strin
 
 // verifyCard is a record's 1200x630 card.
 func verifyCard(v *board.Verification) cards.Card {
-	result := fmt.Sprintf("%d of %d checks passed", v.Passed, v.Ran)
-	if v.Failed > 0 {
-		result = fmt.Sprintf("Failed: %d of %d checks passed", v.Passed, v.Ran)
-	}
+	result := verifyVerdict(v)
+	result = strings.ToUpper(result[:1]) + result[1:]
 	var lines []string
 	for _, c := range v.Checks {
 		line := c.State + "  " + c.Property
+		if c.State == board.CheckFlaky {
+			line += fmt.Sprintf(" (%d of %d runs passed)", c.Passes, c.Runs)
+		}
 		if c.Note != "" {
 			line += ": " + c.Note
 		}
@@ -378,11 +404,7 @@ func loadVerification(r *http.Request, p *page, execute func(board.Command) (boa
 	}
 	p.View, p.VerifyView = "verification", vp
 	p.Title = "Verified by SwarmMemo: " + vp.Subject
-	verdict := fmt.Sprintf("%d of %d checks passed", v.Passed, v.Ran)
-	if v.Failed > 0 {
-		verdict = fmt.Sprintf("failed, %d of %d checks passed", v.Passed, v.Ran)
-	}
-	p.Description = vp.Subject + ": " + verdict + ", signed by " + vp.Verifier + ". The command, environment, checks and what was not tested, with how to re-run it."
+	p.Description = vp.Subject + ": " + verifyVerdict(v) + ", signed by " + vp.Verifier + ". The command, environment, checks and what was not tested, with how to re-run it."
 	p.Canonical = board.VerificationPath + v.ID
 	p.OG = &openGraph{Type: "article", Title: p.Title, Description: p.Description, URL: p.Canonical, Image: p.Canonical + ".png", Card: true}
 	return 200
@@ -429,5 +451,5 @@ EOF`
 
 // verifyStateLabel is a check state in words.
 func verifyStateLabel(state string) string {
-	return map[string]string{"pass": "pass", "fail": "fail", "not_checked": "not checked", "not_checkable": "not checkable"}[state]
+	return map[string]string{"pass": "pass", "fail": "fail", board.CheckFlaky: "flaky", "not_checked": "not checked", "not_checkable": "not checkable"}[state]
 }

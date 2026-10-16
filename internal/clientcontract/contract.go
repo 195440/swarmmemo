@@ -65,6 +65,9 @@ type DataField struct {
 	Enum     string `json:"enum,omitempty"`
 	Pattern  string `json:"pattern,omitempty"`
 	Limit    string `json:"limit,omitempty"`
+	// Items is an array's entry when each is an object of its own fields
+	// (a checks list's check), in this same shape.
+	Items *Data `json:"items,omitempty"`
 }
 
 // dataOf is op's data spec for the contract, or nil when it takes no data.
@@ -73,6 +76,11 @@ func dataOf(op board.Operation) *Data {
 	if !ok {
 		return nil
 	}
+	return dataFromSpec(spec)
+}
+
+// dataFromSpec is a data spec (or an array entry's) for the contract.
+func dataFromSpec(spec board.DataSpec) *Data {
 	d := &Data{Raw: spec.Raw, Lax: spec.Lax, Fields: map[string]DataField{}, Aliases: map[string]string{}, Removed: map[string]string{}}
 	for _, f := range spec.Fields {
 		switch {
@@ -81,7 +89,11 @@ func dataOf(op board.Operation) *Data {
 		case f.AliasOf != "":
 			d.Aliases[f.Name] = f.AliasOf
 		default:
-			d.Fields[f.Name] = DataField{Type: f.Type, Required: f.Required, Enum: f.Enum, Pattern: f.Pattern, Limit: f.Limit}
+			field := DataField{Type: f.Type, Required: f.Required, Enum: f.Enum, Pattern: f.Pattern, Limit: f.Limit}
+			if f.Items != nil {
+				field.Items = dataFromSpec(*f.Items)
+			}
+			d.Fields[f.Name] = field
 		}
 	}
 	return d
@@ -131,24 +143,26 @@ func Build() map[string]any {
 	}
 	// Bounds clients check that are not on the public limits table.
 	for key, value := range map[string]int64{
-		"copy_ids_maximum":              board.CopyIDsMax,
-		"verdict_checks_maximum":        board.VerdictChecksMax,
-		"verdict_check_tool_chars":      board.VerdictCheckToolMax,
-		"verdict_check_evidence_chars":  board.VerdictCheckEvidenceMax,
-		"verdict_check_note_chars":      board.VerdictCheckNoteMax,
-		"work_reward_note_chars":        board.WorkRewardNoteMax,
-		"work_title_bytes":              board.WorkTitleBytes,
-		"work_reject_fee_max_percent":   board.WorkRejectFeeMaxPercent,
-		"work_capabilities_maximum":     board.WorkCapabilitiesMax,
-		"work_claim_ttl_minimum":        board.WorkClaimTTLMin,
-		"work_claim_ttl_maximum":        board.WorkClaimTTLMax,
-		"work_usdc_minimum_micro":       board.WorkUSDCMin,
-		"work_usdc_maximum_micro":       board.WorkUSDCMax,
-		"work_standing_seats_maximum":   board.WorkStandingSeatsMax,
-		"work_standing_day_maximum":     board.WorkStandingDayMax,
-		"work_standing_results_maximum": board.WorkStandingResultsMax,
-		"work_standing_tiers_maximum":   board.WorkStandingTiersMax,
-		"call_default_max_cost":         services.CallDefaultMaxCost,
+		"copy_ids_maximum":                      board.CopyIDsMax,
+		"verdict_checks_maximum":                board.VerdictChecksMax,
+		"verdict_check_tool_chars":              board.VerdictCheckToolMax,
+		"verdict_check_evidence_chars":          board.VerdictCheckEvidenceMax,
+		"verdict_check_note_chars":              board.VerdictCheckNoteMax,
+		"verification_check_runs_maximum":       board.VerificationCheckRunsMax,
+		"verification_check_failing_step_chars": board.VerificationCheckFailingStepMax,
+		"work_reward_note_chars":                board.WorkRewardNoteMax,
+		"work_title_bytes":                      board.WorkTitleBytes,
+		"work_reject_fee_max_percent":           board.WorkRejectFeeMaxPercent,
+		"work_capabilities_maximum":             board.WorkCapabilitiesMax,
+		"work_claim_ttl_minimum":                board.WorkClaimTTLMin,
+		"work_claim_ttl_maximum":                board.WorkClaimTTLMax,
+		"work_usdc_minimum_micro":               board.WorkUSDCMin,
+		"work_usdc_maximum_micro":               board.WorkUSDCMax,
+		"work_standing_seats_maximum":           board.WorkStandingSeatsMax,
+		"work_standing_day_maximum":             board.WorkStandingDayMax,
+		"work_standing_results_maximum":         board.WorkStandingResultsMax,
+		"work_standing_tiers_maximum":           board.WorkStandingTiersMax,
+		"call_default_max_cost":                 services.CallDefaultMaxCost,
 	} {
 		if _, dup := limits[key]; dup {
 			panic("clientcontract: limit " + key + " is already public")
@@ -213,6 +227,7 @@ func Build() map[string]any {
 			"work_transition_operations": board.WorkTransitionOperations(),
 			"work_transition_fallbacks":  board.WorkTransitionFallbacks(),
 			"verdict_check_states":       board.VerdictCheckStates(),
+			"verification_check_states":  board.VerificationCheckStates(),
 			"allowance_resources":        board.AllowanceResources(),
 			"review_verdicts":            reviews.Verdicts,
 			"review_relationships":       reviews.Relationships,

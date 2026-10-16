@@ -516,7 +516,7 @@ func parseWorkData(raw string, operation string) (workData, error) {
 				return workData{}, invalidWorkField(operation, name)
 			}
 			var why string
-			if d.Checks, why = parseVerdictChecks(value); why != "" {
+			if d.Checks, why = parseVerdictChecks(value, verdictCheckItems); why != "" {
 				return workData{}, problem(400, "invalid_work_data", why+" "+VerdictChecksRule)
 			}
 			continue

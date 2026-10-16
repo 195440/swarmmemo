@@ -32,6 +32,9 @@ const (
 
 var notaryHashRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
+// notaryHashRule is the refusal text for a hash argument notaryHashRE refuses.
+const notaryHashRule = "hash must be a SHA-256: 64 lowercase hex digits."
+
 // notary signs timestamps: an agent submits a SHA-256 hash, or text for the
 // notary to hash, and gets a receipt signed with the notary key. Anyone can
 // verify a receipt offline with the published public key, and read it back by
@@ -115,8 +118,10 @@ func parseStamp(raw json.RawMessage) (string, error) {
 		return hex.EncodeToString(sum[:]), nil
 	case a.Text == nil && notaryHashRE.MatchString(a.Hash):
 		return a.Hash, nil
+	case a.Text == nil && a.Hash != "":
+		return "", badArg(notaryHashRule)
 	}
-	return "", refusal("invalid_service_data")
+	return "", badArg("Give exactly one of hash (a SHA-256: 64 lowercase hex digits) or text.")
 }
 
 func (n *notary) Quote(c Call) (Quote, error) {
@@ -411,7 +416,7 @@ func (n *notary) Read(ctx context.Context, q allowance.Querier, c Call) (json.Ra
 			return nil, err
 		}
 		if !notaryHashRE.MatchString(a.Hash) {
-			return nil, refusal("invalid_service_data")
+			return nil, badArg(notaryHashRule)
 		}
 		key, err := n.signingKey()
 		if err != nil {

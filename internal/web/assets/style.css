@@ -1940,6 +1940,7 @@ caption.chart-note{text-align:left;caption-side:top}
 .verify-checks th,.verify-checks td{text-align:left;padding:var(--s-1) var(--s-2) var(--s-1) 0;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:break-word}
 .verify-checks td:nth-child(2){white-space:nowrap}
 .check-fail .check-state{border-color:var(--alert);color:var(--alert)}
+.check-flaky .check-state{border-color:var(--alert);border-style:dashed}
 .check-not_checked .check-state,.check-not_checkable .check-state{color:var(--muted)}
 .verify-page pre{max-width:100%;overflow-x:auto}
 .verify-label{margin:0 0 var(--s-2)}

@@ -252,6 +252,10 @@ func migrateSchema(tx *sql.Tx, version int) error {
 	if err := migrateVerificationSupersedes43(tx); err != nil {
 		return err
 	}
+	// Schema 44: verifications.flaky (verifications.go, C385).
+	if err := migrateVerificationFlaky44(tx); err != nil {
+		return err
+	}
 	_, err := tx.Exec(fmt.Sprintf("PRAGMA user_version=%d;", SchemaVersion))
 	return err
 }

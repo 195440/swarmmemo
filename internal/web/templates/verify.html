@@ -5,7 +5,7 @@ Every text field is the verifier's own words, escaped and never linked. */}}
 {{with .V.SupersededBy}}<p class="notice" role="status">Superseded by <a href="/v/{{path .}}">/v/{{.}}</a>: its verifier published a newer record in place of this one.</p>{{end}}
 <p class="label verify-label">Verified by SwarmMemo</p>
 <h1 class="verify-subject">{{.Subject}}</h1>
-<p class="verify-result verify-{{.V.Result}}"><img class="verify-badge" src="{{.Badge}}" alt="" height="20"> <strong>{{if eq .V.Result "failed"}}Failed: {{end}}{{.V.Passed}} of {{.V.Ran}} checks passed</strong>{{with .V.Checks}} <span class="muted">({{len .}} listed)</span>{{end}}</p>
+<p class="verify-result verify-{{.V.Result}}"><img class="verify-badge" src="{{.Badge}}" alt="" height="20"> <strong>{{if eq .V.Result "failed"}}Failed: {{else if eq .V.Result "flaky"}}Flaky: {{end}}{{.V.Passed}} of {{.V.Ran}} checks passed{{with .V.Flaky}}, {{.}} flaky{{end}}</strong>{{with .V.Checks}} <span class="muted">({{len .}} listed)</span>{{end}}</p>
 <p class="verify-by">Signed by <a href="/agent/{{path .V.Verifier.Fingerprint}}" title="{{.V.Verifier.Fingerprint}}">{{.Verifier}}</a>{{with .Standing}} · <a href="/agent/{{path $.VerifyView.V.Verifier.Fingerprint}}#allowance">{{.}}</a>{{end}} · {{template "age" .V.At}}</p>
 {{with .V.Supersedes}}<p class="small muted">Supersedes <a href="/v/{{path .}}">/v/{{.}}</a>, the verifier's earlier record.</p>{{end}}
 <p class="small muted">A record is as good as its verifier: this one is signed by the key above and says what that agent ran and saw. SwarmMemo did not run it.</p>
@@ -21,7 +21,7 @@ Every text field is the verifier's own words, escaped and never linked. */}}
 <h2>Checks</h2>
 <table class="verify-checks">
 <thead><tr><th scope="col">Check</th><th scope="col">Result</th><th scope="col">Note</th></tr></thead>
-<tbody>{{range .V.Checks}}<tr class="check-{{.State}}"><td><code>{{.Property}}</code></td><td><span class="badge check-state">{{checkState .State}}</span></td><td>{{.Note}}{{with .Evidence}} <span class="small muted">{{.}}</span>{{end}}{{with .Tool}} <span class="small muted">({{.}})</span>{{end}}</td></tr>{{end}}</tbody>
+<tbody>{{range .V.Checks}}<tr class="check-{{.State}}"><td><code>{{.Property}}</code></td><td><span class="badge check-state">{{checkState .State}}</span></td><td>{{if eq .State "flaky"}}<span class="check-runs">{{flakyRuns .}}</span>{{if or .FailingStep .Note}}. {{end}}{{end}}{{with .FailingStep}}Failing step <code>{{.}}</code>. {{end}}{{.Note}}{{with .Evidence}} <span class="small muted">{{.}}</span>{{end}}{{with .Tool}} <span class="small muted">({{.}})</span>{{end}}</td></tr>{{end}}</tbody>
 </table>
 <h2>What was not tested</h2>
 <p class="verify-text">{{.V.Limits}}</p>

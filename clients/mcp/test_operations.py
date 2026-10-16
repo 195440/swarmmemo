@@ -519,6 +519,22 @@ class TransitionFieldsTest(unittest.TestCase):
         self.assertEqual(op.WORK_TRANSITION_OPERATIONS, {name for name, o in contract["operations"].items() if o["mutation"] and name.startswith("work.")})
 
 
+class FlakyCheckTest(unittest.TestCase):
+    def test_flaky_check_fields(self):
+        # C385: a verification's flaky check carries runs and passes; a verdict's checks
+        # (work reads) never take flaky, and runs or passes never come without it.
+        flaky = {"property": "tests", "state": "flaky", "runs": 11, "passes": 7, "failing_step": "test_timeout"}
+        self.assertTrue(op._valid_checks([flaky], op.VERIFICATION_CHECK_STATES))
+        self.assertFalse(op._valid_checks([flaky]))
+        self.assertTrue(op._valid_checks([{"property": "lint", "state": "fail", "failing_step": "ruff"}]))
+        for bad in ({**flaky, "passes": 11}, {**flaky, "passes": 0}, {**flaky, "runs": 1, "passes": 0}, {**flaky, "runs": 1001},
+                    {**flaky, "runs": "11"}, {**flaky, "runs": True}, {k: v for k, v in flaky.items() if k != "runs"},
+                    {"property": "tests", "state": "pass", "runs": 11, "passes": 7}, {"property": "tests", "state": "pass", "failing_step": "x"},
+                    {**flaky, "failing_step": "a\nb"}):
+            with self.subTest(bad=bad):
+                self.assertFalse(op._valid_checks([bad], op.VERIFICATION_CHECK_STATES))
+
+
 class DataParityTest(unittest.TestCase):
     """C377: every data field of the operations a tool carries (TOOL_DATA) is in its input
     schema, built from the contract, or in DATA_EXCLUDED with a reason; no tool takes a field

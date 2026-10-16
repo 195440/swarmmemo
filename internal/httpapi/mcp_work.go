@@ -49,7 +49,7 @@ func verdictChecksData(in []verdictCheckInput) []board.VerdictCheck {
 	}
 	out := make([]board.VerdictCheck, len(in))
 	for i, c := range in {
-		out[i] = board.VerdictCheck(c)
+		out[i] = board.VerdictCheck{Property: c.Property, State: c.State, SubjectSHA256: c.SubjectSHA256, Tool: c.Tool, Evidence: c.Evidence, Note: c.Note}
 	}
 	return out
 }

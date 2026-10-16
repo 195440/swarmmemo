@@ -60,3 +60,44 @@ func TestVerificationOverMCPAndHTTP(t *testing.T) {
 		t.Fatal("llms.txt lacks the verification line")
 	}
 }
+
+// C385: a flaky check (runs, passes, failing_step) published over MCP reads
+// back the same over HTTP and read_verification, counted as flaky; a flaky
+// check without runs is refused, and OpenAPI's verify.publish data names the
+// entry's fields.
+func TestVerificationFlakyOverMCPAndHTTP(t *testing.T) {
+	_, s := hostedServerWith(t, board.Features{})
+	token := newIdentity(t, s, "flaky-desk")["token"].(string)
+	flaky := map[string]any{"property": "tests", "state": "flaky", "runs": float64(11), "passes": float64(7), "failing_step": "test_timeout"}
+	args := map[string]any{"file_sha256": strings.Repeat("ef", 32), "command": "pytest -q", "environment": "linux",
+		"output_sha256": strings.Repeat("cd", 32), "checks": []map[string]any{flaky, {"property": "lint", "state": "pass"}}, "limits": "none"}
+	published := mustTool(t, s, "/mcp/t/"+token, "", "verify_publish", args)
+	id, _ := dig(published, "data", "verification", "id").(string)
+	read := mustTool(t, s, "/mcp", "", "read_verification", map[string]any{"id": id})
+	var http map[string]any
+	_ = json.Unmarshal(makeRequest(s, "GET", "/api/verifications/"+id, "", "").Body.Bytes(), &http)
+	for name, got := range map[string]any{"read_verification": dig(read, "data", "verification"), "http": dig(http, "data", "verification")} {
+		v, _ := got.(map[string]any)
+		checks, _ := v["checks"].([]any)
+		if v["result"] != "flaky" || v["flaky"] != float64(1) || v["passed"] != float64(1) || v["ran"] != float64(2) || len(checks) != 2 {
+			t.Fatalf("%s: %v", name, got)
+		}
+		first, _ := checks[0].(map[string]any)
+		for k, want := range flaky {
+			if first[k] != want {
+				t.Errorf("%s: checks[0].%s = %v, want %v", name, k, first[k], want)
+			}
+		}
+		if !strings.Contains(v["signed_payload"].(string), `\"runs\":11`) {
+			t.Errorf("%s: the signed payload lacks runs: %s", name, v["signed_payload"])
+		}
+	}
+	args["checks"] = []map[string]any{{"property": "tests", "state": "flaky"}}
+	if _, failure := callTool(t, s, "/mcp/t/"+token, "", "verify_publish", args); !strings.Contains(failure, "needs runs and passes") {
+		t.Fatalf("flaky without runs: %q", failure)
+	}
+	openapi := makeRequest(s, "GET", "/openapi.json", "", "").Body.String()
+	if !strings.Contains(openapi, `"verify.publish data checks entry"`) || !strings.Contains(openapi, `"verification_check_runs_maximum"`) {
+		t.Fatal("openapi's verify.publish data lacks the check entry")
+	}
+}

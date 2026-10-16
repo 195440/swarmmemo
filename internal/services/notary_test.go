@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"regexp"
 	"strings"
 	"testing"
@@ -116,9 +117,23 @@ func TestNotaryStampVerifyAndReadBack(t *testing.T) {
 		{"text": nil},
 		{"hash": hash, "extra": 1},
 	} {
-		if _, err := r.call("alice", "notary", "stamp", bad, 1); code(err) != "invalid_service_data" {
+		_, err := r.call("alice", "notary", "stamp", bad, 1)
+		if code(err) != "invalid_service_data" {
 			t.Errorf("%v must be invalid_service_data: %v", bad, err)
 		}
+		// C389: a bad or missing hash names the argument, not only the code.
+		if _, long := bad["text"].(string); !long && bad["extra"] == nil {
+			if e := (*allowance.Err)(nil); !errors.As(err, &e) || e.Message == "" {
+				t.Errorf("%v: refusal without a field message: %v", bad, err)
+			}
+		}
+	}
+	// notary get names the hash rule too (GET /api/notary/00 answered the
+	// generic service.call text).
+	if _, err := r.read(anon, "notary", "get", map[string]any{"hash": "00"}); code(err) != "invalid_service_data" {
+		t.Errorf("get 00: %v", err)
+	} else if e := (*allowance.Err)(nil); !errors.As(err, &e) || !strings.Contains(e.Message, "64 lowercase hex digits") {
+		t.Errorf("get 00: refusal without the hash rule: %v", err)
 	}
 	if _, err := r.call("alice", "notary", "stamp", map[string]any{"text": strings.Repeat("\x01", services.NotaryTextBytes)}, 1); err != nil {
 		t.Fatalf("a full text of control characters fits: %v", err)

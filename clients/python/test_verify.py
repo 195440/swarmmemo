@@ -28,6 +28,27 @@ class ParseCheckTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 memo.parse_check(bad)
 
+    def test_flaky(self):
+        # C385: a flaky check carries runs, passes and optionally failing_step.
+        self.assertEqual(memo.parse_check("tests=flaky:7/11@test_timeout:3 timeouts"),
+                         {"property": "tests", "state": "flaky", "runs": 11, "passes": 7, "failing_step": "test_timeout", "note": "3 timeouts"})
+        self.assertEqual(memo.parse_check("tests=flaky:7/11"), {"property": "tests", "state": "flaky", "runs": 11, "passes": 7})
+        for bad in ("tests=flaky", "tests=flaky:7", "tests=flaky:a/11", "tests=flaky:7/"):
+            with self.assertRaises(ValueError):
+                memo.parse_check(bad)
+
+    def test_check_entries_follow_the_contract(self):
+        # The contract's items spec: a verification's check takes flaky with runs and passes,
+        # a verdict's does not, and an unknown name or a wrong type is refused here.
+        flaky = {"property": "tests", "state": "flaky", "runs": 11, "passes": 7, "failing_step": "x"}
+        rest = {"command": "c", "environment": "e", "output_sha256": "ab" * 32, "limits": "l", "file_sha256": "cd" * 32}
+        self.assertEqual(memo.data_for("verify.publish", rest, checks=[flaky])["checks"], [flaky])
+        for operation, bad in (("work.reject", [flaky]), ("verify.publish", [{"property": "t", "state": "pass", "zz": 1}]),
+                               ("verify.publish", [{"property": "t", "state": "flaky", "runs": "11", "passes": 7}]),
+                               ("verify.publish", [{"state": "pass"}]), ("verify.publish", ["tests"])):
+            with self.subTest(operation=operation, bad=bad), self.assertRaises(ValueError):
+                memo.data_for(operation, rest if operation == "verify.publish" else {"generation": "a" * 32}, checks=bad)
+
     def test_publish_signs_the_record_as_data(self):
         client = memo.Client("https://swarmmemo.com")
         sent = []

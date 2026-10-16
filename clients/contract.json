@@ -166,6 +166,13 @@
       "not_checkable",
       "not_checked"
     ],
+    "verification_check_states": [
+      "pass",
+      "fail",
+      "not_checkable",
+      "not_checked",
+      "flaky"
+    ],
     "work_credit_states": [
       "held",
       "pending",
@@ -293,6 +300,8 @@
     "verdict_check_note_chars": 280,
     "verdict_check_tool_chars": 80,
     "verdict_checks_maximum": 16,
+    "verification_check_failing_step_chars": 200,
+    "verification_check_runs_maximum": 1000,
     "verification_data_bytes": 16384,
     "verifications_per_day": 50,
     "vouches_active": 256,
@@ -1277,7 +1286,43 @@
           "checks": {
             "type": "array",
             "required": false,
-            "limit": "verdict_checks_maximum"
+            "limit": "verdict_checks_maximum",
+            "items": {
+              "fields": {
+                "evidence": {
+                  "type": "string",
+                  "required": false,
+                  "limit": "verdict_check_evidence_chars"
+                },
+                "note": {
+                  "type": "string",
+                  "required": false,
+                  "limit": "verdict_check_note_chars"
+                },
+                "property": {
+                  "type": "string",
+                  "required": true,
+                  "pattern": "verdict_check_property"
+                },
+                "state": {
+                  "type": "string",
+                  "required": true,
+                  "enum": "verdict_check_states"
+                },
+                "subject_sha256": {
+                  "type": "string",
+                  "required": false,
+                  "pattern": "fingerprint"
+                },
+                "tool": {
+                  "type": "string",
+                  "required": false,
+                  "limit": "verdict_check_tool_chars"
+                }
+              },
+              "aliases": {},
+              "removed": {}
+            }
           },
           "kind": {
             "type": "string",
@@ -2550,7 +2595,57 @@
           "checks": {
             "type": "array",
             "required": true,
-            "limit": "verdict_checks_maximum"
+            "limit": "verdict_checks_maximum",
+            "items": {
+              "fields": {
+                "evidence": {
+                  "type": "string",
+                  "required": false,
+                  "limit": "verdict_check_evidence_chars"
+                },
+                "failing_step": {
+                  "type": "string",
+                  "required": false,
+                  "limit": "verification_check_failing_step_chars"
+                },
+                "note": {
+                  "type": "string",
+                  "required": false,
+                  "limit": "verdict_check_note_chars"
+                },
+                "passes": {
+                  "type": "int",
+                  "required": false
+                },
+                "property": {
+                  "type": "string",
+                  "required": true,
+                  "pattern": "verdict_check_property"
+                },
+                "runs": {
+                  "type": "int",
+                  "required": false,
+                  "limit": "verification_check_runs_maximum"
+                },
+                "state": {
+                  "type": "string",
+                  "required": true,
+                  "enum": "verification_check_states"
+                },
+                "subject_sha256": {
+                  "type": "string",
+                  "required": false,
+                  "pattern": "fingerprint"
+                },
+                "tool": {
+                  "type": "string",
+                  "required": false,
+                  "limit": "verdict_check_tool_chars"
+                }
+              },
+              "aliases": {},
+              "removed": {}
+            }
           },
           "command": {
             "type": "string",
@@ -2717,7 +2812,43 @@
           "checks": {
             "type": "array",
             "required": false,
-            "limit": "verdict_checks_maximum"
+            "limit": "verdict_checks_maximum",
+            "items": {
+              "fields": {
+                "evidence": {
+                  "type": "string",
+                  "required": false,
+                  "limit": "verdict_check_evidence_chars"
+                },
+                "note": {
+                  "type": "string",
+                  "required": false,
+                  "limit": "verdict_check_note_chars"
+                },
+                "property": {
+                  "type": "string",
+                  "required": true,
+                  "pattern": "verdict_check_property"
+                },
+                "state": {
+                  "type": "string",
+                  "required": true,
+                  "enum": "verdict_check_states"
+                },
+                "subject_sha256": {
+                  "type": "string",
+                  "required": false,
+                  "pattern": "fingerprint"
+                },
+                "tool": {
+                  "type": "string",
+                  "required": false,
+                  "limit": "verdict_check_tool_chars"
+                }
+              },
+              "aliases": {},
+              "removed": {}
+            }
           },
           "generation": {
             "type": "string",
@@ -2944,7 +3075,43 @@
           "checks": {
             "type": "array",
             "required": false,
-            "limit": "verdict_checks_maximum"
+            "limit": "verdict_checks_maximum",
+            "items": {
+              "fields": {
+                "evidence": {
+                  "type": "string",
+                  "required": false,
+                  "limit": "verdict_check_evidence_chars"
+                },
+                "note": {
+                  "type": "string",
+                  "required": false,
+                  "limit": "verdict_check_note_chars"
+                },
+                "property": {
+                  "type": "string",
+                  "required": true,
+                  "pattern": "verdict_check_property"
+                },
+                "state": {
+                  "type": "string",
+                  "required": true,
+                  "enum": "verdict_check_states"
+                },
+                "subject_sha256": {
+                  "type": "string",
+                  "required": false,
+                  "pattern": "fingerprint"
+                },
+                "tool": {
+                  "type": "string",
+                  "required": false,
+                  "limit": "verdict_check_tool_chars"
+                }
+              },
+              "aliases": {},
+              "removed": {}
+            }
           },
           "generation": {
             "type": "string",
@@ -3463,7 +3630,10 @@
       ],
       "optional": [
         "evidence",
+        "failing_step",
         "note",
+        "passes",
+        "runs",
         "subject_sha256",
         "tool"
       ]

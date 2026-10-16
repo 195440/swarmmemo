@@ -61,6 +61,9 @@ type DataField struct {
 	// RemovedIn is the release that stopped taking this field; it is
 	// refused like any unknown name.
 	RemovedIn string
+	// Items is an array field's entry, when each is an object of its own
+	// fields (a checks list's check, C385).
+	Items *DataSpec
 }
 
 // DataSpec is what an operation's data holds: a JSON object of Fields, or,
@@ -238,6 +241,17 @@ func (d DataSpec) with(fields ...string) DataSpec {
 	return d.checked()
 }
 
+// withItems sets array field name's entry spec.
+func (d DataSpec) withItems(name string, items DataSpec) DataSpec {
+	d.Fields = slices.Clone(d.Fields)
+	i := slices.IndexFunc(d.Fields, func(f DataField) bool { return f.Name == name })
+	if i < 0 || d.Fields[i].Type != DataArray {
+		panic("dataspec: withItems names no array field " + name)
+	}
+	d.Fields[i].Items = &items
+	return d
+}
+
 // rawSpec is data that is a string of shape, not a JSON object.
 func rawSpec(shape string) DataSpec { return DataSpec{Raw: shape} }
 
@@ -339,6 +353,20 @@ func workSpec(fields ...string) DataSpec {
 	return objectSpec(append(slices.Clone(workCommonData), fields...)...)
 }
 
+// A checks list's entry (C97, checks.go): verdictCheckItems where a verdict
+// carries one, verificationCheckItems in verify.publish, whose state may be
+// flaky with runs, passes and failing_step (C385). parseVerdictChecks reads
+// the names and the state enum from them.
+var (
+	verdictCheckFields = func(states string) []string {
+		return []string{"property! string pattern=verdict_check_property", "state! string enum=" + states, "subject_sha256 string pattern=fingerprint",
+			"tool string limit=verdict_check_tool_chars", "evidence string limit=verdict_check_evidence_chars", "note string limit=verdict_check_note_chars"}
+	}
+	verdictCheckItems      = objectSpec(verdictCheckFields("verdict_check_states")...)
+	verificationCheckItems = objectSpec(append(verdictCheckFields("verification_check_states"),
+		"runs int limit=verification_check_runs_maximum", "passes int", "failing_step string limit=verification_check_failing_step_chars")...)
+)
+
 // dataSpecs is every operation's data, keyed by operation name. An
 // operation whose Fields name data has an entry here, and only those
 // (TestDataSpecCoversEveryDataOperation).
@@ -373,10 +401,10 @@ var dataSpecs = map[string]DataSpec{
 		"nonce_log string", "nonce_log_size int", "observed_height int", "observed_time int"),
 	"identity.unlink": objectSpec("schema! int", "kind! string", "value! string"),
 	"identity.witness": objectSpec("schema! int", "agent! string pattern=fingerprint", "kind! string", "value! string", "nonce! string",
-		"verdict! string", "checks array limit=verdict_checks_maximum"),
+		"verdict! string", "checks array limit=verdict_checks_maximum").withItems("checks", verdictCheckItems),
 	"verify.publish": objectSpec("schema! int", "repo string", "commit string", "file string", "file_sha256 string pattern=fingerprint",
 		"command! string", "environment! string", "output_sha256! string pattern=fingerprint", "limits! string", "supersedes string",
-		"checks! array limit=verdict_checks_maximum"),
+		"checks! array limit=verdict_checks_maximum").withItems("checks", verificationCheckItems),
 	"standing.challenge": objectSpec("schema! int", "kind! string", "value string", "bits int", "action string", "usdc string",
 		"payment string", "id string", "tx_hash string pattern=tx_hash"),
 	"standing.work":  objectSpec("schema! int", "nonce! string", "solution! string"),
@@ -395,8 +423,8 @@ var dataSpecs = map[string]DataSpec{
 	"work.claim":        workSpec("result_sha256 string pattern=fingerprint", "payout_address string"),
 	"work.renew":        workSpec(),
 	"work.submit":       workSpec("result_sha256 string pattern=fingerprint", "payout_address string"),
-	"work.accept":       workSpec("result_sha256 string pattern=fingerprint", "checks array limit=verdict_checks_maximum", "tier string pattern=standing_tier", "review object"),
-	"work.reject":       workSpec("checks array limit=verdict_checks_maximum"),
+	"work.accept":       workSpec("result_sha256 string pattern=fingerprint", "checks array limit=verdict_checks_maximum", "tier string pattern=standing_tier", "review object").withItems("checks", verdictCheckItems),
+	"work.reject":       workSpec("checks array limit=verdict_checks_maximum").withItems("checks", verdictCheckItems),
 	"work.cancel":       workSpec(),
 	"work.settle":       workSpec("tx_hash! string pattern=tx_hash"),
 	"work.reviewer.set": workSpec("reviewer! string pattern=fingerprint"),

@@ -165,6 +165,15 @@ func TestVerificationRefusals(t *testing.T) {
 			d["checks"] = []map[string]any{{"property": "tests", "state": "pass", "note": "a\nb"}}
 		},
 		"file with spaces": func(d map[string]any) { d["file"] = " x" },
+		"flaky, no runs": func(d map[string]any) {
+			d["checks"] = []map[string]any{{"property": "tests", "state": "flaky", "passes": 7}}
+		},
+		"flaky, passes = runs": func(d map[string]any) {
+			d["checks"] = []map[string]any{{"property": "tests", "state": "flaky", "runs": 11, "passes": 11}}
+		},
+		"runs on a pass": func(d map[string]any) {
+			d["checks"] = []map[string]any{{"property": "tests", "state": "pass", "runs": 11, "passes": 7}}
+		},
 	} {
 		_, err := s.Execute(testContext, publishVerify(key, verifyRecord(change)), "test-origin")
 		var e *Error
@@ -193,6 +202,41 @@ func TestVerificationRefusals(t *testing.T) {
 	}
 	if sqlCount(t, s, "SELECT count(*) FROM verifications WHERE verifier=?", keyID(other)) != 1 {
 		t.Fatal("a retry published twice")
+	}
+}
+
+// C385: a flaky check is signed with its runs, passes and failing_step,
+// counted (flaky column and record), reads back unchanged, and alone counts
+// as a check that ran; a failure still makes the record failed.
+func TestVerificationFlaky(t *testing.T) {
+	s := openTest(t, Config{})
+	key := keyFor(46)
+	flaky := map[string]any{"property": "tests", "state": "flaky", "runs": 11, "passes": 7, "failing_step": "test_timeout"}
+	v := verificationOf(t, run(t, s, publishVerify(key, verifyRecord(func(d map[string]any) {
+		d["checks"] = []map[string]any{flaky, {"property": "lint", "state": "pass"}, {"property": "fuzz", "state": "not_checked"}}
+	}))))
+	if v.Result != "flaky" || v.Passed != 1 || v.Failed != 0 || v.Flaky != 1 || v.Ran != 2 ||
+		v.Checks[0] != (VerdictCheck{Property: "tests", State: CheckFlaky, Runs: 11, Passes: 7, FailingStep: "test_timeout"}) ||
+		!strings.Contains(v.SignedPayload, `\"runs\":11`) {
+		t.Fatalf("record %+v", v)
+	}
+	if sqlCount(t, s, "SELECT flaky FROM verifications WHERE id=?", v.ID) != 1 {
+		t.Fatal("the flaky column is not 1")
+	}
+	got := verificationOf(t, run(t, s, Command{Operation: "verify.get", Target: v.ID}))
+	if got.Result != "flaky" || got.Flaky != 1 || got.Checks[0] != v.Checks[0] {
+		t.Fatalf("read %+v", got)
+	}
+	only := verificationOf(t, run(t, s, publishVerify(key, verifyRecord(func(d map[string]any) {
+		d["checks"] = []map[string]any{flaky}
+		d["limits"] = "only the flaky suite"
+	}))))
+	failed := verificationOf(t, run(t, s, publishVerify(key, verifyRecord(func(d map[string]any) {
+		d["checks"] = []map[string]any{flaky, {"property": "lint", "state": "fail", "failing_step": "ruff"}}
+		d["limits"] = "also lint"
+	}))))
+	if only.Result != "flaky" || only.Ran != 1 || failed.Result != "failed" || failed.Flaky != 1 || failed.Checks[1].FailingStep != "ruff" {
+		t.Fatalf("flaky alone %+v, with a failure %+v", only, failed)
 	}
 }
 

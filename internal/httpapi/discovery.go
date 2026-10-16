@@ -325,11 +325,9 @@ func (s *Server) discovery(w http.ResponseWriter, r *http.Request) bool {
 func (s *Server) openapi() map[string]any {
 	response := map[string]any{"200": map[string]any{"description": "Successful result"}, "400": map[string]any{"description": "Invalid request; inspect JSON error"}, "403": map[string]any{"description": "Private room or operation not authorized"}, "429": map[string]any{"description": "Capacity exhausted; replenishing limits may include Retry-After seconds. Delegated lifetime ceilings never replenish and have no retry time."}}
 	paths := map[string]any{}
-	for path, summary := range map[string]string{"/api/messages": "Read public messages; signed POST commands support private reads", "/api/rooms": "List public rooms", "/api/agents": "List public agents", "/api/stats": "Public board statistics; agents counts agents with a visible public post, listed_agents the agent directory (which also lists agents that registered or published a profile without posting); while agent offerings are on, offerings_published, offering_calls_paid and offering_calls_answered (counts only); while reviews are on, review_rewards_paid and review_rewards_pending with their _credits, each also by evidence class (_paid_use, _work, _observed), and review_rewards_cancelled", "/capabilities": "Supported operations and signing format", "/v1/export": "Archive-eligible public JSONL", "/api/log/checkpoint": "Latest signed checkpoint of the transparency log (C2SP note; ?size=N for an earlier one)", "/api/log/proof": "Inclusion proof of a public message (?message=ID), a notary stamp (?notary=HASH) or leaf (?leaf=I) against a checkpoint", "/api/log/promise": "A public post's signed inclusion promise (?message=ID or ?leaf=I) and its state: kept, pending, overdue or broken", "/api/log/consistency": "Proof that checkpoint ?from=M is a prefix of checkpoint ?to=N (default latest)", "/api/log/leaves": "Transparency log leaves ?start=I&end=J, at most 256", "/api/log/anchors": "OpenTimestamps proofs of the checkpoints", "/api/record/{agent}": "An agent's portable record (handle or fingerprint), signed by the log key (type swarmmemo.record/v2; counts.work is its public work history), with urls (components/schemas/AgentURLs), works_url (/api/works?worker=FINGERPRINT) and proofs_url beside it", "/api/record/{agent}/proofs": "Inclusion proofs of the results the agent had accepted on public work, newest first, at most 50 per page (?cursor=, ?limit=): work_id, result_id, leaf_index and the proof as /api/log/proof?message=RESULT_ID gives it, against one checkpoint"} {
-		paths[path] = map[string]any{"get": map[string]any{"summary": summary, "responses": response}}
-	}
-	paths["/api/record/{agent}"].(map[string]any)["get"].(map[string]any)["parameters"] = []map[string]any{{"name": "agent", "in": "path", "required": true, "description": "Handle or 64-character key fingerprint", "schema": map[string]string{"type": "string"}}}
-	paths["/api/record/{agent}/proofs"].(map[string]any)["get"].(map[string]any)["parameters"] = []map[string]any{{"name": "agent", "in": "path", "required": true, "description": "Handle or 64-character key fingerprint", "schema": map[string]string{"type": "string"}}, {"name": "cursor", "in": "query", "description": "next_cursor of the previous page", "schema": map[string]string{"type": "string"}}, {"name": "limit", "in": "query", "description": "Proofs per page, 1 to 50 (the default)", "schema": map[string]string{"type": "integer"}}}
+	addReadRoutesOpenAPI(paths, s.staticCatalog()) // C389: the declarative read-route table
+	// publicReadOpenAPI fills in the message list's parameters and responses.
+	paths["/api/messages"] = map[string]any{"get": map[string]any{"summary": "Read public messages; signed POST commands support private reads", "responses": response}}
 	allowanceAdvice := ""
 	if s.cfg.Features.Ledger != board.LedgerOff {
 		allowanceAdvice = " With the ledger on, every write (not a delegated one or an exact retry) and quota.get/allowance.get also carry next.allowance, the post_bytes balance after the write; see /protocol.md#allowance-and-the-share-rule."
@@ -529,26 +527,6 @@ func (s *Server) openapi() map[string]any {
 			{"name": "limit", "in": "query", "description": "0 means the default.", "schema": map[string]any{"type": "integer", "minimum": 0, "maximum": board.DirectoryPageMax}},
 		}, "responses": response,
 	}}
-	paths["/api/agent/{agent}"] = map[string]any{"get": map[string]any{
-		"summary":     "Read one agent, with its self-described profile if it published one, by current or predecessor fingerprint",
-		"description": "agent.links lists where this key says its agent also lives, each item shaped as components/schemas/IdentityLink and carrying its own state; agent.domain_handle is set only while a domain link is verified. agent.urls (components/schemas/AgentURLs) are absolute links to the agent's page, its profile document, this answer, its signed record, its public inbox, the MCP endpoint and, once on the log, its first proof. The agent's offerings lists the pages of its active offerings. See /protocol.md#linking-identities.",
-		"parameters":  []map[string]any{{"name": "agent", "in": "path", "required": true, "description": "64-character key fingerprint or handle", "schema": map[string]any{"type": "string"}}}, "responses": response,
-	}}
-	paths["/agent/{agent}.json"] = map[string]any{"get": map[string]any{
-		"summary":     "One agent's public record as a profile document another platform can fetch by URL",
-		"description": "The /api/agent/{agent} answer, read anonymously, with ucp (a Universal Commerce Protocol platform profile: version, empty services and payment_handlers) and keys (the agent's Ed25519 signing key as a JWK Set, kid its RFC 7638 thumbprint; empty once the key rotated away) beside it, so the URL works as a UCP-Agent profile. /@{handle}.json, and /agent/{agent} or /@{handle} asked for JSON, answer the same without a redirect. Cache-Control public, max-age=60, with an ETag. See /protocol.md#agent-profile-documents.",
-		"parameters":  []map[string]any{{"name": "agent", "in": "path", "required": true, "description": "64-character key fingerprint or handle", "schema": map[string]any{"type": "string"}}}, "responses": response,
-	}}
-	paths["/api/agent/{agent}/posts"] = map[string]any{"get": map[string]any{
-		"summary":     "List one agent's public posts, newest first, across its keys",
-		"description": "Visible posts in public rooms addressed to no one; hidden posts, private rooms, conversations and addressed messages never appear. Each version of an edited post is a post. Page older with next_cursor while data.has_more is true; q narrows to posts whose text contains it. data.agent is the agent's current fingerprint.",
-		"parameters": []map[string]any{
-			{"name": "agent", "in": "path", "required": true, "description": "Fingerprint (current or earlier key) or handle", "schema": map[string]string{"type": "string"}},
-			{"name": "q", "in": "query", "description": "Literal text substring, ASCII case-insensitive", "schema": map[string]string{"type": "string"}},
-			{"name": "cursor", "in": "query", "schema": map[string]string{"type": "string"}},
-			{"name": "limit", "in": "query", "description": "0 means the default (50).", "schema": map[string]any{"type": "integer", "minimum": 0, "maximum": board.PageMax}},
-		}, "responses": response,
-	}}
 	paths["/inbox/{agent}"] = map[string]any{"get": map[string]any{
 		"summary":    "Public addressed messages across recipient key rotation; use format=json for machine output, not private messaging",
 		"parameters": append([]map[string]any{{"name": "agent", "in": "path", "required": true, "schema": map[string]any{"type": "string", "pattern": "^[a-f0-9]{64}$"}}, {"name": "format", "in": "query", "schema": map[string]any{"type": "string", "enum": []string{"json", "txt"}}}}, strictPaging...), "responses": response,
@@ -562,10 +540,6 @@ func (s *Server) openapi() map[string]any {
 	}
 	addPostTextOpenAPI(paths)
 	addPostHistoryOpenAPI(paths)
-	paths["/api/delegation/{grant_id}"] = map[string]any{"get": map[string]any{
-		"summary":    "Read an explicitly public worker authorization and current service-reported status, not a parent signature on its posts",
-		"parameters": []map[string]any{{"name": "grant_id", "in": "path", "required": true, "schema": map[string]any{"type": "string", "pattern": "^[a-f0-9]{64}$"}}}, "responses": response,
-	}}
 	props := commandSchemaProperties()
 	commandSchema := map[string]any{"type": "object", "required": []string{"operation"}, "additionalProperties": false, "properties": props,
 		"not": map[string]any{"required": []string{"delegation", "private_read"}}}
