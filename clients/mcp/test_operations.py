@@ -105,7 +105,8 @@ class OperationTests(unittest.TestCase):
                 "standing": {"seats": 10, "open": 7, "submitted": 3, "owed": 0, "paid": 12, "results": 15, "per_agent_day": 1, "day_max": 10, "opened_today": 2,
                              "tiers": [{"name": "bug", "credits": 2000, "usdc": "0.2"}, {"name": "bug+fix", "credits": 2000}], "usdc_day_max": "2",
                              "verdict_ttl": 259200, "results_until": 9, "results_max": 20},
-                "standing_id": "9" * 32, "tier": "bug+fix", "worker_subject": "agent:" + "8" * 64}
+                "standing_id": "9" * 32, "tier": "bug+fix", "worker_subject": "agent:" + "8" * 64,
+                "results": [{"result_id": "c" * 32, "work_id": "c" * 32, "worker": agent, "tier": "bug+fix", "rating": 77, "review_id": "d" * 32, "accepted_at": 5}]}
         self.assertEqual(set(work), op.WORK_REQUIRED | op.WORK_OPTIONAL, "add a sample for the new work field, then teach _work to validate it")
         self.assertEqual(op._work(self.profile, dict(work), "e" * 32), work)
         # C346: a full standing task says so; full is only ever true.
@@ -427,6 +428,12 @@ class OperationTests(unittest.TestCase):
                     {**verdict, "extra": 1}):
             with self.subTest(verdict=bad), self.assertRaisesRegex(BridgeError, "invalid_response"):
                 op._work(self.profile, {**work, "verdict_checks": bad})
+        # results: the work's accepted results (/protocol.md#work-results).
+        accepted = {"result_id": "c" * 32, "work_id": "c" * 32, "worker": {"id": fingerprint, "public_key": self.public}, "tier": "bug+fix", "rating": 77, "review_id": "d" * 32, "accepted_at": 5}
+        self.assertEqual(op._work(self.profile, {**work, "results": [accepted, {k: v for k, v in accepted.items() if k not in ("tier", "rating", "review_id")}]})["results"][0], accepted)
+        for bad in ([], [{**accepted, "rating": 101}], [{**accepted, "result_id": "x"}], [{**accepted, "extra": 1}], [{**accepted, "tier": "Bug"}], [accepted] * 51):
+            with self.subTest(results=bad), self.assertRaisesRegex(BridgeError, "invalid_response"):
+                op._work(self.profile, {**work, "results": bad})
 
     @unittest.skipUnless(os.environ.get("SWARMMEMO_MCP_TEST_BINARY"), "requires explicit disposable Go binary")
     def test_actual_go_public_work_lifecycle_exact_replay_and_inactive_status(self):

@@ -385,6 +385,20 @@ def _work(profile, work, expected=None):
                 or verdict["operation"] not in ("work.accept", "work.reject") or type(verdict["sequence"]) is not int or type(verdict["at"]) is not int
                 or not isinstance(verdict["author"], str) or not re.fullmatch(HEX64, verdict["author"]) or not _valid_checks(verdict["checks"])):
             raise BridgeError("invalid_response")
+    # results: each accepted result (Go WorkAcceptedResult), newest first.
+    if "results" in work:
+        results = work["results"]
+        fields = memo.struct_fields("work_result")
+        if not isinstance(results, list) or not 1 <= len(results) <= 50: raise BridgeError("invalid_response")
+        for item in results:
+            if (not isinstance(item, dict) or set(item) - fields
+                    or any(not isinstance(item.get(name), str) or not re.fullmatch(HEX32, item[name]) for name in ("result_id", "work_id"))
+                    or not isinstance(item.get("worker"), dict) or not isinstance(item["worker"].get("id"), str) or not re.fullmatch(HEX64, item["worker"]["id"])
+                    or type(item.get("accepted_at")) is not int
+                    or ("tier" in item and (not isinstance(item["tier"], str) or not re.fullmatch(STANDING_TIER, item["tier"])))
+                    or ("rating" in item and (type(item["rating"]) is not int or not 0 <= item["rating"] <= 100))
+                    or ("review_id" in item and (not isinstance(item["review_id"], str) or not re.fullmatch(HEX32, item["review_id"])))):
+                raise BridgeError("invalid_response")
     if work["room"] != profile.room: raise BridgeError("scope_mismatch")
     if expected and work["id"] != expected and work.get("resolved_from") != expected: raise BridgeError("invalid_response")
     for name in ("id", "generation", "service_generation"):

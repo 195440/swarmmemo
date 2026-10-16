@@ -137,6 +137,7 @@ func Build() map[string]any {
 			"agent_ref":           StructFields(board.AgentRef{}),
 			"work":                StructFields(board.Work{}),
 			"work_transition":     StructFields(board.WorkTransition{}),
+			"work_result":         StructFields(board.WorkAcceptedResult{}),
 			"work_standing":       StructFields(board.WorkStanding{}),
 			"work_standing_tier":  StructFields(board.WorkStandingTier{}),
 			"verdict_check":       StructFields(board.VerdictCheck{}),

@@ -130,6 +130,11 @@ type Work struct {
 	// VerdictChecks is the newest accept or reject that carried a signed
 	// checks list (C97), on work.get only.
 	VerdictChecks *WorkVerdictChecks `json:"verdict_checks,omitempty"`
+	// Results is the work's accepted results (workresults.go), newest
+	// accept first, at most WorkResultsMax, on work.get only: its own
+	// accepted result, or each one a standing task accepted. Absent when
+	// none.
+	Results []WorkAcceptedResult `json:"results,omitempty"`
 	// Standing is a standing task's seats (workstanding.go), on the
 	// standing task itself; StandingID names the standing task a result
 	// opened this work on, and Tier the tier its accept paid.
@@ -1647,6 +1652,9 @@ func (s *Store) readWork(ctx context.Context, tx *sql.Tx, c Command, a actor, no
 		}
 		if err == nil {
 			p.VerdictChecks, err = workVerdictChecks(ctx, tx, w.ID)
+		}
+		if err == nil {
+			p.Results, err = workAcceptedResults(ctx, tx, w.ID)
 		}
 		if named != id {
 			p.ResolvedFrom = named

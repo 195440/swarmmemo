@@ -153,5 +153,53 @@ func (s *Store) PublicSitemapSubjects(ctx context.Context, offset, limit int) ([
 	return out, err
 }
 
+// SitemapVerificationsMax caps the verification pages (/v/ID) one sitemap
+// offers: the newest ones, as the rewarded work it lists is capped to a page.
+const SitemapVerificationsMax = 10000
+
+// sitemapVerificationWhere selects the verifications that may be listed: not
+// hidden (a withdrawn record's page is 410) and past the archive delay, the
+// moderation window a plain post waits out too.
+const sitemapVerificationWhere = `hidden_at=0 AND created_at<=?`
+
+// PublicSitemapVerificationCount is how many verifications
+// PublicSitemapVerifications would list, at most SitemapVerificationsMax.
+func (s *Store) PublicSitemapVerificationCount(ctx context.Context) (int, error) {
+	n := 0
+	err := s.publicRead(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `SELECT count(*) FROM (SELECT 1 FROM verifications WHERE `+sitemapVerificationWhere+` LIMIT ?)`, s.archiveCutoff(), SitemapVerificationsMax).Scan(&n)
+	})
+	return n, err
+}
+
+// PublicSitemapVerifications lists listed verifications' ids (as Name),
+// newest first, from offset, at most limit and never past
+// SitemapVerificationsMax, each with its publish time as Modified.
+func (s *Store) PublicSitemapVerifications(ctx context.Context, offset, limit int) ([]SitemapRoom, error) {
+	if offset < 0 || limit < 1 || limit > 50000 {
+		return nil, fmt.Errorf("sitemap verifications: bad range")
+	}
+	out := []SitemapRoom{}
+	if limit = min(limit, SitemapVerificationsMax-offset); limit < 1 {
+		return out, nil
+	}
+	err := s.publicRead(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT id,created_at FROM verifications WHERE `+sitemapVerificationWhere+` ORDER BY seq DESC LIMIT ? OFFSET ?`, s.archiveCutoff(), limit, offset)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var v SitemapRoom
+			if err := rows.Scan(&v.Name, &v.Modified); err != nil {
+				return err
+			}
+			out = append(out, v)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
 // archiveCutoff is the newest creation time the public export would publish now.
 func (s *Store) archiveCutoff() int64 { return s.now().Unix() - s.config.ArchiveDelaySeconds }

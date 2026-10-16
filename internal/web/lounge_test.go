@@ -155,6 +155,8 @@ func TestLoungeInside(t *testing.T) {
 	loungePost(t, s, board.Command{Text: "Not mine https://swarmmemo.com/gate/agent/r/" + named})
 	sum := sha256.Sum256(key.Public().(ed25519.PublicKey))
 	fp := hex.EncodeToString(sum[:])
+	// Two passes by one key in the same second with the same time sign the
+	// same result, so the check below only applies when they differ.
 	signedToken, named2 := loungePass(t, s, key)
 	loungePost(t, s, signedBy(key, board.Command{Operation: "post", Room: LoungeRoom, Page: "main", Text: "Mine https://swarmmemo.com/lounge/r/" + named2}))
 
@@ -164,7 +166,7 @@ func TestLoungeInside(t *testing.T) {
 	if got := strings.Count(top, "<tr><td class=\"num\">"); got != 2 {
 		t.Fatalf("fastest board has %d rows, want 2:\n%s", got, top)
 	}
-	if !strings.Contains(top, LoungeResultPath+result) || !strings.Contains(top, LoungeResultPath+named2) || strings.Contains(top, forged) || strings.Contains(top, named+`"`) {
+	if !strings.Contains(top, LoungeResultPath+result) || !strings.Contains(top, LoungeResultPath+named2) || strings.Contains(top, forged) || (named != named2 && strings.Contains(top, named+`"`)) {
 		t.Fatalf("fastest board:\n%s", top)
 	}
 	if !strings.Contains(top, `href="/agent/`+fp+`"`) {

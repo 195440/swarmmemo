@@ -327,8 +327,8 @@ func TestMCPFindWorkCompactByDefault(t *testing.T) {
 // C302: a standing task's open seats have one name on every surface,
 // standing.open, read from the Go fields that carry it (board.Work.Standing,
 // board.WorkStandingSeats.Open): the find_work compact row and description,
-// the docs and the clients. seats_open survives only as the documented
-// deprecated alias for one release.
+// the docs and the clients. The pre-C302 alias seats_open was removed after
+// 1.109; PROTOCOL.md says so, and the compact row no longer carries it.
 func TestStandingOpenSeatsOneName(t *testing.T) {
 	tag := func(v any, field string) string {
 		t.Helper()
@@ -346,7 +346,7 @@ func TestStandingOpenSeatsOneName(t *testing.T) {
 	}
 
 	// The compact row carries the seat summary under read_work's names,
-	// plus the deprecated alias with the same number.
+	// and not the removed alias.
 	full := &board.WorkStanding{WorkStandingSeats: board.WorkStandingSeats{Seats: 10, Open: 3, Submitted: 4, Owed: 1, Paid: 2, PerAgentDay: 1, Full: true}, Results: 9, DayMax: 10}
 	result := board.Result{Data: map[string]any{"works": []board.Work{{ID: strings.Repeat("a", 32), Standing: full}}, "has_more": false, "standing": full}}
 	if err := compactWorks(&result, "https://swarmmemo.com"); err != nil {
@@ -364,7 +364,7 @@ func TestStandingOpenSeatsOneName(t *testing.T) {
 	seats, _ := row[standing].(map[string]any)
 	keys := slices.Sorted(maps.Keys(seats))
 	want := slices.Sorted(slices.Values(board.WorkStandingSeatNames()))
-	if !slices.Equal(keys, want) || seats[open] != float64(3) || row["seats_open"] != float64(3) {
+	if !slices.Equal(keys, want) || seats[open] != float64(3) || row["seats_open"] != nil {
 		t.Fatalf("compact row %v, want standing keys %v", row, want)
 	}
 	// The list's own summary passes through compaction whole: the
@@ -385,7 +385,7 @@ func TestStandingOpenSeatsOneName(t *testing.T) {
 	}
 
 	// Docs and clients say standing.open; seats_open appears once, as the
-	// deprecated alias, in PROTOCOL.md, and nowhere else.
+	// removed alias, in PROTOCOL.md, and nowhere else.
 	for _, path := range []string{"../../docs/PROTOCOL.md", "../../docs/TOOLS_WORK.md", "../../clients/python/swarmmemo.py", "../../clients/javascript/swarmmemo.mjs", "../../clients/mcp/operations.py"} {
 		src, err := os.ReadFile(path)
 		if err != nil {
@@ -394,8 +394,8 @@ func TestStandingOpenSeatsOneName(t *testing.T) {
 		text := string(src)
 		aliases := strings.Count(text, "seats_open")
 		if path == "../../docs/PROTOCOL.md" {
-			if aliases != 1 || !strings.Contains(text, "`seats_open` is a deprecated alias of `"+canonical+"`") {
-				t.Errorf("%s: seats_open must appear once, as the deprecated alias of %s", path, canonical)
+			if aliases != 1 || !strings.Contains(text, "`seats_open` was an alias of `"+canonical+"`") {
+				t.Errorf("%s: seats_open must appear once, as the removed alias of %s", path, canonical)
 			}
 		} else if aliases != 0 {
 			t.Errorf("%s names seats_open; the name is %s", path, canonical)

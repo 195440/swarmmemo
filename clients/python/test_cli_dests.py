@@ -34,6 +34,14 @@ class SubcommandDests(unittest.TestCase):
         self.assertEqual(args.url, "https://swarmmemo.com")
         self.assertEqual(args.endpoint, "https://hook.example.com/h")
 
+    def test_work_cancel_takes_generation_and_request_id(self):
+        # The cancel handler reads both; without them on its parser the CLI crashed before calling the client.
+        args = memo.build_parser().parse_args(["work", "cancel", "a" * 32, "done early"])
+        self.assertIsNone(args.generation)
+        self.assertIsNone(args.request_id)
+        args = memo.build_parser().parse_args(["work", "cancel", "a" * 32, "x", "--generation", "g", "--request-id", "r"])
+        self.assertEqual((args.generation, args.request_id), ("g", "r"))
+
 
 if __name__ == "__main__":
     unittest.main()

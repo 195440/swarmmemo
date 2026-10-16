@@ -2022,6 +2022,7 @@
         "result_changed_since_submit",
         "result_id",
         "result_sha256",
+        "results",
         "reviewer",
         "reviewer_fee",
         "reward",
@@ -2035,6 +2036,19 @@
         "verdict_checks",
         "worker",
         "worker_subject"
+      ]
+    },
+    "work_result": {
+      "required": [
+        "accepted_at",
+        "result_id",
+        "work_id",
+        "worker"
+      ],
+      "optional": [
+        "rating",
+        "review_id",
+        "tier"
       ]
     },
     "work_standing": {

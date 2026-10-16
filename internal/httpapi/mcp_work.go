@@ -209,9 +209,6 @@ type compactWork struct {
 	// standing task a result opened this task on.
 	Standing   *board.WorkStandingSeats `json:"standing,omitempty"`
 	StandingID string                   `json:"standing_id,omitempty"`
-	// SeatsOpen is standing.open under its pre-C302 name. Deprecated:
-	// kept for one release (1.109.x), removed after; PROTOCOL.md says so.
-	SeatsOpen *int64 `json:"seats_open,omitempty"`
 	URL       string `json:"url"`
 }
 
@@ -242,7 +239,7 @@ func compactWorks(result *board.Result, origin string) error {
 		row := compactWork{ID: w.ID, Title: w.Title, State: w.State, RewardNote: w.RewardNote, Eligibility: w.Eligibility, Eligible: w.Eligible, EligibleReason: w.EligibleReason, Deadline: w.Deadline, StandingID: w.StandingID, URL: origin + "/work/" + w.ID}
 		if w.Standing != nil {
 			seats := w.Standing.WorkStandingSeats
-			row.Standing, row.SeatsOpen = &seats, &seats.Open
+			row.Standing = &seats
 		}
 		if w.Reward != nil {
 			row.Reward = &compactWorkReward{Amount: w.Reward.Amount, Unit: w.Reward.Unit, State: w.Reward.State}

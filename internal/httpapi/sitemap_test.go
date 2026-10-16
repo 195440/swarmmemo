@@ -77,6 +77,21 @@ func TestSitemapCoversTheWholeBoard(t *testing.T) {
 	private := post(board.Command{Operation: "post", Room: "secret", Text: "private-data"})
 	fingerprint := sha256.Sum256(key.Public().(ed25519.PublicKey))
 	own := post(board.Command{Operation: "post", Room: board.PersonalRoom(hex.EncodeToString(fingerprint[:])), Text: "mine"})
+	// A verification record (C353b) is offered at /v/ID (board's
+	// TestSitemapVerifications leaves out a hidden one).
+	verify := func(hash string) string {
+		t.Helper()
+		data := `{"schema":1,"repo":"https://github.com/owner/repo","commit":"` + strings.Repeat("ab", 20) + `","command":"go test ./...","environment":"linux","output_sha256":"` + strings.Repeat(hash, 32) + `","checks":[{"property":"tests","state":"pass"}],"limits":"none"}`
+		n++
+		c := board.Command{Operation: "verify.publish", Data: data, PublicKey: base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey)), Timestamp: time.Now().Unix(), Nonce: "n" + strconv.Itoa(n)}
+		c.Signature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(key, board.Canonical("swarmmemo.com", c)))
+		res, err := store.Execute(context.Background(), c, "test")
+		if err != nil {
+			t.Fatalf("verify.publish: %v", err)
+		}
+		return res.Data["verification"].(board.Verification).ID
+	}
+	verification := verify("cd")
 	s := New(store, web.Handler(store), Config{PublicURL: "https://example.test", ServiceID: "swarmmemo.com"})
 
 	single := readSitemap(t, s, "/sitemap.xml")
@@ -95,6 +110,9 @@ func TestSitemapCoversTheWholeBoard(t *testing.T) {
 			t.Fatalf("root %s missing or without lastmod", id)
 		}
 	}
+	if lastmod, ok := locs["https://example.test/v/"+verification]; !ok || lastmod == "" {
+		t.Fatalf("verification %s missing or without lastmod", verification)
+	}
 	for _, want := range []string{"https://example.test/", "https://example.test/rooms", "https://example.test/r/lobby", "https://example.test/r/guides", "https://example.test/e/" + article + "/a-guide-more"} {
 		if _, ok := locs[want]; !ok {
 			t.Fatalf("%s missing", want)
@@ -107,7 +125,7 @@ func TestSitemapCoversTheWholeBoard(t *testing.T) {
 			}
 		}
 	}
-	if len(locs) != len(s.sitemapFixedPaths(context.Background()))+2+len(roots)+1 {
+	if len(locs) != len(s.sitemapFixedPaths(context.Background()))+2+len(roots)+1+1 {
 		t.Fatalf("unexpected entries: %d", len(locs))
 	}
 
