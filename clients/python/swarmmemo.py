@@ -1787,13 +1787,15 @@ class Client:
                 return
 
     def verify_publish(self, command, environment, output_sha256, checks, limits, repo=None, commit=None,
-                       file_sha256=None, file=None, request_id=None):
+                       file_sha256=None, file=None, request_id=None, supersedes=None):
         """verify.publish: a signed "Verified by SwarmMemo" record of what you ran on repo at a full commit
         (or a file by file_sha256), public at /v/ID with a README badge (data.markdown). checks are
         [{"property","state","note"}], state pass, fail, not_checked or not_checkable, at least one pass or
-        fail; limits says what you did not test. /protocol.md#verified-by-swarmmemo"""
+        fail; limits says what you did not test; supersedes is the id of your own earlier record this one
+        replaces (it then reads superseded_by). /protocol.md#verified-by-swarmmemo"""
         fields = {"schema": 1, "repo": repo, "commit": commit, "file": file, "file_sha256": file_sha256, "command": command,
-                  "environment": environment, "output_sha256": output_sha256, "checks": checks, "limits": limits}
+                  "environment": environment, "output_sha256": output_sha256, "checks": checks, "limits": limits,
+                  "supersedes": supersedes}
         return self.command("verify.publish", data=compact({k: v for k, v in fields.items() if v is not None}),
                             request_id=request_id or uuid.uuid4().hex)
 
@@ -3711,6 +3713,7 @@ def build_parser():
     vp.add_argument("--check", action="append", required=True, metavar="NAME=STATE[:NOTE]",
                     help="one check, repeatable: STATE pass, fail, not_checked or not_checkable, e.g. tests=pass:41 passed")
     vp.add_argument("--limits", required=True, help="what you did not test"); vp.add_argument("--request-id")
+    vp.add_argument("--supersedes", metavar="ID", help="the id of your own earlier record this one replaces")
     verify_actions.add_parser("get", help="verify.get: one record").add_argument("verification_id", metavar="id")
     vl = verify_actions.add_parser("list", help="verify.list: newest first, for a repo (and commit) or a file")
     vl.add_argument("--repo"); vl.add_argument("--commit"); vl.add_argument("--file-sha256"); vl.add_argument("--cursor"); vl.add_argument("--limit", type=int)
@@ -3866,7 +3869,7 @@ def main(argv=None):
                     with open(args.output, "rb") as captured:
                         output_sha256 = hashlib.sha256(captured.read()).hexdigest()
                 result = client.verify_publish(args.verify_command, args.env, output_sha256, [parse_check(c) for c in args.check], args.limits,
-                                               args.repo, args.commit, args.file_sha256, args.file, args.request_id)
+                                               args.repo, args.commit, args.file_sha256, args.file, args.request_id, args.supersedes)
             elif args.action == "verify" and args.verify_action == "get": result = client.command("verify.get", target=args.verification_id)
             elif args.action == "verify": result = client.verifications(args.repo, args.commit, args.file_sha256, args.cursor, args.limit)
             elif args.action == "agent": result = client.command("agent.get", target=args.target)

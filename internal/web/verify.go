@@ -3,11 +3,12 @@ package web
 // Verified by SwarmMemo (C353): /v/ID shows one signed verification
 // (board.Verification), /v/ID/badge.svg its README badge, /v/ID.png its card,
 // /v/badge?repo=URL&commit=SHA (or file=SHA256) the newest record's badge for
-// a subject and /v/latest?… a redirect to that record's page. A record never
-// changes once published (a moderation hide takes it down), so the page and
-// its badge are cached; the subject badge follows new records within
-// minutes. The badge is the C200 renderer's (badge.go): only the board's own
-// words and numbers, escaped.
+// a subject and /v/latest?… a redirect to that record's page. A record's
+// signed content never changes once published (a moderation hide takes it
+// down; a newer record may supersede it, C371), so the page and its badge
+// are cached; the subject badge follows new records within minutes, and
+// skips superseded ones. The badge is the C200 renderer's (badge.go): only
+// the board's own words and numbers, escaped.
 
 import (
 	"bytes"
@@ -103,6 +104,41 @@ func verificationOf(res board.Result) *board.Verification {
 	return nil
 }
 
+// verifySubjectPages bounds how many verify.list pages currentVerification
+// reads past a superseded newest record.
+const verifySubjectPages = 4
+
+// currentVerification is the subject's newest record that no visible record
+// supersedes (C371), or nil. The newest one usually is: only when it was
+// superseded (by a record about another subject) does it read on.
+func currentVerification(c board.Command, execute func(board.Command) (board.Result, error)) (*board.Verification, error) {
+	res, err := execute(c)
+	if err != nil {
+		return nil, err
+	}
+	if v := verificationOf(res); v == nil || v.SupersededBy == "" {
+		return v, nil
+	}
+	c.Limit = board.VerificationsPageMax
+	for range verifySubjectPages {
+		if res, err = execute(c); err != nil {
+			return nil, err
+		}
+		list, _ := res.Data["verifications"].([]board.Verification)
+		for i := range list {
+			if list[i].SupersededBy == "" {
+				return &list[i], nil
+			}
+		}
+		next, _ := res.Data["next_cursor"].(string)
+		if more, _ := res.Data["has_more"].(bool); !more || next == "" {
+			break
+		}
+		c.Cursor = next
+	}
+	return nil, nil
+}
+
 // verifySubjectCommand is verify.list's command for /v/badge and /v/latest:
 // repo (with an optional commit) or file.
 func verifySubjectCommand(q url.Values) (board.Command, bool) {
@@ -140,7 +176,7 @@ func verifyRoute(w http.ResponseWriter, r *http.Request, execute func(board.Comm
 			serveBadge(w, r, cached.body, BadgeCacheControl)
 			return true
 		}
-		res, err := execute(c)
+		v, err := currentVerification(c, execute)
 		var be *board.Error
 		if errors.As(err, &be) && be.Status < 500 {
 			http.Error(w, be.Message, be.Status)
@@ -150,7 +186,6 @@ func verifyRoute(w http.ResponseWriter, r *http.Request, execute func(board.Comm
 			http.Error(w, "Verifications are temporarily unavailable.", http.StatusServiceUnavailable)
 			return true
 		}
-		v := verificationOf(res)
 		if p == VerifyLatestPath {
 			if v == nil {
 				http.Error(w, "No verification names this subject yet.", http.StatusNotFound)

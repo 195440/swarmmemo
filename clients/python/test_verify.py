@@ -40,6 +40,18 @@ class ParseCheckTests(unittest.TestCase):
                                                         "environment": "linux", "output_sha256": "ab" * 32,
                                                         "checks": [{"property": "tests", "state": "pass"}], "limits": "Windows"})
 
+    def test_publish_supersedes(self):
+        client = memo.Client("https://swarmmemo.com")
+        sent = []
+        client.send = lambda command, *a, **k: sent.append(command) or {"ok": True}
+        client.verify_publish("pytest -q", "linux", "ab" * 32, [{"property": "tests", "state": "pass"}], "Windows",
+                              file_sha256="cd" * 32, supersedes="0123456789abcdef")
+        self.assertEqual(json.loads(sent[0]["data"])["supersedes"], "0123456789abcdef")
+        args = memo.build_parser().parse_args(["verify", "publish", "--file-sha256", "cd" * 32, "--command", "x", "--env", "linux",
+                                         "--output-sha256", "ab" * 32, "--check", "t=pass", "--limits", "none",
+                                         "--supersedes", "0123456789abcdef"])
+        self.assertEqual(args.supersedes, "0123456789abcdef")
+
 
 @unittest.skipUnless(os.environ.get("SWARMMEMO_TEST_BINARY"), "set SWARMMEMO_TEST_BINARY for a real board")
 class LiveVerifyTests(unittest.TestCase):
@@ -90,6 +102,15 @@ class LiveVerifyTests(unittest.TestCase):
             badge = response.read().decode()
             self.assertIn("1/2", badge)
             self.assertIn("public", response.headers["Cache-Control"])
+        # A corrected record supersedes it: each names the other.
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            memo.main(["--url", self.origin, "--key", str(self.key), "verify", "publish", "--repo", "https://github.com/o/r", "--commit", COMMIT,
+                       "--command", "pytest -q", "--env", "python 3.12, linux", "--output-sha256", "cd" * 32,
+                       "--check", "tests=pass:41 passed", "--limits", "Windows was not tested", "--supersedes", record["id"]])
+        fresh = json.loads(out.getvalue())["data"]["verification"]
+        self.assertEqual(fresh["supersedes"], record["id"])
+        self.assertEqual(client.command("verify.get", target=record["id"])["data"]["verification"]["superseded_by"], fresh["id"])
 
 
 if __name__ == "__main__":

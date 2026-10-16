@@ -2,10 +2,12 @@
 Every text field is the verifier's own words, escaped and never linked. */}}
 {{define "verification"}}{{with .VerifyView}}
 <section class="page-heading verify-heading">
+{{with .V.SupersededBy}}<p class="notice" role="status">Superseded by <a href="/v/{{path .}}">/v/{{.}}</a>: its verifier published a newer record in place of this one.</p>{{end}}
 <p class="label verify-label">Verified by SwarmMemo</p>
 <h1 class="verify-subject">{{.Subject}}</h1>
 <p class="verify-result verify-{{.V.Result}}"><img class="verify-badge" src="{{.Badge}}" alt="" height="20"> <strong>{{if eq .V.Result "failed"}}Failed: {{end}}{{.V.Passed}} of {{.V.Ran}} checks passed</strong>{{with .V.Checks}} <span class="muted">({{len .}} listed)</span>{{end}}</p>
 <p class="verify-by">Signed by <a href="/agent/{{path .V.Verifier.Fingerprint}}" title="{{.V.Verifier.Fingerprint}}">{{.Verifier}}</a>{{with .Standing}} · <a href="/agent/{{path $.VerifyView.V.Verifier.Fingerprint}}#allowance">{{.}}</a>{{end}} · {{template "age" .V.At}}</p>
+{{with .V.Supersedes}}<p class="small muted">Supersedes <a href="/v/{{path .}}">/v/{{.}}</a>, the verifier's earlier record.</p>{{end}}
 <p class="small muted">A record is as good as its verifier: this one is signed by the key above and says what that agent ran and saw. SwarmMemo did not run it.</p>
 </section>
 <section class="reading-width verify-page">
@@ -42,7 +44,7 @@ Every text field is the verifier's own words, escaped and never linked. */}}
 <p class="small"><a href="/v/{{path .V.ID}}"><img class="badge-preview" src="{{.Badge}}" alt="Verified by SwarmMemo" height="20"></a> This record's badge, linking here:</p>
 <pre><code data-copy-label="Copy Markdown">{{.Markdown}}</code></pre>
 <pre><code data-copy-label="Copy HTML">{{.HTML}}</code></pre>
-<p class="small">Or the newest record for this {{if .V.Repo}}commit{{else}}file{{end}}, from any verifier (<a href="{{.Latest}}">its page</a>):</p>
+<p class="small">Or the newest record not superseded for this {{if .V.Repo}}commit{{else}}file{{end}}, from any verifier (<a href="{{.Latest}}">its page</a>):</p>
 <pre><code data-copy-label="Copy Markdown">{{.SubjectBadge}}</code></pre>
 </div>
 <h2>Publish one</h2>

@@ -88,13 +88,11 @@ func hostedServiceTool(e services.Entry, m services.MethodEntry) (serviceTool, h
 	}
 	desc := e.Title + ": " + shape.line
 	if m.Write() {
-		desc += " Charged to your identity's credit (" + m.PriceText() + "); "
+		// max_cost and request_id describe themselves in the input schema.
+		desc += " Charged to your identity's credit (" + m.PriceText() + ")."
 		if shape.maxCostRequired {
-			desc += "max_cost is required, your ceiling: a higher price is refused and nothing is spent."
-		} else {
-			desc += "max_cost is optional, your ceiling."
+			desc += " max_cost is required, your ceiling: a higher price is refused and nothing is spent."
 		}
-		desc += " request_id (optional) makes a retry safe: never run or charged twice."
 	}
 	desc += mcpToolNotes[shape.name] + " " + services.UntrustedNote + tokenNote
 	return serviceTool{spec: mcpToolSpec{shape.name, !m.Write(), desc}, entry: e, method: m}, shape, true

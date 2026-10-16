@@ -29,9 +29,16 @@ import (
 // for gate_solve, the SwarmMemo Gate (about 0.8 KB on each, kept terse).
 // C353 raised every profile by 3.4 KB for read_verification and
 // verify_publish (its checks schema) and the checks note (about 3.3 KB).
+// C368 (2026-10-16): after C366 /mcp measured 132,099 of 132,100, so the
+// descriptions shed what is said elsewhere: the hosted-identity note is
+// "Needs a hosted identity (create_identity)" (the server instructions and
+// create_identity say how to reconnect), and max_cost and request_id are
+// no longer restated where their input schema already describes them.
+// Measured after: /mcp 127,609, core 96,405, assistant 91,080; each budget
+// keeps about 2 KB of headroom, so a small addition fits.
 var mcpToolsListBudget = map[string]int{
-	"/mcp":               132_100,
-	mcpProfileCore:       99_500,
+	"/mcp":               130_000,
+	mcpProfileCore:       98_500,
 	web.AssistantMCPPath: 93_500,
 }
 

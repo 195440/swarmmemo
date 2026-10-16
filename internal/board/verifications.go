@@ -14,7 +14,11 @@ package board
 // one trust run's.
 //
 // Records are public, immutable and never deleted; the moderation screen
-// (moderationwire.go) may hide one, which keeps the row and says why.
+// (moderationwire.go) may hide one, which keeps the row and says why. A
+// verifier corrects a record by publishing a new one whose signed data
+// names it in supersedes (C371): the old record stays, marked superseded_by
+// the new one, and a subject's badge follows the newest record not
+// superseded.
 
 import (
 	"bytes"
@@ -54,6 +58,24 @@ CREATE INDEX IF NOT EXISTS verifications_file ON verifications(file_sha256,seq);
 CREATE INDEX IF NOT EXISTS verifications_by ON verifications(account,created_at);
 `
 
+// migrateVerificationSupersedes43 adds verifications.supersedes (schema 43,
+// C371): the id of the verifier's own earlier record this one replaces,
+// copied from its signed data, empty for none; and its index, so a record's
+// superseded_by is one lookup.
+func migrateVerificationSupersedes43(tx *sql.Tx) error {
+	var exists int
+	if err := tx.QueryRow("SELECT count(*) FROM pragma_table_info('verifications') WHERE name='supersedes'").Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		if _, err := tx.Exec("ALTER TABLE verifications ADD COLUMN supersedes TEXT NOT NULL DEFAULT ''"); err != nil {
+			return err
+		}
+	}
+	_, err := tx.Exec("CREATE INDEX IF NOT EXISTS verifications_supersedes ON verifications(supersedes) WHERE supersedes<>''")
+	return err
+}
+
 const (
 	// VerificationsPerDay bounds verify.publish per account per UTC day.
 	VerificationsPerDay = 50
@@ -91,7 +113,7 @@ var (
 func ValidVerificationID(id string) bool { return verificationIDRE.MatchString(id) }
 
 // VerificationRule is the whole data rule, the tail of every refusal.
-var VerificationRule = fmt.Sprintf(`verify.publish data is a strict JSON object {"schema":1,"repo","commit","file","file_sha256","command","environment","output_sha256","checks","limits"}, at most %d bytes: the subject is repo (an https URL, at most %d bytes) with commit (the full 40 or 64 lowercase hex), or file_sha256 (64 lowercase hex), or both; file (a path or name, at most %d characters) is optional; command (at most %d characters), environment (what it ran on, at most %d) and limits (what was not tested, at most %d) are text and may span lines; output_sha256 is the SHA-256 of the output you captured; checks is 1 to %d checks of which at least one is pass or fail. `,
+var VerificationRule = fmt.Sprintf(`verify.publish data is a strict JSON object {"schema":1,"repo","commit","file","file_sha256","command","environment","output_sha256","checks","limits","supersedes"}, at most %d bytes: the subject is repo (an https URL, at most %d bytes) with commit (the full 40 or 64 lowercase hex), or file_sha256 (64 lowercase hex), or both; file (a path or name, at most %d characters) is optional; command (at most %d characters), environment (what it ran on, at most %d) and limits (what was not tested, at most %d) are text and may span lines; output_sha256 is the SHA-256 of the output you captured; checks is 1 to %d checks of which at least one is pass or fail; supersedes (optional) is the id of your own earlier record this one replaces. `,
 	VerificationDataBytes, VerificationRepoBytes, VerificationFileMax, VerificationCommandMax, VerificationEnvironmentMax, VerificationLimitsMax, VerdictChecksMax)
 
 func verificationError(code string) error {
@@ -112,7 +134,7 @@ func verificationError(code string) error {
 type verifyData struct {
 	Repo, Commit, File, FileSHA256     string
 	Command, Environment, OutputSHA256 string
-	Limits                             string
+	Limits, Supersedes                 string
 	Checks                             []VerdictCheck
 }
 
@@ -246,6 +268,8 @@ func parseVerifyData(raw string) (verifyData, error) {
 			dest = &d.OutputSHA256
 		case "limits":
 			dest = &d.Limits
+		case "supersedes":
+			dest = &d.Supersedes
 		case "checks":
 			var why string
 			if d.Checks, why = parseVerdictChecks(value); why != "" {
@@ -285,6 +309,9 @@ func parseVerifyData(raw string) (verifyData, error) {
 	}
 	if !fingerprintRE.MatchString(d.OutputSHA256) || !verifyText(d.Command, VerificationCommandMax, true) ||
 		!verifyText(d.Environment, VerificationEnvironmentMax, true) || !verifyText(d.Limits, VerificationLimitsMax, true) {
+		return d, invalid
+	}
+	if seen["supersedes"] && !ValidVerificationID(d.Supersedes) {
 		return d, invalid
 	}
 	if passed, failed := d.counts(); passed+failed == 0 {
@@ -330,6 +357,11 @@ type Verification struct {
 	OutputSHA256 string         `json:"output_sha256"`
 	Checks       []VerdictCheck `json:"checks"`
 	Limits       string         `json:"limits"`
+	// Supersedes is the id of the verifier's earlier record this one
+	// replaces, from its signed data; SupersededBy the newest visible record
+	// that replaces this one. Each is absent when there is none.
+	Supersedes   string `json:"supersedes,omitempty"`
+	SupersededBy string `json:"superseded_by,omitempty"`
 	// Passed and Failed count the checks that ran (pass, fail); Ran is
 	// both. Result is passed when none failed, failed otherwise.
 	Passed int    `json:"passed"`
@@ -392,14 +424,18 @@ type verificationRow struct {
 	seq                                                  int64
 	id, verifier, account, publicKey, handle             string
 	recordSHA256, signature, signedPayload, hiddenReason string
+	supersededBy                                         string
 	createdAt, hiddenAt                                  int64
 }
 
-const verificationColumns = `v.seq,v.id,v.verifier,v.account,i.public_key,coalesce(i.handle,''),v.record_sha256,v.signature,v.signed_payload,v.hidden_reason,v.created_at,v.hidden_at`
+// verificationSupersededBy is the newest visible record superseding v.
+const verificationSupersededBy = `coalesce((SELECT s.id FROM verifications s WHERE s.supersedes=v.id AND s.hidden_at=0 ORDER BY s.seq DESC LIMIT 1),'')`
+
+const verificationColumns = `v.seq,v.id,v.verifier,v.account,i.public_key,coalesce(i.handle,''),v.record_sha256,v.signature,v.signed_payload,v.hidden_reason,v.created_at,v.hidden_at,` + verificationSupersededBy
 
 func scanVerification(scan func(...any) error) (verificationRow, error) {
 	var r verificationRow
-	err := scan(&r.seq, &r.id, &r.verifier, &r.account, &r.publicKey, &r.handle, &r.recordSHA256, &r.signature, &r.signedPayload, &r.hiddenReason, &r.createdAt, &r.hiddenAt)
+	err := scan(&r.seq, &r.id, &r.verifier, &r.account, &r.publicKey, &r.handle, &r.recordSHA256, &r.signature, &r.signedPayload, &r.hiddenReason, &r.createdAt, &r.hiddenAt, &r.supersededBy)
 	return r, err
 }
 
@@ -415,6 +451,7 @@ func (s *Store) verificationView(ctx context.Context, q *sql.Tx, r verificationR
 		Verifier: VerificationVerifier{Fingerprint: r.verifier, PublicKey: r.publicKey, Handle: r.handle, Agent: origin + "/agent/" + r.verifier},
 		Repo:     d.Repo, Commit: d.Commit, CommitURL: CommitURL(d.Repo, d.Commit), File: d.File, FileSHA256: d.FileSHA256,
 		Command: d.Command, Environment: d.Environment, OutputSHA256: d.OutputSHA256, Checks: d.Checks, Limits: d.Limits,
+		Supersedes: d.Supersedes, SupersededBy: r.supersededBy,
 		Passed: passed, Failed: failed, Ran: passed + failed, Result: "passed", At: r.createdAt,
 		RecordSHA256: r.recordSHA256, Signature: r.signature, SignedPayload: r.signedPayload, TextIsUntrusted: true}
 	if failed > 0 {
@@ -466,6 +503,11 @@ func (s *Store) publishVerification(ctx context.Context, tx *sql.Tx, c Command, 
 	if today >= VerificationsPerDay {
 		return Result{}, verificationError("verification_limit")
 	}
+	if d.Supersedes != "" {
+		if err = checkSupersedes(ctx, tx, d.Supersedes, a.id); err != nil {
+			return Result{}, err
+		}
+	}
 	if err = s.charge(ctx, tx, a, int64(len(a.canonical))+SmallCommandCost, now); err != nil {
 		return Result{}, err
 	}
@@ -473,8 +515,8 @@ func (s *Store) publishVerification(ctx context.Context, tx *sql.Tx, c Command, 
 	record := hex.EncodeToString(sum[:])
 	id := record[:16]
 	passed, failed := d.counts()
-	if _, err = tx.ExecContext(ctx, `INSERT INTO verifications(id,verifier,account,repo,commit_sha,file_sha256,passed,failed,record_sha256,signature,signed_payload,created_at)
- VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, id, a.id, a.account, d.Repo, d.Commit, d.FileSHA256, passed, failed, record, c.Signature, string(a.canonical), now); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO verifications(id,verifier,account,repo,commit_sha,file_sha256,passed,failed,record_sha256,signature,signed_payload,created_at,supersedes)
+ VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, id, a.id, a.account, d.Repo, d.Commit, d.FileSHA256, passed, failed, record, c.Signature, string(a.canonical), now, d.Supersedes); err != nil {
 		return Result{}, err
 	}
 	if s.verificationNotary() {
@@ -482,7 +524,11 @@ func (s *Store) publishVerification(ctx context.Context, tx *sql.Tx, c Command, 
 			return Result{}, err
 		}
 	}
-	if err = audit(ctx, tx, c.Operation, a.id, id, fmt.Sprintf("verification published: %d/%d checks passed", passed, passed+failed), now); err != nil {
+	note := fmt.Sprintf("verification published: %d/%d checks passed", passed, passed+failed)
+	if d.Supersedes != "" {
+		note += ", superseding " + d.Supersedes
+	}
+	if err = audit(ctx, tx, c.Operation, a.id, id, note, now); err != nil {
 		return Result{}, err
 	}
 	row, err := scanVerification(tx.QueryRowContext(ctx, "SELECT "+verificationColumns+" FROM verifications v JOIN identities i ON i.id=v.verifier WHERE v.id=?", id).Scan)
@@ -494,6 +540,35 @@ func (s *Store) publishVerification(ctx context.Context, tx *sql.Tx, c Command, 
 		return Result{}, err
 	}
 	return Result{Data: map[string]any{"verification": v, "markdown": BadgeMarkdown(v.URL), "html": BadgeHTML(v.URL)}}, nil
+}
+
+// checkSupersedes allows a record to supersede id only when id is the
+// verifier's own (signed by the same key), visible, and not already
+// superseded by a visible record: a message's new version's rules
+// (checkSupersession), with its codes.
+func checkSupersedes(ctx context.Context, tx *sql.Tx, id, verifier string) error {
+	var signer string
+	var hiddenAt int64
+	err := tx.QueryRowContext(ctx, "SELECT verifier,hidden_at FROM verifications WHERE id=?", id).Scan(&signer, &hiddenAt)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return problem(404, "verification_not_found", "supersedes names no verification: give the id of your earlier record, as in "+VerificationPath+"ID.")
+	case err != nil:
+		return err
+	case signer != verifier:
+		return problem(403, "supersede_forbidden", "Only the key that signed a verification can supersede it.")
+	case hiddenAt != 0:
+		return problem(409, "supersede_hidden", "A hidden verification cannot be superseded; publish a new record without supersedes.")
+	}
+	var by string
+	err = tx.QueryRowContext(ctx, "SELECT id FROM verifications WHERE supersedes=? AND hidden_at=0 ORDER BY seq DESC LIMIT 1", id).Scan(&by)
+	if err == nil {
+		return problem(409, "already_superseded", "That verification is already superseded by "+VerificationPath+by+"; supersede the newest record instead.")
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	return nil
 }
 
 // BadgeMarkdown is the copy-paste Markdown of a record's badge, linking to

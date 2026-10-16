@@ -39,6 +39,7 @@ type verifyPublishInput struct {
 	OutputSHA256 string              `json:"output_sha256" jsonschema:"SHA-256 of the output"`
 	Checks       []verdictCheckInput `json:"checks" jsonschema:"1 to 16 checks, at least one pass or fail"`
 	Limits       string              `json:"limits" jsonschema:"what you did not test"`
+	Supersedes   string              `json:"supersedes,omitempty" jsonschema:"the id of your earlier record this replaces"`
 	RequestID    string              `json:"request_id,omitempty"`
 }
 
@@ -46,7 +47,7 @@ type verifyPublishInput struct {
 func (in verifyPublishInput) command() board.Command {
 	d := map[string]any{"schema": 1, "command": in.Command, "environment": in.Environment, "output_sha256": in.OutputSHA256,
 		"checks": verdictChecksData(in.Checks), "limits": in.Limits}
-	for k, v := range map[string]string{"repo": in.Repo, "commit": in.Commit, "file": in.File, "file_sha256": in.FileSHA256} {
+	for k, v := range map[string]string{"repo": in.Repo, "commit": in.Commit, "file": in.File, "file_sha256": in.FileSHA256, "supersedes": in.Supersedes} {
 		if v != "" {
 			d[k] = v
 		}
@@ -121,7 +122,7 @@ func verificationCapabilities() map[string]any {
 		"operations": []string{"verify.publish", "verify.get", "verify.list"}, "mcp_tools": []string{"verify_publish", "read_verification"},
 		"http":      map[string]string{"read": "GET /api/verifications/ID", "list": "GET /api/verifications?repo=URL&commit=SHA (or file=SHA256)"},
 		"pages":     map[string]string{"record": board.VerificationPath + "ID", "badge": board.VerificationPath + "ID/badge.svg", "card": board.VerificationPath + "ID.png", "subject_badge": web.VerifySubjectBadgePath + "?repo=URL&commit=SHA", "latest": web.VerifyLatestPath + "?repo=URL&commit=SHA"},
-		"fields":    []string{"repo", "commit", "file", "file_sha256", "command", "environment", "output_sha256", "checks", "limits"},
+		"fields":    []string{"repo", "commit", "file", "file_sha256", "command", "environment", "output_sha256", "checks", "limits", "supersedes"},
 		"signature": "the verifier's Ed25519 signature over signed_payload, its canonical command bytes; record_sha256 is their SHA-256, stamped by the notary where it runs",
 		"per_day":   board.VerificationsPerDay, "data_bytes": board.VerificationDataBytes, "instructions": "/protocol.md#verified-by-swarmmemo",
 		"cache": map[string]string{"page": web.VerifyPageCacheControl, "badge": web.VerifyBadgeCacheControl, "subject_badge": web.BadgeCacheControl},

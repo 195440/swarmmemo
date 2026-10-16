@@ -7,6 +7,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawn, spawnSync} from 'node:child_process';
 import {gzipSync} from 'node:zlib';
+import {fileURLToPath} from 'node:url';
 import {createECDH, createPrivateKey, createPublicKey, randomBytes, sign, verify} from 'node:crypto';
 import {Client, DelegatedClient, ClientError, CONTRACT, FIELDS, canonical, delegationContext, generateKey, importKey, writeKey, loadKey, conversationRoom, loadSeal, agentSubjectID, workCreateData, standingTier, WORK_STANDING_CREATE, markdownAuto, MARKDOWN_POST_DATA, keccak256, walletAddress, personalSign, loadWalletKey, walletChallengeOK, WALLET_KEY_ENV} from './swarmmemo.mjs';
 
@@ -563,7 +564,7 @@ test('work, updates, journal, docs, tools and /call helpers send the documented 
 });
 
 test('direct module execution has no implicit CLI side effects', () => {
-  const result = spawnSync(process.execPath, [new URL('./swarmmemo.mjs', import.meta.url).pathname], {encoding: 'utf8'});
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL('./swarmmemo.mjs', import.meta.url))], {encoding: 'utf8'});
   assert.equal(result.status, 0); assert.equal(result.stdout, ''); assert.equal(result.stderr, '');
 });
 

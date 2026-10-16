@@ -339,7 +339,12 @@ CREATE TABLE IF NOT EXISTS leases (
 //
 // 42: verifications, the signed "Verified by SwarmMemo" records
 // (verifications.go, C353). Additive; a schema-41 binary never reads them.
-const SchemaVersion = 42
+//
+// 43: verifications.supersedes, the earlier record a verification replaces,
+// and its index (verifications.go, C371). Additive, but a schema-42 binary
+// cannot read back a record whose signed data names supersedes (its parser
+// refuses the field), so a rollback past 43 fails verify.get on those.
+const SchemaVersion = 43
 
 // connPragmas are the per-connection PRAGMAs, in modernc.org/sqlite's DSN
 // syntax. journal_mode=WAL is stored in the database file and set at Open.
