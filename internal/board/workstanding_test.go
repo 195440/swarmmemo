@@ -660,3 +660,69 @@ func TestWorkStandingHiddenResultFreesSeat(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// USDC owed holds no seat: an accept frees its seat at once, and the USDC a
+// requester owes unsettled on one standing task is capped at seats times the
+// top tier's; past it an accept pays credits only, and a settle lowers it
+// (C386).
+func TestWorkStandingOwedUSDCFreesSeatAndCaps(t *testing.T) {
+	s, chain := usdcStore(t)
+	owner := keyFor(210)
+	mintCredit(t, s, keyID(owner), allowance.Paid, 5000)
+	id := rewardRequest(t, s, owner, "lobby")
+	tiers := []any{map[string]any{"name": "bug", "credits": 100, "usdc": "0.40"}}
+	run(t, s, standingCreate(s, owner, id, map[string]any{"seats": 2, "tiers": tiers, "day_max": 10}, 10*86400))
+	if st := standingAt(t, s, id); st.USDCOwed != "0" || st.USDCOwedMax != "0.8" || st.Open != 2 {
+		t.Fatalf("fresh: %+v", st)
+	}
+	accept := func(r string) WorkAck {
+		t.Helper()
+		return run(t, s, workCommand(s, owner, Command{Operation: "work.accept", MessageID: r, Amount: 1})).Data["ack"].(WorkAck)
+	}
+	r1, c1 := standingClaim(t, s, keyFor(211), id, map[string]any{"payout_address": usdcPayee})
+	run(t, s, c1)
+	r2, c2 := standingClaim(t, s, keyFor(212), id, map[string]any{"payout_address": usdcOther})
+	run(t, s, c2)
+	accept(r1)
+	accept(r2)
+	st := standingAt(t, s, id)
+	if st.Owed != 2 || st.Submitted != 0 || st.Open != 2 || st.NextOpenAt != 0 || st.USDCOwed != "0.8" || st.USDCOwedMax != "0.8" {
+		t.Fatalf("both seats owed USDC: %+v", st)
+	}
+	if w := getTestWork(t, s, id); !w.Claimable {
+		t.Fatal("a standing task whose seats are all owed USDC is not claimable")
+	}
+
+	// Every seat's USDC is owed, yet a claim succeeds; its accept would pass
+	// the 0.80 owed cap, so it is paid in credits only.
+	r3, c3 := standingClaim(t, s, keyFor(213), id, map[string]any{"payout_address": usdcOther})
+	run(t, s, c3)
+	acked := accept(r3)
+	if !strings.Contains(acked.Note, "paid in credits only: 100 credits") || !strings.Contains(acked.Note, "unpaid USDC cap (0.8 USDC") || !strings.Contains(acked.Note, "0.8 already owed") {
+		t.Fatalf("owed-cap note: %q", acked.Note)
+	}
+	if w := getTestWork(t, s, r3); w.Reward.State != "paid" || w.RewardUSDC.State != "void" || w.RewardUSDC.Reason != "usdc_cap" {
+		t.Fatalf("over the owed cap: %+v %+v", w.Reward, w.RewardUSDC)
+	}
+
+	// Settling one lowers what is owed: the next accept carries USDC again.
+	chain.add(txHash(40), fakeTx{status: "0x1", block: chain.head - 20, blockTime: s.now().Unix(), logs: []map[string]any{transferLog(usdcAsset(s), usdcOther, usdcPayee, 400_000)}})
+	run(t, s, settle(s, owner, r1, txHash(40)))
+	if st = standingAt(t, s, id); st.Owed != 1 || st.Paid != 2 || st.USDCOwed != "0.4" {
+		t.Fatalf("after a settle: %+v", st)
+	}
+	r4, c4 := standingClaim(t, s, keyFor(214), id, map[string]any{"payout_address": usdcPayee})
+	run(t, s, c4)
+	if acked = accept(r4); strings.Contains(acked.Note, "credits only") {
+		t.Fatalf("after a settle the accept still pays credits only: %q", acked.Note)
+	}
+	if w := getTestWork(t, s, r4); w.RewardUSDC.State != "payable" || w.RewardUSDC.Amount != "0.4" {
+		t.Fatalf("after a settle: %+v", w.RewardUSDC)
+	}
+	if st = standingAt(t, s, id); st.USDCOwed != "0.8" || st.Open != 2 {
+		t.Fatalf("owed again: %+v", st)
+	}
+	if err := s.Integrity(testContext); err != nil {
+		t.Fatal(err)
+	}
+}

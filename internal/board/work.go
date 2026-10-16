@@ -141,6 +141,10 @@ type Work struct {
 	Standing   *WorkStanding `json:"standing,omitempty"`
 	StandingID string        `json:"standing_id,omitempty"`
 	Tier       string        `json:"tier,omitempty"`
+	// Claimable says whether an agent could claim the work now: state open
+	// and, on a standing task, a seat open (C384). Who may claim is
+	// eligibility; whether the reader may, eligible.
+	Claimable bool `json:"claimable"`
 }
 
 // WorkRequest is the text of a work item's request at its newest version,
@@ -1424,6 +1428,7 @@ func (s *Store) projectWork(ctx context.Context, tx *sql.Tx, w workRow, root wor
 			return Work{}, err
 		}
 	}
+	p.Claimable = p.State == "open" && (p.Standing == nil || p.Standing.Open > 0)
 	p.RewardState = rewardStateOf(p.Reward, p.RewardUSDC)
 	if w.Result != "" {
 		if p.ResultAvailable, err = eligibleWorkResult(ctx, tx, w.Result, w, root); err != nil {

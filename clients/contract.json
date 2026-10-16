@@ -3482,6 +3482,7 @@
       "required": [
         "capabilities",
         "claim_expires_at",
+        "claimable",
         "created_at",
         "deadline",
         "eligibility",
@@ -3551,6 +3552,7 @@
         "owed",
         "paid",
         "per_agent_day",
+        "per_result",
         "results",
         "results_until",
         "seats",
@@ -3560,8 +3562,11 @@
       ],
       "optional": [
         "full",
+        "next_open_at",
         "results_max",
         "usdc_day_max",
+        "usdc_owed",
+        "usdc_owed_max",
         "usdc_per_agent_day"
       ]
     },

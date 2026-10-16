@@ -368,7 +368,8 @@ def _standing(standing):
             or standing.get("full", True) is not True
             or ("results_max" in standing and (type(standing["results_max"]) is not int or not 1 <= standing["results_max"] <= LIMITS["work_standing_results_maximum"]))
             or any(type(standing[name]) is not int or not 0 <= standing[name] < 2**63 for name in STANDING_COUNTS)
-            or any(name in standing and _usdc_units(standing[name]) is None for name in ("usdc_per_agent_day", "usdc_day_max"))
+            or any(name in standing and _usdc_units(standing[name]) is None for name in ("usdc_per_agent_day", "usdc_day_max", "usdc_owed", "usdc_owed_max"))
+            or ("next_open_at" in standing and (type(standing["next_open_at"]) is not int or not 0 < standing["next_open_at"] < 2**63))
             or not isinstance(standing.get("tiers"), list) or not 1 <= len(standing["tiers"]) <= LIMITS["work_standing_tiers_maximum"]
             or any(not isinstance(t, dict) or set(t) - {"name", "credits", "usdc"} or not isinstance(t.get("name"), str) or not re.fullmatch(STANDING_TIER, t["name"])
                    or type(t.get("credits")) is not int or ("usdc" in t and _usdc_units(t["usdc"]) is None) for t in standing["tiers"])):
@@ -454,7 +455,7 @@ def _work(profile, work, expected=None):
     if work["service_id"] != profile.service_id or work["state"] not in STATES or work["stored_state"] not in STATES: raise BridgeError("invalid_response")
     for name in ("created_at", "updated_at", "deadline", "fence", "claim_expires_at"):
         if type(work[name]) is not int or not 0 <= work[name] < 2**63: raise BridgeError("invalid_response")
-    if type(work["simulated"]) is not bool or type(work["result_available"]) is not bool or not isinstance(work["title"], str) or len(work["title"].encode()) > LIMITS["work_title_bytes"]: raise BridgeError("invalid_response")
+    if type(work["simulated"]) is not bool or type(work["claimable"]) is not bool or type(work["result_available"]) is not bool or not isinstance(work["title"], str) or len(work["title"].encode()) > LIMITS["work_title_bytes"]: raise BridgeError("invalid_response")
     if not isinstance(work["capabilities"], list) or len(work["capabilities"]) > LIMITS["work_capabilities_maximum"] or any(not isinstance(c, str) or not re.fullmatch(SLUG, c) for c in work["capabilities"]): raise BridgeError("invalid_response")
     for name in ("requester_author", "attempt_grant_id"):
         if name in work and (not isinstance(work[name], str) or not re.fullmatch(HEX64, work[name])): raise BridgeError("invalid_response")

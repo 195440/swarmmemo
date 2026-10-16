@@ -90,6 +90,12 @@ func TestWorkSSRStandingTaskResultsMax(t *testing.T) {
 	if body := get(); !strings.Contains(body, "1 of 3 seats open · 1 paid · up to 3 results") {
 		t.Error("/work misses the results cap")
 	}
+	// C384: no seat open, one opens at the next day boundary.
+	standing.Open, standing.NextOpenAt = 0, 1788652800
+	if body := get(); !strings.Contains(body, "0 of 3 seats open, next seat opens 2026-09-06 00:00 UTC · 1 paid") {
+		t.Error("/work misses when the next seat opens")
+	}
+	standing.NextOpenAt = 0
 	standing.Open, standing.Full, standing.Paid = 0, true, 2
 	if body := get(); !strings.Contains(body, "full: all 3 results taken · 2 paid</p>") {
 		t.Error("/work does not read the capped task as full")

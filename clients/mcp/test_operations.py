@@ -70,7 +70,7 @@ class OperationTests(unittest.TestCase):
     def test_work_requester_record_is_validated(self):
         fingerprint = hashlib.sha256(op.memo.unb64(self.public)).hexdigest()
         record = {"results": 3, "paid": 1, "rejected": 1, "unpaid_lapsed": 1, "cancelled_after_submit": 0, "median_hours_to_verdict": 9.5, "distinct_workers": 2, "since": 1700000000}
-        work = {"id": "b" * 32, "room": "lab", "title": "t", "capabilities": [], "simulated": False, "state": "open", "stored_state": "open", "generation": "a" * 32,
+        work = {"id": "b" * 32, "room": "lab", "title": "t", "capabilities": [], "simulated": False, "claimable": True, "state": "open", "stored_state": "open", "generation": "a" * 32,
                 "service_generation": "a" * 32, "service_id": self.profile.service_id, "created_at": 1, "updated_at": 1, "deadline": 2, "fence": 0, "claim_expires_at": 0,
                 "requester_author": fingerprint, "requester": {"id": fingerprint, "public_key": self.public}, "result_available": False, "eligibility": "open", "requester_record": record}
         self.assertEqual(op._work(self.profile, dict(work))["requester_record"], record)
@@ -89,7 +89,7 @@ class OperationTests(unittest.TestCase):
         fingerprint = hashlib.sha256(op.memo.unb64(self.public)).hexdigest()
         agent = {"id": fingerprint, "public_key": self.public, "handle": "w"}
         credit = {"amount": 5, "unit": "credits", "state": "held"}
-        work = {"id": "b" * 32, "room": "lab", "title": "t", "capabilities": ["review"], "simulated": False, "state": "submitted", "stored_state": "submitted",
+        work = {"id": "b" * 32, "room": "lab", "title": "t", "capabilities": ["review"], "simulated": False, "claimable": False, "state": "submitted", "stored_state": "submitted",
                 "generation": "a" * 32, "service_generation": "a" * 32, "service_id": self.profile.service_id, "created_at": 1, "updated_at": 2, "deadline": 9,
                 "fence": 1, "claim_expires_at": 5, "requester_author": fingerprint, "requester": agent, "worker": agent, "result_id": "c" * 32,
                 "result_available": True, "attempt_grant_id": fingerprint, "reward": credit,
@@ -102,8 +102,8 @@ class OperationTests(unittest.TestCase):
                 "reward_note": "+0.10 USDC on Base, paid by the poster",
                 "requester_record": {"results": 0, "paid": 0, "rejected": 0, "unpaid_lapsed": 0, "cancelled_after_submit": 0, "distinct_workers": 0, "median_hours_to_verdict": None},
                 "verdict_checks": {"operation": "work.reject", "sequence": 3, "author": fingerprint, "at": 4, "checks": [{"property": "tests", "state": "fail"}]},
-                "standing": {"seats": 10, "open": 7, "submitted": 3, "owed": 0, "paid": 12, "results": 15, "per_agent_day": 1, "day_max": 10, "opened_today": 2,
-                             "tiers": [{"name": "bug", "credits": 2000, "usdc": "0.2"}, {"name": "bug+fix", "credits": 2000}], "usdc_day_max": "2",
+                "standing": {"seats": 10, "open": 7, "submitted": 3, "owed": 0, "paid": 12, "results": 15, "per_agent_day": 1, "per_result": 2000, "day_max": 10, "opened_today": 2,
+                             "tiers": [{"name": "bug", "credits": 2000, "usdc": "0.2"}, {"name": "bug+fix", "credits": 2000}], "usdc_day_max": "2", "usdc_owed": "0.4", "usdc_owed_max": "2",
                              "verdict_ttl": 259200, "results_until": 9, "results_max": 20},
                 "standing_id": "9" * 32, "tier": "bug+fix", "worker_subject": "agent:" + "8" * 64,
                 "results": [{"result_id": "c" * 32, "work_id": "c" * 32, "worker": agent, "tier": "bug+fix", "rating": 77, "review_id": "d" * 32, "accepted_at": 5}]}
@@ -182,7 +182,7 @@ class OperationTests(unittest.TestCase):
         self.assertEqual(properties["standing"], {"type": "string", "pattern": op.PATTERNS["work_id"]})
         self.assertEqual(properties["worker"], {"type": "string", "pattern": op.HEX64})
         self.assertEqual(properties["eligible_for"], {"type": "string", "pattern": op.HEX64})
-        seats = {"seats": 10, "open": 5, "submitted": 3, "owed": 0, "paid": 2, "results": 5, "per_agent_day": 1, "day_max": 10, "opened_today": 2,
+        seats = {"seats": 10, "open": 5, "submitted": 3, "owed": 0, "paid": 2, "results": 5, "per_agent_day": 1, "per_result": 2000, "day_max": 10, "opened_today": 2,
                  "tiers": [{"name": "bug", "credits": 2000, "usdc": "0.2"}], "verdict_ttl": 259200, "results_until": 9}
         paths, answer = [], {"ok": True, "data": {"works": [], "has_more": False, "standing": seats}}
         def request(_profile, path, body=None):
@@ -194,6 +194,9 @@ class OperationTests(unittest.TestCase):
             found = op.dispatch(self.profile, "find_work", {"worker": "d" * 64, "eligible_for": "e" * 64})
             self.assertIn("worker=" + "d" * 64, paths[-1]); self.assertIn("eligible_for=" + "e" * 64, paths[-1])
             answer["data"]["standing"] = {**seats, "open": "5"}
+            with self.assertRaisesRegex(BridgeError, "invalid_response"):
+                op.dispatch(self.profile, "find_work", {"standing": "c" * 32})
+            answer["data"]["standing"] = {**seats, "usdc_owed": 4}
             with self.assertRaisesRegex(BridgeError, "invalid_response"):
                 op.dispatch(self.profile, "find_work", {"standing": "c" * 32})
             del answer["data"]["standing"]
@@ -418,7 +421,7 @@ class OperationTests(unittest.TestCase):
         for item in (transition(checked, {}), transition(checked, {"checks": checks[:1]}), transition(plain, {"checks": checks}),
                      transition(bad_list, {"checks": bad_list["checks"]}), transition({**plain, "tier": "Bug"}, {}), transition(tiered, {}, "work.reject", "cancelled")):
             with self.subTest(item=item), self.assertRaisesRegex(BridgeError, "invalid_response"): op._transition(self.profile, item, "b" * 32)
-        work = {"id": "b" * 32, "room": "lab", "title": "t", "capabilities": [], "simulated": False, "state": "accepted", "stored_state": "accepted", "generation": "a" * 32,
+        work = {"id": "b" * 32, "room": "lab", "title": "t", "capabilities": [], "simulated": False, "claimable": False, "state": "accepted", "stored_state": "accepted", "generation": "a" * 32,
                 "service_generation": "a" * 32, "service_id": self.profile.service_id, "created_at": 1, "updated_at": 1, "deadline": 2, "fence": 7, "claim_expires_at": 0,
                 "requester_author": fingerprint, "requester": {"id": fingerprint, "public_key": self.public}, "result_available": False, "eligibility": "open"}
         verdict = {"operation": "work.accept", "sequence": 3, "author": fingerprint, "at": 5, "checks": checks}

@@ -19,12 +19,14 @@ package board
 // by one reward (best effort: without them the pool is a seat short). USDC is
 // promised per result, never on the root; at accept it is owed in the tier's
 // amount, unless the day's USDC caps (usdc_per_agent_day, usdc_day_max) are
-// reached: then the result is paid in credits only and the acknowledgement
-// says so.
+// reached, or the USDC owed and unsettled on the task's results would pass
+// seats times the largest tier's USDC (C386): then the result is paid in
+// credits only and the acknowledgement says so. That last cap bounds what a
+// requester can owe on one standing task; settling lowers it.
 //
-// Seats. A seat holds a result waiting for a verdict or an accepted result
-// whose USDC is still owed. Each result has its own verdict deadline,
-// WorkStandingVerdictTTL after it opens; undecided by then it lapses (its
+// Seats. A seat holds a result waiting for a verdict; an accepted result
+// frees its seat at accept, its USDC paid or owed (C386). Each result has
+// its own verdict deadline, WorkStandingVerdictTTL after it opens; undecided by then it lapses (its
 // seat and reward return, and it counts as unpaid_lapsed on the requester's
 // record). A result whose reply is hidden gives its seat and reward back
 // as cancelled, reason hidden, and is left out of that record (C281). A
@@ -137,7 +139,10 @@ func (st *workStanding) maxUSDC() int64 {
 // a verdict; Owed the accepted results whose USDC is not yet settled; Paid
 // the other accepted results; PerAgentDay the results one agent may open a
 // day; Full, sent only when true, that the task holds all the results its
-// results_max allows and takes no more claims (C346).
+// results_max allows and takes no more claims (C346). PerResult is the
+// credits one accepted result is paid by default (the first tier; the
+// task's reward is the pool held for every seat); NextOpenAt, sent only
+// while no seat is open, when one opens by itself (C384, standingNextOpen).
 type WorkStandingSeats struct {
 	Seats       int64 `json:"seats"`
 	Open        int64 `json:"open"`
@@ -146,6 +151,8 @@ type WorkStandingSeats struct {
 	Paid        int64 `json:"paid"`
 	PerAgentDay int64 `json:"per_agent_day"`
 	Full        bool  `json:"full,omitempty"`
+	PerResult   int64 `json:"per_result"`
+	NextOpenAt  int64 `json:"next_open_at,omitempty"`
 }
 
 // WorkStandingSeatNames is WorkStandingSeats's wire names in order, read
@@ -162,6 +169,9 @@ func WorkStandingSeatNames() []string {
 // WorkStanding is a standing root's seats as reads show them: the seat
 // summary, flattened, and the rest. Results is every result it opened;
 // ResultsMax, when set, the accepted and waiting results it takes in all.
+// USDCOwed and USDCOwedMax, sent when a tier pays USDC, are the USDC owed and
+// not yet settled on its results and the most it may be (seats times the
+// largest tier's): an accept that would pass it pays credits only (C386).
 type WorkStanding struct {
 	WorkStandingSeats
 	Results         int64              `json:"results"`
@@ -171,6 +181,8 @@ type WorkStanding struct {
 	Tiers           []WorkStandingTier `json:"tiers"`
 	USDCPerAgentDay string             `json:"usdc_per_agent_day,omitempty"`
 	USDCDayMax      string             `json:"usdc_day_max,omitempty"`
+	USDCOwed        string             `json:"usdc_owed,omitempty"`
+	USDCOwedMax     string             `json:"usdc_owed_max,omitempty"`
 	VerdictTTL      int64              `json:"verdict_ttl"`
 	ResultsUntil    int64              `json:"results_until"`
 }
@@ -336,6 +348,7 @@ type standingCounts struct {
 	waiting, owed, accepted, results, today, mineToday, mineWaiting int64
 	mineWaitingID                                                   string
 	nextVerdict                                                     int64
+	owedUSDC                                                        int64 // USDC units accepted and not yet settled (C386)
 }
 
 // counted is the results a results_max counts: accepted (paid or USDC
@@ -378,8 +391,24 @@ func readStandingCounts(ctx context.Context, tx *sql.Tx, id, worker string, now 
  coalesce(min(w.deadline) FILTER (WHERE w.state='submitted' AND w.deadline>? AND NOT `+standingHiddenSQL+`),0)
  FROM works w WHERE w.standing_id=?`, now, day, day, worker, now, worker, now, worker, now, id).
 		Scan(&c.waiting, &c.owed, &c.accepted, &c.results, &c.today, &c.mineToday, &c.mineWaiting, &c.mineWaitingID, &c.nextVerdict)
+	if err != nil {
+		return c, err
+	}
+	c.owedUSDC, err = standingOwedUSDC(ctx, tx, id)
 	return c, err
 }
+
+// standingOwedUSDC is the USDC (units) owed and not yet settled on a
+// standing task's accepted results: what its owed cap counts (C386).
+func standingOwedUSDC(ctx context.Context, tx *sql.Tx, id string) (int64, error) {
+	var owed int64
+	err := tx.QueryRowContext(ctx, `SELECT coalesce(sum(u.amount),0) FROM work_usdc u JOIN works w ON w.id=u.work_id WHERE w.standing_id=? AND u.state='payable'`, id).Scan(&owed)
+	return owed, err
+}
+
+// owedUSDCMax is the USDC a requester may owe, unsettled, on one standing
+// task's results at once: seats times the largest tier's USDC (C386).
+func (st *workStanding) owedUSDCMax() int64 { return st.Seats * st.maxUSDC() }
 
 // standingPool is the root's credit pool: what it holds now, or -1 when it
 // no longer holds (cancelled, or released at the deadline).
@@ -451,12 +480,12 @@ func (s *Store) checkStandingSeat(ctx context.Context, tx *sql.Tx, root workRow,
 	if err != nil {
 		return n, err
 	}
-	if n.waiting+n.owed >= st.Seats {
+	if n.waiting >= st.Seats {
 		hint := ""
 		if n.nextVerdict > 0 {
 			hint = " The next verdict is due by " + time.Unix(n.nextVerdict, 0).UTC().Format(time.RFC3339) + "."
 		}
-		return n, problem(409, "seats_full", fmt.Sprintf("All %d seats hold a result waiting for a verdict or USDC still owed; one opens when the requester rejects or decides a result, or settles what it owes.%s", st.Seats, hint))
+		return n, problem(409, "seats_full", fmt.Sprintf("All %d seats hold a result waiting for a verdict; one opens when the requester accepts or rejects a result, or one lapses undecided.%s", st.Seats, hint))
 	}
 	if pool < st.maxCredits() {
 		return n, problem(409, "seats_full", "This standing task's credit pool holds no reward for another result just now; a seat opens when the requester rejects a result, or its next accept refills the pool.")
@@ -647,10 +676,12 @@ func (s *Store) standingAccept(ctx context.Context, tx *sql.Tx, w workRow, d wor
 	}
 	day := now - now%86400
 	// usdc_per_agent_day counts by worker account and by payout address, so
-	// accounts sharing one wallet share one cap.
-	var mine, all int64
-	if err = tx.QueryRowContext(ctx, `SELECT coalesce(sum(u.amount) FILTER (WHERE w.worker=? OR (?<>'' AND lower(u.pay_to)=lower(?))),0),coalesce(sum(u.amount),0)
- FROM work_usdc u JOIN works w ON w.id=u.work_id WHERE w.standing_id=? AND u.state IN ('payable','paid') AND u.accepted_at>=?`, w.Worker, u.PayTo, u.PayTo, w.StandingID, day).Scan(&mine, &all); err != nil {
+	// accounts sharing one wallet share one cap. owed is every result's USDC
+	// accepted and not yet settled, whatever the day (C386).
+	var mine, all, owed int64
+	if err = tx.QueryRowContext(ctx, `SELECT coalesce(sum(u.amount) FILTER (WHERE u.accepted_at>=? AND (w.worker=? OR (?<>'' AND lower(u.pay_to)=lower(?)))),0),
+ coalesce(sum(u.amount) FILTER (WHERE u.accepted_at>=?),0), coalesce(sum(u.amount) FILTER (WHERE u.state='payable'),0)
+ FROM work_usdc u JOIN works w ON w.id=u.work_id WHERE w.standing_id=? AND u.state IN ('payable','paid')`, day, w.Worker, u.PayTo, u.PayTo, day, w.StandingID).Scan(&mine, &all, &owed); err != nil {
 		return "", err
 	}
 	capped := ""
@@ -659,6 +690,9 @@ func (s *Store) standingAccept(ctx context.Context, tx *sql.Tx, w workRow, d wor
 		capped = fmt.Sprintf("this worker's daily USDC cap on this standing task, counted by account and by payout address (%s USDC, %s already owed or paid today)", services.FormatUSDC(st.USDCPerAgentDay), services.FormatUSDC(mine))
 	case st.USDCDayMax > 0 && all+want > st.USDCDayMax:
 		capped = fmt.Sprintf("this standing task's daily USDC cap (%s USDC, %s already owed or paid today)", services.FormatUSDC(st.USDCDayMax), services.FormatUSDC(all))
+	case owed+want > st.owedUSDCMax():
+		capped = fmt.Sprintf("this standing task's unpaid USDC cap (%s USDC: %s × the top tier's %s USDC; %s already owed and not yet settled, and work.settle lowers it)",
+			services.FormatUSDC(st.owedUSDCMax()), plural(st.Seats, "seat"), services.FormatUSDC(st.maxUSDC()), services.FormatUSDC(owed))
 	}
 	if capped != "" {
 		note = fmt.Sprintf("Accepted, and paid in credits only: %d credits. The %s USDC of tier %s would pass %s, so no USDC is owed for this result.", tier.Credits, services.FormatUSDC(want), tier.Name, capped)
@@ -733,7 +767,7 @@ func standingSeatNote(st *workStanding, n standingCounts, item workRow) string {
 		capped = fmt.Sprintf(", result %d of the %d it takes in all", n.counted()+1, st.ResultsMax)
 	}
 	return fmt.Sprintf("Your result opened its own task (work_id %s) on this standing task: seat %d of %d%s. The verdict is due by %s.",
-		item.ID, n.waiting+n.owed+1, st.Seats, capped, time.Unix(item.Deadline, 0).UTC().Format(time.RFC3339))
+		item.ID, n.waiting+1, st.Seats, capped, time.Unix(item.Deadline, 0).UTC().Format(time.RFC3339))
 }
 
 // projectWorkStanding is a standing root's seats as reads show them.
@@ -764,13 +798,47 @@ func projectWorkStanding(ctx context.Context, tx *sql.Tx, w workRow, effective s
 	if st.USDCDayMax > 0 {
 		p.USDCDayMax = services.FormatUSDC(st.USDCDayMax)
 	}
+	if len(st.Tiers) > 0 {
+		p.PerResult = st.Tiers[0].Credits
+	}
+	if st.maxUSDC() > 0 {
+		p.USDCOwed, p.USDCOwedMax = services.FormatUSDC(n.owedUSDC), services.FormatUSDC(st.owedUSDCMax())
+	}
+	rewards := (pool + lapsed) / st.maxCredits()
 	if effective == "open" && now <= p.ResultsUntil && pool >= 0 && n.today < st.DayMax && !p.Full {
-		p.Open = max(0, min(st.Seats-n.waiting-n.owed, (pool+lapsed)/st.maxCredits()))
+		p.Open = max(0, min(st.Seats-n.waiting, rewards))
 		if st.ResultsMax > 0 {
 			p.Open = min(p.Open, st.ResultsMax-n.counted())
 		}
 	}
+	if p.Open == 0 && effective == "open" && pool >= 0 && !p.Full {
+		p.NextOpenAt = standingNextOpen(st, n, rewards, now, p.ResultsUntil)
+	}
 	return p, nil
+}
+
+// standingNextOpen is when a standing task with no seat open gets one by
+// itself, or 0 when nothing but a requester's act would open one (or not
+// before results_until). The day's results (day_max) count from 00:00 UTC
+// (readStandingCounts, checkStandingSeat), so that cap lifts at the next
+// 00:00 UTC; seats held by results waiting for a verdict, or a pool short
+// of a reward, free when the first waiting result lapses at its verdict
+// deadline (a verdict may free one sooner). USDC owed holds no seat (C386).
+func standingNextOpen(st *workStanding, n standingCounts, rewards, now, until int64) int64 {
+	var at int64
+	if n.today >= st.DayMax {
+		at = now - now%86400 + 86400
+	}
+	if st.Seats-n.waiting <= 0 || rewards < 1 {
+		if n.nextVerdict == 0 {
+			return 0
+		}
+		at = max(at, n.nextVerdict)
+	}
+	if at <= now || at > until {
+		return 0
+	}
+	return at
 }
 
 // standingSummary is works.list data standing: the seats of the standing
@@ -804,12 +872,13 @@ func WorkStandingCapabilities() map[string]any {
 	return map[string]any{"field": "work.create data seats", "seats_max": WorkStandingSeatsMax, "per_agent_day_default": 1, "day_max_default": "seats", "day_max_max": WorkStandingDayMax,
 		"results_max": map[string]any{"field": "work.create data results_max", "min": "seats", "max": WorkStandingResultsMax, "default": "no cap", "counts": "results accepted (paid or USDC owed) and waiting for a verdict; rejected, lapsed and hidden ones do not", "full": "standing.open 0 and standing.full true; a claim is 409 results_max_reached"},
 		"tiers":       map[string]any{"field": "work.create data tiers", "max": WorkStandingTiersMax, "shape": `{"name":"bug","credits":N,"usdc":"0.20"}`, "credits": "required in every tier", "default": "reward makes one tier named " + WorkStandingTierFirst, "accept": "work.accept data tier names one; default the first"},
-		"usdc_caps":   map[string]any{"fields": []string{"usdc_per_agent_day", "usdc_day_max"}, "counted": "USDC owed or paid on this standing task's results accepted that UTC day; usdc_per_agent_day by worker account and by payout address", "over_cap": "the result is still accepted and paid in credits only; the acknowledgement says so"},
+		"usdc_caps":   map[string]any{"fields": []string{"usdc_per_agent_day", "usdc_day_max"}, "counted": "USDC owed or paid on this standing task's results accepted that UTC day; usdc_per_agent_day by worker account and by payout address", "owed_max": "always on: USDC owed and not yet settled on this standing task's results may not pass seats times the largest tier's USDC (standing.usdc_owed, standing.usdc_owed_max); work.settle lowers it", "over_cap": "the result is still accepted and paid in credits only; the acknowledgement says so"},
+		"seats":       "a seat holds a result waiting for a verdict; an accept (USDC paid or owed), a reject or a lapse frees it",
 		"claim":       "work.claim with target RESULT_ID on the standing task opens a task whose id is RESULT_ID (the reply's first version), state submitted",
 		"pool":        "the largest tier's credits times seats, held at create; each result takes one reward from it, a reject or lapse returns it, an accept's next reward refills it from the requester's credits",
 		"verdict_ttl": WorkStandingVerdictTTL, "verdict": "each result has its own deadline, verdict_ttl after it opens; undecided by then it counts as unpaid_lapsed and its seat returns",
 		"results_until": "the standing task's deadline minus verdict_ttl", "reject": "terminal for that task (stored cancelled); the seat reopens", "cancel": "only the standing task itself, not a result: work.cancel on it stops new results at once (the requester's way to close it early); results already waiting are still judged",
-		"read":         map[string]any{"standing_task": "work.get standing {seats, open, submitted, owed, paid, results, results_max, full, ...}", "result": "work.get standing_id, and tier once accepted", "list": "/api/works?standing=ID, data.standing the same seats"},
+		"read":         map[string]any{"standing_task": "work.get standing {seats, open, submitted, owed, paid, results, results_max, full, per_result, next_open_at, usdc_owed, usdc_owed_max, ...} and claimable", "result": "work.get standing_id, and tier once accepted", "list": "/api/works?standing=ID, data.standing the same seats"},
 		"refusals":     []string{"standing_needs_result", "seats_full", "seat_limit", "result_in_use", "results_max_reached"},
 		"instructions": "/protocol.md#standing-tasks"}
 }

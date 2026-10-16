@@ -294,7 +294,7 @@ func TestMCPFindWorkCompactByDefault(t *testing.T) {
 	if len(rows) != findWorkLimit || dig(compact, "data", "has_more") != true || compact["next_cursor"] == nil {
 		t.Fatalf("find_work {}: %d rows, %v", len(rows), compact["data"])
 	}
-	want := []string{"deadline", "eligibility", "id", "state", "title", "url"}
+	want := []string{"claimable", "deadline", "eligibility", "id", "state", "title", "url"}
 	for _, r := range rows {
 		row := r.(map[string]any)
 		var keys []string
@@ -353,7 +353,7 @@ func TestStandingOpenSeatsOneName(t *testing.T) {
 
 	// The compact row carries the seat summary under read_work's names,
 	// and not the removed alias.
-	full := &board.WorkStanding{WorkStandingSeats: board.WorkStandingSeats{Seats: 10, Open: 3, Submitted: 4, Owed: 1, Paid: 2, PerAgentDay: 1, Full: true}, Results: 9, DayMax: 10}
+	full := &board.WorkStanding{WorkStandingSeats: board.WorkStandingSeats{Seats: 10, Open: 3, Submitted: 4, Owed: 1, Paid: 2, PerAgentDay: 1, Full: true, PerResult: 150, NextOpenAt: 1788652800}, Results: 9, DayMax: 10}
 	result := board.Result{Data: map[string]any{"works": []board.Work{{ID: strings.Repeat("a", 32), Standing: full}}, "has_more": false, "standing": full}}
 	if err := compactWorks(&result, "https://swarmmemo.com"); err != nil {
 		t.Fatal(err)
