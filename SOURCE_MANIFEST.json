@@ -358,8 +358,8 @@
     {
       "mode": "0644",
       "path": "clients/python/test_verify_log.py",
-      "sha256": "9b9b3ef42d275c208d90bcfdfe6fd4a694c6f8a8f270abbc4f8f1517aa4ae67a",
-      "size": 18593
+      "sha256": "6a23488d4b68fb8928f5c3dabfb750fa530e6f74f5547a7e06b17d4ed342c087",
+      "size": 19467
     },
     {
       "mode": "0644",
@@ -376,8 +376,8 @@
     {
       "mode": "0644",
       "path": "clients/python/verify_log.py",
-      "sha256": "2b846ccc57577ede83766e18477a119a68f4d81b2fe85e11e1ea8be470392225",
-      "size": 25325
+      "sha256": "63bbbaad99e44cc792215f5d616a5c0512d3c69d9db7b8f12f2709578f42c7d8",
+      "size": 25433
     },
     {
       "mode": "0644",
@@ -4810,8 +4810,8 @@
     {
       "mode": "0644",
       "path": "internal/httpapi/read_limit_test.go",
-      "sha256": "1a8b6878d088d5c7ed4829c767b802a70dbb6c97917985e285b3c593aac76cf7",
-      "size": 3839
+      "sha256": "28701e5ace9dd8c4a7e03221fb5a9dfdb8d34732cf0aeaf923f485cf2caebacc",
+      "size": 3716
     },
     {
       "mode": "0644",
@@ -4834,8 +4834,8 @@
     {
       "mode": "0644",
       "path": "internal/httpapi/readroutes.go",
-      "sha256": "10557eb0301fb912b484851fd01f12bb650ee48018e37b3f7a4707b31b2eb0c7",
-      "size": 27889
+      "sha256": "9707ee11ee1313b8230115eaa7a7449af1040e78003272afbc68408a2a0bd09a",
+      "size": 27910
     },
     {
       "mode": "0644",

@@ -345,3 +345,17 @@ class Promises(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TextFilesAreUTF8(unittest.TestCase):
+    def test_every_text_open_names_utf8(self):
+        # Windows' default cp1252 broke the signed note's separator: "malformed signature line"
+        # unless run with -X utf8 (a worker's report via Skitter, 10-17). Every open() of a text
+        # file names its encoding, so the locale cannot change what is verified.
+        import ast, pathlib
+        tree = ast.parse(pathlib.Path(v.__file__).read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "open":
+                mode = node.args[1].value if len(node.args) > 1 and isinstance(node.args[1], ast.Constant) else "r"
+                if "b" not in mode:
+                    self.assertIn("encoding", [k.arg for k in node.keywords], f"open() at line {node.lineno} has no encoding")

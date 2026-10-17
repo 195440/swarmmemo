@@ -152,8 +152,8 @@ func readRoutes() []readRoute {
 	scope.Enum = []string{"all", "front"}
 	runID := pathParam("id", "^[1-9][0-9]*$", "A trust run's number", "999999")
 	trustAgent := pathParam("agent", "", "64-character key fingerprint or handle", "nobody")
-	subjectLimit := queryParam("limit", "integer", "0 means the default.", "")
-	subjectLimit.Minimum = intPtr(0)
+	subjectLimit := pageLimit("Subjects", board.SubjectsPageMax, true)
+	reviewLimit := pageLimit("Reviews", board.ReviewPageMax, true)
 	jsonFormat := readParam{Name: "format", In: "query", Desc: "json, the only answer", Enum: []string{"json"}, Example: "json"}
 	runErrors := map[int]string{400: "invalid_request: not a positive run number, or a query string", 404: "not_found: no such run", 503: "trust_unavailable: the trust estimate cannot be read right now"}
 	generic := map[int]string{400: "", 403: ""}
@@ -246,7 +246,7 @@ func readRoutes() []readRoute {
 			Params: []readParam{{Name: "uri", In: "query", Required: true, Desc: "TYPE:KEY, such as domain:example.com; /capabilities subjects.uri lists the forms", Example: "domain:example.com"}},
 			Strict: true, Errors: generic},
 		{Path: "/api/subjects/{id}", Feature: "subjects", Summary: "One subject with its reviews, paged (subject.get)",
-			Params: []readParam{pathParam("id", "^[a-z2-7]{26}$", "The subject's id", "aaaaaaaaaaaaaaaaaaaaaaaaaa"), queryParam("cursor", "string", "next_cursor of the previous page", ""), subjectLimit},
+			Params: []readParam{pathParam("id", "^[a-z2-7]{26}$", "The subject's id", "aaaaaaaaaaaaaaaaaaaaaaaaaa"), queryParam("cursor", "string", "next_cursor of the previous page", ""), reviewLimit},
 			Strict: true, Errors: with(generic, 404, "not_found: no such subject")},
 
 		// Moderation (MODERATION on).

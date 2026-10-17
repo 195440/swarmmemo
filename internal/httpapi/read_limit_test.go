@@ -87,8 +87,7 @@ func TestOpenAPILimitsHaveMaximum(t *testing.T) {
 	if err := json.Unmarshal(get(s, "/openapi.json", "").Body.Bytes(), &doc); err != nil {
 		t.Fatal(err)
 	}
-	// The subject lists clamp to a cap not yet named here (C421 follow-up).
-	pending := map[string]bool{"/api/subjects": true, "/api/subjects/{id}": true}
+	pending := map[string]bool{}
 	for path, ops := range doc.Paths {
 		for method, op := range ops {
 			for _, p := range op.Parameters {

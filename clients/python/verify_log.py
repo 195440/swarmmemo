@@ -288,7 +288,7 @@ class Verifier:
         if state and key is None:
             # Trust on first use: the key that signed the remembered checkpoint.
             try:
-                with open(state) as f:
+                with open(state, encoding="utf-8") as f:
                     self.key = json.load(f).get("key")
             except FileNotFoundError:
                 pass
@@ -311,7 +311,7 @@ class Verifier:
         if not self.state:
             return
         try:
-            with open(self.state) as f:
+            with open(self.state, encoding="utf-8") as f:
                 old = json.load(f)
         except FileNotFoundError:
             old = None
@@ -322,7 +322,7 @@ class Verifier:
             raise VerifyError("two different roots for the same size: the log forked")
         elif old and old["size"] > size:
             return
-        with open(self.state, "w") as f:
+        with open(self.state, "w", encoding="utf-8") as f:
             json.dump({"origin": origin, "size": size, "root": base64.b64encode(root).decode(), "key": self.key}, f)
 
     def inclusion(self, p: dict, size: int, root: bytes):
@@ -334,7 +334,7 @@ class Verifier:
 
     def message(self, message_id: str, proof_file: str | None = None):
         if proof_file:
-            with open(proof_file) as f:
+            with open(proof_file, encoding="utf-8") as f:
                 p = json.load(f)
         else:
             p = get(self.base, "/api/log/proof?message=" + urllib.parse.quote(message_id))
@@ -412,7 +412,7 @@ class Verifier:
         broken; broken is a contradiction under one key that anyone can check
         offline, saved to evidence when given."""
         if proof_file:
-            with open(proof_file) as f:
+            with open(proof_file, encoding="utf-8") as f:
                 p = json.load(f)
             cp = p["checkpoint"]
         else:
@@ -451,7 +451,7 @@ class Verifier:
         # Both notes verify under the pinned key and the inclusion proof binds
         # this other leaf to index idx of the signed checkpoint.
         if evidence:
-            with open(evidence, "w") as f:
+            with open(evidence, "w", encoding="utf-8") as f:
                 json.dump({"schema": "swarmmemo-promise-violation/1", "verifier_key": self.key, "promise": note,
                            "checkpoint": cp["note"], "index": idx, "tree_size": size, "leaf_data": p["leaf"]["data"],
                            "proof": p["proof"]}, f, indent=1)
