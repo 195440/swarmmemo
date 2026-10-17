@@ -71,3 +71,88 @@ func TestWorkClaimableAndStandingNextOpen(t *testing.T) {
 		t.Fatalf("claimed work: claimable %v state %s", w.Claimable, w.State)
 	}
 }
+
+// A message's work mark says claimable as work.get does: a full standing
+// task (its one seat waiting on a verdict) is not claimable on the request's
+// mark in a feed, a thread or message.get either (C408).
+func TestWorkMarkClaimableFollowsStandingSeats(t *testing.T) {
+	s := rewardStore(t)
+	owner := keyFor(195)
+	mintCredit(t, s, keyID(owner), allowance.Paid, 5000)
+	id := rewardRequest(t, s, owner, "lobby")
+	run(t, s, standingCreate(s, owner, id, map[string]any{"seats": 1, "reward": 150}, 10*86400))
+	mark := func() bool {
+		t.Helper()
+		got := map[string]bool{}
+		reads := map[string][]Message{
+			"message.get":   run(t, s, Command{Operation: "message.get", MessageID: id}).Messages,
+			"messages.list": run(t, s, Command{Operation: "messages.list", Room: "lobby", Limit: 50}).Messages,
+			"thread.get":    run(t, s, Command{Operation: "thread.get", MessageID: id}).Messages,
+		}
+		for read, page := range reads {
+			m := workMarks(page)[id]
+			if m == nil || m.Claimable == nil {
+				t.Fatalf("%s: no claimable mark on the request", read)
+			}
+			got[read] = *m.Claimable
+		}
+		for read, c := range got {
+			if c != got["message.get"] {
+				t.Fatalf("%s says claimable %v, message.get %v", read, c, got["message.get"])
+			}
+		}
+		return got["message.get"]
+	}
+	if w := getTestWork(t, s, id); !w.Claimable || !mark() {
+		t.Fatalf("open seat: work.get claimable %v, mark %v", w.Claimable, mark())
+	}
+	_, c := standingClaim(t, s, keyFor(196), id, nil)
+	run(t, s, c)
+	w := getTestWork(t, s, id)
+	if w.Claimable || w.Standing.Open != 0 {
+		t.Fatalf("full: work.get claimable %v open %d", w.Claimable, w.Standing.Open)
+	}
+	if mark() {
+		t.Fatal("full standing task: work.get says not claimable, the message mark says claimable")
+	}
+}
+
+// The web's open-work reads list what works.list kind=rewarded lists: a
+// standing task with no seat open (here day_max reached) leaves the strip
+// count and the framework rows as it leaves that list, and a framework row
+// shows what one result is paid, not the pool (C408).
+func TestOpenWorkReadsFollowStandingSeats(t *testing.T) {
+	s := rewardStore(t)
+	owner := keyFor(197)
+	mintCredit(t, s, keyID(owner), allowance.Paid, 5000)
+	id := rewardRequest(t, s, owner, "lobby")
+	run(t, s, standingCreate(s, owner, id, map[string]any{"seats": 3, "reward": 150, "day_max": 1}, 10*86400))
+	agree := func(want bool) {
+		t.Helper()
+		listed := false
+		for _, w := range run(t, s, Command{Operation: "works.list", Kind: WorkKindRewarded}).Data["works"].([]Work) {
+			listed = listed || w.ID == id
+		}
+		n, err := s.PublicOpenRewardedWork(testContext)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows, err := s.PublicOpenPaidWorkNaming(testContext, []string{"bugs"}, OpenPaidWorkMax)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if listed != want || (n == 1) != want || (len(rows) == 1) != want {
+			t.Fatalf("want listed %v: works.list %v, strip %d, framework rows %+v", want, listed, n, rows)
+		}
+		if want && (rows[0].ID != id || rows[0].Reward != 150 || !rows[0].PerResult) {
+			t.Fatalf("framework row: %+v, want 150 per result", rows[0])
+		}
+	}
+	agree(true)
+	_, c := standingClaim(t, s, keyFor(198), id, nil)
+	run(t, s, c)
+	if st := standingAt(t, s, id); st.Open != 0 {
+		t.Fatalf("after day_max: open %d", st.Open)
+	}
+	agree(false)
+}

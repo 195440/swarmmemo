@@ -27,7 +27,7 @@ const (
 	// NotarySchema names the receipt format; a breaking change is a new name.
 	NotarySchema = "swarmmemo-notary/1"
 	// notaryArgsMax leaves room for a full text JSON-escaped.
-	notaryArgsMax = 6*NotaryTextBytes + 256
+	notaryArgsMax = JSONEscape*NotaryTextBytes + 256
 )
 
 var notaryHashRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -273,28 +273,41 @@ func (n *notary) Run(ctx context.Context, tx *sql.Tx, c Call) (Result, error) {
 		return Result{}, err
 	}
 	public := json.RawMessage(`{}`)
-	existing, err := readReceipt(ctx, tx, hash, key)
-	switch {
-	case err == nil:
-		body, _ := json.Marshal(map[string]any{"receipt": existing, "duplicate": true, "log": notaryLog(hash)})
-		return Result{Body: body, Used: 0, Public: public}, nil
-	case !errors.Is(err, errNoReceipt):
-		return Result{}, err
-	}
-	var today int64
-	day := c.Now - c.Now%86400
-	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM notary_receipts WHERE account=? AND time>=?", c.Subject.ID, day).Scan(&today); err != nil {
-		return Result{}, err
-	}
-	if today >= NotaryPerAccountDay || !c.Subject.Signed && today >= NotaryPerAnonymousDay {
-		return Result{}, refusal("notary_limit")
-	}
-	r, err := insertReceipt(ctx, tx, key, n.serviceID, c.Subject.ID, hash, c.Now)
+	r, duplicate, err := stampForAgent(ctx, tx, key, n.serviceID, c.Subject.ID, c.Subject.Signed, hash, c.Now)
 	if err != nil {
 		return Result{}, err
 	}
-	body, _ := json.Marshal(map[string]any{"receipt": r, "duplicate": false, "log": notaryLog(hash)})
-	return Result{Body: body, Used: c.Price.For(0), Public: public}, nil
+	used := c.Price.For(0)
+	if duplicate {
+		used = 0
+	}
+	body, _ := json.Marshal(map[string]any{"receipt": r, "duplicate": duplicate, "log": notaryLog(hash)})
+	return Result{Body: body, Used: used, Public: public}, nil
+}
+
+// stampForAgent is a receipt an agent asks for, by notary.stamp or a doc's
+// notary:true: the first receipt for hash again (duplicate, never counted),
+// or a new one within the account's daily count (NotaryPerAccountDay, or
+// NotaryPerAnonymousDay without a key), refused with notary_limit past it.
+// Every agent-requested receipt goes through here, so no path skips the
+// count; the board's own record kinds use StampHash.
+func stampForAgent(ctx context.Context, tx *sql.Tx, key ed25519.PrivateKey, serviceID, account string, signed bool, hash string, now int64) (NotaryReceipt, bool, error) {
+	existing, err := readReceipt(ctx, tx, hash, key)
+	switch {
+	case err == nil:
+		return existing, true, nil
+	case !errors.Is(err, errNoReceipt):
+		return NotaryReceipt{}, false, err
+	}
+	var today int64
+	if err = tx.QueryRowContext(ctx, "SELECT count(*) FROM notary_receipts WHERE account=? AND time>=?", account, now-now%86400).Scan(&today); err != nil {
+		return NotaryReceipt{}, false, err
+	}
+	if today >= NotaryPerAccountDay || !signed && today >= NotaryPerAnonymousDay {
+		return NotaryReceipt{}, false, refusal("notary_limit")
+	}
+	r, err := insertReceipt(ctx, tx, key, serviceID, account, hash, now)
+	return r, false, err
 }
 
 // insertReceipt stores and signs a new receipt for hash.
@@ -314,9 +327,10 @@ func insertReceipt(ctx context.Context, tx *sql.Tx, key ed25519.PrivateKey, serv
 }
 
 // StampHash is the notary's stamp for a record the board makes itself (a
-// paid work reward), in the command's transaction: the same receipt a stamp
-// gives, read back the same way, without a charge or the per-agent count
-// (account names the board's record kind, not an agent). The first receipt
+// paid work reward, a verification), in the command's transaction: the same
+// receipt a stamp gives, read back the same way, without a charge or the
+// per-agent count (account names the board's record kind, not an agent; an
+// agent's own receipts go through stampForAgent). The first receipt
 // for a hash stands and is returned again.
 func StampHash(ctx context.Context, tx *sql.Tx, key ed25519.PrivateKey, serviceID, account, hash string, now int64) (NotaryReceipt, error) {
 	if len(key) != ed25519.PrivateKeySize || !notaryHashRE.MatchString(hash) {

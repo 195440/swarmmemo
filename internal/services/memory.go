@@ -21,7 +21,7 @@ const (
 	MemoryListPageMax = 100
 	// MemoryPutArgsMax bounds put's args JSON: a full value with room for
 	// JSON escaping.
-	MemoryPutArgsMax = 2*MemoryValueBytes + 1024
+	MemoryPutArgsMax = JSONEscape*MemoryValueBytes + 1024
 	memorySmallArgs  = 1024
 )
 

@@ -53,6 +53,13 @@ func Integer(raw json.RawMessage, max int64) (int64, bool) {
 	return n, err == nil && n <= max
 }
 
+// JSONEscape is how many bytes one byte of a string value can take in
+// args JSON: a control character or, from encoders such as Go's
+// json.Marshal, < > & is written \u00XX. An args bound for a value of n
+// bytes is JSONEscape*n plus room for the rest, so a value within its
+// advertised limit is never refused for how its sender escaped it.
+const JSONEscape = 6
+
 // badArg is an argument-level invalid_service_data refusal. msg names the
 // argument and what it takes; it never repeats the value sent.
 func badArg(msg string) error {

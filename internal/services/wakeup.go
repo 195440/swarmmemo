@@ -182,6 +182,12 @@ type wakeupSpec struct {
 	// none after until.
 	every, count    int64
 	atSet, countSet bool
+	asked           int64 // the count the caller gave, when countSet
+}
+
+// naturalFires is how many firings fit from start to until, every apart.
+func naturalFires(start, until, every int64) int64 {
+	return (until-start)/every + 1
 }
 
 // fires is how many firings s pays for.
@@ -293,13 +299,13 @@ func parseRecurring(s wakeupSpec, a wakeupScheduleArgs, now int64) (wakeupSpec, 
 	if s.dueAt > s.until {
 		return s, badArg("until must not be before the first firing (at, else now plus every).")
 	}
-	s.count = (s.until-s.dueAt)/every + 1
+	s.count = naturalFires(s.dueAt, s.until, every)
 	if a.Count != nil {
 		count, err := intArg(a.Count, "count", "", 1, WakeupFiresMax)
 		if err != nil {
 			return s, err
 		}
-		s.count, s.countSet = min(s.count, count), true
+		s.count, s.countSet, s.asked = min(s.count, count), true, count
 	}
 	return s, nil
 }
@@ -393,7 +399,10 @@ func storedKind(kind, room string) (string, string) {
 
 // same reports whether an active wake-up is the one s asks for; a retry that
 // omits until matches whatever until the registration defaulted to.
-// A recurring retry that omits at or count likewise matches the defaults.
+// A recurring retry that omits at or count likewise matches the defaults;
+// a count it gives is capped as the registration capped it, from the stored
+// start and until (not from now: a retry a second later, without at, would
+// fit one firing fewer).
 func (v wakeupView) same(s wakeupSpec) bool {
 	if v.Key != s.key || v.On != s.kind || v.Room != s.room || v.Every != s.every || (v.Until != s.until && s.untilSet) {
 		return false
@@ -401,7 +410,7 @@ func (v wakeupView) same(s wakeupSpec) bool {
 	if s.every == 0 {
 		return v.At == s.dueAt
 	}
-	return (v.At == s.dueAt || !s.atSet) && (v.Count == s.count || !s.countSet)
+	return (v.At == s.dueAt || !s.atSet) && (!s.countSet || v.Count == min(naturalFires(v.At, v.Until, v.Every), s.asked))
 }
 
 func (w *wakeup) Run(ctx context.Context, tx *sql.Tx, c Call) (Result, error) {

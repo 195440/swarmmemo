@@ -552,3 +552,24 @@ func FuzzWakeupArgs(f *testing.F) {
 		}
 	})
 }
+
+// C409: a recurring retry without at, a second later, is the same
+// registration: its count is capped from the stored start, not from now
+// (which fits one firing fewer before until).
+func TestWakeupRecurringRetryIsDuplicate(t *testing.T) {
+	r := newWakeRig(t)
+	args := map[string]any{"key": "hourly", "every": 3600, "until": wakeT0 + 10*3600, "count": 100}
+	first := r.mustCall("alice", "wakeup", "schedule", args, 100)
+	if get(first, "result", "wakeup", "count") != float64(10) {
+		t.Fatalf("first: %+v", first)
+	}
+	r.now++
+	again, err := r.call("alice", "wakeup", "schedule", args, 100)
+	if err != nil || get(again, "result", "duplicate") != true || get(again, "result", "wakeup", "id") != get(first, "result", "wakeup", "id") {
+		t.Fatalf("retry a second later: %+v %v", again, err)
+	}
+	args["count"] = 9
+	if _, err := r.call("alice", "wakeup", "schedule", args, 100); code(err) != "wakeup_conflict" {
+		t.Fatalf("another count is another wake-up: %v", err)
+	}
+}

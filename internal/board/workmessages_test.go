@@ -169,6 +169,11 @@ func (c *countingQuerier) QueryContext(ctx context.Context, query string, args .
 	return c.tx.QueryContext(ctx, query, args...)
 }
 
+func (c *countingQuerier) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	c.n++
+	return c.tx.QueryRowContext(ctx, query, args...)
+}
+
 func TestWorkMarksOneStatementPerPage(t *testing.T) {
 	s := openTest(t, Config{})
 	owner, worker := keyFor(170), keyFor(171)

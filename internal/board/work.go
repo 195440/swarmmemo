@@ -1454,7 +1454,7 @@ func (s *Store) projectWork(ctx context.Context, tx *sql.Tx, w workRow, root wor
 			return Work{}, err
 		}
 	}
-	p.Claimable = p.State == "open" && (p.Standing == nil || p.Standing.Open > 0)
+	p.Claimable = workClaimable(p.State, p.Standing)
 	p.RewardState = rewardStateOf(p.Reward, p.RewardUSDC)
 	if w.Result != "" {
 		if p.ResultAvailable, err = eligibleWorkResult(ctx, tx, w.Result, w, root); err != nil {
@@ -1547,9 +1547,15 @@ func workEligibilitySubject(ctx context.Context, tx *sql.Tx, named string, a act
 // OpenRewardedWorkMax caps the count PublicOpenRewardedWork reads.
 const OpenRewardedWorkMax = 100
 
+// openRewardedStandingScan caps the open rewarded standing tasks
+// PublicOpenRewardedWork reads the seats of.
+const openRewardedStandingScan = 4 * OpenRewardedWorkMax
+
 // PublicOpenRewardedWork counts the public open work with a reward held in
 // escrow, up to OpenRewardedWorkMax: what works.list kind=rewarded lists,
-// for the web's "open work" strip. One bounded statement.
+// for the web's "open work" strip. A standing task counts only with a seat
+// open (standingSeatOpen), as that list filters it. One bounded statement
+// for the rest, and the seats of each open rewarded standing task.
 func (s *Store) PublicOpenRewardedWork(ctx context.Context) (int, error) {
 	n := 0
 	now := s.now().Unix()
@@ -1558,9 +1564,48 @@ func (s *Store) PublicOpenRewardedWork(ctx context.Context) (int, error) {
 		if err := tx.QueryRowContext(ctx, `SELECT value FROM meta WHERE key='generation'`).Scan(&generation); err != nil {
 			return err
 		}
-		return tx.QueryRowContext(ctx, `SELECT count(*) FROM (SELECT 1 FROM works w JOIN events e ON e.id=w.id JOIN rooms r ON r.name=e.room
- WHERE e.hidden=0 AND r.visibility='public' AND e.kind<>'simulation' AND (`+workEffectiveSQL+`)='open'
- AND EXISTS(SELECT 1 FROM work_rewards wr WHERE wr.work_id=w.id AND wr.state='held') LIMIT ?)`, now, generation, now, OpenRewardedWorkMax).Scan(&n)
+		open := `FROM works w JOIN events e ON e.id=w.id JOIN rooms r ON r.name=e.room
+ WHERE e.hidden=0 AND r.visibility='public' AND e.kind<>'simulation' AND (` + workEffectiveSQL + `)='open'
+ AND EXISTS(SELECT 1 FROM work_rewards wr WHERE wr.work_id=w.id AND wr.state='held')`
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM (SELECT 1 `+open+`
+ AND NOT EXISTS(SELECT 1 FROM work_standing ws WHERE ws.work_id=w.id) LIMIT ?)`, now, generation, now, OpenRewardedWorkMax).Scan(&n); err != nil {
+			return err
+		}
+		rows, err := tx.QueryContext(ctx, `SELECT w.id,w.deadline `+open+`
+ AND EXISTS(SELECT 1 FROM work_standing ws WHERE ws.work_id=w.id) LIMIT ?`, now, generation, now, openRewardedStandingScan)
+		if err != nil {
+			return err
+		}
+		type root struct {
+			id       string
+			deadline int64
+		}
+		roots := []root{}
+		for rows.Next() {
+			var r root
+			if err := rows.Scan(&r.id, &r.deadline); err != nil {
+				rows.Close()
+				return err
+			}
+			roots = append(roots, r)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		for _, r := range roots {
+			if n >= OpenRewardedWorkMax {
+				break
+			}
+			seats, err := openStandingSeats(ctx, tx, r.id, r.deadline, now)
+			if err != nil {
+				return err
+			}
+			if standingSeatOpen(seats) {
+				n++
+			}
+		}
+		return nil
 	})
 	return n, err
 }
@@ -1852,7 +1897,7 @@ func (s *Store) readWork(ctx context.Context, tx *sql.Tx, c Command, a actor, no
 		// stored page, so a filtered page may be shorter than the limit.
 		claimable := works[:0]
 		for _, w := range works {
-			if w.Standing == nil || w.Standing.Open > 0 {
+			if standingSeatOpen(w.Standing) {
 				claimable = append(claimable, w)
 			}
 		}

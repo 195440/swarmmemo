@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"swarmmemo/internal/allowance"
+	"swarmmemo/internal/trust"
 )
 
 // Work eligibility on the real store: each rule admits and refuses on
@@ -168,4 +171,32 @@ func TestWorkEligibilityStandingAtLeast(t *testing.T) {
 	run(t, s, claimCommand(s, trusted, tr))
 	bad := run(t, s, signed(owner, Command{Operation: "post", Room: "lobby", Kind: "request", Text: "Bad brief", Timestamp: s.now().Unix()})).Receipt.ID
 	fails(t, s, signed(owner, Command{Operation: "work.create", MessageID: bad, Data: `{"schema":1,"generation":"` + s.generation + `","title":"x","capabilities":[],"eligibility":"standing_at_least:anonymous"}`, Timestamp: s.now().Unix()}), "invalid_work_data")
+}
+
+// The standing rules read the band floors from the live trust parameters,
+// as conversation policy and the band display do: raising unit_cents raises
+// the proven floor a claim must reach, and the refusal names it (C408).
+func TestWorkEligibilityStandingFollowsLiveParams(t *testing.T) {
+	s := openTest(t, Config{})
+	owner, worker := keyFor(224), keyFor(225)
+	registerAll(t, s, owner, worker)
+	setStanding(t, s, map[string]int64{keyID(worker): 300})
+	p := trust.DefaultParams()
+	p.UnitCents = 400
+	p.Derive()
+	if _, err := s.SetAllowanceParams(testContext, trust.ParamsNamespace, p.Body(), "test: unit 4.00", 0); err != nil {
+		t.Fatal(err)
+	}
+	live, err := trustParams(testContext, s.db, s.now().Unix())
+	if err != nil || live.BandFloorCents(allowance.BandProven) != 400 {
+		t.Fatalf("live proven floor %d %v", live.BandFloorCents(allowance.BandProven), err)
+	}
+	id := eligibleCreate(t, s, owner, "standing_at_least:proven")
+	if w := getTestWork(t, s, id); w.Eligibility != "standing_at_least:proven" {
+		t.Fatalf("stored eligibility %q", w.Eligibility)
+	}
+	// 300 cents clears the compiled-in $2.00 floor but not the live $4.00.
+	if _, err := s.Execute(testContext, claimCommand(s, worker, id), "o"); errCode(err) != "not_eligible" || !strings.Contains(err.Error(), "$4.00") {
+		t.Fatalf("300 cents against a live 400 floor: %v", err)
+	}
 }

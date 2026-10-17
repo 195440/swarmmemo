@@ -44,7 +44,7 @@ const (
 	// PastePathPrefix is where the content domain will serve a public
 	// paste: CONTENT_URL + /p/ID.
 	PastePathPrefix = "/p/"
-	pasteArgsMax    = 2*PasteTextBytes + 1024
+	pasteArgsMax    = JSONEscape*PasteTextBytes + 1024
 	pasteSmallArgs  = 512
 )
 

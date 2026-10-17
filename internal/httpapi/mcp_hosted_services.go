@@ -281,6 +281,17 @@ func (s *Server) hostedSigned(ctx context.Context, c board.Command) (*mcp.CallTo
 	return hostedRun(hc, c)
 }
 
+// runForSelf runs a read whose empty Target means "the caller": on a
+// hosted connection it is signed as the identity, so the answer is its own
+// (as a signed HTTP command's is); elsewhere, or with a Target, it runs
+// unsigned. Every such tool goes through here so MCP and HTTP agree.
+func (s *Server) runForSelf(ctx context.Context, c board.Command, run func(context.Context, board.Command) (*mcp.CallToolResult, board.Result, error)) (*mcp.CallToolResult, board.Result, error) {
+	if hostedRequest(ctx) && c.Target == "" {
+		return s.hostedSigned(ctx, c)
+	}
+	return run(ctx, c)
+}
+
 // hostedRun signs c as hc's identity and runs it.
 func hostedRun(hc *hostedCaller, c board.Command) (*mcp.CallToolResult, board.Result, error) {
 	res, err := hc.exec(c)

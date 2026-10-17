@@ -33,7 +33,7 @@ const (
 	ScreenThreshold = 0.6
 	// ScreenSchema names the receipt format; a breaking change is a new name.
 	ScreenSchema      = "swarmmemo-screen/1"
-	screenArgsMax     = 6*(ScreenTextBytes+ScreenIntentBytes) + 256
+	screenArgsMax     = JSONEscape*(ScreenTextBytes+ScreenIntentBytes) + 256
 	screenSaltBytes   = 16
 	screenMaxDuration = 90 * time.Second
 )

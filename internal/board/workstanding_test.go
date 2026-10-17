@@ -661,6 +661,45 @@ func TestWorkStandingHiddenResultFreesSeat(t *testing.T) {
 	}
 }
 
+// A hide on any version removes the message, so a result whose edit (the
+// version the claim bound) is hidden holds no seat either: the seat is free
+// at once and the next claim returns its reward, rather than a seat held
+// for a result nobody can accept until it lapses (C408).
+func TestWorkStandingHiddenEditFreesSeat(t *testing.T) {
+	s := rewardStore(t)
+	owner, worker := keyFor(205), keyFor(206)
+	mintCredit(t, s, keyID(owner), allowance.Paid, 5000)
+	id := rewardRequest(t, s, owner, "lobby")
+	run(t, s, standingCreate(s, owner, id, map[string]any{"seats": 1, "reward": 150}, 10*86400))
+	reply := run(t, s, signed(worker, Command{Operation: "post", Room: "lobby", ReplyTo: id, Text: "Bug v1", Timestamp: s.now().Unix()})).Receipt.ID
+	edit := run(t, s, signedNow(s, worker, Command{Operation: "post", Room: "lobby", ReplyTo: id, Text: "Bug v2 spam", Data: `{"schema":1,"supersedes":"` + reply + `"}`})).Receipt.ID
+	run(t, s, workWith(s, worker, Command{Operation: "work.claim", MessageID: id, Target: reply}, nil))
+	if st := standingAt(t, s, id); st.Submitted != 1 || st.Open != 0 {
+		t.Fatalf("after the claim: %+v", st.WorkStandingSeats)
+	}
+	if _, err := s.db.Exec("UPDATE events SET hidden=1,hidden_by='room' WHERE id=?", edit); err != nil {
+		t.Fatal(err)
+	}
+	if st := standingAt(t, s, id); st.Submitted != 0 || st.Open != 1 {
+		t.Fatalf("after hiding the bound edit: %+v", st.WorkStandingSeats)
+	}
+	if w := getTestWork(t, s, id); !w.Claimable {
+		t.Fatal("the freed seat is not claimable")
+	}
+	_, next := standingClaim(t, s, keyFor(207), id, nil)
+	run(t, s, next)
+	var state, reason string
+	if err := s.db.QueryRow("SELECT w.state,r.reason FROM works w JOIN work_rewards r ON r.work_id=w.id WHERE w.id=?", reply).Scan(&state, &reason); err != nil {
+		t.Fatal(err)
+	}
+	if state != "cancelled" || reason != "hidden" {
+		t.Fatalf("hidden-edit result: %s %s", state, reason)
+	}
+	if err := s.Integrity(testContext); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // USDC owed holds no seat: an accept frees its seat at once, and the USDC a
 // requester owes unsettled on one standing task is capped at seats times the
 // top tier's; past it an accept pays credits only, and a settle lowers it

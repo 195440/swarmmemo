@@ -21,7 +21,8 @@ import (
 )
 
 // MessageWork is a message's work mark. On a request: ID, its effective
-// State, Deadline, Eligibility, Claimable (State is open) and, when set,
+// State, Deadline, Eligibility, Claimable (as work.get's: State is open
+// and, on a standing task, a seat is open; workClaimable) and, when set,
 // Reward, RewardNote (display text only; the poster pays it), Reviewer
 // and Simulated. On a reply that a worker submitted as
 // the result: ResultOf (the work's ID) and State, one of submitted,
@@ -80,13 +81,16 @@ var workEffectiveInlineSQL = func() string {
 // workRowsQuerier is the transaction attachWork reads through (a test counts it).
 type workRowsQuerier interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	rowQuerier
 }
 
 // attachWork sets Work on the visible messages of one page that are a work
 // request (at any version) or a reply submitted as a work's result: one
 // statement for the page, by primary key, whatever its size. A reply is
 // matched by version chain, so an edit of a result keeps its mark; a
-// rejected result is one whose submit the next transition rejected.
+// rejected result is one whose submit the next transition rejected. An open
+// standing task on the page also reads its seats, as work.get does, so its
+// claimable is work.get's.
 func attachWork(ctx context.Context, q workRowsQuerier, events []Message, now int64) error {
 	seen := map[string]bool{}
 	keys := []any{}
@@ -111,7 +115,8 @@ func attachWork(ctx context.Context, q workRowsQuerier, events []Message, now in
  coalesce((SELECT group_concat(CASE WHEN te.origin<>'' THEN te.origin ELSE te.id END) FROM work_transitions t
   JOIN work_transitions x ON x.work_id=t.work_id AND x.sequence=t.sequence+1 AND x.operation='work.reject'
   JOIN events te ON te.id=json_extract(t.payload,'$.command.target')
-  WHERE t.work_id=w.id AND t.state='submitted'),''),w.standing_id
+  WHERE t.work_id=w.id AND t.state='submitted'),''),w.standing_id,
+ EXISTS(SELECT 1 FROM work_standing ws WHERE ws.work_id=w.id)
  FROM works w JOIN events e ON e.id=w.id
  LEFT JOIN work_rewards rw ON rw.work_id=w.id
  LEFT JOIN work_usdc wu ON wu.work_id=w.id
@@ -126,6 +131,7 @@ func attachWork(ctx context.Context, q workRowsQuerier, events []Message, now in
 		stored           string // the stored state: accepted marks the current result accepted
 		result, rejected string // the current result's version chain; rejected results' chains, comma-separated
 		standing         string // a result a standing task opened: the standing task
+		standingRoot     bool   // a standing task: its seats decide claimable
 	}
 	found := map[string]mark{}
 	for rows.Next() {
@@ -134,7 +140,7 @@ func attachWork(ctx context.Context, q workRowsQuerier, events []Message, now in
 		var reward, usdc int64
 		var rewardState, usdcState string
 		var reviewer AgentRef
-		if err = rows.Scan(&m.root.ID, &m.root.Title, &m.root.State, &m.stored, &m.root.Deadline, &m.root.Eligibility, &kind, &reward, &rewardState, &usdc, &usdcState, &m.root.RewardNote, &reviewer.ID, &reviewer.PublicKey, &reviewer.Handle, &m.result, &m.rejected, &m.standing); err != nil {
+		if err = rows.Scan(&m.root.ID, &m.root.Title, &m.root.State, &m.stored, &m.root.Deadline, &m.root.Eligibility, &kind, &reward, &rewardState, &usdc, &usdcState, &m.root.RewardNote, &reviewer.ID, &reviewer.PublicKey, &reviewer.Handle, &m.result, &m.rejected, &m.standing, &m.standingRoot); err != nil {
 			return err
 		}
 		m.root.Simulated = kind == "simulation"
@@ -162,13 +168,26 @@ func attachWork(ctx context.Context, q workRowsQuerier, events []Message, now in
 		if reviewer.ID != "" {
 			m.root.Reviewer = &reviewer
 		}
-		claimable := m.root.State == "open"
+		claimable := workClaimable(m.root.State, nil)
 		m.root.Claimable = &claimable
 		m.root.URL = "/work/" + m.root.ID
 		found[m.root.ID] = m
 	}
 	if err = rows.Err(); err != nil {
 		return err
+	}
+	rows.Close()
+	for id, m := range found {
+		if !m.standingRoot || !*m.root.Claimable {
+			continue
+		}
+		seats, err := openStandingSeats(ctx, q, id, m.root.Deadline, now)
+		if err != nil {
+			return err
+		}
+		claimable := workClaimable(m.root.State, seats)
+		m.root.Claimable = &claimable
+		found[id] = m
 	}
 	for i, e := range events {
 		if e.Type != "message" || e.Hidden {

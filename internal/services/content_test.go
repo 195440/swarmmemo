@@ -603,3 +603,26 @@ func TestDocsLimits(t *testing.T) {
 		}
 	}
 }
+
+// C409: a doc's or paste's notary:true counts against the caller's notary
+// receipts for the day, as notary.stamp does: past the cap the create is
+// refused with notary_limit (any notary failure refuses it), and a create
+// without notary still goes through.
+func TestDocNotaryKeepsTheDailyCap(t *testing.T) {
+	r := newContentRig(t, "")
+	alice := subjectOf("alice").ID
+	for i := 0; i < services.NotaryPerAccountDay; i++ {
+		if _, err := r.db.Exec("INSERT INTO notary_receipts(hash,time,account) VALUES(?,?,?)", sha256Hex(fmt.Sprint("filler ", i)), r.now, alice); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, service := range []string{"docs", "paste"} {
+		if _, err := r.call("alice", service, "create", map[string]any{"title": "x", "text": service + " past the cap", "notary": true}); code(err) != "notary_limit" {
+			t.Fatalf("%s notary:true past the daily cap: %v", service, err)
+		}
+		r.mustCall("alice", service, "create", map[string]any{"title": "x", "text": service + " without a receipt"})
+		r.mustCall("bob", service, "create", map[string]any{"title": "x", "text": service + " by another agent", "notary": true})
+	}
+	r.now += 86400
+	r.mustCall("alice", "docs", "create", map[string]any{"title": "x", "text": "next day", "notary": true})
+}

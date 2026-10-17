@@ -167,10 +167,12 @@ func (v Vocab) synonyms(word string) []string {
 var (
 	// "under a cent", "less than one penny", "below a dollar"
 	pricePhraseRE = regexp.MustCompile(`\b(?:under|below|less than|at most|up to|max(?:imum)?|cheaper than|no more than|within)\s+(?:a|one)\s+(cent|penny|dollar|buck)\b`)
-	// "under $0.05", "under 5 cents", "max 0.01 usd", "<= $1"
-	priceAmountRE = regexp.MustCompile(`(?:\b(?:under|below|less than|at most|up to|max(?:imum)?|cheaper than|no more than|within)\s*|<=?\s*)\$?\s*(\d{1,7}(?:\.\d{1,6})?|\.\d{1,6})\s*(cents?|¢|c\b|usd\b|usdc\b|dollars?\b|\$)?`)
+	// "under $0.05", "under 5 cents", "max 0.01 usd", "<= $1". A number
+	// counts only with a currency cue ("up to 10 languages" is no price),
+	// and the trail group catches "$5,000" so it is not read as $5.
+	priceAmountRE = regexp.MustCompile(`(?:\b(?:under|below|less than|at most|up to|max(?:imum)?|cheaper than|no more than|within)\s*|<=?\s*)(\$?)\s*(\d{1,7}(?:\.\d{1,6})?|\.\d{1,6})([.,]?\d)?\s*(cents?\b|¢|c\b|usd\b|usdc\b|dollars?\b|\$)?`)
 	// "$0.01 or less", "0.01 usd max"
-	priceTrailRE = regexp.MustCompile(`\$\s*(\d{1,7}(?:\.\d{1,6})?|\.\d{1,6})\s*(?:or less|max(?:imum)?|tops)?`)
+	priceTrailRE = regexp.MustCompile(`(\$)\s*(\d{1,7}(?:\.\d{1,6})?|\.\d{1,6})([.,]?\d)?\s*()(?:or less|max(?:imum)?|tops)?`)
 	freeRE       = regexp.MustCompile(`\b(?:free|no cost|costs nothing)\b`)
 	outputRE     = regexp.MustCompile(`\b(?:that\s+)?(?:returns?|returning|outputs?|gives?(?:\s+(?:me|back))?|responds? (?:with|in)|answers? (?:with|in)|in|as)\s+(?:a\s+|an\s+)?(json|text|plain text|markdown|csv|html|images?|png|jpe?g|audio|mp3|wav|video|mp4)\b`)
 	outputBareRE = regexp.MustCompile(`\b(json|html|csv)\b`)
@@ -215,6 +217,26 @@ var stopWords = map[string]bool{
 	"this": true, "these": true, "there": true, "your": true, "you": true, "one": true, "about": true, "like": true, "into": true,
 }
 
+// priceMatch reads one price match: dollar is "$" or empty, amount the
+// number, trail what follows the number directly (a further digit or a
+// thousands separator, which refuses the whole match), unit the currency
+// word after it. A bare number is no price: it needs "$" or a unit. Cents
+// round up to a whole micro-USD, so a tiny cap never becomes free.
+func priceMatch(dollar, amount, trail, unit string) (int64, bool) {
+	unit = strings.TrimSpace(unit)
+	if trail != "" || (dollar == "" && unit == "") {
+		return 0, false
+	}
+	micro, ok := ParseUSD(amount)
+	if !ok {
+		return 0, false
+	}
+	if strings.HasPrefix(unit, "cent") || unit == "¢" || unit == "c" {
+		micro = (micro + 99) / 100
+	}
+	return micro, true
+}
+
 // ParseRules is the deterministic parser: the filters q names and the text
 // left. It never fails; an unreadable price is left in the text.
 func ParseRules(q string, v Vocab) (Filters, string) {
@@ -242,25 +264,15 @@ func ParseRules(q string, v Vocab) (Filters, string) {
 		}
 		return true
 	})
-	cut(priceAmountRE, func(m []string) bool {
-		micro, ok := ParseUSD(m[1])
-		if !ok {
-			return false
-		}
-		if unit := strings.TrimSpace(m[2]); strings.HasPrefix(unit, "cent") || unit == "¢" || unit == "c" {
-			micro /= 100
-		}
-		setPrice(micro)
-		return true
-	})
-	cut(priceTrailRE, func(m []string) bool {
-		micro, ok := ParseUSD(m[1])
-		if !ok {
-			return false
-		}
-		setPrice(micro)
-		return true
-	})
+	for _, re := range []*regexp.Regexp{priceAmountRE, priceTrailRE} {
+		cut(re, func(m []string) bool {
+			micro, ok := priceMatch(m[1], m[2], m[3], m[4])
+			if ok {
+				setPrice(micro)
+			}
+			return ok
+		})
+	}
 	cut(freeRE, func([]string) bool { f.MaxPrice = "0"; return true })
 	cut(outputRE, func(m []string) bool { f.Output = outputWords[m[1]]; return f.Output != "" })
 	if f.Output == "" {

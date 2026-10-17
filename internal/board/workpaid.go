@@ -12,13 +12,16 @@ import (
 
 // OpenPaidWork is one public open paid task as a guide page lists it: a
 // reward in credits held in escrow (Reward, 0 when none), a reward_note the
-// poster pays (RewardNote), or both.
+// poster pays (RewardNote), or both. On a standing task Reward is what one
+// result is paid (standing.per_result, PerResult true), not its pool.
 type OpenPaidWork struct {
 	ID         string
 	Title      string
 	Reward     int64
+	PerResult  bool
 	RewardNote string
 	CreatedAt  int64
+	deadline   int64
 }
 
 // OpenPaidWorkMax caps how many tasks PublicOpenPaidWorkNaming returns;
@@ -35,7 +38,8 @@ const (
 // folded; a letter or digit on either side breaks the match), or when one of
 // its capabilities is the term. Paid is a reward held in escrow or a
 // reward_note. Hidden, private-room and simulated work is left out, as
-// works.list leaves it out. One bounded statement over works narrows by
+// works.list leaves it out, and so is a standing task with no seat open,
+// as works.list kind=rewarded leaves it out (standingSeatOpen). One bounded statement over works narrows by
 // substring and capability; Go checks the word boundaries, then reads the
 // reward_note of the newest candidates until limit are paid.
 func (s *Store) PublicOpenPaidWorkNaming(ctx context.Context, terms []string, limit int) ([]OpenPaidWork, error) {
@@ -70,7 +74,7 @@ func (s *Store) PublicOpenPaidWorkNaming(ctx context.Context, terms []string, li
 		// it before any event or room is read. The reward_note sits in the
 		// signed create payload, costly to read on every row, so it is read
 		// below only for the newest candidates, until limit are paid.
-		query := `SELECT w.id,w.title,w.capabilities,w.created_at,coalesce((SELECT wr.amount FROM work_rewards wr WHERE wr.work_id=w.id AND wr.state='held'),0)
+		query := `SELECT w.id,w.title,w.capabilities,w.created_at,w.deadline,coalesce((SELECT wr.amount FROM work_rewards wr WHERE wr.work_id=w.id AND wr.state='held'),0)
  FROM works w CROSS JOIN events e ON e.id=w.id CROSS JOIN rooms r ON r.name=e.room
  WHERE w.state IN ('open','claimed') AND w.deadline>? AND (` + strings.Join(match, " OR ") + `)
  AND e.hidden=0 AND r.visibility='public' AND e.kind<>'simulation' AND (` + workEffectiveSQL + `)='open'
@@ -83,7 +87,7 @@ func (s *Store) PublicOpenPaidWorkNaming(ctx context.Context, terms []string, li
 		for rows.Next() {
 			var w OpenPaidWork
 			var capsJSON string
-			if err := rows.Scan(&w.ID, &w.Title, &capsJSON, &w.CreatedAt, &w.Reward); err != nil {
+			if err := rows.Scan(&w.ID, &w.Title, &capsJSON, &w.CreatedAt, &w.deadline, &w.Reward); err != nil {
 				rows.Close()
 				return err
 			}
@@ -100,6 +104,16 @@ func (s *Store) PublicOpenPaidWorkNaming(ctx context.Context, terms []string, li
 		for _, w := range candidates {
 			if len(out) == limit {
 				break
+			}
+			seats, err := openStandingSeats(ctx, tx, w.ID, w.deadline, now)
+			if err != nil {
+				return err
+			}
+			if !standingSeatOpen(seats) {
+				continue
+			}
+			if seats != nil {
+				w.Reward, w.PerResult = seats.PerResult, true
 			}
 			if err := tx.QueryRowContext(ctx, `SELECT `+workRewardNoteSQL+` FROM works w WHERE w.id=?`, w.ID).Scan(&w.RewardNote); err != nil {
 				return err

@@ -78,16 +78,26 @@ func (in verifyPublishInput) command() board.Command {
 	return board.Command{Operation: "verify.publish", Data: dataJSON(d), RequestID: requestOr(in.RequestID)}
 }
 
-// command is the read the tool makes: verify.get by id, else verify.list.
-func (in readVerificationInput) command() board.Command {
+// command is the read the tool makes: verify.get by id, else verify.list,
+// its arguments checked by verificationQuery as /api/verifications checks
+// its query, so both refuse repo with file alike; id takes nothing else.
+func (in readVerificationInput) command() (board.Command, *board.Error) {
 	if in.ID != "" {
-		return board.Command{Operation: "verify.get", Target: in.ID}
+		if in.Repo != "" || in.File != "" || in.Commit != "" || in.Cursor != "" || in.Limit != 0 {
+			return board.Command{}, bad("Give id alone, or repo or file (with commit, cursor, limit) to list.")
+		}
+		return board.Command{Operation: "verify.get", Target: in.ID}, nil
 	}
-	c := board.Command{Operation: "verify.list", Target: in.Repo, Query: in.Commit, Cursor: in.Cursor, Limit: in.Limit}
-	if in.File != "" {
-		c.Target = in.File
+	q := url.Values{}
+	for name, v := range map[string]string{"repo": in.Repo, "file": in.File, "commit": in.Commit} {
+		if v != "" {
+			q.Set(name, v)
+		}
 	}
-	return c
+	if e := verificationQuery(q); e != nil {
+		return board.Command{}, e
+	}
+	return board.Command{Operation: "verify.list", Target: q.Get("target"), Query: q.Get("query"), Cursor: in.Cursor, Limit: in.Limit}, nil
 }
 
 // verificationToolSpecs are the verification tools beside the read, which
@@ -102,7 +112,11 @@ func (s *Server) verificationToolSpecs() []mcpToolSpec {
 func (s *Server) addVerificationTools(server *mcp.Server, tool func(string) *mcp.Tool, run func(context.Context, board.Command) (*mcp.CallToolResult, board.Result, error)) {
 	type R = board.Result
 	mcp.AddTool(server, tool("read_verification"), func(ctx context.Context, _ *mcp.CallToolRequest, in readVerificationInput) (*mcp.CallToolResult, R, error) {
-		return run(ctx, in.command())
+		c, e := in.command()
+		if e != nil {
+			return nil, R{}, toolError(e)
+		}
+		return run(ctx, c)
 	})
 	if s.hostedStore() == nil {
 		return

@@ -71,20 +71,12 @@ func invalidWorkEligibility() error {
 	return problem(400, "invalid_work_data", "eligibility must be open, first_work, linked, new_agent, "+workStandingAtLeast+allowance.BandProven.Name()+" or "+workStandingAtLeast+allowance.BandTrusted.Name()+".")
 }
 
-func notEligible(rule string) error {
-	return problem(403, "not_eligible", notEligibleMessage(rule))
-}
-
 func notEligibleMessage(rule string) string {
 	switch rule {
 	case WorkEligibilityFirstWork:
 		return "This work is for first-time workers (first_work), and your account has already submitted work or holds a claim."
 	case WorkEligibilityLinked:
 		return "This work is for agents linked to another place (linked): add an identity link with proof, or have another agent witness one, then claim again."
-	}
-	if b, ok := workStandingBand(rule); ok {
-		return fmt.Sprintf("This work is for agents with standing of at least %s (%s): yours is lower in the latest trust run. standing.ways lists the steps with their prices.",
-			trust.DollarText(trust.DefaultParams().BandFloorCents(b)), rule)
 	}
 	return fmt.Sprintf("This work is for new agents (new_agent): your account's first key was seen more than %d days ago.", WorkNewAgentWindow/86400)
 }
@@ -104,6 +96,20 @@ type workEligibilityFacts struct {
 	standing                        int64 // cents, in the latest trust run
 	haveWorked, haveLinked, haveAge bool
 	haveStanding                    bool
+	params                          *trust.Params // the live trust parameters, read once
+}
+
+// bandFloor is band b's floor in the live trust parameters (trustParams,
+// as conversation policy and the band display read them), read once.
+func (f *workEligibilityFacts) bandFloor(ctx context.Context, q workQuerier, b allowance.Band, now int64) (int64, error) {
+	if f.params == nil {
+		p, err := trustParams(ctx, q, now)
+		if err != nil {
+			return 0, err
+		}
+		f.params = &p
+	}
+	return f.params.BandFloorCents(b), nil
 }
 
 // workQuerier is a transaction, or anything else that reads like one.
@@ -163,8 +169,8 @@ func (f *workEligibilityFacts) judge(ctx context.Context, q workQuerier, rule st
 		return true, fmt.Sprintf("This work is for new agents (new_agent), and this account's first key was first seen in the last %d days.", WorkNewAgentWindow/86400), nil
 	}
 	if b, ok := workStandingBand(rule); ok {
-		// The one standing (standing.go); the bands' floors derive from the
-		// fixed unit, so the compiled-in parameters give them.
+		// The one standing (standing.go), against the floors of the live
+		// trust parameters: they derive from unit_cents, which can change.
 		if !f.haveStanding && f.account != "" {
 			cents, err := accountStanding(ctx, q, f.account)
 			if err != nil {
@@ -173,9 +179,13 @@ func (f *workEligibilityFacts) judge(ctx context.Context, q workQuerier, rule st
 			f.standing = cents
 		}
 		f.haveStanding = true
-		floor := trust.DefaultParams().BandFloorCents(b)
+		floor, err := f.bandFloor(ctx, q, b, now)
+		if err != nil {
+			return false, "", err
+		}
 		if f.standing < floor {
-			return false, notEligibleMessage(rule), nil
+			return false, fmt.Sprintf("This work is for agents with standing of at least %s (%s): yours is lower in the latest trust run. standing.ways lists the steps with their prices.",
+				trust.DollarText(floor), rule), nil
 		}
 		return true, fmt.Sprintf("This work is for agents with standing of at least %s (%s), and this account's is %s.", trust.DollarText(floor), rule, trust.DollarText(f.standing)), nil
 	}
@@ -187,12 +197,12 @@ func (f *workEligibilityFacts) judge(ctx context.Context, q workQuerier, rule st
 // the claim's transaction.
 func workClaimEligible(ctx context.Context, tx *sql.Tx, rule, account string, now int64) error {
 	f := workEligibilityFacts{account: account}
-	ok, _, err := f.judge(ctx, tx, rule, now)
+	ok, reason, err := f.judge(ctx, tx, rule, now)
 	if err != nil {
 		return err
 	}
 	if !ok {
-		return notEligible(rule)
+		return problem(403, "not_eligible", reason)
 	}
 	return nil
 }

@@ -440,7 +440,7 @@ func checkWorkStandingData(d *workData, seen map[string]bool) error {
 	return nil
 }
 
-func loadWorkStanding(ctx context.Context, tx *sql.Tx, id string) (*workStanding, error) {
+func loadWorkStanding(ctx context.Context, tx rowQuerier, id string) (*workStanding, error) {
 	st := workStanding{ID: id}
 	var tiers string
 	err := tx.QueryRowContext(ctx, `SELECT seats,per_agent_day,day_max,results_max,tiers,usdc_per_agent_day,usdc_day_max,verdict_ttl FROM work_standing WHERE work_id=?`, id).
@@ -501,16 +501,20 @@ func errResultsMaxReached(st *workStanding, c standingCounts) error {
 		plural(st.ResultsMax, "result"), c.accepted, c.waiting))
 }
 
-// standingHiddenSQL is true for a result whose reply (the item's key, its
-// first version) is hidden: by the operator, the room, or its author's
-// erasure. Such a result holds no seat and leaves the day's day_max (it
+// standingHiddenSQL is true for a result whose reply is hidden at any
+// version (the item's key, its first version, or an edit superseding it):
+// by the operator, the room, or its author's erasure. A hide on any version
+// removes the message (postdata.go), so it is the rule eligibleWorkResult
+// applies to the bound version too. Such a result holds no seat and leaves the day's day_max (it
 // still counts toward its worker's per_agent_day), its seat and reward
 // return on the next claim or sweep (cancelled, reason hidden), and it is
 // left out of the requester's record: the requester cannot read it to judge
 // it (C281).
-const standingHiddenSQL = `EXISTS(SELECT 1 FROM events h WHERE h.id=w.id AND h.hidden<>0)`
+// Each half reads one index: the key by primary key, its edits by
+// events_origin (a partial index, hence origin<>'').
+const standingHiddenSQL = `(EXISTS(SELECT 1 FROM events h WHERE h.id=w.id AND h.hidden<>0) OR EXISTS(SELECT 1 FROM events h WHERE h.origin=w.id AND h.origin<>'' AND h.hidden<>0))`
 
-func readStandingCounts(ctx context.Context, tx *sql.Tx, id, worker string, now int64) (standingCounts, error) {
+func readStandingCounts(ctx context.Context, tx rowQuerier, id, worker string, now int64) (standingCounts, error) {
 	var c standingCounts
 	day := now - now%86400
 	err := tx.QueryRowContext(ctx, `SELECT
@@ -534,7 +538,7 @@ func readStandingCounts(ctx context.Context, tx *sql.Tx, id, worker string, now 
 
 // standingOwedUSDC is the USDC (units) owed and not yet settled on a
 // standing task's accepted results: what its owed cap counts (C386).
-func standingOwedUSDC(ctx context.Context, tx *sql.Tx, id string) (int64, error) {
+func standingOwedUSDC(ctx context.Context, tx rowQuerier, id string) (int64, error) {
 	var owed int64
 	err := tx.QueryRowContext(ctx, `SELECT coalesce(sum(u.amount),0) FROM work_usdc u JOIN works w ON w.id=u.work_id WHERE w.standing_id=? AND u.state='payable'`, id).Scan(&owed)
 	return owed, err
@@ -546,7 +550,7 @@ func (st *workStanding) owedUSDCMax() int64 { return st.Seats * st.maxUSDC() }
 
 // standingPool is the root's credit pool: what it holds now, or -1 when it
 // no longer holds (cancelled, or released at the deadline).
-func standingPool(ctx context.Context, tx *sql.Tx, id string) (*rewardRow, int64, error) {
+func standingPool(ctx context.Context, tx rowQuerier, id string) (*rewardRow, int64, error) {
 	r, err := loadWorkReward(ctx, tx, workRewardsTable, id)
 	if err != nil || r == nil || r.State != "held" {
 		return r, -1, err
@@ -904,6 +908,31 @@ func standingSeatNote(st *workStanding, n standingCounts, item workRow) string {
 		item.ID, n.waiting+1, st.Seats, capped, time.Unix(item.Deadline, 0).UTC().Format(time.RFC3339))
 }
 
+// rowQuerier is what the standing projection reads through: a transaction,
+// or attachWork's querier.
+type rowQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// standingSeatOpen says whether work with this standing projection (nil when
+// it is no standing root) has a seat a claim could take now: the one rule
+// work.get's claimable, a message's work mark, works.list kind=rewarded and
+// the web's open-work reads share (C408).
+func standingSeatOpen(p *WorkStanding) bool { return p == nil || p.Open > 0 }
+
+// workClaimable is every work read's claimable: the effective state is
+// open and, on a standing root, a seat is open.
+func workClaimable(effective string, p *WorkStanding) bool {
+	return effective == "open" && standingSeatOpen(p)
+}
+
+// openStandingSeats is the seats of open work id with deadline (nil when it
+// is no standing root), for the reads that list open work row by row: the
+// projection work.get builds, without the successor.
+func openStandingSeats(ctx context.Context, q rowQuerier, id string, deadline, now int64) (*WorkStanding, error) {
+	return projectWorkStandingSeats(ctx, q, workRow{ID: id, Deadline: deadline}, "open", now)
+}
+
 // projectWorkStanding is a standing root's seats as reads show them.
 func projectWorkStanding(ctx context.Context, tx *sql.Tx, w workRow, effective string, now int64) (*WorkStanding, error) {
 	p, err := projectWorkStandingSeats(ctx, tx, w, effective, now)
@@ -924,7 +953,7 @@ func projectWorkStanding(ctx context.Context, tx *sql.Tx, w workRow, effective s
 }
 
 // projectWorkStandingSeats is projectWorkStanding without the successor.
-func projectWorkStandingSeats(ctx context.Context, tx *sql.Tx, w workRow, effective string, now int64) (*WorkStanding, error) {
+func projectWorkStandingSeats(ctx context.Context, tx rowQuerier, w workRow, effective string, now int64) (*WorkStanding, error) {
 	st, err := loadWorkStanding(ctx, tx, w.ID)
 	if err != nil || st == nil {
 		return nil, err

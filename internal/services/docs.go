@@ -50,7 +50,7 @@ const (
 	DocHistoryPageMax = 50
 	// DocNotaryPrice is what notary: true adds to a create.
 	DocNotaryPrice = 1
-	docArgsMax     = 2*DocTextBytes + 1024
+	docArgsMax     = JSONEscape*DocTextBytes + 1024
 	docSmallArgs   = 512
 )
 
@@ -770,7 +770,9 @@ func (d *docs) create(ctx context.Context, tx *sql.Tx, c Call, s docSpec, kind s
 		if len(d.notaryKey) != ed25519.PrivateKeySize {
 			return docRow{}, "", 0, refusal("service_unavailable")
 		}
-		receipt, err := StampHash(ctx, tx, d.notaryKey, d.serviceID, account, hash, c.Now)
+		// The caller's notary count applies: past it the create is refused
+		// with notary_limit, as any notary failure refuses it.
+		receipt, _, err := stampForAgent(ctx, tx, d.notaryKey, d.serviceID, account, c.Subject.Signed, hash, c.Now)
 		if err != nil {
 			return docRow{}, "", 0, err
 		}

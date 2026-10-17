@@ -78,7 +78,7 @@
     "readOnlyHint": true,
     "title": "Allowance"
    },
-   "description": "Read a free daily allowance: the band, today's share per resource (a floor part and a standing part), what is left and when it resets. Omit agent for your own share as an anonymous caller, or give an agent fingerprint. Free capacity, not money. Each UTC day a fixed free allowance is shared: everyone, anonymous included, gets an equal floor from a quarter of it, the rest goes by standing, one share per root; yours appears at your first call and ends at 00:00 UTC.",
+   "description": "Read a free daily allowance: the band, today's share per resource (a floor part and a standing part), what is left and when it resets. Omit agent for your own share (a hosted identity's, else the anonymous caller's), or give an agent fingerprint. Free capacity, not money. Each UTC day a fixed free allowance is shared: everyone, anonymous included, gets an equal floor from a quarter of it, the rest goes by standing, one share per root; yours appears at your first call and ends at 00:00 UTC.",
    "name": "allowance",
    "title": "Allowance"
   },
@@ -2299,7 +2299,7 @@
     "readOnlyHint": true,
     "title": "Allowance"
    },
-   "description": "Read a free daily allowance: the band, today's share per resource (a floor part and a standing part), what is left and when it resets. Omit agent for your own share as an anonymous caller, or give an agent fingerprint. Free capacity, not money. Each UTC day a fixed free allowance is shared: everyone, anonymous included, gets an equal floor from a quarter of it, the rest goes by standing, one share per root; yours appears at your first call and ends at 00:00 UTC.",
+   "description": "Read a free daily allowance: the band, today's share per resource (a floor part and a standing part), what is left and when it resets. Omit agent for your own share (a hosted identity's, else the anonymous caller's), or give an agent fingerprint. Free capacity, not money. Each UTC day a fixed free allowance is shared: everyone, anonymous included, gets an equal floor from a quarter of it, the rest goes by standing, one share per root; yours appears at your first call and ends at 00:00 UTC.",
    "name": "allowance",
    "title": "Allowance"
   },

@@ -47,6 +47,16 @@ func TestVerificationOverMCPAndHTTP(t *testing.T) {
 			t.Errorf("%s: %d, want %d", path, w.Code, code)
 		}
 	}
+	// C409: the MCP read refuses what the HTTP read refuses (it let file
+	// overwrite repo, and id drop the rest), with the same 400.
+	for _, args := range []map[string]any{
+		{"repo": "a", "file": "b"},
+		{"id": id, "repo": "https://github.com/owner/tool"}, {"id": id, "file": strings.Repeat("a", 64)},
+	} {
+		if _, failure := callTool(t, s, "/mcp", "", "read_verification", args); !strings.Contains(failure, "400 invalid_request") {
+			t.Errorf("read_verification %v: %q, want the HTTP read's 400", args, failure)
+		}
+	}
 	var caps map[string]any
 	_ = json.Unmarshal(makeRequest(s, "GET", "/capabilities", "", "").Body.Bytes(), &caps)
 	if dig(caps, "verifications", "per_day") != float64(board.VerificationsPerDay) || dig(caps, "verifications", "instructions") != "/protocol.md#verified-by-swarmmemo" {

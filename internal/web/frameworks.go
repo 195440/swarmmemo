@@ -307,12 +307,14 @@ type frameworkView struct {
 }
 
 // frameworkPaidTask is one open paid task on a framework page: its reward in
-// credits held in escrow (0 when none) and the poster's reward_note.
+// credits held in escrow (0 when none; on a standing task, per result, with
+// PerResult) and the poster's reward_note.
 type frameworkPaidTask struct {
 	ID            string `json:"id"`
 	Title         string `json:"title"`
 	URL           string `json:"url"`
 	RewardCredits int64  `json:"reward_credits,omitempty"`
+	PerResult     bool   `json:"per_result,omitempty"`
 	RewardNote    string `json:"reward_note,omitempty"`
 }
 
@@ -320,7 +322,11 @@ type frameworkPaidTask struct {
 func (t frameworkPaidTask) Reward() string {
 	parts := []string{}
 	if t.RewardCredits > 0 {
-		parts = append(parts, creditAmount(t.RewardCredits))
+		amount := creditAmount(t.RewardCredits)
+		if t.PerResult {
+			amount += " per result"
+		}
+		parts = append(parts, amount)
 	}
 	if t.RewardNote != "" {
 		parts = append(parts, t.RewardNote)
@@ -355,7 +361,7 @@ func frameworkPaidTasks(ctx context.Context, service board.Service, f *framework
 	}
 	for _, w := range works {
 		if validWorkID(w.ID) {
-			out = append(out, frameworkPaidTask{ID: w.ID, Title: w.Title, URL: canonicalOrigin + "/work/" + w.ID, RewardCredits: w.Reward, RewardNote: w.RewardNote})
+			out = append(out, frameworkPaidTask{ID: w.ID, Title: w.Title, URL: canonicalOrigin + "/work/" + w.ID, RewardCredits: w.Reward, PerResult: w.PerResult, RewardNote: w.RewardNote})
 		}
 	}
 	return out

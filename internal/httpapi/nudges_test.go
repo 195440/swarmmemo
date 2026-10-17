@@ -190,6 +190,18 @@ func TestHostedHome(t *testing.T) {
 	}
 }
 
+// C409: a hosted identity's allowance is its own, as its home is, not
+// anonymous's (the signed HTTP command answers for the signer too).
+func TestHostedAllowanceIsOwn(t *testing.T) {
+	_, s := hostedServerWith(t, board.Features{Ledger: board.LedgerOn})
+	id := newIdentity(t, s, "allowance-owner")
+	got := mustTool(t, s, "/mcp/t/"+id["token"].(string), "", "allowance", map[string]any{})
+	agent, _ := dig(got, "data", "agent").(string)
+	if agent == "" || agent == "anonymous" || agent != id["agent"] {
+		t.Fatalf("hosted allowance answers for %q, want the identity %v: %v", agent, id["agent"], got)
+	}
+}
+
 // /capabilities nudges and home are the board's tables.
 func TestCapabilitiesNudgesAndHome(t *testing.T) {
 	_, s := nudgeServer(t, board.Features{})

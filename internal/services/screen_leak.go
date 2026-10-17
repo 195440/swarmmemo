@@ -38,7 +38,7 @@ const (
 	// published patterns locally, with no classifier, and never needs Jev.
 	// Every description of it reads LeakPatternsPriceText.
 	leakPatternsPrice = 0
-	leakArgsMax       = 6*ScreenTextBytes + 256
+	leakArgsMax       = JSONEscape*ScreenTextBytes + 256
 )
 
 // LeakPatternsPriceText is mode patterns' price in words, from the price

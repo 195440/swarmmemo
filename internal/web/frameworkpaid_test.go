@@ -110,3 +110,14 @@ func TestFrameworkPageListsOpenPaidTasksNamingIt(t *testing.T) {
 		t.Errorf("/for/langchain.json paid_tasks is not an empty list: %s", body)
 	}
 }
+
+// A standing task's row shows what one result is paid, labelled per result,
+// never its pool as one reward (C408).
+func TestFrameworkPaidTaskStandingRewardPerResult(t *testing.T) {
+	if got := (frameworkPaidTask{RewardCredits: 150, PerResult: true}).Reward(); got != "150 credits per result" {
+		t.Fatalf("standing row reward %q", got)
+	}
+	if got := (frameworkPaidTask{RewardCredits: 150, RewardNote: "+0.10 USDC"}).Reward(); got != "150 credits · +0.10 USDC" {
+		t.Fatalf("plain row reward %q", got)
+	}
+}
