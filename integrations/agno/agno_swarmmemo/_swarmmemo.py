@@ -2165,7 +2165,7 @@ def load_key(path: Path):
         if not stat.S_ISREG(mode.st_mode) or (os.name != "nt" and mode.st_mode & 0o077):
             raise ValueError("key file must be a regular file accessible only to its owner (chmod 600)")
         _warn_windows_acl(path)
-        record = json.load(stream)
+        record = json.loads(read_bounded(stream, "the key file", STATE_BYTES))
     private, _, serialization = crypto()
     raw = unb64(record["private_key"])
     if len(raw) == 32:
@@ -2444,6 +2444,34 @@ class OriginError(ValueError):
     """A base URL that is not a usable origin. Its message never contains the URL."""
 
 
+# Local input caps (C416). Text bound for a request (a message, memory value, review, a
+# raw command) can never exceed the server's body limit, so that is its cap; the server
+# still refuses smaller per-field limits with its own error. Local JSON state (keys,
+# settings, conversation state) gets a generous cap well above any real file.
+INPUT_BYTES = LIMITS["body_bytes"]
+STATE_BYTES = 16 * 1024 * 1024
+
+
+class InputTooLarge(ValueError):
+    """Local input over its cap. Its message never contains the input or its path."""
+
+
+def read_bounded(source, what="the input", cap=INPUT_BYTES):
+    """UTF-8 text of at most cap bytes from stdin ("-"), a path, or an open text stream,
+    reading no more than cap+1 characters; InputTooLarge when it is over."""
+    if source == "-":
+        source = sys.stdin
+    if isinstance(source, (str, os.PathLike)):
+        with open(source, encoding="utf-8") as stream:  # text mode, as read_text: universal newlines
+            text = stream.read(cap + 1)
+    else:
+        text = source.read(cap + 1)
+    if len(text) > cap or len(text.encode("utf-8", "replace")) > cap:
+        size = f"{cap // (1024 * 1024)} MiB" if cap % (1024 * 1024) == 0 else f"{cap} bytes"
+        raise InputTooLarge(f"{what} is over {size}, the most SwarmMemo reads for it")
+    return text
+
+
 class Client:
     def __init__(self, base_url="https://swarmmemo.com", key=None, timeout=30, service=SERVICE, save_request=None):
         url = urllib.parse.urlsplit(base_url)
@@ -2574,7 +2602,7 @@ class Client:
                 fields["data"] = data_json("messages.list", options)
             return self.command("messages.list", room=room, page=page, cursor=cursor, limit=limit, **fields)
         query = {"room": room, "page": page, "cursor": cursor, "limit": limit, **fields}
-        return self._request("/api/messages?" + urllib.parse.urlencode({k: "true" if v is True else v for k, v in query.items() if v not in ("", None, False)}))
+        return self._request("/api/messages?" + urllib.parse.urlencode({k: "true" if v is True else v for k, v in query.items() if v is not None and v is not False and v != ""}))
 
     def rotate(self, new_key):
         if self.key is None:
@@ -2873,7 +2901,7 @@ class Client:
         if pages is not None and pages < 1:
             raise ValueError("pages is at least 1")
         path = Path(cursor_file) if cursor_file else None
-        cursor = cursor or (read_private(path, {}).get("cursor", "") if path else "")
+        cursor = cursor or (read_cursor(path) if path else "")
         read = 0
         while True:
             page = self.updates(agent, cursor, limit, wait, counts, **data)
@@ -3318,7 +3346,8 @@ def chat_settings(flags=None):
     settings, sources = dict(CHAT_DEFAULTS), dict.fromkeys(CHAT_DEFAULTS, "default")
     path = chat_home() / "chat.json"
     if path.exists():
-        try: data = strict_json(path.read_text(encoding="utf-8"))
+        text = read_bounded(path, "the chat settings file", STATE_BYTES)
+        try: data = strict_json(text)
         except ValueError: raise ChatStop(1, f"{path} is not valid JSON") from None
         if not isinstance(data, dict): raise ChatStop(1, f"{path} must be a JSON object")
         for section, values in data.items():
@@ -3485,7 +3514,26 @@ def write_private(path: Path, value):
 
 
 def read_private(path: Path, default):
-    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
+    return json.loads(read_bounded(path, "a local state file", STATE_BYTES)) if path.exists() else default
+
+
+# The updates cursor file, shared with the JavaScript client: {"cursor": STRING}.
+# A cursor is a short opaque token, so the file is capped well below other state.
+CURSOR_FILE_BYTES = 64 * 1024
+
+
+def read_cursor(path):
+    """The saved cursor in path, or "" when there is no file yet."""
+    path = Path(path)
+    if not path.exists():
+        return ""
+    try:
+        value = json.loads(read_bounded(path, "the cursor file", CURSOR_FILE_BYTES))
+    except json.JSONDecodeError:
+        raise ValueError("the cursor file is not JSON") from None
+    if not isinstance(value, dict) or not isinstance(value.get("cursor", ""), str):
+        raise ValueError('the cursor file holds {"cursor": STRING}')
+    return value.get("cursor", "")
 
 
 def chat_room(room):
@@ -3510,14 +3558,14 @@ def conversation_room():
 
 def chat_text(source):
     """A message's text from a file, or stdin for -."""
-    text = sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8")
+    text = read_bounded(source, "the message")
     if not text.strip(): raise ChatStop(1, "the message is empty")
     return text
 
 
 def own_private_key(path):
     """The key file's private key string, which the outbound scan never lets out."""
-    try: return json.loads(Path(path).read_text(encoding="utf-8")).get("private_key") if path else None
+    try: return json.loads(read_bounded(Path(path), "the key file", STATE_BYTES)).get("private_key") if path else None
     except (OSError, ValueError, AttributeError): return None
 
 
@@ -4236,7 +4284,8 @@ class Chat:
             policy = {"schema": 1, "preset": a.preset, **{k: current[k] for k in ("allow", "postage") if current.get(k)}}
             self.set_messaging(inbound_policy=policy)
         elif a.policy_action == "set":
-            try: policy = strict_json(chat_text(a.file))
+            text = chat_text(a.file)
+            try: policy = strict_json(text)
             except ValueError: raise ChatStop(1, "the policy must be one JSON object; see docs/MESSAGES.md") from None
             self.set_messaging(inbound_policy=policy)
         elif a.policy_action in ("block", "unblock"):
@@ -4580,7 +4629,7 @@ def json_object(text):
 
 def run_helper(args, client):
     """The work, updates, journal, docs, tools and call-url commands; None when args is another."""
-    stdin = lambda text: sys.stdin.read() if text == "-" else text
+    stdin = lambda text: read_bounded("-", "the text") if text == "-" else text
     if args.action == "work":
         action = args.work_action
         if action == "list":
@@ -4621,7 +4670,7 @@ def run_helper(args, client):
                 raise ChatStop(0, f"read {args.pages} pages" + ("; the cursor is saved in " + str(args.cursor_file) if args.cursor_file else ""))
             except KeyboardInterrupt:
                 raise ChatStop(130, "stopped" + ("; the cursor is saved in " + str(args.cursor_file) if args.cursor_file else "")) from None
-        cursor = args.cursor or (read_private(args.cursor_file, {}).get("cursor", "") if args.cursor_file else "")
+        cursor = args.cursor or (read_cursor(args.cursor_file) if args.cursor_file else "")
         page = client.updates(args.agent, cursor, args.limit, args.wait, args.counts, **data_args(args, "updates.get"))
         if args.cursor_file and page.get("next_cursor") and not args.counts:
             write_private(args.cursor_file, {"cursor": page["next_cursor"]})
@@ -4693,7 +4742,7 @@ def embed_setup(args, out=None):
             raise ChatStop(1, "--page must start with a letter or digit after normalization (lowercase, other characters become -)")
     welcome = None
     if args.welcome is not None:
-        welcome = sys.stdin.read() if args.welcome == "-" else Path(args.welcome).read_text(encoding="utf-8")
+        welcome = read_bounded(args.welcome, "the welcome text")
         if not welcome.strip():
             raise ChatStop(1, "the welcome text is empty; nothing was posted")
 
@@ -5045,10 +5094,15 @@ def main(argv=None):
     utf8_stdio()
     # C400: `notary URL` is shorthand for `notary stamp-fetch URL` (a bare http(s) URL
     # right after "notary"); this never touches `notary stamp-fetch ...` or `--help`.
+    # Root options (--key FILE, --url=URL ...) may come first (alex-vale, 10-17).
     argv = sys.argv[1:] if argv is None else list(argv)
-    if len(argv) >= 2 and argv[0] == "notary" and argv[1].startswith(("http://", "https://")):
-        argv = [argv[0], "stamp-fetch"] + argv[1:]
     parser = build_parser()
+    valued = {o for a in parser._actions if a.option_strings and a.nargs != 0 for o in a.option_strings}
+    i = 0
+    while i < len(argv) and argv[i].startswith("--"):
+        i += 2 if argv[i] in valued else 1
+    if argv[i:i + 1] == ["notary"] and i + 1 < len(argv) and argv[i + 1].startswith(("http://", "https://")):
+        argv = argv[:i + 1] + ["stamp-fetch"] + argv[i + 1:]
     args = parser.parse_args(argv)
     if args.action == "transfer" and not args.resource:
         parser.error(TRANSFER_NEEDS_RESOURCE)
@@ -5114,7 +5168,7 @@ def main(argv=None):
                     raise ValueError("args must be a JSON object")
                 result = client.service_method(args.target_service, args.method, call_args, args.max_cost, args.request_id)
             elif args.action == "memory" and args.memory_action == "put":
-                value = sys.stdin.read() if args.value == "-" else args.value
+                value = read_bounded("-", "the value") if args.value == "-" else args.value
                 if args.value == "-" and not value:
                     raise ChatStop(1, "memory put: stdin was empty, nothing stored (a literal - value is not supported)")
                 entry = {"key": args.memory_key, "value": value, "visibility": "public" if args.public else "private"}
@@ -5159,7 +5213,7 @@ def main(argv=None):
                     if not value.isdigit():
                         raise ChatStop(1, "--dimension is NAME=0-100, such as works=90")
                     dimensions[name] = int(value)
-                text = sys.stdin.read() if args.text == "-" else args.text
+                text = read_bounded("-", "the review text") if args.text == "-" else args.text
                 result = client.review(args.subject, args.verdict, text, dimensions, args.evidence, args.relationship, args.supersedes, args.request_id, args.transport,
                                        **data_args(args, "post"))
             elif args.action == "subject" and args.resolve: result = client.subject_resolve(args.target)
@@ -5190,7 +5244,7 @@ def main(argv=None):
             elif args.action == "download": result = client.download(args.id, args.path)
             elif args.action == "blob-delete": result = client.command("blob.delete", message_id=args.id)
             else:
-                value = strict_json(sys.stdin.read() if args.json == "-" else args.json)
+                value = strict_json(read_bounded("-", "the command") if args.json == "-" else args.json)
                 if not isinstance(value, dict) or not isinstance(value.get("operation"), str):
                     raise ChatStop(1, 'the command is one JSON object with an "operation", such as {"operation":"agent.get","target":"FINGERPRINT"}')
                 unknown = sorted(set(value) - set(FIELDS) - {"signature", "proof"})
@@ -5217,7 +5271,7 @@ def main(argv=None):
               + "); this is not a request failure, and a write may already have been sent: check before retrying."
               " Give UTF-8 input, or set PYTHONIOENCODING=utf-8.", file=sys.stderr)
         return 1
-    except OriginError as exc:
+    except (OriginError, InputTooLarge) as exc:
         print("SwarmMemo: " + str(exc), file=sys.stderr)
         return 1
     except (ValueError, OSError, RuntimeError, KeyError) as exc:

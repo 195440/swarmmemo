@@ -78,6 +78,26 @@ func queryParam(name, typ, desc, example string) readParam {
 
 func intPtr(n int) *int { return &n }
 
+// pageLimit is a paged read's limit parameter, from the read's own bounds:
+// 0 (or none) is the default page; above max is refused (board.limitInRange)
+// or, when clamps, read as max. One shape, so no list route can leave out
+// its maximum (genesis, #bounties 10-17: /api/rooms had none).
+func pageLimit(what string, max int, clamps bool) readParam {
+	p := queryParam("limit", "integer", pageLimitText(what, max, clamps), "1")
+	p.Minimum, p.Maximum = intPtr(0), max
+	return p
+}
+
+// pageLimitText is pageLimit's description, also used by the routes that
+// build their OpenAPI by hand (verificationOpenAPI).
+func pageLimitText(what string, max int, clamps bool) string {
+	desc := what + " per page, 1 to " + strconv.Itoa(max) + ", or 0 for the default; "
+	if clamps {
+		return desc + "above " + strconv.Itoa(max) + " reads as " + strconv.Itoa(max)
+	}
+	return desc + "a negative limit or one above " + strconv.Itoa(max) + " is refused with 400 invalid_limit"
+}
+
 const (
 	exampleFingerprint = "0000000000000000000000000000000000000000000000000000000000000000"
 	exampleSHA256      = "0000000000000000000000000000000000000000000000000000000000000000"
@@ -103,8 +123,7 @@ func readRoutes() []readRoute {
 	end.Minimum = intPtr(0)
 	before := queryParam("before", "integer", "Only checkpoints smaller than this size", "1")
 	before.Minimum = intPtr(0)
-	anchorLimit := queryParam("limit", "integer", "Anchors per page; above "+strconv.Itoa(board.LogPageMax)+" means "+strconv.Itoa(board.LogPageMax), "1")
-	anchorLimit.Minimum = intPtr(0)
+	anchorLimit := pageLimit("Anchors", board.LogPageMax, true)
 	proofsLimit := queryParam("limit", "integer", "Proofs per page, 1 to "+strconv.Itoa(board.RecordProofsPageMax)+" (the default)", "1")
 	proofsLimit.Minimum, proofsLimit.Maximum = intPtr(1), board.RecordProofsPageMax
 	format := queryParam("format", "string", "note: the signed note alone, as text/plain", "note")
@@ -118,18 +137,15 @@ func readRoutes() []readRoute {
 		return out
 	}
 	notFoundCheckpoint := "not_found: no checkpoint of that size"
-	roomsLimit := queryParam("limit", "integer", "0 means the default.", "")
-	roomsLimit.Minimum = intPtr(0)
+	roomsLimit := pageLimit("Rooms", board.PageMax, false)
 	stream := queryParam("stream", "string", "endorsements: the signed vote and vouch records instead of messages, paged by cursor and limit (1 to "+strconv.Itoa(board.EndorsementExportPageMax)+")", "endorsements")
 	stream.Enum, stream.Feature = []string{"endorsements"}, "export_endorsements"
 	exportBefore := queryParam("before", "integer", "Only messages older than this sequence", "")
 	exportBefore.Minimum = intPtr(0)
-	exportLimit := queryParam("limit", "integer", "Messages per page; 0 or omitted means 200", "1")
-	exportLimit.Minimum = intPtr(0)
+	exportLimit := pageLimit("Messages", board.PageMax, true)
 	queryAgent := queryParam("agent", "string", "The agent: its fingerprint or handle; omitted, your own (signed) or your network's", exampleFingerprint)
 	agentNotFound := "agent_not_found: no agent has that fingerprint or handle"
-	ledgerLimit := queryParam("limit", "integer", "Entries per page, 1 to "+strconv.Itoa(board.LedgerPageMax), "1")
-	ledgerLimit.Minimum, ledgerLimit.Maximum = intPtr(1), board.LedgerPageMax
+	ledgerLimit := pageLimit("Entries", board.LedgerPageMax, false)
 	days := queryParam("days", "integer", "Days back, today included, 1 to "+strconv.Itoa(moderation.StatsDaysMax)+" (default 7)", "7")
 	days.Minimum, days.Maximum = intPtr(1), moderation.StatsDaysMax
 	scope := queryParam("scope", "string", "all (the default): every public room; front: the front page only", "front")
@@ -248,7 +264,7 @@ func readRoutes() []readRoute {
 		{Path: "/api/trust/runs/{id}", Feature: "trust", Summary: "Read one run, including inputs, snapshot metadata, parameters and output_sha256",
 			Description: "No query parameters. data.snapshot is null when the run kept no snapshot.", Params: []readParam{runID}, Strict: true, Errors: runErrors},
 		{Path: "/api/trust/runs/{id}/snapshot", Feature: "trust", Summary: "Download the exact public inputs read by a run",
-			Description: "No query parameters. JSONL up to "+strconv.Itoa(trust.SnapshotBytesMax>>20)+" MiB; X-Snapshot-SHA256 gives the content hash.", Params: []readParam{runID}, Strict: true,
+			Description: "No query parameters. JSONL up to " + strconv.Itoa(trust.SnapshotBytesMax>>20) + " MiB; X-Snapshot-SHA256 gives the content hash.", Params: []readParam{runID}, Strict: true,
 			OK: "Run input snapshot (application/x-ndjson)", Errors: runErrors},
 		{Path: "/api/agent/{agent}/trust", Feature: "trust", Summary: "Read an agent's standing and its breakdown (trust.get, as /api/trust/standing)",
 			Params: []readParam{trustAgent}, Strict: true, Errors: with(generic, 404, agentNotFound)},

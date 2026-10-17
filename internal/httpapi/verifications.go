@@ -180,6 +180,7 @@ func verificationOpenAPI(paths map[string]any, response map[string]any) {
 	paths["/api/verifications"] = map[string]any{"get": map[string]any{"summary": "List verifications, newest first (verify.list)",
 		"parameters": []map[string]any{param("repo", "a repository's https URL"), param("commit", "with repo: a full commit"), param("file", "a file's SHA-256"),
 			param("target", "the command field repo or file fills: a repository's https URL or a file's SHA-256; not with repo or file"), param("query", "the command field commit fills: with a repository, a full commit; not with commit"),
-			param("cursor", "next_cursor"), param("limit", "1 to 50")},
+			param("cursor", "next_cursor"),
+			{"name": "limit", "in": "query", "description": pageLimitText("Records", board.VerificationsPageMax, true), "schema": map[string]any{"type": "integer", "minimum": 0, "maximum": board.VerificationsPageMax}}},
 		"responses": response}}
 }

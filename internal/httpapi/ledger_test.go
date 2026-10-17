@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -62,7 +63,12 @@ func TestLedgerRoutes(t *testing.T) {
 			t.Fatal("an anonymous journal line is public")
 		}
 	}
-	get("/api/ledger?limit=1000", 400)
+	// Zero is the default page, as on every paged read, and the refusal says
+	// so (it said "limit is 1–100" while serving limit=0; genesis, 10-17).
+	get("/api/ledger?limit=0", 200)
+	if refused := get("/api/ledger?limit=1000", 400); !strings.Contains(fmt.Sprint(refused), "or zero for the default") {
+		t.Fatalf("ledger limit refusal %v", refused)
+	}
 	params := get("/api/params/allowance", 200)["data"].(map[string]any)
 	if params["current"].(map[string]any)["version"] != float64(0) || len(params["versions"].([]any)) != 1 {
 		t.Fatalf("params %v", params)

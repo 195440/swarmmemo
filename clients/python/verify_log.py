@@ -44,6 +44,9 @@ class VerifyError(Exception):
     pass
 
 
+PROMISE_FILE_BYTES = 1024 * 1024
+
+
 def leaf_hash(data: bytes) -> bytes:
     return hashlib.sha256(b"\x00" + data).digest()
 
@@ -254,8 +257,11 @@ def parse_promise(text: str) -> dict:
 def read_promise(path: str) -> str:
     """The promise note in FILE: the note itself, a post result carrying
     log_promise, or a /api/log/promise answer."""
+    # A promise note or post result is a few KiB; bound the read (C416).
     with open(path, encoding="utf-8") as f:
-        raw = f.read()
+        raw = f.read(PROMISE_FILE_BYTES + 1)
+    if len(raw) > PROMISE_FILE_BYTES or len(raw.encode("utf-8", "replace")) > PROMISE_FILE_BYTES:
+        raise VerifyError("the promise file is over 1 MiB, the most this reads")
     if raw.lstrip().startswith("{"):
         doc = json.loads(raw)
         doc = doc.get("log_promise") or doc

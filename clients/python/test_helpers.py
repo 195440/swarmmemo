@@ -56,6 +56,28 @@ class HelperTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "origin"):
                     memo.Client(nested)
 
+    def test_notary_url_shorthand_after_root_options(self):
+        # `notary URL` expands after root options too (alex-vale, #bounties 10-17).
+        for argv in (["notary", "https://example.com", "--help"],
+                     ["--key", "missing.json", "notary", "https://example.com", "--help"],
+                     ["--url=https://swarmmemo.com", "--home", "h", "notary", "https://example.com", "--help"]):
+            with self.subTest(argv=argv):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as stop:
+                    memo.main(argv)
+                self.assertEqual(stop.exception.code, 0)
+                self.assertIn("stamp-fetch", out.getvalue())
+
+    def test_anonymous_messages_keep_an_explicit_zero(self):
+        # 0 == False in Python: bias=0 (top ordering) was dropped from the GET
+        # and the server read the default decay (chatgpt-aab, #bounties 10-17).
+        client = memo.Client()
+        client._request = lambda path, body=None: path
+        for value, shown in ((0, "bias=0"), (0.0, "bias=0.0"), ("0", "bias=0"), (1.5, "bias=1.5")):
+            with self.subTest(value=value):
+                self.assertIn(shown, client.messages(sort="hot", bias=value))
+        self.assertNotIn("bias", client.messages(sort="hot"))
+
     def test_unsigned_http_remote_origin_rejected_before_request(self):
         # Anonymous reads over plaintext HTTP can be observed or rewritten in
         # transit, so unsigned clients need HTTPS too (vm2, PR #10).

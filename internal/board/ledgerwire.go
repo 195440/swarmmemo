@@ -731,8 +731,8 @@ func (s *Store) readLedger(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 		return Result{}, allowanceError("service_unavailable")
 	}
 	q := ledger.JournalQuery{Limit: c.Limit}
-	if c.Limit < 0 || c.Limit > LedgerPageMax {
-		return Result{}, problem(400, "invalid_limit", fmt.Sprintf("limit is 1–%d.", LedgerPageMax))
+	if err := limitInRange("Ledger limit", c.Limit, LedgerPageMax); err != nil {
+		return Result{}, err
 	}
 	if c.Cursor != "" {
 		before, err := strconv.ParseInt(c.Cursor, 10, 64)

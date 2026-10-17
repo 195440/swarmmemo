@@ -1277,8 +1277,8 @@ func (s *Store) readOfferingCalls(ctx context.Context, tx *sql.Tx, c Command, a 
 		return Result{}, errOfferingCallNotFound()
 	}
 	limit := c.Limit
-	if limit < 0 || limit > OfferingCallsPageMax {
-		return Result{}, problem(400, "invalid_limit", fmt.Sprintf("limit is 1–%d.", OfferingCallsPageMax))
+	if err := limitInRange("Call list limit", limit, OfferingCallsPageMax); err != nil {
+		return Result{}, err
 	}
 	if limit == 0 {
 		limit = 20

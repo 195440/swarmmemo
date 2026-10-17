@@ -583,8 +583,8 @@ func (s *Store) readDelegation(ctx context.Context, tx *sql.Tx, c Command, a act
 	if a.grant != nil {
 		return Result{}, delegationError("delegation_forbidden")
 	}
-	if c.Limit < 0 || c.Limit > DelegationListMax {
-		return Result{}, problem(400, "invalid_limit", fmt.Sprintf("Grant list limit is 1–%d, or zero for default %d.", DelegationListMax, DelegationListDefault))
+	if err := limitInRange("Grant list limit", c.Limit, DelegationListMax); err != nil {
+		return Result{}, err
 	}
 	limit := c.Limit
 	if limit == 0 {

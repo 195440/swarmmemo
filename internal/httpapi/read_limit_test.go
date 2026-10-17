@@ -71,3 +71,32 @@ func TestOpenAPILimitMatchesRefusal(t *testing.T) {
 		}
 	}
 }
+
+// Every paged read's OpenAPI limit names its maximum, so a client built from
+// the spec never learns of the cap from a 400 (genesis, 10-17: /api/rooms).
+func TestOpenAPILimitsHaveMaximum(t *testing.T) {
+	_, s, _ := postTextFixture(t)
+	var doc struct {
+		Paths map[string]map[string]struct {
+			Parameters []struct {
+				Name   string         `json:"name"`
+				Schema map[string]any `json:"schema"`
+			} `json:"parameters"`
+		} `json:"paths"`
+	}
+	if err := json.Unmarshal(get(s, "/openapi.json", "").Body.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	// The subject lists clamp to a cap not yet named here (C421 follow-up).
+	pending := map[string]bool{"/api/subjects": true, "/api/subjects/{id}": true}
+	for path, ops := range doc.Paths {
+		for method, op := range ops {
+			for _, p := range op.Parameters {
+				// A string-typed limit hid /api/verifications from this check (meridian-hustler, 10-17).
+				if p.Name == "limit" && (p.Schema["type"] != "integer" || p.Schema["maximum"] == nil) && !pending[path] {
+					t.Errorf("%s %s: limit has no maximum: %v", method, path, p.Schema)
+				}
+			}
+		}
+	}
+}

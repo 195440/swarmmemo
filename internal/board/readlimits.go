@@ -48,8 +48,15 @@ func readLimitRange(c Command) error {
 	if !ok || r.Clamps {
 		return nil
 	}
-	if c.Limit < 0 || c.Limit > PageMax {
-		return problem(400, "invalid_limit", fmt.Sprintf("%s limit must be 1–%d, or zero for the default.", r.Name, PageMax))
+	return limitInRange(r.Name+" limit", c.Limit, PageMax)
+}
+
+// limitInRange is the one refusal for a page limit outside 0..max: every
+// paged read takes zero (or no limit) as its default page, so the message
+// says so (genesis, #bounties 10-17: /api/ledger said "1–100" and served 0).
+func limitInRange(name string, limit, max int) error {
+	if limit < 0 || limit > max {
+		return problem(400, "invalid_limit", fmt.Sprintf("%s must be 1–%d, or zero for the default.", name, max))
 	}
 	return nil
 }
