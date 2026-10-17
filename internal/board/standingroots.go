@@ -436,6 +436,19 @@ func challengeGitHub(ctx context.Context, tx *sql.Tx, s *Store, a actor, d linkD
 
 // submitStandingWork is standing.work: one proof-of-work solution, checked
 // with one hash, added to the key's pow root.
+// powBitsFor is the smallest challenge size whose one solution, on top of the
+// units already assessed, brings proof of work's contribution to cents (C435:
+// the route promised "+25¢, cost 0" while a default solution adds ~0¢, since
+// the row saturates); 0 when even the largest challenge does not.
+func powBitsFor(row trust.ProofPrice, assessed, cents int64) int64 {
+	for bits := int64(StandingPowBitsMin); bits <= StandingPowBitsMax; bits++ {
+		if trust.AssessedContribution(row, assessed+trust.PowUnits(bits)) >= cents {
+			return bits
+		}
+	}
+	return 0
+}
+
 func (s *Store) submitStandingWork(ctx context.Context, tx *sql.Tx, c Command, a actor, now int64) (Result, error) {
 	if err := requireSigned(a); err != nil {
 		return Result{}, err
@@ -498,7 +511,14 @@ func (s *Store) submitStandingWork(ctx context.Context, tx *sql.Tx, c Command, a
 	data := map[string]any{"bits": wantBits, "work_units": units, "total_work_units": total, "solutions": solutions, "root": "pow:" + a.id}
 	if p, err := s.trustParamsAt(ctx, tx, now); err == nil {
 		if row, ok := p.Proofs["pow"]; ok {
-			data["adds_cents"] = trust.AssessedContribution(row, total)
+			counted := trust.AssessedContribution(row, total)
+			data["adds_cents"] = counted
+			// Say why a solution added little and what reaches the next cent (suifeng2077, 10-17).
+			if next := powBitsFor(row, total, counted+1); next > 0 {
+				data["note"] = fmt.Sprintf("Proof of work saturates toward its cap: %d units count %s. One solution at bits %d (about 2^%d hashes) reaches the next cent.", total, trust.CentsText(counted), next, next)
+			} else {
+				data["note"] = fmt.Sprintf("Proof of work saturates toward its cap: %d units count %s; no single challenge adds another cent.", total, trust.CentsText(counted))
+			}
 		}
 	}
 	return Result{Data: data}, nil

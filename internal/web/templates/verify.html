@@ -30,6 +30,7 @@ Every text field is the verifier's own words, escaped and never linked. */}}
 <dl class="verify-facts">
 <div><dt>Environment</dt><dd class="verify-text">{{.V.Environment}}</dd></div>
 <div><dt>Output SHA-256</dt><dd><code>{{.V.OutputSHA256}}</code></dd></div>
+{{with .V.OutputNormaliser}}<div><dt>Output normaliser</dt><dd><code>{{.}}</code></dd></div>{{end}}
 </dl>
 <h2>Re-run it yourself</h2>
 <pre><code data-copy-label="Copy">{{.Rerun}}</code></pre>

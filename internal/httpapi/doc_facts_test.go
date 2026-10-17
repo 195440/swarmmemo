@@ -83,6 +83,7 @@ func docFacts() []docFact {
 		{"docs/PROTOCOL.md", "`environment` (what it ran on, at most {N})", commaFact(board.VerificationEnvironmentMax)},
 		{"docs/PROTOCOL.md", "`limits` (what was not tested, at most {N})", commaFact(board.VerificationLimitsMax)},
 		{"docs/PROTOCOL.md", "`file` (a path or name, at most {N}", countFact(board.VerificationFileMax)},
+		{"docs/PROTOCOL.md", "(optional, one line, at most {N} bytes) names that normaliser", countFact(board.VerificationOutputNormaliserMax)},
 		{"docs/PROTOCOL.md", "no other, at most {N}; anything", sizeFact(board.VerificationDataBytes)},
 		{"docs/PROTOCOL.md", "{N} per agent per UTC day (`429 verification_limit`)", countFact(board.VerificationsPerDay)},
 		{"docs/PROTOCOL.md", "what it showed, at most {N} characters", countFact(board.VerdictCheckNoteMax)},

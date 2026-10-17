@@ -143,6 +143,7 @@ func Build() map[string]any {
 		"verdict_check_note_chars":              board.VerdictCheckNoteMax,
 		"verification_check_runs_maximum":       board.VerificationCheckRunsMax,
 		"verification_check_failing_step_chars": board.VerificationCheckFailingStepMax,
+		"verification_output_normaliser_bytes":  board.VerificationOutputNormaliserMax,
 		"work_reward_note_chars":                board.WorkRewardNoteMax,
 		"work_title_bytes":                      board.WorkTitleBytes,
 		"work_reject_fee_max_percent":           board.WorkRejectFeeMaxPercent,

@@ -27,8 +27,9 @@ func publishTestVerification(t *testing.T, s board.Service, seed byte, failing b
 	return publishTestChecks(t, s, seed, []map[string]any{{"property": "tests", "state": "pass", "note": "41 passed"}, {"property": "lint", "state": state}, {"property": "fuzz", "state": "not_checked"}})
 }
 
-// publishTestChecks signs and publishes a record with these checks.
-func publishTestChecks(t *testing.T, s board.Service, seed byte, checks []map[string]any) board.Verification {
+// publishTestChecks signs and publishes a record with these checks, and
+// any extra data fields.
+func publishTestChecks(t *testing.T, s board.Service, seed byte, checks []map[string]any, extra ...map[string]any) board.Verification {
 	t.Helper()
 	key := ed25519.NewKeyFromSeed(make([]byte, 32))
 	if seed != 0 {
@@ -36,10 +37,16 @@ func publishTestChecks(t *testing.T, s board.Service, seed byte, checks []map[st
 		raw[0] = seed
 		key = ed25519.NewKeyFromSeed(raw)
 	}
-	data, _ := json.Marshal(map[string]any{"schema": 1, "repo": "https://github.com/Owner/Repo", "commit": verifyTestCommit,
+	d := map[string]any{"schema": 1, "repo": "https://github.com/Owner/Repo", "commit": verifyTestCommit,
 		"command": "pytest -q <script>alert(1)</script>", "environment": "python 3.12\nlinux, network off", "output_sha256": strings.Repeat("ab", 32),
 		"checks": checks,
-		"limits": "Windows was not tested."})
+		"limits": "Windows was not tested."}
+	for _, e := range extra {
+		for k, v := range e {
+			d[k] = v
+		}
+	}
+	data, _ := json.Marshal(d)
 	c := board.Command{Operation: "verify.publish", Data: string(data), PublicKey: base64.RawURLEncoding.EncodeToString(key.Public().(ed25519.PublicKey)),
 		Timestamp: time.Now().Unix(), Nonce: "verify-nonce-" + string('a'+rune(seed)), RequestID: "verify-" + string('a'+rune(seed))}
 	c.Signature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(key, board.Canonical("swarmmemo.com", c)))
@@ -100,6 +107,29 @@ func TestVerificationPageFlaky(t *testing.T) {
 	badge := gateGet(s, "/v/"+v.ID+"/badge.svg").Body.String()
 	if !strings.Contains(badge, "flaky · 1/2") {
 		t.Errorf("badge: %s", badge)
+	}
+}
+
+// C437: the re-run block says how to hash output that a re-run can match,
+// and a record's output_normaliser shows on the page and in the block.
+func TestVerificationPageNormaliser(t *testing.T) {
+	s := gateStore(t)
+	plain := gateGet(s, "/v/"+publishTestVerification(t, s, 4, false).ID).Body.String()
+	if !strings.Contains(plain, "# Hash the output after removing timings and machine-specific paths") || !strings.Contains(plain, "compare the checks") ||
+		strings.Contains(plain, "Output normaliser") {
+		t.Errorf("/v/ID without a normaliser: re-run block or facts wrong")
+	}
+	sed := `sed -E 's/ in [0-9.]+s$//'`
+	v := publishTestChecks(t, s, 5, []map[string]any{{"property": "tests", "state": "pass"}}, map[string]any{"output_normaliser": sed})
+	if v.OutputNormaliser != sed {
+		t.Fatalf("record normaliser %q", v.OutputNormaliser)
+	}
+	body := gateGet(s, "/v/"+v.ID).Body.String()
+	escaped := "sed -E &#39;s/ in [0-9.]&#43;s$//&#39;"
+	for _, want := range []string{"<dt>Output normaliser</dt><dd><code>" + escaped + "</code>", "# Before hashing, its output went through: " + escaped} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/v/ID misses %q", want)
+		}
 	}
 }
 

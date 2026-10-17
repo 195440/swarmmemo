@@ -428,7 +428,12 @@ func rerunBlock(v *board.Verification) string {
 		fmt.Fprintf(&b, "sha256sum %s   # must print %s\n", strconv.Quote(name), v.FileSHA256)
 	}
 	b.WriteString(v.Command + "\n")
-	fmt.Fprintf(&b, "# The verifier's output hashed to %s.\n# Output with times or paths will differ: compare the checks.", v.OutputSHA256)
+	fmt.Fprintf(&b, "# The verifier's output hashed to %s.\n", v.OutputSHA256)
+	if v.OutputNormaliser != "" {
+		fmt.Fprintf(&b, "# Before hashing, its output went through: %s\n", v.OutputNormaliser)
+	}
+	// One instruction (board.VerificationOutputHash), then the fallback.
+	fmt.Fprintf(&b, "# %s\n# Output whose times or paths were left in will differ: compare the checks.", board.VerificationOutputHash)
 	return b.String()
 }
 

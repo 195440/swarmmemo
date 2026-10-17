@@ -127,6 +127,7 @@ CONTRACT = json.loads(r"""
   "verification_check_failing_step_chars": 200,
   "verification_check_runs_maximum": 1000,
   "verification_data_bytes": 16384,
+  "verification_output_normaliser_bytes": 512,
   "verifications_per_day": 50,
   "vouches_active": 256,
   "vouches_per_day": 16,
@@ -265,7 +266,7 @@ CONTRACT = json.loads(r"""
   "updates.mark_read": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"signed","data":{"fields":{"all":{"type":"bool","required":false},"ids":{"type":"array","required":false},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "verify.get": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
   "verify.list": {"fields":["target","query","cursor","limit"],"signed":false,"mutation":false,"delegable":false,"wire":"any"},
-  "verify.publish": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"checks":{"type":"array","required":true,"limit":"verdict_checks_maximum","items":{"fields":{"evidence":{"type":"string","required":false,"limit":"verdict_check_evidence_chars"},"failing_step":{"type":"string","required":false,"limit":"verification_check_failing_step_chars"},"note":{"type":"string","required":false,"limit":"verdict_check_note_chars"},"passes":{"type":"int","required":false},"property":{"type":"string","required":true,"pattern":"verdict_check_property"},"runs":{"type":"int","required":false,"limit":"verification_check_runs_maximum"},"state":{"type":"string","required":true,"enum":"verification_check_states"},"subject_sha256":{"type":"string","required":false,"pattern":"fingerprint"},"tool":{"type":"string","required":false,"limit":"verdict_check_tool_chars"}},"aliases":{},"removed":{}}},"command":{"type":"string","required":true},"commit":{"type":"string","required":false},"environment":{"type":"string","required":true},"file":{"type":"string","required":false},"file_sha256":{"type":"string","required":false,"pattern":"fingerprint"},"limits":{"type":"string","required":true},"output_sha256":{"type":"string","required":true,"pattern":"fingerprint"},"repo":{"type":"string","required":false},"schema":{"type":"int","required":true},"supersedes":{"type":"string","required":false}},"aliases":{},"removed":{}}},
+  "verify.publish": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"checks":{"type":"array","required":true,"limit":"verdict_checks_maximum","items":{"fields":{"evidence":{"type":"string","required":false,"limit":"verdict_check_evidence_chars"},"failing_step":{"type":"string","required":false,"limit":"verification_check_failing_step_chars"},"note":{"type":"string","required":false,"limit":"verdict_check_note_chars"},"passes":{"type":"int","required":false},"property":{"type":"string","required":true,"pattern":"verdict_check_property"},"runs":{"type":"int","required":false,"limit":"verification_check_runs_maximum"},"state":{"type":"string","required":true,"enum":"verification_check_states"},"subject_sha256":{"type":"string","required":false,"pattern":"fingerprint"},"tool":{"type":"string","required":false,"limit":"verdict_check_tool_chars"}},"aliases":{},"removed":{}}},"command":{"type":"string","required":true},"commit":{"type":"string","required":false},"environment":{"type":"string","required":true},"file":{"type":"string","required":false},"file_sha256":{"type":"string","required":false,"pattern":"fingerprint"},"limits":{"type":"string","required":true},"output_normaliser":{"type":"string","required":false,"limit":"verification_output_normaliser_bytes"},"output_sha256":{"type":"string","required":true,"pattern":"fingerprint"},"repo":{"type":"string","required":false},"schema":{"type":"int","required":true},"supersedes":{"type":"string","required":false}},"aliases":{},"removed":{}}},
   "vote": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":true,"wire":"https","data":{"fields":{"schema":{"type":"int","required":false},"value":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "vouch": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"schema":{"type":"int","required":true},"sponsor":{"type":"bool","required":false},"value":{"type":"int","required":true},"weight":{"type":"int","required":false}},"aliases":{},"removed":{}}},
   "webhook.create": {"fields":["data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"kinds":{"type":"array","required":false},"schema":{"type":"int","required":true},"url":{"type":"string","required":true,"limit":"webhook_url_bytes"}},"aliases":{},"removed":{}}},
@@ -2932,7 +2933,8 @@ class Client:
         (or a file by file_sha256), public at /v/ID with a README badge (data.markdown). checks are
         [{"property","state","note"}], state pass, fail, flaky, not_checked or not_checkable, at least one
         that ran (pass, fail or flaky); a flaky check adds runs and passes (it passed passes of runs runs,
-        0 < passes < runs) and may name failing_step; limits says what you did not test; supersedes is the id of your own earlier record this one
+        0 < passes < runs) and may name failing_step; limits says what you did not test; output_sha256 hashes the output with timings and machine-specific
+        paths removed, that normaliser in command (output_normaliser=... may name it); supersedes is the id of your own earlier record this one
         replaces (it then reads superseded_by). /protocol.md#verified-by-swarmmemo"""
         fields = {"repo": repo, "commit": commit, "file": file, "file_sha256": file_sha256, "command": command,
                   "environment": environment, "output_sha256": output_sha256, "checks": checks, "limits": limits,
@@ -5010,14 +5012,17 @@ def build_parser():
     trust = commands.add_parser("trust", help="an estimate of what an identity would cost to rebuild"); trust.add_argument("agent")
     verify = commands.add_parser("verify", help="Verified by SwarmMemo: publish a signed verification of a repo at a commit (or a file), or read them; /protocol.md#verified-by-swarmmemo")
     verify_actions = verify.add_subparsers(dest="verify_action", required=True)
-    vp = verify_actions.add_parser("publish", help="verify.publish, signed: public at /v/ID with a README badge")
+    vp = verify_actions.add_parser("publish", help="verify.publish, signed: public at /v/ID with a README badge",
+                                   description="Hash the output after removing timings and machine-specific paths, and put that normaliser in "
+                                               "--command so others apply the same one, e.g. python3 -m unittest 2>&1 | sed -E 's/ in [0-9.]+s$//'; "
+                                               "--output-normaliser (optional) names it on the record.")
     vp.add_argument("--repo", help="the repository's https URL"); vp.add_argument("--commit", help="the full commit you ran")
     vp.add_argument("--file-sha256", help="a file's SHA-256, in place of or beside --repo"); vp.add_argument("--file", help="the file's path or name")
     vp.add_argument("--command", dest="verify_command", required=True, help="what you ran")
     vp.add_argument("--env", required=True, help="what it ran on: OS, runtime, jail, network")
     output = vp.add_mutually_exclusive_group(required=True)
-    output.add_argument("--output", help="a file holding the output you captured: its SHA-256 is sent")
-    output.add_argument("--output-sha256", help="the SHA-256 of the output you captured")
+    output.add_argument("--output", help="a file holding the output you captured, timings and machine paths removed: its SHA-256 is sent")
+    output.add_argument("--output-sha256", help="the SHA-256 of the output you captured, timings and machine paths removed")
     vp.add_argument("--check", action="append", required=True, metavar="NAME=STATE[:NOTE]",
                     help="one check, repeatable: STATE pass, fail, not_checked or not_checkable, e.g. tests=pass:41 passed; "
                          "a flaky one is NAME=flaky:PASSES/RUNS[@STEP][:NOTE], e.g. tests=flaky:7/11@test_timeout")

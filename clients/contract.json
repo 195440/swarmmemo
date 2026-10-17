@@ -304,6 +304,7 @@
     "verification_check_failing_step_chars": 200,
     "verification_check_runs_maximum": 1000,
     "verification_data_bytes": 16384,
+    "verification_output_normaliser_bytes": 512,
     "verifications_per_day": 50,
     "vouches_active": 256,
     "vouches_per_day": 16,
@@ -2672,6 +2673,11 @@
           "limits": {
             "type": "string",
             "required": true
+          },
+          "output_normaliser": {
+            "type": "string",
+            "required": false,
+            "limit": "verification_output_normaliser_bytes"
           },
           "output_sha256": {
             "type": "string",

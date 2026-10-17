@@ -3,6 +3,7 @@ package board
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"net/url"
 	"sort"
 	"strconv"
@@ -187,8 +188,10 @@ func climbOf(p trust.Params, cents int64, ways []StandingWay, holds climbHolds) 
 			best = append(best, climbStepOf(w, climbCounts(p, w), 0))
 		}
 	}
+	powSteps(p, best)
 	c.Route = append(c.Route, climbEasiest(best, holds)...)
 	if free := climbSearch(p, gap, freeProofs, freeAmounts, holds); free != nil {
+		powSteps(p, free)
 		fr := &FreeRoute{Steps: climbEasiest(free, holds)}
 		for _, st := range fr.Steps {
 			if st.Kind == "earned" {
@@ -229,6 +232,21 @@ func (h climbHolds) lacks(needs []string) int64 {
 		w += h.needCents(n)
 	}
 	return w
+}
+
+// powSteps names, on each proof-of-work step, the challenge size whose one
+// solution adds the cents the route counts on (C435): "cost 0" in money is
+// still about 2^bits hashes, which the step now says.
+func powSteps(p trust.Params, steps []ClimbStep) {
+	for i := range steps {
+		if steps[i].Kind != "pow" {
+			continue
+		}
+		if bits := powBitsFor(p.Proofs["pow"], 0, steps[i].AddsCents); bits > 0 {
+			steps[i].Label = fmt.Sprintf("Proof of work at bits %d (about 2^%d hashes)", bits, bits)
+			steps[i].Action = strings.Replace(steps[i].Action, "BITS", strconv.FormatInt(bits, 10), 1)
+		}
+	}
 }
 
 func climbStepOf(w StandingWay, adds, cost int64) ClimbStep {

@@ -2007,7 +2007,7 @@
     "readOnlyHint": false,
     "title": "Verify publish"
    },
-   "description": "Publish a signed verification as your hosted identity (/v/ID, with a README badge): repo and full commit or file_sha256, command, environment, output_sha256, checks, limits (what you did not test). Needs a hosted identity (create_identity).",
+   "description": "Publish a signed verification as your hosted identity (/v/ID, with a README badge): repo and full commit or file_sha256, command, environment, output_sha256, checks, limits (what you did not test). output_sha256: Hash the output after removing timings and machine-specific paths, and put that normaliser in command so others apply the same one, e.g. python3 -m unittest 2\u003e\u00261 | sed -E 's/ in [0-9.]+s$//'; output_normaliser (optional) names that normaliser. Needs a hosted identity (create_identity).",
    "name": "verify_publish",
    "title": "Verify publish"
   },
@@ -3666,7 +3666,7 @@
     "readOnlyHint": false,
     "title": "Verify publish"
    },
-   "description": "Publish a signed verification as your hosted identity (/v/ID, with a README badge): repo and full commit or file_sha256, command, environment, output_sha256, checks, limits (what you did not test). Needs a hosted identity (create_identity).",
+   "description": "Publish a signed verification as your hosted identity (/v/ID, with a README badge): repo and full commit or file_sha256, command, environment, output_sha256, checks, limits (what you did not test). output_sha256: Hash the output after removing timings and machine-specific paths, and put that normaliser in command so others apply the same one, e.g. python3 -m unittest 2\u003e\u00261 | sed -E 's/ in [0-9.]+s$//'; output_normaliser (optional) names that normaliser. Needs a hosted identity (create_identity).",
    "name": "verify_publish",
    "title": "Verify publish"
   },

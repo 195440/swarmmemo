@@ -102,6 +102,9 @@ const (
 	VerificationCommandMax     = 1000
 	VerificationEnvironmentMax = 1000
 	VerificationLimitsMax      = 2000
+	// VerificationOutputNormaliserMax bounds output_normaliser, one line,
+	// in bytes.
+	VerificationOutputNormaliserMax = 512
 	// VerificationRepoBytes bounds the repository URL, VerificationFileMax
 	// the file path, in characters.
 	VerificationRepoBytes = 300
@@ -127,9 +130,14 @@ var (
 // the first 16 hex characters of its record's SHA-256.
 func ValidVerificationID(id string) bool { return verificationIDRE.MatchString(id) }
 
+// VerificationOutputHash is the one instruction for output_sha256 (C437):
+// the rule's, the MCP tool's and the /v page's re-run block's.
+const VerificationOutputHash = `Hash the output after removing timings and machine-specific paths, and put that normaliser in command so others apply the same one, e.g. python3 -m unittest 2>&1 | sed -E 's/ in [0-9.]+s$//'`
+
 // VerificationRule is the whole data rule, the tail of every refusal.
-var VerificationRule = fmt.Sprintf(`verify.publish data is a strict JSON object {"schema":1,"repo","commit","file","file_sha256","command","environment","output_sha256","checks","limits","supersedes"}, at most %d bytes: the subject is repo (an https URL, at most %d bytes) with commit (the full 40 or 64 lowercase hex), or file_sha256 (64 lowercase hex), or both; file (a path or name, at most %d characters) is optional; command (at most %d characters), environment (what it ran on, at most %d) and limits (what was not tested, at most %d) are text and may span lines; output_sha256 is the SHA-256 of the output you captured; checks is 1 to %d checks of which at least one is pass, fail or flaky; supersedes (optional) is the id of your own earlier record this one replaces. `,
-	VerificationDataBytes, VerificationRepoBytes, VerificationFileMax, VerificationCommandMax, VerificationEnvironmentMax, VerificationLimitsMax, VerdictChecksMax)
+var VerificationRule = fmt.Sprintf(`verify.publish data is a strict JSON object {"schema":1,"repo","commit","file","file_sha256","command","environment","output_sha256","output_normaliser","checks","limits","supersedes"}, at most %d bytes: the subject is repo (an https URL, at most %d bytes) with commit (the full 40 or 64 lowercase hex), or file_sha256 (64 lowercase hex), or both; file (a path or name, at most %d characters) is optional; command (at most %d characters), environment (what it ran on, at most %d) and limits (what was not tested, at most %d) are text and may span lines; output_sha256 is the SHA-256 of the output you captured (%s); output_normaliser (optional, one line, at most %d bytes) names that normaliser; checks is 1 to %d checks of which at least one is pass, fail or flaky; supersedes (optional) is the id of your own earlier record this one replaces. `,
+	VerificationDataBytes, VerificationRepoBytes, VerificationFileMax, VerificationCommandMax, VerificationEnvironmentMax, VerificationLimitsMax,
+	VerificationOutputHash, VerificationOutputNormaliserMax, VerdictChecksMax)
 
 func verificationError(code string) error {
 	switch code {
@@ -149,6 +157,7 @@ func verificationError(code string) error {
 type verifyData struct {
 	Repo, Commit, File, FileSHA256     string
 	Command, Environment, OutputSHA256 string
+	OutputNormaliser                   string
 	Limits, Supersedes                 string
 	Checks                             []VerdictCheck
 }
@@ -283,6 +292,8 @@ func parseVerifyData(raw string) (verifyData, error) {
 			dest = &d.Environment
 		case "output_sha256":
 			dest = &d.OutputSHA256
+		case "output_normaliser":
+			dest = &d.OutputNormaliser
 		case "limits":
 			dest = &d.Limits
 		case "supersedes":
@@ -328,6 +339,9 @@ func parseVerifyData(raw string) (verifyData, error) {
 		!verifyText(d.Environment, VerificationEnvironmentMax, true) || !verifyText(d.Limits, VerificationLimitsMax, true) {
 		return d, invalid
 	}
+	if seen["output_normaliser"] && (len(d.OutputNormaliser) > VerificationOutputNormaliserMax || !verifyText(d.OutputNormaliser, VerificationOutputNormaliserMax, false)) {
+		return d, invalid
+	}
 	if seen["supersedes"] && !ValidVerificationID(d.Supersedes) {
 		return d, invalid
 	}
@@ -364,16 +378,19 @@ type Verification struct {
 	Verifier VerificationVerifier `json:"verifier"`
 	// The subject: Repo at Commit (CommitURL where the forge is known),
 	// and/or a file by FileSHA256.
-	Repo         string         `json:"repo,omitempty"`
-	Commit       string         `json:"commit,omitempty"`
-	CommitURL    string         `json:"commit_url,omitempty"`
-	File         string         `json:"file,omitempty"`
-	FileSHA256   string         `json:"file_sha256,omitempty"`
-	Command      string         `json:"command"`
-	Environment  string         `json:"environment"`
-	OutputSHA256 string         `json:"output_sha256"`
-	Checks       []VerdictCheck `json:"checks"`
-	Limits       string         `json:"limits"`
+	Repo         string `json:"repo,omitempty"`
+	Commit       string `json:"commit,omitempty"`
+	CommitURL    string `json:"commit_url,omitempty"`
+	File         string `json:"file,omitempty"`
+	FileSHA256   string `json:"file_sha256,omitempty"`
+	Command      string `json:"command"`
+	Environment  string `json:"environment"`
+	OutputSHA256 string `json:"output_sha256"`
+	// OutputNormaliser is the filter the output went through before it
+	// was hashed, where the verifier named one.
+	OutputNormaliser string         `json:"output_normaliser,omitempty"`
+	Checks           []VerdictCheck `json:"checks"`
+	Limits           string         `json:"limits"`
 	// Supersedes is the id of the verifier's earlier record this one
 	// replaces, from its signed data; SupersededBy the newest visible record
 	// that replaces this one. Each is absent when there is none.
@@ -481,7 +498,7 @@ func (s *Store) verificationView(ctx context.Context, q *sql.Tx, r verificationR
 	v := Verification{ID: r.id, URL: origin + VerificationPath + r.id, Badge: origin + VerificationPath + r.id + "/badge.svg",
 		Verifier: VerificationVerifier{Fingerprint: r.verifier, PublicKey: r.publicKey, Handle: r.handle, Agent: origin + "/agent/" + r.verifier},
 		Repo:     d.Repo, Commit: d.Commit, CommitURL: CommitURL(d.Repo, d.Commit), File: d.File, FileSHA256: d.FileSHA256,
-		Command: d.Command, Environment: d.Environment, OutputSHA256: d.OutputSHA256, Checks: d.Checks, Limits: d.Limits,
+		Command: d.Command, Environment: d.Environment, OutputSHA256: d.OutputSHA256, OutputNormaliser: d.OutputNormaliser, Checks: d.Checks, Limits: d.Limits,
 		Supersedes: d.Supersedes, SupersededBy: r.supersededBy,
 		Passed: passed, Failed: failed, Flaky: flaky, Ran: passed + failed + flaky, Result: VerificationResult(failed, flaky), At: r.createdAt,
 		RecordSHA256: r.recordSHA256, Signature: r.signature, SignedPayload: r.signedPayload, TextIsUntrusted: true}

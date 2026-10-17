@@ -100,6 +100,23 @@ func TestVerificationPublishAndRead(t *testing.T) {
 	fails(t, s, Command{Operation: "verify.list", Target: "https://github.com/o/r", Query: "abc"}, "invalid_verification_query")
 }
 
+// C437: output_normaliser is optional, signed with the rest and read back.
+func TestVerificationOutputNormaliser(t *testing.T) {
+	s := openTest(t, Config{})
+	key := keyFor(44)
+	sed := `sed -E 's/ in [0-9.]+s$//'`
+	v := verificationOf(t, run(t, s, publishVerify(key, verifyRecord(func(d map[string]any) { d["output_normaliser"] = sed }))))
+	if v.OutputNormaliser != sed || !strings.Contains(v.SignedPayload, "output_normaliser") {
+		t.Fatalf("record %+v", v)
+	}
+	if got := verificationOf(t, run(t, s, Command{Operation: "verify.get", Target: v.ID})); got.OutputNormaliser != sed {
+		t.Fatalf("read back %q", got.OutputNormaliser)
+	}
+	if !strings.Contains(VerificationRule, VerificationOutputHash) {
+		t.Fatal("the data rule does not carry the output hash instruction")
+	}
+}
+
 // A file subject needs no repository; every check passing reads passed;
 // pages follow next_cursor.
 func TestVerificationFileSubjectAndPages(t *testing.T) {
@@ -153,11 +170,16 @@ func TestVerificationRefusals(t *testing.T) {
 		"empty command":   func(d map[string]any) { d["command"] = "" },
 		"long command":    func(d map[string]any) { d["command"] = strings.Repeat("x", VerificationCommandMax+1) },
 		"long limits":     func(d map[string]any) { d["limits"] = strings.Repeat("x", VerificationLimitsMax+1) },
-		"control char":    func(d map[string]any) { d["environment"] = "linux\x1b[31m" },
-		"bidi override":   func(d map[string]any) { d["environment"] = "linux ‮" },
-		"no checks":       func(d map[string]any) { d["checks"] = []map[string]any{} },
-		"none ran":        func(d map[string]any) { d["checks"] = []map[string]any{{"property": "tests", "state": "not_checked"}} },
-		"bad state":       func(d map[string]any) { d["checks"] = []map[string]any{{"property": "tests", "state": "ok"}} },
+		"long normaliser": func(d map[string]any) {
+			d["output_normaliser"] = strings.Repeat("é", VerificationOutputNormaliserMax/2+1)
+		},
+		"multi-line normaliser": func(d map[string]any) { d["output_normaliser"] = "sed 1d\nsort" },
+		"empty normaliser":      func(d map[string]any) { d["output_normaliser"] = "" },
+		"control char":          func(d map[string]any) { d["environment"] = "linux\x1b[31m" },
+		"bidi override":         func(d map[string]any) { d["environment"] = "linux ‮" },
+		"no checks":             func(d map[string]any) { d["checks"] = []map[string]any{} },
+		"none ran":              func(d map[string]any) { d["checks"] = []map[string]any{{"property": "tests", "state": "not_checked"}} },
+		"bad state":             func(d map[string]any) { d["checks"] = []map[string]any{{"property": "tests", "state": "ok"}} },
 		"long note": func(d map[string]any) {
 			d["checks"] = []map[string]any{{"property": "tests", "state": "pass", "note": strings.Repeat("n", VerdictCheckNoteMax+1)}}
 		},

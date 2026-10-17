@@ -38,7 +38,7 @@ func TestClimbFreeRoute(t *testing.T) {
 	if strings.Join(kinds, ",") != "pow,earned" || adds < 50 || c.FreeRoute.Days != days(50-25) {
 		t.Fatalf("wallet-only free route: %v adds %d, %d days", kinds, adds, c.FreeRoute.Days)
 	}
-	if got, want := summary(c), "Standing 50¢, signed (own costs 50¢, no backers yet). Next: tier 1 at 100¢, 50¢ away: proof of work (+~25¢) and about 3 active days, free, or pay 50¢ now."; got != want {
+	if got, want := summary(c), "Standing 50¢, signed (own costs 50¢, no backers yet). Next: tier 1 at 100¢, 50¢ away: proof of work at bits 47 (about 2^47 hashes) (+~25¢) and about 3 active days, free, or pay 50¢ now."; got != want {
 		t.Fatalf("summary\n got %q\nwant %q", got, want)
 	}
 	// Proof of work taken: active days alone.
@@ -81,5 +81,22 @@ func TestClimbFreeRoute(t *testing.T) {
 	}
 	if raw, _ := json.Marshal(c); !strings.Contains(string(raw), `"free_route":null`) {
 		t.Fatalf("free_route is not null: %s", raw)
+	}
+}
+
+// The route names the challenge size behind proof of work's counted cents:
+// a default 20-bit solution adds ~0¢ on the saturating row (suifeng2077,
+// #bounties 10-17), and powBitsFor finds the bits that reach a target.
+func TestPowBitsFor(t *testing.T) {
+	row := trust.DefaultParams().Proofs["pow"]
+	if got := trust.AssessedContribution(row, trust.PowUnits(StandingPowBitsMin)); got != 0 {
+		t.Fatalf("a %d-bit solution counts %d¢", StandingPowBitsMin, got)
+	}
+	b := powBitsFor(row, 0, 25)
+	if b < StandingPowBitsMin || b > StandingPowBitsMax || trust.AssessedContribution(row, trust.PowUnits(b)) < 25 || trust.AssessedContribution(row, trust.PowUnits(b-1)) >= 25 {
+		t.Fatalf("powBitsFor(25¢) = %d", b)
+	}
+	if powBitsFor(row, 0, 1000) != 0 {
+		t.Fatal("no challenge reaches 1000¢ on a 50¢ row")
 	}
 }
