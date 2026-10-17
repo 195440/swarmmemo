@@ -14,6 +14,7 @@ package board
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"slices"
 	"strings"
 
@@ -24,7 +25,8 @@ import (
 // State, Deadline, Eligibility, Claimable (as work.get's: State is open
 // and, on a standing task, a seat is open; workClaimable) and, when set,
 // Reward, RewardNote (display text only; the poster pays it), Reviewer
-// and Simulated. On a reply that a worker submitted as
+// and Simulated; on a standing task, Standing, its terms per result
+// (C434). On a reply that a worker submitted as
 // the result: ResultOf (the work's ID) and State, one of submitted,
 // accepted or rejected. Title and URL (the work's page) are on both.
 type MessageWork struct {
@@ -41,7 +43,17 @@ type MessageWork struct {
 	Eligibility string             `json:"eligibility,omitempty"`
 	Reviewer    *AgentRef          `json:"reviewer,omitempty"`
 	Claimable   *bool              `json:"claimable,omitempty"`
-	URL         string             `json:"url"`
+	// Standing is set on a standing task's request: its reward is then the
+	// pool held for every seat, never what one result earns (C434).
+	Standing *MessageWorkStanding `json:"standing,omitempty"`
+	URL      string               `json:"url"`
+}
+
+// MessageWorkStanding is a standing task's terms on its request's mark:
+// Seats, and the Tiers one result may be paid (the first is the default).
+type MessageWorkStanding struct {
+	Seats int64              `json:"seats"`
+	Tiers []WorkStandingTier `json:"tiers"`
 }
 
 // MessageWorkReward is the reward the requester attached, in credits; its
@@ -116,8 +128,9 @@ func attachWork(ctx context.Context, q workRowsQuerier, events []Message, now in
   JOIN work_transitions x ON x.work_id=t.work_id AND x.sequence=t.sequence+1 AND x.operation='work.reject'
   JOIN events te ON te.id=json_extract(t.payload,'$.command.target')
   WHERE t.work_id=w.id AND t.state='submitted'),''),w.standing_id,
- EXISTS(SELECT 1 FROM work_standing ws WHERE ws.work_id=w.id)
+ ws.work_id IS NOT NULL,coalesce(ws.seats,0),coalesce(ws.tiers,'')
  FROM works w JOIN events e ON e.id=w.id
+ LEFT JOIN work_standing ws ON ws.work_id=w.id
  LEFT JOIN work_rewards rw ON rw.work_id=w.id
  LEFT JOIN work_usdc wu ON wu.work_id=w.id
  LEFT JOIN identities ri ON w.reviewer<>'' AND ri.account=w.reviewer AND ri.successor=''
@@ -140,8 +153,16 @@ func attachWork(ctx context.Context, q workRowsQuerier, events []Message, now in
 		var reward, usdc int64
 		var rewardState, usdcState string
 		var reviewer AgentRef
-		if err = rows.Scan(&m.root.ID, &m.root.Title, &m.root.State, &m.stored, &m.root.Deadline, &m.root.Eligibility, &kind, &reward, &rewardState, &usdc, &usdcState, &m.root.RewardNote, &reviewer.ID, &reviewer.PublicKey, &reviewer.Handle, &m.result, &m.rejected, &m.standing, &m.standingRoot); err != nil {
+		var seats int64
+		var tiers string
+		if err = rows.Scan(&m.root.ID, &m.root.Title, &m.root.State, &m.stored, &m.root.Deadline, &m.root.Eligibility, &kind, &reward, &rewardState, &usdc, &usdcState, &m.root.RewardNote, &reviewer.ID, &reviewer.PublicKey, &reviewer.Handle, &m.result, &m.rejected, &m.standing, &m.standingRoot, &seats, &tiers); err != nil {
 			return err
+		}
+		if m.standingRoot {
+			st := &MessageWorkStanding{Seats: seats}
+			if json.Unmarshal([]byte(tiers), &st.Tiers) == nil && len(st.Tiers) > 0 {
+				m.root.Standing = st
+			}
 		}
 		m.root.Simulated = kind == "simulation"
 		if m.root.Eligibility == "" {

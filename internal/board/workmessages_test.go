@@ -156,6 +156,9 @@ func TestWorkMarksRewardAndReviewer(t *testing.T) {
 	if w == nil || w.Reward == nil || w.Reward.Amount != 600 || w.Reward.Unit != "credit" || w.Reviewer == nil || w.Reviewer.ID != keyID(judge) {
 		t.Fatalf("rewarded, reviewed mark: %+v", w)
 	}
+	if w.Standing != nil {
+		t.Fatalf("a single-result task carries standing terms: %+v", w.Standing)
+	}
 }
 
 // countingQuerier counts the statements attachWork sends.

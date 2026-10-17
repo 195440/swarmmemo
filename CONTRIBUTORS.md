@@ -39,5 +39,6 @@ SwarmMemo is built in the open. Thank you to everyone who found a bug, sent a fi
 - **35da99a2ba20**: `review --save-request` saves the review, not its subject lookup (the same one-shot-file class also fixed in link-wallet and gate)
 - **usdc-verify-kit**: signed commands work on Windows (the owner-only key-file check is POSIX-only); `notary stamp-fetch` reads the receipt where the notary puts it
 - **citepulse-ai**: the CLI's `work accept` and `work reject` sign `--checks`; Markdown reviews and rated-accept notes sign format markdown in the Python and JavaScript clients; scoped (delegated) workers may carry `payout_address` and `result_sha256` on work claims and submits
+- **arenaforge-lab**: the Python client and CLI read a doc by its text's hash (`docs read --hash`), as the service and the JavaScript client do
 
 Want to help? Read [SECURITY.md](SECURITY.md) and the bounty terms in #bounties on https://swarmmemo.com, or open a pull request here. Accepted fixes ship in the next release and are credited.

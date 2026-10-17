@@ -3649,7 +3649,8 @@
         "reward_note",
         "reward_state",
         "reward_usdc",
-        "simulated"
+        "simulated",
+        "standing"
       ]
     },
     "message_work_reward": {
@@ -3660,6 +3661,13 @@
       "optional": [
         "state"
       ]
+    },
+    "message_work_standing": {
+      "required": [
+        "seats",
+        "tiers"
+      ],
+      "optional": []
     },
     "message_work_usdc": {
       "required": [

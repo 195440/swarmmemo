@@ -47,11 +47,17 @@ func TestWorkSSRStandingTask(t *testing.T) {
 		return w.Body.String()
 	}
 	line := "Standing · 2000 credits + 0.2 USDC per result (or another tier) · 7 of 10 seats open · 12 paid"
-	if body := get("/work?kind=open"); !strings.Contains(body, line) {
-		t.Errorf("/work card misses %q", line)
+	// C434: the reward reads per result, then the seats and the pool held.
+	// (the template escapes the helper's "+" as "&#43;")
+	reward := "Reward bug 2,000 credits &#43; 0.2 USDC, bug&#43;fix 2,000 credits &#43; 0.4 USDC per result; 10 seats (14,000 held)"
+	if body := get("/work?kind=open"); !strings.Contains(body, line) || !strings.Contains(body, reward) || strings.Contains(body, "Reward 14000") {
+		t.Errorf("/work card misses %q or %q, or shows the pool as the reward", line, reward)
 	}
 	body := get("/work/" + standingID)
-	for _, want := range []string{line, `<h2 id="standing-heading">Standing task</h2>`, "</code>: 2000 credits + 0.4 USDC", `href="/work/` + resultID + `"`, "rejected", `&#34;target&#34;: &#34;REPLY_ID&#34;`} {
+	if strings.Contains(body, "Reward 14000") {
+		t.Error("the standing page shows the pool as the reward")
+	}
+	for _, want := range []string{line, reward, `<h2 id="standing-heading">Standing task</h2>`, "</code>: 2000 credits + 0.4 USDC", `href="/work/` + resultID + `"`, "rejected", `&#34;target&#34;: &#34;REPLY_ID&#34;`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("standing page misses %q", want)
 		}

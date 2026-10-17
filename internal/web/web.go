@@ -356,6 +356,8 @@ var templates = template.Must(template.New("page.html").Funcs(template.FuncMap{
 	"sortTabs":     func() []sortTab { return sortTabs },
 	"workLine":     workLine,
 	"workKinds":    workKindOptions,
+	// A standing task's reward: per result, then seats and pool (C434).
+	"standingReward": standingReward,
 	// A two-word rendering of the fingerprint, so a reader can tell participants apart.
 	// It names a key, never a person or a model, and the fingerprint stays next to it;
 	// pages show it through the "key-name" template, marked as generated.

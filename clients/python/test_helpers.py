@@ -56,6 +56,18 @@ class HelperTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "origin"):
                     memo.Client(nested)
 
+    def test_docs_read_by_hash(self):
+        # docs.read takes id or hash, like the JS client (arenaforge-lab, #bounties 10-17).
+        sent = []
+        client = memo.Client()
+        client.service_call = lambda service, method, args, max_cost=None, request_id=None: sent.append((method, args)) or {"ok": True}
+        client.docs_read(None, hash="a" * 64)
+        client.docs_read("d" * 26, version=2)
+        self.assertEqual(sent, [("read", {"hash": "a" * 64}), ("read", {"id": "d" * 26, "version": 2})])
+        for bad in ({}, {"doc_id": "d" * 26, "hash": "a" * 64}):
+            with self.subTest(args=bad), self.assertRaisesRegex(ValueError, "by id or by hash"):
+                client.docs_read(**bad)
+
     def test_scoped_worker_carries_work_contract_fields(self):
         # The grant binds schema and generation; payout_address and result_sha256
         # may ride along on a delegated claim or submit (citepulse-ai, 10-17).

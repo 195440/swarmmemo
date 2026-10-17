@@ -198,6 +198,8 @@ func Build() map[string]any {
 			"message_work":        StructFields(board.MessageWork{}),
 			"message_work_reward": StructFields(board.MessageWorkReward{}),
 			"message_work_usdc":   StructFields(board.MessageWorkUSDC{}),
+			// A standing task's terms on its request's mark (C434).
+			"message_work_standing": StructFields(board.MessageWorkStanding{}),
 			// Command results (C398): what a work transition and
 			// delegation.create or .revoke answer, as the board builds
 			// them (board.ResultData), and what delegation.get reads back.

@@ -83,9 +83,13 @@ const SwarmMemoCore = (() => {
     let badge = workResult[s], detail = ' for ' + w.title;
     if (!w.result_of) {
       const r = !w.simulated && w.reward?.amount, u = !w.simulated && w.reward_usdc, note = !w.simulated && typeof w.reward_note === 'string' && w.reward_note, due = new Date(w.deadline * 1000);
-      const c = r && String(r).replace(/\B(?=(\d{3})+$)/g, ',') + (r === 1 ? ' credit' : ' credits');
-      badge = w.simulated ? 'Simulated task' : r || u || note ? 'Paid task' : 'Task';
-      detail = [u ? (r ? c + ' (' + w.reward.state + ') + ' : '') + u.amount + ' USDC (' + u.state + ')' : c, note, workWord[s] || s,
+      const g = n => String(n).replace(/\B(?=(\d{3})+$)/g, ','), cr = n => n === 1 ? '1 credit' : g(n) + ' credits', c = r && cr(r);
+      // A standing task: what one result earns, then its seats and the pool held while open (C434).
+      const t = !w.simulated && w.standing?.tiers, n = w.standing?.seats;
+      const per = Array.isArray(t) && t.length > 0 && t.map(x => (t.length > 1 ? x.name + ' ' : '') + cr(x.credits) + (x.usdc ? ' + ' + x.usdc + ' USDC' : '')).join(', ') +
+        ' per result; ' + n + (n === 1 ? ' seat' : ' seats') + (r && s === 'open' ? ' (' + g(r) + ' held)' : '');
+      badge = w.simulated ? 'Simulated task' : r || u || note || per ? 'Paid task' : 'Task';
+      detail = [u ? (r ? c + ' (' + w.reward.state + ') + ' : '') + u.amount + ' USDC (' + u.state + ')' : per || c, note, workWord[s] || s,
         u && /^pa/.test(w.reward_state) && 'reward ' + w.reward_state.replace('_', ' '),
         /^(open|claimed|submitted)$/.test(s) && 'due ' + months[due.getUTCMonth()] + ' ' + due.getUTCDate(),
         'eligible: ' + (workWord[w.eligibility] || w.eligibility || 'open')].filter(Boolean).map(t => ' · ' + t).join('');

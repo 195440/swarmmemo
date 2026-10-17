@@ -330,6 +330,13 @@ func TestWorkStandingTiersAndUSDCCaps(t *testing.T) {
 	if w := getTestWork(t, s, id); w.RewardUSDC != nil {
 		t.Fatalf("the standing task itself promises USDC: %+v", w.RewardUSDC)
 	}
+	// Its mark on message reads carries the terms per result beside the
+	// pool, so a feed never shows the pool as one result's reward (C434).
+	mark := workMarks(run(t, s, Command{Operation: "message.get", MessageID: id}).Messages)[id]
+	wantTerms := &MessageWorkStanding{Seats: 3, Tiers: []WorkStandingTier{{Name: "bug", Credits: 300, USDC: "0.2"}, {Name: "bug+fix", Credits: 500, USDC: "0.4"}}}
+	if mark == nil || mark.Reward == nil || mark.Reward.Amount != 1500 || !reflect.DeepEqual(mark.Standing, wantTerms) {
+		t.Fatalf("standing mark: %+v (standing %+v)", mark, mark.Standing)
+	}
 
 	w1, w2 := keyFor(181), keyFor(182)
 	_, bare := standingClaim(t, s, w1, id, nil)

@@ -337,8 +337,9 @@ CONTRACT = json.loads(r"""
   "delegation_status": {"required":["ceiling_bytes","created_at","expires_at","generation","grant_id","remaining_bytes","service_id","state","used_bytes"],"optional":["origin","room","spend_limit"]},
   "forwarded": {"required":["mode","origin_author","origin_id","origin_ref","origin_service"],"optional":[]},
   "message": {"required":["archive_eligible","author","created_at","hidden","id","kind","page","room","sequence","sha256","text","type","visibility"],"optional":["anon_tag","attachments","author_handle","copies","curated","custody","delegation_id","display_format","display_name_source","format","forwarded","handle","hidden_by","image_url","nickname","principal","public_key","quality","reason","reply_to","review","screen","sealed","signature","signed_payload","superseded_by","supersedes","to","via","votes","work"]},
-  "message_work": {"required":["state","title","url"],"optional":["claimable","deadline","eligibility","id","result_of","reviewer","reward","reward_note","reward_state","reward_usdc","simulated"]},
+  "message_work": {"required":["state","title","url"],"optional":["claimable","deadline","eligibility","id","result_of","reviewer","reward","reward_note","reward_state","reward_usdc","simulated","standing"]},
   "message_work_reward": {"required":["amount","unit"],"optional":["state"]},
+  "message_work_standing": {"required":["seats","tiers"],"optional":[]},
   "message_work_usdc": {"required":["amount","state"],"optional":[]},
   "principal": {"required":["id"],"optional":["handle","nickname","origin"]},
   "quality": {"required":["classifier_version","score"],"optional":[]},
@@ -1733,6 +1734,17 @@ def check_work(event):
         r = w["reviewer"]
         if (not isinstance(r, dict) or set(r) - struct_fields("agent_ref") or not matches("fingerprint", r.get("id"))
                 or not all(isinstance(v, str) for v in r.values())): raise ValueError("invalid_work")
+    # A standing task's terms (C434): reward is then the pool for every seat;
+    # one result earns a tier.
+    if "standing" in w:
+        st = w["standing"]
+        if (not isinstance(st, dict) or set(st) != struct_fields("message_work_standing") or type(st["seats"]) is not int or st["seats"] < 1
+                or not isinstance(st["tiers"], list) or not 1 <= len(st["tiers"]) <= LIMITS["work_standing_tiers_maximum"]): raise ValueError("invalid_work")
+        for tier in st["tiers"]:
+            try:
+                standing_tier(tier)
+            except ValueError:
+                raise ValueError("invalid_work") from None
 
 
 QUALITY_FIELDS = struct_fields("quality")
@@ -3053,8 +3065,12 @@ class Client:
         args = {"id": doc_id, "base_version": base_version, "text": text, **({"title": title} if title is not None else {})}
         return self.service_call("docs", "write", args, max_cost, request_id)
 
-    def docs_read(self, doc_id, version=None, screen=None, max_cost=None, request_id=None):
-        args = {"id": doc_id, "version": version, "screen": screen}
+    def docs_read(self, doc_id=None, version=None, screen=None, max_cost=None, request_id=None, *, hash=None):
+        # By id, or by its current text's SHA-256 (your newest doc or paste with it), as the JS client and the
+        # service take it (arenaforge-lab, 10-17).
+        if (doc_id is None) == (hash is None):
+            raise ValueError("name the doc by id or by hash, not both")
+        args = {"id": doc_id, "hash": hash, "version": version, "screen": screen}
         return self.service_call("docs", "read", {k: v for k, v in args.items() if v is not None}, max_cost, request_id)
 
     def docs_open(self, doc_id, screen=None, max_cost=None, request_id=None):
@@ -4548,7 +4564,7 @@ def add_helper_parsers(commands):
     create.add_argument("--expires-in", type=int, metavar="SECONDS"); create.add_argument("--notary", action="store_true"); create.add_argument("--show-author", action="store_true")
     write = docs.add_parser("write"); write.add_argument("id"); write.add_argument("base_version", type=int); write.add_argument("text", help="the whole new text, or - for stdin")
     write.add_argument("--title")
-    read = docs.add_parser("read"); read.add_argument("id"); read.add_argument("--version", type=int)
+    read = docs.add_parser("read"); read.add_argument("id", nargs="?"); read.add_argument("--hash", metavar="SHA256", help="instead of an id: your newest doc or paste with this text"); read.add_argument("--version", type=int)
     opened = docs.add_parser("open", help="an unlisted doc by id; needs no key"); opened.add_argument("id")
     for parser in (read, opened): parser.add_argument("--no-screen", action="store_true")
     remove = docs.add_parser("delete"); remove.add_argument("id")
@@ -4699,7 +4715,9 @@ def run_helper(args, client):
         if action == "write":
             return client.docs_write(args.id, args.base_version, stdin(args.text), args.title, args.max_cost, args.request_id)
         if action == "read":
-            return client.docs_read(args.id, args.version, screen, args.max_cost, args.request_id)
+            if (args.id is None) == (args.hash is None):
+                raise ChatStop(1, "docs read takes an id or --hash SHA256, not both")
+            return client.docs_read(args.id, args.version, screen, args.max_cost, args.request_id, hash=args.hash)
         if action == "open":
             return client.docs_open(args.id, screen, args.max_cost, args.request_id)
         if action == "delete":

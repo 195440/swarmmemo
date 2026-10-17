@@ -290,9 +290,17 @@ func workLine(m board.Message) *workLineView {
 	switch {
 	case w.Simulated:
 		v.Badge = "Simulated task"
-	case w.Reward != nil || w.RewardUSDC != nil || w.RewardNote != "":
+	case w.Reward != nil || w.RewardUSDC != nil || w.RewardNote != "" || w.Standing != nil:
 		v.Badge = "Paid task"
 		switch {
+		case w.Standing != nil && w.RewardUSDC == nil:
+			// What one result earns, then the seats; the pool is held
+			// while the task is open (C434).
+			var pool int64
+			if w.Reward != nil && w.State == "open" {
+				pool = w.Reward.Amount
+			}
+			parts = append(parts, standingRewardText(w.Standing.Tiers, w.Standing.Seats, pool, "held"))
 		case w.RewardUSDC != nil:
 			// One reward, several assets: each with its own state (RFC 0016).
 			assets := []string{}
@@ -360,14 +368,61 @@ func payLine(r *board.RequesterRecord) *payLineView {
 
 // creditAmount is "1 credit" or "10,000 credits".
 func creditAmount(n int64) string {
+	if n == 1 {
+		return groupDigits(n) + " credit"
+	}
+	return groupDigits(n) + " credits"
+}
+
+// groupDigits is n with thousands separated: "10,000".
+func groupDigits(n int64) string {
 	digits := strconv.FormatInt(n, 10)
 	for i := len(digits) - 3; i > 0; i -= 3 {
 		digits = digits[:i] + "," + digits[i:]
 	}
-	if n == 1 {
-		return digits + " credit"
+	return digits
+}
+
+// standingRewardText is a standing task's reward as what one result earns,
+// then its seats and the pool held for them (C434), never the pool alone:
+// "150 credits per result; 3 seats (450 held)". With more than one tier
+// each is named: "bug 500 credits + 0.2 USDC, bug+fix 800 credits + 0.4
+// USDC per result; 5 seats (4,000 held)". A pool of 0 or an empty
+// poolState leaves the pool out. Kept in step with workLine in
+// assets/memo-core.js.
+func standingRewardText(tiers []board.WorkStandingTier, seats, pool int64, poolState string) string {
+	each := make([]string, len(tiers))
+	for i, t := range tiers {
+		if len(tiers) > 1 {
+			each[i] = t.Name + " "
+		}
+		each[i] += creditAmount(t.Credits)
+		if t.USDC != "" {
+			each[i] += " + " + t.USDC + " USDC"
+		}
 	}
-	return digits + " credits"
+	text := strings.Join(each, ", ") + " per result; " + strconv.FormatInt(seats, 10) + " seat"
+	if seats != 1 {
+		text += "s"
+	}
+	if pool > 0 && poolState != "" {
+		text += " (" + groupDigits(pool) + " " + poolState + ")"
+	}
+	return text
+}
+
+// standingReward is standingRewardText for the work pages: a standing
+// task's tiers and seats, and its pool in its escrow state.
+func standingReward(st *board.WorkStanding, r *board.WorkReward) string {
+	if st == nil {
+		return ""
+	}
+	var pool int64
+	var state string
+	if r != nil {
+		pool, state = r.Amount, r.State
+	}
+	return standingRewardText(st.Tiers, st.Seats, pool, state)
 }
 
 // evidenceHref is where a verdict check's evidence links: a message ID to

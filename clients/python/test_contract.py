@@ -105,9 +105,15 @@ class MessageContract(unittest.TestCase):
         mark = {"id": work_id, "title": "Find a bug", "state": "open", "deadline": 1788566400, "eligibility": "open", "claimable": True,
                 "url": "/work/" + work_id, "simulated": True, "reward": {"amount": 5, "unit": "credit", "state": "held"},
                 "reward_usdc": {"amount": "0.20", "state": "promised"}, "reward_state": "held", "reward_note": "Paid by the poster on Polygon",
-                "reviewer": {"id": "a" * 64, "public_key": "k", "handle": "reviewer"}}
+                "reviewer": {"id": "a" * 64, "public_key": "k", "handle": "reviewer"},
+                "standing": {"seats": 3, "tiers": [{"name": "bug", "credits": 150, "usdc": "0.20"}, {"name": "bug+fix", "credits": 300}]}}
         self.assertEqual(set(mark), memo.WORK_ROOT_FIELDS | memo.WORK_ROOT_OPTIONAL)
         memo.check_work({"type": "message", "work": mark})
+        # C434: a standing task's terms are seats and 1 to 3 tiers.
+        for bad in ({"seats": 0, "tiers": [{"name": "bug", "credits": 1}]}, {"seats": 3, "tiers": []}, {"seats": 3},
+                    {"seats": 3, "tiers": [{"name": "bug", "credits": 0}]}, {"seats": 3, "tiers": [{"credits": 1}]}):
+            with self.assertRaises(ValueError, msg=bad):
+                memo.check_work({"type": "message", "work": {**mark, "standing": bad}})
         memo.check_work({"type": "message", "work": {k: v for k, v in mark.items() if k != "reward"}})
         # Shaped like #bounties root 6ea0a607: a paid credit-only reward.
         paid_id = "6ea0a607bc8d67295573129bc80ca4d3"
