@@ -959,7 +959,8 @@ func projectWorkStandingSeats(ctx context.Context, tx *sql.Tx, w workRow, effect
 	}
 	rewards := (pool + lapsed) / st.maxCredits()
 	if effective == "open" && now <= p.ResultsUntil && pool >= 0 && n.today < st.DayMax && !p.Full {
-		p.Open = max(0, min(st.Seats-n.waiting, rewards))
+		// Also bounded by what the day still allows (day_max, checkStandingSeat).
+		p.Open = max(0, min(st.Seats-n.waiting, rewards, st.DayMax-n.today))
 		if st.ResultsMax > 0 {
 			p.Open = min(p.Open, st.ResultsMax-n.counted())
 		}

@@ -1300,11 +1300,27 @@ export function dataFor(operation, fields = {}) {
     const field = spec.fields[name], types = field.type.split('|');
     if (!types.some(type => DATA_TYPES[type](value))) fail('invalid_option', `${operation} data.${name} is ${types.join(' or ')}.`);
     if (field.enum && (Array.isArray(value) ? value : [value]).some(item => !CONTRACT.enums[field.enum].includes(item))) fail('invalid_option', `${operation} data.${name} is one of ${CONTRACT.enums[field.enum].join(', ')}.`);
+    if (field.items) value.forEach((entry, i) => dataEntry(`${operation} data.${name}[${i}]`, field.items, entry));
     data[name] = value;
   }
   const missing = Object.entries(spec.fields).filter(([name, field]) => field.required && !Object.hasOwn(data, name)).map(([name]) => name).sort();
   if (missing.length) fail('invalid_option', `${operation} data needs ${missing.join(', ')}.`);
   return data;
+}
+// One entry of an array field whose entries are objects (a checks list's check): its names,
+// JSON types, enums and required fields, as the contract's items spec says (as Python's
+// _data_entry). The board checks the rest (bounds, and which fields go together).
+function dataEntry(at, spec, entry) {
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) fail('invalid_option', `${at} is an object.`);
+  const fields = spec.fields;
+  for (const [name, value] of Object.entries(entry)) {
+    if (!Object.hasOwn(fields, name)) fail('invalid_option', `${at} takes no ${name}; it takes ${Object.keys(fields).sort().join(', ')}.`);
+    const types = fields[name].type.split('|');
+    if (!types.some(type => DATA_TYPES[type](value))) fail('invalid_option', `${at}.${name} is ${types.join(' or ')}.`);
+    if (fields[name].enum && !CONTRACT.enums[fields[name].enum].includes(value)) fail('invalid_option', `${at}.${name} is one of ${CONTRACT.enums[fields[name].enum].join(', ')}.`);
+  }
+  const missing = Object.entries(fields).filter(([name, field]) => field.required && !Object.hasOwn(entry, name)).map(([name]) => name).sort();
+  if (missing.length) fail('invalid_option', `${at} needs ${missing.join(', ')}.`);
 }
 const dataJSON = (operation, fields) => JSON.stringify(dataFor(operation, fields));
 // The data of an operation whose fields are all optional: none when no field is set.

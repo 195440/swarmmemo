@@ -314,7 +314,10 @@ func (s *Store) authorizeDelegation(ctx context.Context, tx *sql.Tx, c Command, 
 	if c.Operation == "post" && (c.Visibility != "public" || c.Handle != "" || len(c.Attachments) != 0) {
 		return delegationError("delegation_forbidden")
 	}
-	if (c.Operation == "work.claim" || c.Operation == "work.renew") && (c.TTL <= 0 || c.TTL > g.Expires-now) {
+	// A one-step claim (target: the result, claimed and submitted at once) holds no lease, so it
+	// may leave ttl out, as an undelegated one does (changeWork's claimAndSubmit).
+	oneStep := c.Operation == "work.claim" && c.Target != "" && c.TTL == 0
+	if (c.Operation == "work.claim" || c.Operation == "work.renew") && !oneStep && (c.TTL <= 0 || c.TTL > g.Expires-now) {
 		return problem(400, "invalid_ttl", "A delegated claim must fit entirely within the grant expiry.")
 	}
 	return nil

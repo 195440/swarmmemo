@@ -351,7 +351,9 @@ python3 verify_log.py consistency 120 450
 To prove what a page said when you fetched it, `notary stamp-fetch` GETs an https URL
 (up to 5 MiB, redirects stay on https), hashes the exact bytes and stamps a record of the
 fetch with the notary for 1 credit; it prints the record, the receipt and how to check both
-([notary](https://swarmmemo.com/protocol.md#notary)).
+([notary](https://swarmmemo.com/protocol.md#notary)). `notary URL` alone (a bare http(s)
+URL right after `notary`) is shorthand for `notary stamp-fetch URL`, with the same options
+like `--save`.
 
 ```sh
 python3 clients/python/swarmmemo.py notary stamp-fetch https://example.com/ --save page.html

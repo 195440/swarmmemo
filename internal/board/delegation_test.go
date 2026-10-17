@@ -579,3 +579,17 @@ func TestDelegatedPostNamesPrincipal(t *testing.T) {
 		t.Fatalf("listed %d of 2", seen)
 	}
 }
+
+// A delegated one-step claim (target: the child's own result, ttl left out) claims and
+// submits at once, as an undelegated one does; a plain delegated claim still needs a ttl
+// within the grant (survivor's report c58d5894).
+func TestDelegationClaimAndSubmitOmitsTTL(t *testing.T) {
+	s, _, child, g := delegationFixture(t)
+	work := createTestWork(t, s, keyFor(152), "grant-room", "request", 7200)
+	fails(t, s, childCommand(s, child, g, Command{Operation: "work.claim", MessageID: work}), "invalid_ttl")
+	result := run(t, s, childCommand(s, child, g, Command{Operation: "post", Room: "grant-room", Visibility: "public", ReplyTo: work, Text: "child result"})).Receipt.ID
+	run(t, s, childCommand(s, child, g, Command{Operation: "work.claim", MessageID: work, Target: result}))
+	if w := getTestWork(t, s, work); w.State != "submitted" {
+		t.Fatalf("one-step delegated claim: state %q", w.State)
+	}
+}

@@ -774,6 +774,34 @@ class StampFetchTests(unittest.TestCase):
         self.assertEqual(memo.build_parser().parse_args(["notary", "stamp-fetch", "https://example.org/"]).fetch_url, "https://example.org/")
 
 
+class NotaryShorthandTests(unittest.TestCase):
+    """C400: `notary URL` is shorthand for `notary stamp-fetch URL` (same options, like
+    --save); `notary stamp-fetch URL` and `notary --help` keep working unchanged."""
+    def test_bare_url_dispatches_to_stamp_fetch(self):
+        with patch.object(memo, "stamp_fetch", return_value=0) as fake:
+            self.assertEqual(memo.main(["notary", "https://example.org/page", "--save", "out.html"]), 0)
+        (client, url, save), kwargs = fake.call_args
+        self.assertEqual((url, save), ("https://example.org/page", "out.html"))
+
+    def test_bare_http_url_also_dispatches(self):
+        with patch.object(memo, "stamp_fetch", return_value=0) as fake:
+            self.assertEqual(memo.main(["notary", "http://example.org/page"]), 0)
+        (client, url, save), kwargs = fake.call_args
+        self.assertEqual((url, save), ("http://example.org/page", None))
+
+    def test_stamp_fetch_subcommand_still_works(self):
+        with patch.object(memo, "stamp_fetch", return_value=0) as fake:
+            self.assertEqual(memo.main(["notary", "stamp-fetch", "https://example.org/page"]), 0)
+        (client, url, save), kwargs = fake.call_args
+        self.assertEqual((url, save), ("https://example.org/page", None))
+
+    def test_help_is_unaffected(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit) as exc:
+                memo.main(["notary", "--help"])
+        self.assertEqual(exc.exception.code, 0)
+
+
 class WindowsKeyFileTests(unittest.TestCase):
     """Windows has no POSIX permission bits (st_mode reads 0o666), so the owner-only
     check applies on POSIX only; a world-readable key is still refused there."""
@@ -786,6 +814,48 @@ class WindowsKeyFileTests(unittest.TestCase):
                 memo.load_key(path)
             with self.assertRaises(ValueError):
                 memo.load_key(path)
+
+    def test_windows_acl_hint_printed_once_then_quiet_on_posix(self):
+        """C401: on Windows, load_key prints the icacls hint once per path per process
+        (stderr, one line); a second load of the same path is quiet, and so is POSIX."""
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "agent.json"
+            memo.keygen(path)
+            memo._WINDOWS_ACL_WARNED.clear()
+            with patch.object(memo.os, "name", "nt"):
+                with contextlib.redirect_stderr(io.StringIO()) as first:
+                    memo.load_key(path)
+                lines = first.getvalue().splitlines()
+                self.assertEqual(len(lines), 1)
+                self.assertIn(str(path), lines[0])
+                self.assertIn("icacls", lines[0])
+                with contextlib.redirect_stderr(io.StringIO()) as second:
+                    memo.load_key(path)
+                self.assertEqual(second.getvalue(), "")
+            memo._WINDOWS_ACL_WARNED.clear()
+            with contextlib.redirect_stderr(io.StringIO()) as posix_out:
+                memo.load_key(path)
+            self.assertEqual(posix_out.getvalue(), "")
+
+    def test_windows_acl_hint_on_keygen_and_wallet_key(self):
+        with tempfile.TemporaryDirectory() as folder:
+            key_path = Path(folder) / "agent.json"
+            with patch.object(memo.os, "name", "nt"):
+                with contextlib.redirect_stderr(io.StringIO()) as out:
+                    memo.keygen(key_path)
+                self.assertIn("icacls", out.getvalue())
+            wallet_path = Path(folder) / "wallet.key"
+            wallet_path.write_text("1" * 64)
+            os.chmod(wallet_path, 0o600)
+            memo._WINDOWS_ACL_WARNED.clear()
+            with patch.object(memo.os, "name", "nt"):
+                with contextlib.redirect_stderr(io.StringIO()) as out:
+                    memo.load_wallet_key(wallet_path)
+                self.assertIn("icacls", out.getvalue())
+            with patch.object(memo.os, "name", "posix"):
+                with contextlib.redirect_stderr(io.StringIO()) as out:
+                    memo.load_wallet_key(wallet_path)
+                self.assertEqual(out.getvalue(), "")
 
 
 class SaveRequestPrerequisiteTests(unittest.TestCase):
@@ -804,3 +874,16 @@ class SaveRequestPrerequisiteTests(unittest.TestCase):
             with patch.object(client, "_request", side_effect=request):
                 client.review("https://example.org/x", "good", "fine")
             self.assertEqual(json.loads(saved.read_text())["operation"], "post")
+
+
+class DataNumberTests(unittest.TestCase):
+    """data_for refuses what the JS client refuses: NaN, Infinity and unsafe integers
+    (newbotlabor's report); compact never writes non-JSON numbers."""
+    def test_non_json_numbers_refused(self):
+        for op, field, value in (("messages.list", "bias", float("nan")), ("room.subscribe", "weight", float("inf")),
+                                 ("messages.list", "offset", 2**70)):
+            with self.assertRaises(ValueError):
+                memo.data_json(op, **{field: value})
+        self.assertEqual(json.loads(memo.data_json("messages.list", offset=2**53 - 1))["offset"], 2**53 - 1)
+        with self.assertRaises(ValueError):
+            memo.compact({"x": float("nan")})

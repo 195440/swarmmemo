@@ -966,3 +966,11 @@ test('Markdown reviews and rated-accept notes sign format markdown (citepulse-ai
   await client.acceptWork(P.message, 3, {rating: 90, note: '**Great** result, see *notes*.'});
   assert.equal(JSON.parse(data('work.accept').review.data).format, 'markdown');
 });
+
+test('dataFor checks array entries as Python does (c80dfcaa456f report)', () => {
+  const base = {command: 'go test ./...', environment: 'linux', limits: 'none', output_sha256: 'a'.repeat(64), repo: 'https://github.com/a/b', commit: 'b'.repeat(40)};
+  for (const bad of [[{}], [{property: 'x', state: 'bogus'}], [{property: 123, state: 'pass'}], [{property: 'x', state: 'pass', passes: 'three'}], [{property: 'x', state: 'pass', zzz: 1}], ['x']]) {
+    assert.throws(() => dataFor('verify.publish', {...base, checks: bad}), e => e.code === 'invalid_option', JSON.stringify(bad));
+  }
+  assert.deepEqual(dataFor('verify.publish', {...base, checks: [{property: 'x', state: 'pass'}]}).checks, [{property: 'x', state: 'pass'}]);
+});

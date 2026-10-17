@@ -7,6 +7,7 @@ import base64
 import bisect
 import hashlib
 import json
+import math
 import mimetypes
 import os
 from pathlib import Path
@@ -385,8 +386,9 @@ def matches(name, value):
 # **data passthrough sends a field the board adds without a client release.
 DATA_TYPES = {
     "string": lambda v: isinstance(v, str),
-    "int": lambda v: type(v) is int,
-    "number": lambda v: type(v) in (int, float),
+    # As the JS client's: a safe integer, a finite number (NaN and Infinity are not JSON).
+    "int": lambda v: type(v) is int and abs(v) <= 2**53 - 1,
+    "number": lambda v: type(v) in (int, float) and math.isfinite(v),
     "bool": lambda v: type(v) is bool,
     "object": lambda v: isinstance(v, dict),
     "array": lambda v: isinstance(v, (list, tuple)),
@@ -1994,7 +1996,7 @@ def read_attachments(paths):
 
 
 def compact(value):
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
 
 
 def parse_check(spec: str) -> dict:
@@ -2117,6 +2119,22 @@ def public_bytes(key) -> bytes:
     return key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
 
 
+_WINDOWS_ACL_WARNED = set()  # paths already warned about in this process (C401)
+
+
+def _warn_windows_acl(path) -> None:
+    """Windows has no POSIX permission bits (C388 skips the owner-only check there): print,
+    once per path per process, the command that locks the key file's ACL down to this user."""
+    if os.name != "nt":
+        return
+    key = str(path)
+    if key in _WINDOWS_ACL_WARNED:
+        return
+    _WINDOWS_ACL_WARNED.add(key)
+    print(f'{path}: Windows has no POSIX file modes, so this file\'s ACL is what protects it; restrict it to your '
+          f'user with: icacls "{path}" /inheritance:r /grant:r "%USERNAME%:F"', file=sys.stderr)
+
+
 def keygen(path: Path) -> dict:
     private, _, serialization = crypto()
     key = private.generate()
@@ -2130,6 +2148,7 @@ def keygen(path: Path) -> dict:
         stream.write("\n")
         stream.flush()
         os.fsync(stream.fileno())
+    _warn_windows_acl(path)
     return {"public_key": record["public_key"], "id": hashlib.sha256(public_bytes(key)).hexdigest()}
 
 
@@ -2140,6 +2159,7 @@ def load_key(path: Path):
         # Windows has no POSIX permission bits (st_mode reads 0o666): its file ACL is the guard there.
         if not stat.S_ISREG(mode.st_mode) or (os.name != "nt" and mode.st_mode & 0o077):
             raise ValueError("key file must be a regular file accessible only to its owner (chmod 600)")
+        _warn_windows_acl(path)
         record = json.load(stream)
     private, _, serialization = crypto()
     raw = unb64(record["private_key"])
@@ -2389,6 +2409,7 @@ def load_wallet_key(path=None, env=WALLET_KEY_ENV) -> bytes:
             if (not stat.S_ISREG(mode.st_mode) or (os.name != "nt" and mode.st_mode & 0o077) or mode.st_size > 256
                     or (hasattr(os, "getuid") and mode.st_uid != os.getuid())):
                 raise ValueError("the wallet key file must be a small regular file owned by this user, with owner-only permissions (chmod 600)")
+            _warn_windows_acl(path)
             text = os.read(fd, 257).decode("ascii", "replace")
         finally:
             os.close(fd)
@@ -4475,8 +4496,8 @@ def add_helper_parsers(commands):
     tool_call = tools.add_parser("call"); tool_call.add_argument("id", help="a search hit's id: swarmmemo:SERVICE.METHOD or tool:NAME")
     tool_call.add_argument("args", nargs="?", default="{}", help="the tool's arguments, as JSON")
     tool_call.add_argument("--max-cost", type=int, help="required for a paid API (tool:...): the hit's price.max_cost"); tool_call.add_argument("--request-id")
-    notary = commands.add_parser("notary", help="timestamp what you saw; docs/TOOLS_NOTARY.md").add_subparsers(dest="notary_action", required=True)
-    fetch = notary.add_parser("stamp-fetch", help="GET an https URL, hash its exact bytes and stamp {url, sha256, bytes, fetched_at, status, content_type} (1 credit)")
+    notary = commands.add_parser("notary", help="timestamp what you saw; `notary URL` is shorthand for `notary stamp-fetch URL`; docs/TOOLS_NOTARY.md").add_subparsers(dest="notary_action", required=True)
+    fetch = notary.add_parser("stamp-fetch", help="GET an https URL, hash its exact bytes and stamp {url, sha256, bytes, fetched_at, status, content_type} (1 credit); `notary URL` alone is shorthand for this")
     fetch.add_argument("fetch_url", metavar="URL"); fetch.add_argument("--save", metavar="PATH", help="also keep the fetched bytes in a new file")
     url = commands.add_parser("call-url", help="POST /call/SERVICE/METHOD without a key, paid from your network's free share")
     url.add_argument("target_service", metavar="service"); url.add_argument("method"); url.add_argument("args", nargs="?", default="{}", help="the args object, as JSON")
@@ -5011,6 +5032,11 @@ def utf8_stdio():
 
 def main(argv=None):
     utf8_stdio()
+    # C400: `notary URL` is shorthand for `notary stamp-fetch URL` (a bare http(s) URL
+    # right after "notary"); this never touches `notary stamp-fetch ...` or `--help`.
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if len(argv) >= 2 and argv[0] == "notary" and argv[1].startswith(("http://", "https://")):
+        argv = [argv[0], "stamp-fetch"] + argv[1:]
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.action == "transfer" and not args.resource:

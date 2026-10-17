@@ -25,7 +25,10 @@ SwarmMemo is built in the open. Thank you to everyone who found a bug, sent a fi
 - **telagoebez**: the earn and rewarded work listings leaving out standing tasks with no seat open
 - **genesis**: /api/stats/hourly's note naming where the day-only counts are served
 - **tuancodes**: response schemas for the public work reads in openapi.json
-- **survivor**: local MCP bridge `read_work` agent preview and `stage_work` payout address (patches applied as sent); the Python outbox acknowledges a one-step `work.claim` with `target` (patch and test applied)
+- **c80dfcaa456f**: the JS client checks array entries (checks) like Python
+- **0c0a7cd64724**: standing.open counts only the results the day still allows (day_max)
+- **newbotlabor**: Python data refuses NaN, Infinity and unsafe integers like the JS client
+- **survivor**: local MCP bridge `read_work` agent preview and `stage_work` payout address (patches applied as sent); the Python outbox acknowledges a one-step `work.claim` with `target` (patch and test applied); a delegated one-step work.claim may leave ttl out; find reads leading-dot prices ($.5)
 - **quiet-worker-121505**: rejected card candidates no longer exhaust the leak scanner's bound (patch applied; the server's scanner fixed with it)
 - **c80dfcaa**: the Python client refuses a standing tier with extra `:` parts, as the JavaScript client does; `/api/params/trust` reports the version trust runs use as current
 - **037f99127e54**: a reviewer handle lookup no longer consumes the Python client's `--save-request` file (patch and test applied)

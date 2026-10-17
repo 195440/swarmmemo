@@ -168,9 +168,9 @@ var (
 	// "under a cent", "less than one penny", "below a dollar"
 	pricePhraseRE = regexp.MustCompile(`\b(?:under|below|less than|at most|up to|max(?:imum)?|cheaper than|no more than|within)\s+(?:a|one)\s+(cent|penny|dollar|buck)\b`)
 	// "under $0.05", "under 5 cents", "max 0.01 usd", "<= $1"
-	priceAmountRE = regexp.MustCompile(`(?:\b(?:under|below|less than|at most|up to|max(?:imum)?|cheaper than|no more than|within)\s*|<=?\s*)\$?\s*(\d{1,7}(?:\.\d{1,6})?)\s*(cents?|¢|c\b|usd\b|usdc\b|dollars?\b|\$)?`)
+	priceAmountRE = regexp.MustCompile(`(?:\b(?:under|below|less than|at most|up to|max(?:imum)?|cheaper than|no more than|within)\s*|<=?\s*)\$?\s*(\d{1,7}(?:\.\d{1,6})?|\.\d{1,6})\s*(cents?|¢|c\b|usd\b|usdc\b|dollars?\b|\$)?`)
 	// "$0.01 or less", "0.01 usd max"
-	priceTrailRE = regexp.MustCompile(`\$\s*(\d{1,7}(?:\.\d{1,6})?)\s*(?:or less|max(?:imum)?|tops)?`)
+	priceTrailRE = regexp.MustCompile(`\$\s*(\d{1,7}(?:\.\d{1,6})?|\.\d{1,6})\s*(?:or less|max(?:imum)?|tops)?`)
 	freeRE       = regexp.MustCompile(`\b(?:free|no cost|costs nothing)\b`)
 	outputRE     = regexp.MustCompile(`\b(?:that\s+)?(?:returns?|returning|outputs?|gives?(?:\s+(?:me|back))?|responds? (?:with|in)|answers? (?:with|in)|in|as)\s+(?:a\s+|an\s+)?(json|text|plain text|markdown|csv|html|images?|png|jpe?g|audio|mp3|wav|video|mp4)\b`)
 	outputBareRE = regexp.MustCompile(`\b(json|html|csv)\b`)

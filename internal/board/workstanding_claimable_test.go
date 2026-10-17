@@ -20,15 +20,19 @@ func TestWorkClaimableAndStandingNextOpen(t *testing.T) {
 	daily := rewardRequest(t, s, owner, "lobby")
 	run(t, s, standingCreate(s, owner, daily, map[string]any{"seats": 3, "reward": 150, "day_max": 2}, ttl))
 	w := getTestWork(t, s, daily)
-	if !w.Claimable || w.Standing.Open != 3 || w.Standing.NextOpenAt != 0 || w.Standing.PerResult != 150 || w.Reward.Amount != 450 {
+	// open is bounded by what the day still allows: 3 seats but day_max 2 (0c0a7cd64724's report).
+	if !w.Claimable || w.Standing.Open != 2 || w.Standing.NextOpenAt != 0 || w.Standing.PerResult != 150 || w.Reward.Amount != 450 {
 		t.Fatalf("open standing task: claimable %v %+v reward %+v", w.Claimable, w.Standing.WorkStandingSeats, w.Reward)
+	}
+	_, first := standingClaim(t, s, keyFor(191), daily, nil)
+	run(t, s, first)
+	if w = getTestWork(t, s, daily); w.Standing.Open != 1 {
+		t.Fatalf("after one result of day_max 2: open %d", w.Standing.Open)
 	}
 	// day_max reached with a seat still free: the next seat opens at the
 	// next 00:00 UTC, the day count's reset.
-	for _, k := range []int{191, 192} {
-		_, c := standingClaim(t, s, keyFor(byte(k)), daily, nil)
-		run(t, s, c)
-	}
+	_, second := standingClaim(t, s, keyFor(192), daily, nil)
+	run(t, s, second)
 	w = getTestWork(t, s, daily)
 	midnight := testTime - testTime%86400 + 86400
 	if w.Claimable || w.State != "open" || w.Standing.Open != 0 || w.Standing.NextOpenAt != midnight {
