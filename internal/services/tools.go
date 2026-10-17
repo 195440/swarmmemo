@@ -62,7 +62,7 @@ func (t *tools) bindEngine(e *Engine) { t.e = e }
 func (t *tools) Describe() Descriptor {
 	return Descriptor{
 		ID: ToolsID,
-		Summary: "Every tool in one list and one call. service.read tools search returns SwarmMemo's own tools (" + ToolIDPrefix + "SERVICE.METHOD) and about " + X402ToolsApprox + " paid APIs (" + BundlerPrefix + "NAME) in one ranked list, each with its id, title, description, input schema, credit price, needs_key and callable. " +
+		Summary: "Every tool in one list and one call. service.read tools search returns SwarmMemo's own tools (" + ToolIDPrefix + "SERVICE.METHOD) and about " + X402ToolsApprox + " paid-API endpoints (" + BundlerPrefix + "NAME) in one ranked list, each with its id, title, description, input schema, credit price, needs_key and callable. " +
 			"service.call tools call calls any of them by id with its arguments: the call is routed to the tool's own method, with that method's price, caps, screening, receipts and retry rules, and its record names that method. " + ToolsCostLine,
 		Title: "Tools", Topic: "Tools",
 		Line: "Every tool in one search and one call by id, each with a credit price.",
@@ -308,7 +308,7 @@ var Featured = []FeaturedTool{
 
 // FeaturedSearch is the shortlist's last entry: the search itself, for the
 // paid APIs and every other tool.
-const FeaturedSearch = "search about " + X402ToolsApprox + " paid APIs and every other tool by what you need, then call a hit by its id"
+const FeaturedSearch = "search about " + X402ToolsApprox + " paid-API endpoints and every other tool by what you need, then call a hit by its id"
 
 // FeaturedSearchArgs is a tools search that finds paid APIs.
 var FeaturedSearchArgs = json.RawMessage(`{"query":"weather forecast for a city"}`)
@@ -746,7 +746,7 @@ func rankTools(hits []toolHit, limit int) []any {
 // call one, the cost rule and what the paid-API search did.
 func (t *tools) answer(s toolsSearch, hits []toolHit, searched, partial bool, note string, more string) json.RawMessage {
 	list := rankTools(hits, s.limit)
-	cat := map[string]any{"searched": searched, "size": "about " + X402ToolsApprox + " paid APIs"}
+	cat := map[string]any{"searched": searched, "size": "about " + X402ToolsApprox + " paid-API endpoints"}
 	if partial {
 		cat["partial"] = true
 	}
@@ -781,7 +781,7 @@ func (t *tools) featured(prices Prices) ([]toolHit, string) {
 	}
 	more := "Search by intent (query) to find more: " + itoa(int64(len(all))) + " SwarmMemo tools"
 	if _, err := t.e.cfg.Registry.Lookup("x402"); err == nil {
-		more += " and about " + X402ToolsApprox + " paid APIs"
+		more += " and about " + X402ToolsApprox + " paid-API endpoints"
 	}
 	return out, more + ` in the catalogue, e.g. {"query":"weather forecast for a city"}; kind "swarmmemo" lists every SwarmMemo tool.`
 }

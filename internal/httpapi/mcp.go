@@ -262,7 +262,7 @@ func serviceTools(catalog []services.Entry) []serviceTool {
 // tools on tools_search, the ceiling rule on tools_call, and on the paid-API
 // relay's own tools that tools_search and tools_call are the same and more.
 var mcpToolNotes = map[string]string{
-	"tools_search":      " Without a query it returns the featured tools, each with why to use it and an example: " + featuredIDs() + "; search by intent for everything else, about " + services.X402ToolsApprox + " paid APIs included.",
+	"tools_search":      " Without a query it returns the featured tools, each with why to use it and an example: " + featuredIDs() + "; search by intent for everything else, about " + services.X402ToolsApprox + " paid-API endpoints included.",
 	"tools_call":        " For a " + services.BundlerPrefix + " id max_cost is required: the hit's price.max_cost or less.",
 	"x402_resources":    " tools_search lists every tool, paid APIs and SwarmMemo's own, in one place.",
 	"x402_tools_search": " Same as tools_search, which also lists SwarmMemo's own tools.",

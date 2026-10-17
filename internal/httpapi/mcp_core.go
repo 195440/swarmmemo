@@ -28,7 +28,7 @@ var coreServices = []string{"memory", "notary", "wakeup", services.ReceiverID, s
 // with why: the operator note (deploy/RUNBOOK.md), /capabilities core_profile
 // and the tests read this one list.
 var coreExcluded = []struct{ ID, Why string }{
-	{services.ToolsID, "tools_search and tools_call search and call about " + services.X402ToolsApprox + " third-party paid APIs"},
+	{services.ToolsID, "tools_search and tools_call search and call about " + services.X402ToolsApprox + " third-party paid-API endpoints"},
 	{"x402", "the x402 relay calls third-party paid APIs and moves USDC"},
 	{services.FetchID, "fetch_page fetches arbitrary outside URLs"},
 	{"public_data", "public_data_fetch and public_data_bulk pull from outside sources (NOAA, openFDA, Congress, FEC, CoinGecko and others); public_data_datasets lists only what they fetch"},

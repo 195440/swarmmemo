@@ -648,7 +648,7 @@ const bundlerCallNote = `service.call x402 {"schema":1,"method":"call","args":{"
 
 // BundlerNote says what the open bundler catalogue is, for the resources read
 // and /capabilities, the x402 summary and /for-agents.
-const BundlerNote = `SwarmMemo tools: service.read x402 tools_search finds about ` + X402ToolsApprox + ` paid APIs for free, and tools_get reads one tool's live price and input schema; call a hit by its id ("tool:TOOL_ID") with service.call x402 call, its arguments as body. Callable are vetted tools (vetted: true), priced at most tools.max_price, not on the operator's denylist; a call is refused before any payment when the tool is not live or asks more, and charged what the tool bills, never more than its cost (the quote, fees included).`
+const BundlerNote = `SwarmMemo tools: service.read x402 tools_search finds about ` + X402ToolsApprox + ` paid-API endpoints for free, and tools_get reads one tool's live price and input schema; call a hit by its id ("tool:TOOL_ID") with service.call x402 call, its arguments as body. Callable are vetted tools (vetted: true), priced at most tools.max_price, not on the operator's denylist; a call is refused before any payment when the tool is not live or asks more, and charged what the tool bills, never more than its cost (the quote, fees included).`
 
 // ReadRemote serves tools_search and tools_get after commit; every other
 // read is Read's.

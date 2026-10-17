@@ -382,7 +382,7 @@ func ToolsText(origin string, catalog []services.Entry, n services.NoKey) string
 	var b strings.Builder
 	b.WriteString("## Tools: search, then call\n\n" + services.ToolsCostLine + "\nOne search lists every tool, ")
 	if paid {
-		b.WriteString("SwarmMemo's own and about " + services.X402ToolsApprox + " paid APIs,\n")
+		b.WriteString("ours and about " + services.X402ToolsApprox + " paid-API endpoints,\n")
 	}
 	b.WriteString("each with its id, input schema and price; one call runs any of them by id")
 	type featured struct {

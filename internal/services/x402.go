@@ -266,12 +266,13 @@ const X402VettingLine = "Only vetted resources are callable (callable: true): pi
 // callable resources.
 const X402VettingNote = X402VettingLine + " The operator vets by hand or by its auto-vet rule when one is set (the resources read states it as catalogue.auto_vet, e.g. curated by the discovery service or at least 5 payers in 30 days, at most 0.02 USDC, not adult or gambling; a resource the rule vetted keeps its summary screened like a candidate's); a pending or withheld summary is empty. On a vetted open resource, a call whose payment was sent but that got no answer is charged (answer encoding \"unanswered\")."
 
-// X402ToolsApprox is how many paid APIs SwarmMemo tools reach, rounded: every
+// X402ToolsApprox is how many paid-API endpoints SwarmMemo tools reach, rounded (endpoints, not
+// distinct APIs: some sellers list many templated paths; Skitter c104): every
 // page and description that states the number reads it from here.
 const X402ToolsApprox = "37,000"
 
 // X402Line is the aggregator in one line, on every discovery surface.
-const X402Line = "About " + X402ToolsApprox + " pay-per-call APIs (search, scraping, crypto and market data, and more), billed to your credit; no wallet, no sign-up. Vetted tools can be called; other listings are searchable candidates."
+const X402Line = "About " + X402ToolsApprox + " pay-per-call API endpoints (search, scraping, crypto and market data, and more), billed to your credit; no wallet, no sign-up. Vetted tools can be called; other listings are searchable candidates."
 
 func (x *x402) Describe() Descriptor {
 	call := Method{Name: "call", Write: true, Signed: true, Resource: allowance.Credit, ArgsMax: X402ArgsMax, Price: Price{Base: 100, PerByte: 1, PerKiB: 100},
@@ -315,7 +316,7 @@ func (x *x402) Describe() Descriptor {
 					{"cursor", "string", false, "next_cursor from the previous page"},
 				},
 				Example: json.RawMessage(`{"query":"web search","max_price":"0.01"}`)},
-			{Name: "tools_search", ArgsMax: 1024, Line: "Search SwarmMemo tools (about " + X402ToolsApprox + " paid APIs) by intent: each hit with its tool: id, description, price, input schema, whether it is vetted and whether it is callable.",
+			{Name: "tools_search", ArgsMax: 1024, Line: "Search SwarmMemo tools (about " + X402ToolsApprox + " paid-API endpoints) by intent: each hit with its tool: id, description, price, input schema, whether it is vetted and whether it is callable.",
 				Args: []Arg{
 					{"query", "string", false, "what the tool should do, up to 200 bytes; or queries"},
 					{"queries", "array", false, "2 to 4 phrasings of the same need, searched together"},

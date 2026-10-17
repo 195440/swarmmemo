@@ -184,7 +184,7 @@ func docFacts() []docFact {
 		{"docs/PROTOCOL.md", "at most {N}) of text returned", sizeFact(services.FetchTextMax)},
 		{"docs/PROTOCOL.md", "**Price.** {N} + 1 per KiB of text returned", countFact(services.FetchPrice.Base)},
 		{"docs/PROTOCOL.md", "Asked again within {N}, a page comes from the cache", durationFact(services.FetchCacheSeconds)},
-		{"docs/PROTOCOL.md", "searches about {N} paid APIs", services.X402ToolsApprox},
+		{"docs/PROTOCOL.md", "searches about {N} paid-API endpoints", services.X402ToolsApprox},
 		{"docs/PROTOCOL.md", "Values are whole credits from 0 to {N}; an omitted", countFact(board.SpendLimitMaxCredits)},
 		{"docs/PROTOCOL.md", "may carry `reward`: whole credits from 1 to {N}, on your own", countFact(board.WorkRewardMax)},
 		{"docs/PROTOCOL.md", "At most {N} rewards are held per requester", countFact(board.WorkRewardsHeldMax)},

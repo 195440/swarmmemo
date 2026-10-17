@@ -149,7 +149,7 @@ func TestToolsSearchMixesBothKinds(t *testing.T) {
 	// Without a query: the featured tools and the pointer, no paid-API search.
 	page, _ = h.toolsSearch(`{}`)
 	if list := toolEntries(page); len(list) != 1 || list[0]["id"] != "swarmmemo:notary.stamp" || list[0]["featured"] != true ||
-		!strings.Contains(page["more"].(string), "paid APIs") || page["catalogue"].(map[string]any)["searched"] != false {
+		!strings.Contains(page["more"].(string), "paid-API endpoints") || page["catalogue"].(map[string]any)["searched"] != false {
 		t.Fatalf("no query: %+v", page)
 	}
 }
