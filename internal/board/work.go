@@ -1397,6 +1397,13 @@ func currentWorkIdentity(ctx context.Context, tx *sql.Tx, account string) (Agent
 
 func (s *Store) projectWork(ctx context.Context, tx *sql.Tx, w workRow, root workRoot, generation string, now int64, opt workReadOptions) (Work, error) {
 	p := Work{ID: w.ID, Room: root.Room, Title: w.Title, Simulated: root.Kind == "simulation", StoredState: w.State, Generation: w.Generation, ServiceGeneration: generation, ServiceID: s.config.ServiceID, CreatedAt: w.Created, UpdatedAt: w.Updated, Deadline: w.Deadline, Fence: w.Fence, ClaimExpiresAt: w.ClaimExpires, RequesterAuthor: root.Author}
+	if w.StandingID != "" {
+		// A standing result's root is the worker's result post; the original
+		// requester is the author of the standing task it was opened under.
+		if err := tx.QueryRowContext(ctx, `SELECT author FROM events WHERE id=?`, w.StandingID).Scan(&p.RequesterAuthor); err != nil {
+			return p, err
+		}
+	}
 	p.AttemptGrantID = w.AttemptGrantID
 	p.Eligibility = w.Eligibility
 	if p.Eligibility == "" {

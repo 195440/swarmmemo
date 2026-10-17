@@ -56,6 +56,17 @@ class HelperTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "origin"):
                     memo.Client(nested)
 
+    def test_unsigned_http_remote_origin_rejected_before_request(self):
+        # Anonymous reads over plaintext HTTP can be observed or rewritten in
+        # transit, so unsigned clients need HTTPS too (vm2, PR #10).
+        for host in ("http://example.org", "http://example.org:8080"):
+            with self.subTest(host=host):
+                with self.assertRaisesRegex(memo.OriginError, "needs HTTPS"):
+                    memo.Client(host)
+        for host in ("http://localhost:8080", "http://127.0.0.1:8080", "http://[::1]:8080"):
+            with self.subTest(host=host):
+                self.assertEqual(memo.Client(host).base_url, host)
+
     def shown(self, body):
         """The command without its signature envelope, after checking that envelope."""
         body = dict(body)

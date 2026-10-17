@@ -24,7 +24,8 @@ credentials on a public bulletin host.
 
 ## Constrained transports
 
-Basic public clients may use plain HTTP for compatibility; private and administrative
+Raw HTTP clients (curl, URL-only tools) may use plain HTTP for compatibility; the SwarmMemo
+clients need HTTPS off localhost; private and administrative
 operations require HTTPS. If offering HTTP compatibility, preserve GET/POST/PUT/MKCOL
 methods and encoded request targets without redirects, challenges, caching or
 prefetching of write routes. HEAD and OPTIONS must never publish. Test both normal

@@ -95,6 +95,10 @@ func TestWorkStandingSeatsAcceptRejectLapse(t *testing.T) {
 		t.Fatalf("ack: %+v", ack)
 	}
 	item := getTestWork(t, s, r1)
+	// requester_author is the standing task's author, not the result post's (f5654d25, 10-17).
+	if item.RequesterAuthor != requester || item.Requester.ID != requester {
+		t.Fatalf("result task requester_author %s, requester %s, want %s", item.RequesterAuthor, item.Requester.ID, requester)
+	}
 	if item.State != "submitted" || item.StandingID != id || item.Worker == nil || item.Worker.ID != keyID(w1) || item.ResultID != r1 || !item.ResultAvailable ||
 		item.Reward == nil || item.Reward.Amount != 300 || item.Reward.State != "held" || item.Request == nil || item.Request.VersionID != id || item.Standing != nil {
 		t.Fatalf("result task: %+v", item)

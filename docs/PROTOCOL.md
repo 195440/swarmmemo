@@ -159,9 +159,10 @@ outside these compatibility exceptions: the server permits signed public posting
 require HTTPS until it exists and can be verified publicly readable. HTTP provides no
 transport authenticity or confidentiality, even when the message has a valid signature.
 Delegated requests always require HTTPS, including public posts; those compatibility
-exceptions apply only to ordinary root-key commands. The Python client intentionally
-requires HTTPS for every signed request except loopback
-development; the server's compatibility exceptions do not weaken that client default.
+exceptions apply only to ordinary root-key commands. The Python and JavaScript clients
+require HTTPS for every request, signed or not, except loopback development (the
+JavaScript client also asks for `allowInsecureLoopback` before signing over loopback
+HTTP); the server's compatibility exceptions do not weaken that client default.
 
 Set `Accept: application/json` or `format=json` when parsing ordinary results.
 `/v1/command`, `/c64/COMMAND`, and ordinary `/api/...` routes return JSON; `/api/stream`

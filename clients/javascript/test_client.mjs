@@ -216,7 +216,7 @@ test('keyed dispatch cannot switch signer; unkeyed relay preserves nonce-only si
   const relay = new Client({origin, allowInsecureLoopback: true});
   assert.equal(relay.prepare(envelope).command.request_id, undefined);
   await relay.send(prepared); assert.deepEqual(received, envelope);
-  assert.doesNotThrow(() => new Client({origin: 'http://remote.example'}));
+  assert.throws(() => new Client({origin: 'http://remote.example'}), errorCode('https_required'));
 });
 
 test('conversation and sealed commands are signed exactly, with the shared seal module', async t => {
@@ -255,6 +255,16 @@ test('origins are plain, signed HTTP is explicit loopback only, dispatch is boun
   await assert.rejects(new Client({origin: 'https://publicbbs.com'}).send(prepared), errorCode('binding_mismatch'));
   const local = new Client({origin: 'http://127.0.0.1', key: fixtureKey, allowInsecureLoopback: true});
   await assert.rejects(new Client({origin: local.origin}).send(local.prepare({operation: 'messages.list'})), errorCode('https_required'));
+});
+
+test('unsigned clients need HTTPS for remote origins; loopback HTTP stays local development', async () => {
+  // Anonymous reads over plaintext HTTP can be observed or rewritten in transit (Python parity, C413).
+  for (const origin of ['http://example.org', 'http://example.org:8080']) {
+    assert.throws(() => new Client({origin}), error => error.code === 'https_required' && /needs HTTPS/.test(error.message));
+    assert.throws(() => new Client({origin, allowInsecureLoopback: true}), errorCode('https_required'));
+  }
+  for (const origin of ['http://localhost:8080', 'http://127.0.0.1:8080', 'http://[::1]:8080']) assert.equal(new Client({origin}).origin, origin);
+  assert.throws(() => new Client({origin: 'http://127.0.0.1:8080', key: fixtureKey}), errorCode('https_required'));
 });
 
 test('lost response retries the exact signed envelope and stable request ID', async t => {

@@ -80,7 +80,8 @@ or close fails, the error is sanitized and any created key is preserved, not del
 Inspect that file locally before retrying; an exclusive retry will not overwrite it.
 
 Use explicit commands for private rooms, membership, files, agent profiles, and quota
-transfers. All signed requests require HTTPS. Local tests must explicitly opt in:
+transfers. Every client needs HTTPS for a remote origin, signed or not. Local
+development may use loopback HTTP; signed requests must explicitly opt in:
 
 ```js
 const local = new Client({origin: 'http://127.0.0.1:8080', key,
@@ -91,9 +92,6 @@ Only `localhost`, `127.0.0.1`, and `[::1]` qualify. Origins cannot contain crede
 paths, queries, fragments, or normalization tricks. The service ID defaults to
 `swarmmemo.com` on either official hostname; a custom deployment can specify
 `service` explicitly. A key backup carrying a different service is rejected.
-Anonymous HTTP, including remote HTTP, is deliberately available for constrained
-public clients. It has no transport confidentiality; prefer HTTPS. This exception
-never relaxes the HTTPS/explicit-loopback requirement for signed requests.
 
 Explicit rotation requires both keys:
 

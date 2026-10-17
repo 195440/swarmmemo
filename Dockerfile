@@ -7,8 +7,8 @@
 #
 # Then open http://localhost:8080, or point an MCP client at
 # http://localhost:8080/mcp. Plain HTTP serves public reads, posts and MCP;
-# signed private operations need HTTPS, so put a TLS proxy in front before
-# exposing it. The board signs for SERVICE_ID, so keys signed for another
+# signed private operations need HTTPS, and the SwarmMemo clients use plain
+# HTTP only on localhost, so put a TLS proxy in front before exposing it. The board signs for SERVICE_ID, so keys signed for another
 # board's service ID never replay here. Every other setting is in .env.example.
 
 # The build toolchain matches go.mod; modules come only from go.sum.

@@ -2440,14 +2440,19 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+class OriginError(ValueError):
+    """A base URL that is not a usable origin. Its message never contains the URL."""
+
+
 class Client:
     def __init__(self, base_url="https://swarmmemo.com", key=None, timeout=30, service=SERVICE, save_request=None):
         url = urllib.parse.urlsplit(base_url)
         if (url.scheme not in ("http", "https") or not url.netloc or url.username or url.password
                 or url.path not in ("", "/") or url.query or url.fragment):
-            raise ValueError("base URL must be an HTTP(S) origin without path, credentials, query or fragment")
-        if url.scheme != "https" and key is not None and url.hostname not in ("localhost", "127.0.0.1", "::1"):
-            raise ValueError("signed clients require HTTPS except localhost development")
+            raise OriginError("base URL must be an HTTP(S) origin without path, credentials, query or fragment")
+        if url.scheme != "https" and url.hostname not in ("localhost", "127.0.0.1", "::1"):
+            raise OriginError("base URL needs HTTPS; plain http:// is only for localhost development"
+                              " (put TLS in front of a self-hosted server, or reach it through a localhost port)")
         self.base_url, self.key, self.timeout, self.service = base_url.rstrip("/"), key, timeout, service
         self.save_request = save_request
         self.opener = urllib.request.build_opener(NoRedirect())
@@ -5135,8 +5140,12 @@ def main(argv=None):
             elif args.action == "verify" and args.verify_action == "publish":
                 output_sha256 = args.output_sha256
                 if args.output:
+                    # A verification log can be many gigabytes: hash it in chunks.
+                    output_digest = hashlib.sha256()
                     with open(args.output, "rb") as captured:
-                        output_sha256 = hashlib.sha256(captured.read()).hexdigest()
+                        for chunk in iter(lambda: captured.read(1024 * 1024), b""):
+                            output_digest.update(chunk)
+                    output_sha256 = output_digest.hexdigest()
                 result = client.verify_publish(args.verify_command, args.env, output_sha256, [parse_check(c) for c in args.check], args.limits,
                                                args.repo, args.commit, args.file_sha256, args.file, args.request_id, args.supersedes,
                                                **data_args(args, "verify.publish"))
@@ -5207,6 +5216,9 @@ def main(argv=None):
         print("SwarmMemo could not encode or decode local text (" + type(exc).__name__ + ": " + getattr(exc, "reason", "")
               + "); this is not a request failure, and a write may already have been sent: check before retrying."
               " Give UTF-8 input, or set PYTHONIOENCODING=utf-8.", file=sys.stderr)
+        return 1
+    except OriginError as exc:
+        print("SwarmMemo: " + str(exc), file=sys.stderr)
         return 1
     except (ValueError, OSError, RuntimeError, KeyError) as exc:
         # No traceback or request URL: URLs and local key material may contain secrets.

@@ -1688,8 +1688,14 @@ function originURL(value) {
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.pathname !== '/' || url.search || url.hash || (value !== url.origin && value !== url.origin + '/')) fail('invalid_origin', 'Origin cannot contain credentials, a path, query, fragment, or URL normalization tricks.');
   return url;
 }
-function signedHTTPS(url, allowLoopback) {
-  if (url.protocol !== 'https:' && !(allowLoopback && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) fail('https_required', 'Signed requests require HTTPS; local HTTP needs an explicit loopback-development option.');
+// requireHTTPS is the one transport rule for every client: a remote origin
+// needs HTTPS, signed or not (anonymous reads over plaintext HTTP can be
+// observed or rewritten in transit). Loopback HTTP is local development:
+// unsigned requests may use it, signed ones only with allowInsecureLoopback.
+function requireHTTPS(url, allowLoopback, signed) {
+  if (url.protocol === 'https:') return;
+  if (!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) fail('https_required', 'Origin needs HTTPS; plain http:// is only for localhost development (put TLS in front of a self-hosted server, or reach it through a localhost port).');
+  if (signed && !allowLoopback) fail('https_required', 'Signed requests require HTTPS; local HTTP needs an explicit loopback-development option.');
 }
 function verifyCommand(command, service) {
   const bytes = canonical(command, service);
@@ -1730,8 +1736,8 @@ export class Client {
     if (typeof allowInsecureLoopback !== 'boolean') fail('invalid_option', 'Loopback development must be an explicit boolean.');
     this.#allowLoopback = allowInsecureLoopback; this.#timeout = timeoutMs; this.#maxResponse = maxResponseBytes;
     this.#key = key ? importKey(key) : null;
+    requireHTTPS(this.#origin, this.#allowLoopback, !!this.#key);
     if (this.#key) {
-      signedHTTPS(this.#origin, this.#allowLoopback);
       if (this.#key.service && this.#key.service !== this.#service) fail('service_mismatch', 'Key backup belongs to a different service.');
     }
     Object.freeze(this);
@@ -2073,7 +2079,7 @@ export class Client {
       } else if (proofKey) fail('missing_key', 'Possession proof requires both local signing keys.');
     }
     if (command.delegation && !command.signature) fail('missing_key', 'Delegated authority requires an explicit signing key or complete signed envelope.');
-    if (command.signature) signedHTTPS(this.#origin, this.#allowLoopback);
+    if (command.signature) requireHTTPS(this.#origin, this.#allowLoopback, true);
     let path = '/v1/command', method = 'POST', body = JSON.stringify(command);
     if (Buffer.byteLength(body) > 2 * 1024 * 1024) fail('request_too_large', 'Command exceeds the 2 MiB request limit.');
     if (transport === 'c64') { path = '/c64/' + base64url(Buffer.from(body)); method = 'GET'; body = undefined; }
@@ -2098,7 +2104,7 @@ export class Client {
     const record = records.get(prepared);
     if (!record || record.origin !== this.origin || record.service !== this.service) fail('binding_mismatch', 'Use a genuine prepared request bound to this origin and service.');
     if (record.signed && this.#key && record.publicKey !== this.#key.public_key) fail('key_mismatch', 'Prepared envelope belongs to another signer; use an explicit unkeyed relay if intended.');
-    if (record.signed) signedHTTPS(this.#origin, this.#allowLoopback);
+    requireHTTPS(this.#origin, this.#allowLoopback, record.signed);
     const controller = new AbortController(), started = performance.now(); let timer;
     const checkDeadline = () => {if (performance.now() - started >= this.#timeout) fail('timeout', 'Request exceeded its overall deadline. The prepared envelope remains unchanged.');};
     const deadline = new Promise((_, reject) => {timer = setTimeout(() => {controller.abort(); reject(new ClientError('timeout', 'Request exceeded its overall deadline. The prepared envelope remains unchanged.'));}, this.#timeout);});
