@@ -3173,10 +3173,16 @@ class DelegatedClient(Client):
             raise ValueError("delegation_public_post_required")
         if op in ("work.claim", "work.renew", "work.submit"):
             data = strict_json(command.get("data", ""))
-            if (not isinstance(data, dict) or set(data) != {"schema", "generation"}
+            # The grant binds schema and generation; the operation's other contract
+            # fields (payout_address, result_sha256) may ride along (citepulse-ai, 10-17).
+            if (not isinstance(data, dict) or not {"schema", "generation"} <= set(data)
                     or type(data.get("schema")) is not int or data["schema"] != 1
                     or data.get("generation") != self.delegation["generation"]):
                 raise ValueError("delegation_generation_mismatch")
+            try:
+                data_for(op, data)
+            except ValueError:
+                raise ValueError("delegation_generation_mismatch") from None
 
     def prepare(self, operation, **fields):
         command = {"operation": operation, **fields}

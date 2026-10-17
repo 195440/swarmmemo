@@ -155,6 +155,10 @@ class ClaimAndSubmitAcknowledgementTest(unittest.TestCase):
         for ttl in (None, 120):
             with self.subTest(ttl=ttl):
                 outbox.validate_ack(*self.fixture(ttl))
+                # A standing task's seat: its own submitted task, no claim expiry (citepulse-ai, 10-17).
+                command, result = self.fixture(ttl)
+                result["data"]["ack"].update(work_id="d" * 32, resolved_from="a" * 32, fence=1, claim_expires_at=0)
+                outbox.validate_ack(command, result)
 
     def test_wrong_state_fence_or_expiry_refused(self):
         for field, value in (("state", "claimed"), ("fence", 0), ("claim_expires_at", 101)):

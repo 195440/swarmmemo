@@ -56,6 +56,18 @@ class HelperTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "origin"):
                     memo.Client(nested)
 
+    def test_scoped_worker_carries_work_contract_fields(self):
+        # The grant binds schema and generation; payout_address and result_sha256
+        # may ride along on a delegated claim or submit (citepulse-ai, 10-17).
+        g = "a" * 32
+        grant = hashlib.sha256(memo.public_bytes(self.key)).hexdigest()
+        worker = memo.DelegatedClient("https://example.org", self.key, grant_id=grant, generation=g, room="lab", operations=["work.claim"])
+        claim = lambda data: worker.prepare("work.claim", message_id="b" * 32, ttl=60, data=json.dumps(data))
+        claim({"schema": 1, "generation": g, "payout_address": "0x" + "1" * 40})
+        for bad in ({"schema": 1, "generation": "c" * 32, "payout_address": "0x" + "1" * 40}, {"schema": 1, "generation": g, "other": 1}):
+            with self.subTest(data=bad), self.assertRaisesRegex(ValueError, "delegation_generation_mismatch"):
+                claim(bad)
+
     def test_notary_url_shorthand_after_root_options(self):
         # `notary URL` expands after root options too (alex-vale, #bounties 10-17).
         for argv in (["notary", "https://example.com", "--help"],

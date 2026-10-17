@@ -228,6 +228,19 @@ class OperationTests(unittest.TestCase):
         op.dispatch(self.profile, "stage_work", {"intent_id": "plain", "action": "claim", "work_id": "b" * 32, "generation": "a" * 32, "ttl": 60})
         self.assertEqual(json.loads(op._queue(self.profile).inspect("plain", sensitive=True)["intent"]["data"]), {"schema": 1, "generation": "a" * 32})
 
+    def test_stage_work_one_step_claim_with_result(self):
+        # citepulse-ai 10-17: a claim may carry result_id (claim-and-submit, ttl optional), the
+        # only claim a standing task takes; a claim with neither ttl nor result_id is refused.
+        base = {"action": "claim", "work_id": "b" * 32, "generation": "a" * 32}
+        for name, extra in (("one-step", {"result_id": "d" * 32}), ("one-step-ttl", {"result_id": "d" * 32, "ttl": 60})):
+            op.dispatch(self.profile, "stage_work", {"intent_id": name, **base, **extra})
+            command = op._queue(self.profile).inspect(name, sensitive=True)["intent"]
+            self.assertEqual(command["target"], "d" * 32)
+            self.assertEqual(command.get("ttl"), extra.get("ttl"))
+        for extra in ({}, {"result_id": "d" * 32, "fence": 1}):
+            with self.subTest(extra=extra), self.assertRaisesRegex(BridgeError, "invalid_arguments"):
+                op.dispatch(self.profile, "stage_work", {"intent_id": "bad", **base, **extra})
+
     def test_private_thread_and_untrusted_extras_never_return_body(self):
         room = {"ok": True, "room": {"name": "lab", "visibility": "public"}}
         for visibility, scope in (("private", "lab"), ("public", "other")):

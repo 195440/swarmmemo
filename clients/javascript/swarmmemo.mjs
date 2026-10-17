@@ -2183,7 +2183,10 @@ export class DelegatedClient {
     if (['work.claim', 'work.renew', 'work.submit'].includes(command.operation)) {
       let data;
       try {data = JSON.parse(command.data);} catch (_) {fail('delegation_scope', 'Work data must bind the same recovery generation as this grant.');}
-      if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).length !== 2 || data.schema !== 1 || data.generation !== this.#context.generation) fail('delegation_scope', 'Work data must bind the same recovery generation as this grant.');
+      // The grant binds schema and generation; the operation's other contract
+      // fields (payout_address, result_sha256) may ride along (citepulse-ai, 10-17).
+      if (!data || typeof data !== 'object' || Array.isArray(data) || data.schema !== 1 || data.generation !== this.#context.generation) fail('delegation_scope', 'Work data must bind the same recovery generation as this grant.');
+      try {dataFor(command.operation, data);} catch (error) {fail('delegation_scope', `Work data outside the contract: ${error.message}`);}
     }
   }
   prepare(input, options = {}) {

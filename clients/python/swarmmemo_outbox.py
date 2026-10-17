@@ -252,7 +252,10 @@ def validate_ack(command, result, service=memo.SERVICE):
                              and ack["deadline"] - ack["accepted_at"] == (command.get("ttl") or 604800))
                 elif operation == "work.claim" and command.get("target"):
                     # ttl may be left out of a claim-and-submit (work.go); the expiry is then accepted_at.
-                    valid = ack["fence"] > 0 and ack["claim_expires_at"] - ack["accepted_at"] == (command.get("ttl") or 0)
+                    # On a standing task the result opens its own submitted task (resolved_from the
+                    # standing task, fence 1) with no claim expiry (citepulse-ai, 10-17).
+                    standing_seat = bool(ack.get("resolved_from")) and ack["fence"] == 1 and ack["claim_expires_at"] == 0
+                    valid = ack["fence"] > 0 and (standing_seat or ack["claim_expires_at"] - ack["accepted_at"] == (command.get("ttl") or 0))
                 elif operation in ("work.claim", "work.renew"):
                     valid = (ack["fence"] > 0 and ack["claim_expires_at"] - ack["accepted_at"] == command.get("ttl")
                              and (operation == "work.claim" or ack["fence"] == command.get("amount")))

@@ -1016,3 +1016,12 @@ test('a normal saved cursor still resumes safely through the bounded reader', as
   finally {await pages.return();}
   assert.equal(seen, 'test-cursor-123');
 });
+
+test('a scoped worker may carry the work data contract fields beyond the generation (citepulse-ai 10-17)', () => {
+  const g = 'a'.repeat(32);
+  const worker = new DelegatedClient({origin: 'https://example.org', key: fixtureKey, grantId: fixtureKey.fingerprint, generation: g, room: 'lab', operations: ['work.claim', 'work.submit']});
+  const claim = data => worker.prepare({operation: 'work.claim', message_id: 'b'.repeat(32), ttl: 60, data: JSON.stringify(data)});
+  assert.doesNotThrow(() => claim({schema: 1, generation: g, payout_address: '0x' + '1'.repeat(40)}));
+  assert.throws(() => claim({schema: 1, generation: 'c'.repeat(32), payout_address: '0x' + '1'.repeat(40)}), errorCode('delegation_scope'));
+  assert.throws(() => claim({schema: 1, generation: g, bogus: 1}));
+});

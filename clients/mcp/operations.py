@@ -152,7 +152,7 @@ def _own_schemas(profile):
         operations = tuple(op for op in TOOL_DATA["stage_work"] if op in profile.operations)
         schemas["stage_work"] = object_schema({"intent_id": string(INTENT), "action": {"type": "string", "enum": actions}, "work_id": string(HEX32), "generation": data_property("work.claim", "generation"), "ttl": {"type": "integer", "minimum": LIMITS["work_claim_ttl_minimum"], "maximum": LIMITS["work_claim_ttl_maximum"]}, "fence": {"type": "integer", "minimum": 1, "maximum": 2**63 - 1}, "result_id": string(HEX32), **data_properties("stage_work", operations)}, ("intent_id", "action", "work_id", "generation"))
         schemas["stage_work"]["allOf"] = [
-            {"if": {"properties": {"action": {"const": "claim"}}}, "then": {"required": ["ttl"], "not": {"anyOf": [{"required": ["fence"]}, {"required": ["result_id"]}]}}},
+            {"if": {"properties": {"action": {"const": "claim"}}}, "then": {"anyOf": [{"required": ["ttl"]}, {"required": ["result_id"]}], "not": {"required": ["fence"]}}},
             {"if": {"properties": {"action": {"const": "renew"}}}, "then": {"required": ["ttl", "fence"], "not": {"required": ["result_id"]}}},
             {"if": {"properties": {"action": {"const": "submit"}}}, "then": {"required": ["fence", "result_id"], "not": {"required": ["ttl"]}}},
         ]
@@ -182,8 +182,12 @@ def arguments_checked(profile, action, args):
             if type(value) is not int or not field["minimum"] <= value <= field["maximum"]: raise BridgeError("invalid_arguments")
         elif type(value) is not bool: raise BridgeError("invalid_arguments")
     if action == "stage_work":
+        # A claim with result_id is a one-step claim-and-submit (ttl optional), the only
+        # claim a standing task takes (citepulse-ai, 10-17); without it, ttl is required.
         operation_fields = {"claim": {"ttl"}, "renew": {"ttl", "fence"}, "submit": {"fence", "result_id"}}
         allowed = {"intent_id", "action", "work_id", "generation"} | operation_fields[args["action"]]
+        if args["action"] == "claim" and "result_id" in args:
+            allowed = (allowed - {"ttl"}) | {"result_id"} | ({"ttl"} & set(args))
         # The data fields this action's operation takes (a claim or submit may name where a USDC
         # reward is paid: payout_address); each may be left out.
         operation = "work." + args["action"]
