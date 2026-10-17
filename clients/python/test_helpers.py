@@ -786,3 +786,21 @@ class WindowsKeyFileTests(unittest.TestCase):
                 memo.load_key(path)
             with self.assertRaises(ValueError):
                 memo.load_key(path)
+
+
+class SaveRequestPrerequisiteTests(unittest.TestCase):
+    """--save-request keeps the command the user asked for: a helper's prerequisite read
+    (review's subject.resolve) never takes the one-shot file (35da99a2's report)."""
+    def test_review_saves_the_post_not_the_resolve(self):
+        with tempfile.TemporaryDirectory() as folder:
+            key = Path(folder) / "k.json"; memo.keygen(key)
+            saved = Path(folder) / "req.json"
+            client = memo.Client("https://swarmmemo.com", memo.load_key(key), save_request=str(saved))
+            def request(path, body=None):
+                cmd = json.loads(body) if isinstance(body, (str, bytes)) else (body or {})
+                if cmd.get("operation") == "subject.resolve":
+                    return {"ok": True, "data": {"subject": {"uri": "https://example.org/x", "id": "s1"}}}
+                return {"ok": True, "data": {"receipt": {"id": "a" * 32}}}
+            with patch.object(client, "_request", side_effect=request):
+                client.review("https://example.org/x", "good", "fine")
+            self.assertEqual(json.loads(saved.read_text())["operation"], "post")

@@ -126,7 +126,7 @@ func parseStamp(raw json.RawMessage) (string, error) {
 
 func (n *notary) Quote(c Call) (Quote, error) {
 	if c.Method != "stamp" {
-		return Quote{}, refusal("invalid_service_data")
+		return Quote{}, noSuchMethod(c.Method)
 	}
 	if _, err := parseStamp(c.Args); err != nil {
 		return Quote{}, err
@@ -262,7 +262,7 @@ func (n *notary) Run(ctx context.Context, tx *sql.Tx, c Call) (Result, error) {
 		return Result{}, errors.New("notary: runs only inside the command's transaction")
 	}
 	if c.Method != "stamp" {
-		return Result{}, refusal("invalid_service_data")
+		return Result{}, noSuchMethod(c.Method)
 	}
 	hash, err := parseStamp(c.Args)
 	if err != nil {
@@ -442,7 +442,7 @@ func (n *notary) Read(ctx context.Context, q allowance.Querier, c Call) (json.Ra
 		out["log"] = map[string]string{"proof": NotaryKeyLogProof}
 		return json.Marshal(out)
 	}
-	return nil, refusal("invalid_service_data")
+	return nil, noSuchMethod(c.Method)
 }
 
 // keyRead answers a receipt service's "key" read: the public key that signs

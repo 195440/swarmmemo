@@ -854,7 +854,7 @@ func (t *tools) ReadRemote(ctx context.Context, q allowance.Querier, c Call) (fu
 // Read serves a search of SwarmMemo's own tools alone.
 func (t *tools) Read(ctx context.Context, q allowance.Querier, c Call) (json.RawMessage, error) {
 	if c.Method != "search" {
-		return nil, refusal("invalid_service_data")
+		return nil, noSuchMethod(c.Method)
 	}
 	s, err := parseToolsSearch(c.Args)
 	if err != nil {

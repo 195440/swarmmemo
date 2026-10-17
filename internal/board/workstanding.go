@@ -185,6 +185,140 @@ type WorkStanding struct {
 	USDCOwedMax     string             `json:"usdc_owed_max,omitempty"`
 	VerdictTTL      int64              `json:"verdict_ttl"`
 	ResultsUntil    int64              `json:"results_until"`
+	// Successor is the standing task the requester named as the next round
+	// (work.successor.set, C391); NextRound, sent only while this task is
+	// not claimable, the first claimable task along that chain, at most
+	// WorkStandingSuccessorDepth links on.
+	Successor string `json:"successor,omitempty"`
+	NextRound string `json:"next_round,omitempty"`
+}
+
+// WorkStandingSuccessorDepth bounds a successor chain: a successor whose
+// own chain runs longer is refused, and next_round looks no further.
+const WorkStandingSuccessorDepth = 8
+
+// standingSuccessor is the successor the newest work.successor.set on a
+// standing task named, or "": the signed transition is the record.
+func standingSuccessor(ctx context.Context, tx *sql.Tx, id string) (string, error) {
+	var payload string
+	err := tx.QueryRowContext(ctx, `SELECT payload FROM work_transitions WHERE work_id=? AND operation=? ORDER BY sequence DESC LIMIT 1`, id, WorkSuccessorSet).Scan(&payload)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	var envelope struct {
+		Command struct {
+			Data string `json:"data"`
+		} `json:"command"`
+	}
+	var data struct {
+		Successor string `json:"successor"`
+	}
+	if json.Unmarshal([]byte(payload), &envelope) != nil || json.Unmarshal([]byte(envelope.Command.Data), &data) != nil || !workIDRE.MatchString(data.Successor) {
+		return "", fmt.Errorf("board: standing task %s has an unreadable successor", id)
+	}
+	return data.Successor, nil
+}
+
+func invalidSuccessor(msg string) error {
+	return problem(400, "invalid_work_data", msg+" A successor is another standing task of yours, open, readable by everyone who reads this one (the same room or a public one), whose own successors never lead back here, at most "+fmt.Sprint(WorkStandingSuccessorDepth)+" links on.")
+}
+
+// checkStandingSuccessor admits next as w's successor (C391): another
+// standing task (not a result) by the same requester, open now, in w's room
+// or a public one, and no cycle: next's chain of successors, at most
+// WorkStandingSuccessorDepth links, never returns to w.
+func checkStandingSuccessor(ctx context.Context, tx *sql.Tx, w workRow, root workRoot, next, generation string, now int64) error {
+	if next == w.ID {
+		return invalidSuccessor("A standing task cannot be its own successor.")
+	}
+	n, err := scanWork(tx.QueryRowContext(ctx, `SELECT `+workColumns+` FROM works w WHERE id=?`, next))
+	if errors.Is(err, sql.ErrNoRows) {
+		return invalidSuccessor("The successor names no work.")
+	}
+	if err != nil {
+		return err
+	}
+	st, err := loadWorkStanding(ctx, tx, next)
+	if err != nil {
+		return err
+	}
+	if st == nil || n.StandingID != "" {
+		return invalidSuccessor("The successor is not a standing task.")
+	}
+	if n.Requester != w.Requester {
+		return invalidSuccessor("The successor is another requester's task.")
+	}
+	var room, visibility string
+	var hidden bool
+	if err = tx.QueryRowContext(ctx, `SELECT e.room,e.hidden,coalesce(r.visibility,'') FROM events e LEFT JOIN rooms r ON r.name=e.room WHERE e.id=?`, next).Scan(&room, &hidden, &visibility); err != nil {
+		return err
+	}
+	if hidden || (room != root.Room && visibility != "public") {
+		return invalidSuccessor("The successor is not readable by this task's readers.")
+	}
+	if state, err := effectiveWork(ctx, tx, next, generation, now); err != nil {
+		return err
+	} else if state != "open" {
+		return invalidSuccessor("The successor is " + state + ", not open.")
+	}
+	at := next
+	for range WorkStandingSuccessorDepth {
+		if at, err = standingSuccessor(ctx, tx, at); err != nil {
+			return err
+		}
+		if at == "" {
+			return nil
+		}
+		if at == w.ID {
+			return invalidSuccessor("That would make a cycle: the successor's own successors lead back to this task.")
+		}
+	}
+	return invalidSuccessor("The successor's chain is too long.")
+}
+
+// standingNextRound is the first claimable standing task along the chain
+// that starts at next, at most WorkStandingSuccessorDepth links, or "": a
+// task whose request is hidden is skipped over, never shown.
+func standingNextRound(ctx context.Context, tx *sql.Tx, next string, now int64) (string, error) {
+	var generation string
+	if err := tx.QueryRowContext(ctx, `SELECT value FROM meta WHERE key='generation'`).Scan(&generation); err != nil {
+		return "", err
+	}
+	seen := map[string]bool{}
+	for at := next; at != "" && !seen[at] && len(seen) < WorkStandingSuccessorDepth; {
+		seen[at] = true
+		w, err := scanWork(tx.QueryRowContext(ctx, `SELECT `+workColumns+` FROM works w WHERE id=?`, at))
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		if err != nil {
+			return "", err
+		}
+		var hidden bool
+		if err = tx.QueryRowContext(ctx, `SELECT hidden FROM events WHERE id=?`, at).Scan(&hidden); err != nil {
+			return "", err
+		}
+		state, err := effectiveWork(ctx, tx, at, generation, now)
+		if err != nil {
+			return "", err
+		}
+		if !hidden && state == "open" {
+			p, err := projectWorkStandingSeats(ctx, tx, w, state, now)
+			if err != nil {
+				return "", err
+			}
+			if p != nil && p.Open > 0 {
+				return at, nil
+			}
+		}
+		if at, err = standingSuccessor(ctx, tx, at); err != nil {
+			return "", err
+		}
+	}
+	return "", nil
 }
 
 func invalidStanding(msg string) error {
@@ -772,6 +906,25 @@ func standingSeatNote(st *workStanding, n standingCounts, item workRow) string {
 
 // projectWorkStanding is a standing root's seats as reads show them.
 func projectWorkStanding(ctx context.Context, tx *sql.Tx, w workRow, effective string, now int64) (*WorkStanding, error) {
+	p, err := projectWorkStandingSeats(ctx, tx, w, effective, now)
+	if err != nil || p == nil {
+		return p, err
+	}
+	// The next round (C391): named by the requester, and resolved to the
+	// first claimable one while this one takes no claim.
+	if p.Successor, err = standingSuccessor(ctx, tx, w.ID); err != nil || p.Successor == "" {
+		return p, err
+	}
+	if effective != "open" || p.Open == 0 {
+		if p.NextRound, err = standingNextRound(ctx, tx, p.Successor, now); err != nil {
+			return nil, err
+		}
+	}
+	return p, nil
+}
+
+// projectWorkStandingSeats is projectWorkStanding without the successor.
+func projectWorkStandingSeats(ctx context.Context, tx *sql.Tx, w workRow, effective string, now int64) (*WorkStanding, error) {
 	st, err := loadWorkStanding(ctx, tx, w.ID)
 	if err != nil || st == nil {
 		return nil, err
@@ -878,7 +1031,8 @@ func WorkStandingCapabilities() map[string]any {
 		"pool":        "the largest tier's credits times seats, held at create; each result takes one reward from it, a reject or lapse returns it, an accept's next reward refills it from the requester's credits",
 		"verdict_ttl": WorkStandingVerdictTTL, "verdict": "each result has its own deadline, verdict_ttl after it opens; undecided by then it counts as unpaid_lapsed and its seat returns",
 		"results_until": "the standing task's deadline minus verdict_ttl", "reject": "terminal for that task (stored cancelled); the seat reopens", "cancel": "only the standing task itself, not a result: work.cancel on it stops new results at once (the requester's way to close it early); results already waiting are still judged",
-		"read":         map[string]any{"standing_task": "work.get standing {seats, open, submitted, owed, paid, results, results_max, full, per_result, next_open_at, usdc_owed, usdc_owed_max, ...} and claimable", "result": "work.get standing_id, and tier once accepted", "list": "/api/works?standing=ID, data.standing the same seats"},
+		"successor":    map[string]any{"command": WorkSuccessorSet, "data": "successor (the next round's work ID)", "by": "the requester", "successor": "another standing task of the same requester, open, in the same room or a public one; no cycles, at most " + fmt.Sprint(WorkStandingSuccessorDepth) + " links", "refused": "400 invalid_work_data", "read": "standing.successor; while the task is not claimable, standing.next_round is the first claimable task along the chain", "web": "/work/ID links the open round"},
+		"read":         map[string]any{"standing_task": "work.get standing {seats, open, submitted, owed, paid, results, results_max, full, per_result, next_open_at, usdc_owed, usdc_owed_max, successor, next_round, ...} and claimable", "result": "work.get standing_id, and tier once accepted", "list": "/api/works?standing=ID, data.standing the same seats"},
 		"refusals":     []string{"standing_needs_result", "seats_full", "seat_limit", "result_in_use", "results_max_reached"},
 		"instructions": "/protocol.md#standing-tasks"}
 }

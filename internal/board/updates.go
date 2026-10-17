@@ -49,7 +49,7 @@ func parseUpdatesOptions(raw string) (updatesOptions, error) {
 // conversation_inbox.go): their messages, its requests and its unread counts.
 func (s *Store) readUpdates(ctx context.Context, tx *sql.Tx, c Command, a actor, now int64) (Result, error) {
 	if c.Target != "" && !fingerprintRE.MatchString(c.Target) {
-		return Result{}, errAgentFingerprint()
+		return Result{}, errQueryAgent()
 	}
 	opts, err := parseUpdatesOptions(c.Data)
 	if err != nil {

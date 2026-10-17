@@ -850,7 +850,7 @@ func (e *Engine) ReadOutcome(ctx context.Context, q allowance.Querier, req Reque
 	}
 	reader, ok := p.(Reader)
 	if !ok {
-		return Outcome{}, refusal("invalid_service_data")
+		return Outcome{}, noSuchMethod(d.Method)
 	}
 	if err = e.allowRead(req.Subject.ID, now); err != nil {
 		return Outcome{}, err
@@ -891,8 +891,11 @@ func (e *Engine) status(ctx context.Context, q allowance.Querier, req Request, d
 	var args struct {
 		Call string `json:"call"`
 	}
-	if err := StrictObject(d.Args, &args); err != nil || !callIDRE.MatchString(args.Call) {
-		return nil, refusal("invalid_service_data")
+	if err := StrictObject(d.Args, &args); err != nil {
+		return nil, err
+	}
+	if !callIDRE.MatchString(args.Call) {
+		return nil, badArg("call is the call's id from its receipt: 32 lowercase hex digits.")
 	}
 	row, err := loadCall(ctx, q, req.Subject.ID, args.Call)
 	if err != nil {

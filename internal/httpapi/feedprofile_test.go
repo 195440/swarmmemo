@@ -98,14 +98,15 @@ func TestFeedProfilesOverHTTPAndMCP(t *testing.T) {
 	}{
 		{"?agent=" + forker["agent"].(string), "404", "profile_not_found"},
 		{"", "401", "agent (target in a command)"},
-		{"?agent=nope", "400", "agent (target in a command) is an agent's fingerprint"},
+		{"?agent=no%20pe", "400", "agent (target in a command) is an agent's fingerprint (64 lowercase hex digits) or handle"},
+		{"?agent=nope", "404", "agent_not_found"},
 	} {
 		w := makeRequest(s, "GET", "/api/feed/profile"+tc.query, "", "")
 		observed[strconv.Itoa(w.Code)] = true
 		if strconv.Itoa(w.Code) != tc.status || !strings.Contains(w.Body.String(), tc.want) || strings.Contains(w.Body.String(), "with target") || strings.Contains(w.Body.String(), "\"target is") {
 			t.Fatalf("/api/feed/profile%s: %d %s", tc.query, w.Code, w.Body.String())
 		}
-		if tc.status == "404" && !strings.Contains(w.Body.String(), "GET /api/feed?profile=default") {
+		if tc.want == "profile_not_found" && !strings.Contains(w.Body.String(), "GET /api/feed?profile=default") {
 			t.Fatalf("404 hint: %s", w.Body.String())
 		}
 	}

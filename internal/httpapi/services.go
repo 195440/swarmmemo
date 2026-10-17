@@ -643,13 +643,20 @@ func addServicesOpenAPI(paths, schemas, commandProps map[string]any, catalog []s
 		pathParam := func(name string) map[string]any {
 			return map[string]any{"name": name, "in": "path", "required": true, "schema": map[string]any{"type": "string"}}
 		}
+		format := map[string]any{"name": "format", "in": "query", "required": false, "schema": map[string]any{"type": "string", "enum": []string{"json", "text"}}, "description": "json (the default); text only for docs.open and paste.open: the text as a text/plain download"}
 		get := map[string]any{"summary": "A service call without a key, as one URL: the method's arguments as query fields (strings as text, numbers and booleans as literals, objects and arrays as JSON), max_cost and request_id. Methods: " + strings.Join(methods, ", ") + "; public reads also work. Billed to your network's free daily credit; the answer is the same JSON as POST /v1/command.",
-			"parameters": []map[string]any{pathParam("service"), pathParam("method"), query("max_cost", "optional: your ceiling, in the method's resource; left out, the quote for the arguments"), query("request_id", services.NoKeyRequestID)},
+			"parameters": []map[string]any{pathParam("service"), pathParam("method"), query("max_cost", "optional: your ceiling, in the method's resource; left out, the quote for the arguments"), query("request_id", services.NoKeyRequestID), format},
 			"responses":  response}
+		fields := map[string]any{"type": "object", "description": "The method's arguments, max_cost, request_id and format as one object of fields: a string as its text, a number or boolean as its literal, an object or array as JSON. No field twice, no null.", "additionalProperties": true}
 		post := map[string]any{}
 		for k, v := range get {
 			post[k] = v
 		}
+		post["summary"] = "The same call with its fields in the body, as a JSON object or a form (not both the body and the query): " + callBodyUsage + "."
+		post["requestBody"] = map[string]any{"required": false, "content": map[string]any{
+			"application/json":                  map[string]any{"schema": fields},
+			"application/x-www-form-urlencoded": map[string]any{"schema": map[string]any{"type": "object", "additionalProperties": map[string]string{"type": "string"}}},
+		}}
 		paths[services.CallPathPrefix+"{service}/{method}"] = map[string]any{"get": get, "post": post}
 	}
 }

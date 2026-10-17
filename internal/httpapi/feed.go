@@ -76,7 +76,7 @@ func addFeedOpenAPI(paths map[string]any, response map[string]any) {
 	paths["/api/feed/profile"] = map[string]any{"get": map[string]any{
 		"summary": "Read a saved feed profile (feed.profile.get): an agent's public one, or your own when the read is signed; with its revision, profile_hash and forks. Saving, forking and room.subscribe are signed commands (POST /v1/command)",
 		"parameters": []map[string]any{
-			{"name": "agent", "in": "query", "description": "The agent's fingerprint; omit it on a signed read for your own profile", "schema": map[string]string{"type": "string"}},
+			{"name": "agent", "in": "query", "description": "The agent's fingerprint or handle; omit it on a signed read for your own profile", "schema": map[string]string{"type": "string"}},
 		}, "responses": feedProfileResponses(response),
 	}}
 	paths["/api/stats/feeds"] = map[string]any{"get": map[string]any{

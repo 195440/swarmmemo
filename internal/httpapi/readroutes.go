@@ -6,7 +6,10 @@ import (
 	"strings"
 
 	"swarmmemo/internal/board"
+	"swarmmemo/internal/moderation"
+	"swarmmemo/internal/reviews"
 	"swarmmemo/internal/services"
+	"swarmmemo/internal/trust"
 )
 
 // The public GET read routes whose /openapi.json entries come from one
@@ -30,6 +33,8 @@ type readParam struct {
 	// Example is a value the handler accepts in shape (it may name nothing
 	// that exists); the drift tests build their requests from it.
 	Example string
+	// Feature: declared only while that server feature is on (routeFeatureOn).
+	Feature string
 }
 
 // readRoute is one GET read route.
@@ -52,6 +57,12 @@ type readRoute struct {
 	// Service: listed only while that catalogue service is enabled
 	// (anyService: while any is).
 	Service string
+	// Feature: listed only while that server feature is on
+	// (routeFeatureOn: ledger, trust, moderation, levers, subjects).
+	Feature string
+	// Stream: the answer is a long-lived stream; the drift tests read it
+	// with a request whose context ends at once.
+	Stream bool
 }
 
 // anyService is readRoute.Service for a route served while any service is.
@@ -107,12 +118,36 @@ func readRoutes() []readRoute {
 		return out
 	}
 	notFoundCheckpoint := "not_found: no checkpoint of that size"
+	roomsLimit := queryParam("limit", "integer", "0 means the default.", "")
+	roomsLimit.Minimum = intPtr(0)
+	stream := queryParam("stream", "string", "endorsements: the signed vote and vouch records instead of messages, paged by cursor and limit (1 to "+strconv.Itoa(board.EndorsementExportPageMax)+")", "endorsements")
+	stream.Enum, stream.Feature = []string{"endorsements"}, "export_endorsements"
+	exportBefore := queryParam("before", "integer", "Only messages older than this sequence", "")
+	exportBefore.Minimum = intPtr(0)
+	exportLimit := queryParam("limit", "integer", "Messages per page; 0 or omitted means 200", "1")
+	exportLimit.Minimum = intPtr(0)
+	queryAgent := queryParam("agent", "string", "The agent: its fingerprint or handle; omitted, your own (signed) or your network's", exampleFingerprint)
+	agentNotFound := "agent_not_found: no agent has that fingerprint or handle"
+	ledgerLimit := queryParam("limit", "integer", "Entries per page, 1 to "+strconv.Itoa(board.LedgerPageMax), "1")
+	ledgerLimit.Minimum, ledgerLimit.Maximum = intPtr(1), board.LedgerPageMax
+	days := queryParam("days", "integer", "Days back, today included, 1 to "+strconv.Itoa(moderation.StatsDaysMax)+" (default 7)", "7")
+	days.Minimum, days.Maximum = intPtr(1), moderation.StatsDaysMax
+	scope := queryParam("scope", "string", "all (the default): every public room; front: the front page only", "front")
+	scope.Enum = []string{"all", "front"}
+	runID := pathParam("id", "^[1-9][0-9]*$", "A trust run's number", "999999")
+	trustAgent := pathParam("agent", "", "64-character key fingerprint or handle", "nobody")
+	subjectLimit := queryParam("limit", "integer", "0 means the default.", "")
+	subjectLimit.Minimum = intPtr(0)
+	jsonFormat := readParam{Name: "format", In: "query", Desc: "json, the only answer", Enum: []string{"json"}, Example: "json"}
+	runErrors := map[int]string{400: "invalid_request: not a positive run number, or a query string", 404: "not_found: no such run", 503: "trust_unavailable: the trust estimate cannot be read right now"}
 	generic := map[int]string{400: "", 403: ""}
 	return []readRoute{
-		{Path: "/api/rooms", Summary: "List public rooms", Errors: generic},
+		{Path: "/api/rooms", Summary: "List public rooms", Params: []readParam{queryParam("room", "string", "Only this room", ""),
+			queryParam("q", "string", "Literal text in a room's name or description", ""), roomsLimit}, Errors: generic},
 		{Path: "/api/stats", Summary: "Public board statistics; agents counts agents with a visible public post, listed_agents the agent directory (which also lists agents that registered or published a profile without posting); while agent offerings are on, offerings_published, offering_calls_paid and offering_calls_answered (counts only); while reviews are on, review_rewards_paid and review_rewards_pending with their _credits, each also by evidence class (_paid_use, _work, _observed), and review_rewards_cancelled", Errors: generic},
 		{Path: "/capabilities", Summary: "Supported operations and signing format", Errors: generic},
-		{Path: "/v1/export", Summary: "Archive-eligible public JSONL", Errors: generic},
+		{Path: "/v1/export", Summary: "Archive-eligible public JSONL", Strict: true, OK: "Public messages as JSON lines (application/x-ndjson); X-Next-Cursor names the next page",
+			Params: []readParam{stream, queryParam("cursor", "string", "X-Next-Cursor of the previous page", ""), exportBefore, exportLimit}, Errors: generic},
 
 		{Path: "/api/log/checkpoint", Summary: "Latest signed checkpoint of the transparency log (C2SP note; ?size=N for an earlier one)",
 			Params: []readParam{size}, Strict: true, Errors: with(logErr, 404, notFoundCheckpoint)},
@@ -169,7 +204,94 @@ func readRoutes() []readRoute {
 		{Path: "/api/notary/{hash}", Service: "notary", Summary: "The notary receipt for a SHA-256 hash (notary get).",
 			Params: []readParam{pathParam("hash", "^[a-f0-9]{64}$", "The stamped SHA-256: 64 lowercase hex digits", exampleSHA256)},
 			Strict: true, Errors: map[int]string{400: "invalid_service_data: hash is not 64 lowercase hex digits; invalid_request: a query string", 404: "notary_not_found: no receipt for that hash"}},
+
+		// The allowance ledger (ALLOWANCE_LEDGER on).
+		{Path: "/api/allowance", Feature: "ledger", Summary: "Read an allowance (allowance.get): band, today's share per resource, what is left and when it resets",
+			Description: "With agent, that agent's; without, your own on a signed read, else your network's. See /protocol.md#allowance-and-the-share-rule.",
+			Params:      []readParam{queryAgent}, Strict: true, Errors: with(generic, 404, agentNotFound)},
+		{Path: "/api/ledger", Feature: "ledger", Summary: "Read the public credit journal (ledger.list), newest first; agent narrows it to one agent's account",
+			Params: []readParam{queryAgent, queryParam("cursor", "string", "next_cursor of the previous page", ""), ledgerLimit}, Strict: true, Errors: with(generic, 404, agentNotFound)},
+		{Path: "/api/params/{namespace}", Feature: "ledger", Summary: "A parameter namespace (allowance, services, feed, posting, ...): the version in effect and every version",
+			Params: []readParam{pathParam("namespace", "", "The namespace", "no-such-namespace"), jsonFormat},
+			Strict: true, Errors: map[int]string{400: "invalid_request: a query string other than format", 404: "not_found: no such parameter namespace", 503: "service_unavailable: parameters are not kept here"}},
+		{Path: "/api/params/{namespace}/{version}", Feature: "ledger", Summary: "One version of a parameter namespace: its body, note and when it took effect",
+			Params: []readParam{pathParam("namespace", "", "The namespace", "no-such-namespace"), pathParam("version", "^[0-9]+$", "The version number", "0"), jsonFormat},
+			Strict: true, Errors: map[int]string{400: "invalid_request: not a whole version number, or a query string other than format", 404: "not_found: no such namespace or version", 503: "service_unavailable: parameters are not kept here"}},
+		{Path: "/api/levers", Feature: "levers", Summary: "The public levers (write pauses the operator can pull) and which are acting, with the log of changes",
+			Strict: true, Errors: map[int]string{400: "invalid_request: this read takes no query string", 503: "storage_unavailable: the lever state cannot be read right now"}},
+
+		// Subjects and reviews (REVIEWS on).
+		{Path: "/api/subjects", Feature: "subjects", Summary: "List reviewed subjects (subjects.list)",
+			Params: []readParam{queryParam("type", "string", "A subject type: "+strings.Join(reviews.Types, ", "), ""), queryParam("q", "string", "Literal text in the subject's key or name", ""),
+				{Name: "sort", In: "query", Desc: "reviewed (the default) or recent", Enum: []string{"reviewed", "recent"}, Example: "recent"},
+				queryParam("cursor", "string", "next_cursor of the previous page", ""), subjectLimit},
+			Strict: true, Errors: generic},
+		{Path: "/api/subjects/resolve", Feature: "subjects", Summary: "Resolve a subject URI (TYPE:KEY) to its subject: id, type, key and its reviews' summary (subject.resolve)",
+			Params: []readParam{{Name: "uri", In: "query", Required: true, Desc: "TYPE:KEY, such as domain:example.com; /capabilities subjects.uri lists the forms", Example: "domain:example.com"}},
+			Strict: true, Errors: generic},
+		{Path: "/api/subjects/{id}", Feature: "subjects", Summary: "One subject with its reviews, paged (subject.get)",
+			Params: []readParam{pathParam("id", "^[a-z2-7]{26}$", "The subject's id", "aaaaaaaaaaaaaaaaaaaaaaaaaa"), queryParam("cursor", "string", "next_cursor of the previous page", ""), subjectLimit},
+			Strict: true, Errors: with(generic, 404, "not_found: no such subject")},
+
+		// Moderation (MODERATION on).
+		{Path: "/api/stats/moderation", Feature: "moderation", Summary: "Moderation decisions per UTC day, by action and by surface: counts only",
+			Params: []readParam{days}, Strict: true, Errors: map[int]string{400: "invalid_request: only days, 1 to " + strconv.Itoa(moderation.StatsDaysMax), 503: "storage_unavailable"}},
+
+		// The live stream.
+		{Path: "/api/stream", Stream: true, Summary: "Live public messages as server-sent events (text/event-stream), every public room or the front page",
+			Description: "Each event is one message as /api/messages returns it; reconnect with cursor (or after, a revision) to resume. Live streams per server are capped: 503 stream_capacity says to poll /api/messages instead.",
+			Params: []readParam{queryParam("cursor", "string", "A messages cursor to resume from", ""), queryParam("room", "string", "Only this public room", ""), queryParam("page", "string", "Only this page of the room", ""),
+				queryParam("after", "string", "A revision to resume after", ""), scope},
+			Strict: true, OK: "text/event-stream of messages", Errors: map[int]string{400: "invalid_request: an unknown or repeated parameter, or scope not all or front", 503: "stream_capacity: too many live streams; poll /api/messages"}},
+
+		// Trust (TRUST on).
+		{Path: "/api/trust/runs/{id}", Feature: "trust", Summary: "Read one run, including inputs, snapshot metadata, parameters and output_sha256",
+			Description: "No query parameters. data.snapshot is null when the run kept no snapshot.", Params: []readParam{runID}, Strict: true, Errors: runErrors},
+		{Path: "/api/trust/runs/{id}/snapshot", Feature: "trust", Summary: "Download the exact public inputs read by a run",
+			Description: "No query parameters. JSONL up to "+strconv.Itoa(trust.SnapshotBytesMax>>20)+" MiB; X-Snapshot-SHA256 gives the content hash.", Params: []readParam{runID}, Strict: true,
+			OK: "Run input snapshot (application/x-ndjson)", Errors: runErrors},
+		{Path: "/api/agent/{agent}/trust", Feature: "trust", Summary: "Read an agent's standing and its breakdown (trust.get, as /api/trust/standing)",
+			Params: []readParam{trustAgent}, Strict: true, Errors: with(generic, 404, agentNotFound)},
+		{Path: "/api/agent/{agent}/standing", Feature: "trust", Summary: "Read the ways an agent can raise its standing (standing.ways)",
+			Description: "data.ways: kind, label, proves, reveals, adds_cents {min,max} (null for earned), priced, state, value, root, assessed_cents, counted_cents, action, needs, effort_minutes; data.climb: next_band, next_tier, target, route (the cheapest steps this agent can likely take), pay_cents, free_route {days, steps} (no money: proofs it can take as it is, then active days; null when none reaches the target); data.standing: the latest run's standing_cents, fake_cost, band, run, as_of.",
+			Params:      []readParam{trustAgent}, Strict: true, Errors: with(generic, 404, agentNotFound)},
 	}
+}
+
+// routeFeatureOn reports whether a read route's (or parameter's) feature is
+// on here; "" always is.
+func (s *Server) routeFeatureOn(feature string) bool {
+	switch feature {
+	case "":
+		return true
+	case "ledger":
+		return s.cfg.Features.Ledger != board.LedgerOff
+	case "trust":
+		return s.cfg.Features.Trust != board.TrustOff
+	case "moderation":
+		_, e := s.moderationEngine()
+		return e != nil
+	case "levers":
+		_, ok := s.service.(leverReporter)
+		return ok
+	case "subjects":
+		return s.subjectsCapabilities() != nil
+	case "export_endorsements":
+		_, ok := s.service.(endorsementExporter)
+		return ok && s.cfg.Features.ExportEndorsements
+	}
+	panic("readroutes: unknown feature " + feature)
+}
+
+// params are the route's parameters whose feature is on.
+func (rt readRoute) params(on func(string) bool) []readParam {
+	out := make([]readParam, 0, len(rt.Params))
+	for _, p := range rt.Params {
+		if on(p.Feature) {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // genericErrorText is each error status's text on every route.
@@ -182,8 +304,21 @@ var genericErrorText = map[int]string{
 	503: "Unavailable here or not yet; inspect JSON error",
 }
 
-// openAPI is the route's operation object.
-func (rt readRoute) openAPI() map[string]any {
+// withNotFound is a copy of a hand-built route's responses with a 404 that
+// says what it means there, worded as the table's are (C390: /api/work/*
+// and /api/room/* answer 404 for an unknown ID and did not declare it).
+func withNotFound(responses map[string]any, text string) map[string]any {
+	out := make(map[string]any, len(responses)+1)
+	for k, v := range responses {
+		out[k] = v
+	}
+	out["404"] = map[string]any{"description": strings.TrimSuffix(genericErrorText[404], "; inspect JSON error") + ": " + text}
+	return out
+}
+
+// openAPI is the route's operation object, with the parameters whose
+// feature is on.
+func (rt readRoute) openAPI(on func(string) bool) map[string]any {
 	ok := rt.OK
 	if ok == "" {
 		ok = "Successful result"
@@ -213,9 +348,9 @@ func (rt readRoute) openAPI() map[string]any {
 	if desc != "" {
 		op["description"] = desc
 	}
-	if len(rt.Params) > 0 {
-		params := make([]map[string]any, 0, len(rt.Params))
-		for _, p := range rt.Params {
+	if declared := rt.params(on); len(declared) > 0 {
+		params := make([]map[string]any, 0, len(declared))
+		for _, p := range declared {
 			typ := p.Type
 			if typ == "" {
 				typ = "string"
@@ -259,16 +394,19 @@ func (rt readRoute) openAPI() map[string]any {
 }
 
 // addReadRoutesOpenAPI writes the table's routes into paths: every route
-// without a Service, and those whose service the catalogue holds.
-func addReadRoutesOpenAPI(paths map[string]any, catalog []services.Entry) {
+// without a Service, and those whose service the catalogue holds, while
+// their feature is on.
+func (s *Server) addReadRoutesOpenAPI(paths map[string]any, catalog []services.Entry) {
 	for _, rt := range readRoutes() {
 		switch {
+		case !s.routeFeatureOn(rt.Feature):
+			continue
 		case rt.Service == anyService && len(catalog) == 0:
 			continue
 		case rt.Service != "" && rt.Service != anyService && !slices.ContainsFunc(catalog, func(e services.Entry) bool { return e.ID == rt.Service }):
 			continue
 		}
-		op := rt.openAPI()
+		op := rt.openAPI(s.routeFeatureOn)
 		if rt.Service == anyService {
 			ids := make([]string, 0, len(catalog))
 			for _, e := range catalog {

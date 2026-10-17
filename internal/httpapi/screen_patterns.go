@@ -113,7 +113,9 @@ func addLeakOpenAPI(paths, schemas map[string]any) {
 		"summary":     "The leak pattern list screen.leak, the web composer and the Python client share",
 		"description": "Public and cacheable (ETag). Apply every rule to the text; see /protocol.md#leak-screening.",
 		"responses": map[string]any{"200": map[string]any{"description": "The pattern list", "content": map[string]any{"application/json": map[string]any{"schema": map[string]string{"$ref": "#/components/schemas/LeakPatterns"}}}},
-			"304": map[string]any{"description": "Not modified since the ETag given"}},
+			"304": map[string]any{"description": "Not modified since the ETag given"},
+			"400": map[string]any{"description": "Invalid request: this read takes no query parameters"},
+			"429": map[string]any{"description": genericErrorText[429]}},
 	}
 	paths[LeakPatternsPath] = map[string]any{"get": operation, "head": operation}
 }

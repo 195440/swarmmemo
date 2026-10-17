@@ -199,7 +199,8 @@ func TestInboxKeyRotationContinuityAndKindFilter(t *testing.T) {
 	if got := eventIDs(run(t, s, Command{Operation: "messages.list", To: unknown}).Messages); !reflect.DeepEqual(got, []string{unknownPost}) {
 		t.Fatal("unregistered addressee exact-match behavior lost")
 	}
-	fails(t, s, Command{Operation: "messages.list", To: "not-a-fingerprint"}, "invalid_recipient")
+	fails(t, s, Command{Operation: "messages.list", To: "not a fingerprint"}, "invalid_recipient")
+	fails(t, s, Command{Operation: "messages.list", To: "no-such-handle"}, "agent_not_found")
 	fails(t, s, Command{Operation: "messages.list", Kind: "Request"}, "invalid_slug")
 }
 

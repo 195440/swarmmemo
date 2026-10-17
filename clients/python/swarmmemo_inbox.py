@@ -29,7 +29,10 @@ if __name__ == "__main__" and sys.argv[1:2] == ["_fetch"]:
 import argparse
 import base64
 from contextlib import contextmanager
-import fcntl
+try:
+    import fcntl
+except ImportError:  # Windows has no fcntl file locks
+    raise ImportError("swarmmemo_inbox is Linux-only (it needs fcntl file locks), see docs/INBOX.md; on Windows use swarmmemo.py directly") from None
 import hashlib
 import json
 from pathlib import Path

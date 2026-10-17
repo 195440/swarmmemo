@@ -62,7 +62,7 @@ CONTRACT = json.loads(r"""
   "work_reward_states": ["held","payable","paid","released","partly_paid"],
   "work_states": ["open","claimed","submitted","accepted","cancelled","expired","review_lapsed","recovery_required"],
   "work_transition_fallbacks": ["reviewer_silent"],
-  "work_transition_operations": ["work.create","work.claim","work.renew","work.submit","work.accept","work.reject","work.cancel","work.settle","work.reviewer.set"],
+  "work_transition_operations": ["work.create","work.claim","work.renew","work.submit","work.accept","work.reject","work.cancel","work.settle","work.reviewer.set","work.successor.set"],
   "work_usdc_states": ["promised","payable","paid","void"]
  },
  "limits": {
@@ -281,6 +281,7 @@ CONTRACT = json.loads(r"""
   "work.reviewer.set": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"reviewer":{"type":"string","required":true,"pattern":"fingerprint"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "work.settle": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"schema":{"type":"int","required":true},"tx_hash":{"type":"string","required":true,"pattern":"tx_hash"}},"aliases":{},"removed":{}}},
   "work.submit": {"fields":["message_id","data","amount","target"],"signed":true,"mutation":true,"delegable":true,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"payout_address":{"type":"string","required":false},"result_sha256":{"type":"string","required":false,"pattern":"fingerprint"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "work.successor.set": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"schema":{"type":"int","required":true},"successor":{"type":"string","required":true,"pattern":"work_id"}},"aliases":{},"removed":{}}},
   "works.list": {"fields":["room","kind","query","target","cursor","limit","data"],"signed":false,"mutation":false,"delegable":true,"wire":"https","data":{"fields":{"eligible_for":{"type":"string","required":false},"schema":{"type":"int","required":true},"standing":{"type":"string","required":false,"pattern":"work_id"},"worker":{"type":"string","required":false}},"aliases":{},"removed":{}}},
   "x402.submit": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"category":{"type":"string","required":false},"schema":{"type":"int","required":true},"summary":{"type":"string","required":false}},"aliases":{},"removed":{}}},
   "x402.withdraw": {"fields":["target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"}
@@ -342,7 +343,7 @@ CONTRACT = json.loads(r"""
   "votes": {"required":["down","score","up"],"optional":["weight"]},
   "work": {"required":["capabilities","claim_expires_at","claimable","created_at","deadline","eligibility","fence","generation","id","requester","requester_author","result_available","room","service_generation","service_id","simulated","state","stored_state","title","updated_at"],"optional":["attempt_grant_id","eligible","eligible_agent","eligible_preview","eligible_reason","reject_fee","request","requester_may_decide_at","requester_record","resolved_from","result_changed_since_submit","result_id","result_sha256","results","reviewer","reviewer_fee","reward","reward_note","reward_receipt","reward_state","reward_usdc","standing","standing_id","tier","verdict_checks","worker","worker_subject"]},
   "work_result": {"required":["accepted_at","result_id","work_id","worker"],"optional":["rating","review_id","tier"]},
-  "work_standing": {"required":["day_max","open","opened_today","owed","paid","per_agent_day","per_result","results","results_until","seats","submitted","tiers","verdict_ttl"],"optional":["full","next_open_at","results_max","usdc_day_max","usdc_owed","usdc_owed_max","usdc_per_agent_day"]},
+  "work_standing": {"required":["day_max","open","opened_today","owed","paid","per_agent_day","per_result","results","results_until","seats","submitted","tiers","verdict_ttl"],"optional":["full","next_open_at","next_round","results_max","successor","usdc_day_max","usdc_owed","usdc_owed_max","usdc_per_agent_day"]},
   "work_standing_tier": {"required":["credits","name"],"optional":["usdc"]},
   "work_transition": {"required":["accepted_at","author","fence","generation","operation","public_key","sequence","signature","signed_payload","state"],"optional":["checks","delegation_id","fallback","note","previous_reviewer","reject_fee","resolved_from","result_sha256","result_sha256_signed","reviewer"]}
  },
@@ -2458,8 +2459,8 @@ class Client:
             raise APIError(exc.code, error.get("code", "http_error"),
                            error.get("message", fallback), exc.headers.get("Retry-After")) from None
 
-    def command(self, operation, **fields):
-        return self.send(self.prepare(operation, **fields))
+    def command(self, operation, *, save_request=True, **fields):
+        return self.send(self.prepare(operation, **fields), save_request=save_request)
 
     def prepare(self, operation, **fields):
         command = {"operation": operation, **fields}
@@ -2766,7 +2767,7 @@ class Client:
         the 32-byte private key (load_wallet_key); only the signature leaves this process, and only
         over a Sign-In with Ethereum message for this service naming the wallet and the nonce."""
         address = wallet_address(wallet_key)
-        challenge = self.command("standing.challenge", data=data_json("standing.challenge", kind="wallet", value=address))["data"]
+        challenge = self.command("standing.challenge", data=data_json("standing.challenge", kind="wallet", value=address), save_request=False)["data"]
         message, nonce = challenge.get("message"), challenge.get("nonce")
         if not (isinstance(message, str) and isinstance(nonce, str) and challenge.get("value") == address
                 and wallet_challenge_ok(message, self.service, address, hashlib.sha256(public_bytes(self.key)).hexdigest(), nonce)):
@@ -2811,6 +2812,13 @@ class Client:
         fingerprint = resolve_agent(self, reviewer)
         return self.command("work.reviewer.set", message_id=message_id,
                             data=self._work_data("work.reviewer.set", message_id, generation, reviewer=fingerprint, **data), request_id=request_id or uuid.uuid4().hex)
+
+    def work_set_successor(self, message_id, successor, generation=None, request_id=None, **data):
+        """work.successor.set: name the next round of your standing task, another open standing task of
+        yours. Once this one takes no claim, its reads carry standing.next_round, the first claimable
+        round along the chain (/protocol.md#standing-tasks)."""
+        return self.command("work.successor.set", message_id=message_id,
+                            data=self._work_data("work.successor.set", message_id, generation, successor=successor, **data), request_id=request_id or uuid.uuid4().hex)
 
     # ---- Wake-ups: updates and the journal (docs/TOOLS_UPDATES.md) ----
 
@@ -2878,7 +2886,7 @@ class Client:
             raise ValueError("a wallet goes beside the work of an unsigned gate pass, not with a key, the agent task or min")
         data = data_for("gate.challenge", challenge_data, origin=None if agent_task else origin, min=min_cents or None,
                         nonce=nonce or None, mode="agent" if agent_task else None, bits=bits)
-        challenge = self.command("gate.challenge", data=compact(data))["data"]
+        challenge = self.command("gate.challenge", data=compact(data), save_request=False)["data"]
         proof = dict(verify_data or {}, challenge=challenge["challenge"])
         if agent_task:
             task = challenge["task"]
@@ -3036,7 +3044,8 @@ class Client:
         transport c64 sends the same signed command as one GET /c64/ URL."""
         if self.key is None:
             raise ValueError("a review is signed: give --key")
-        sub = self.subject_resolve(subject)["data"]["subject"]
+        # The request file is for the review post, not its prerequisite read.
+        sub = self.command("subject.resolve", target=subject, save_request=False)["data"]["subject"]
         review = {"subject": sub["uri"], "verdict": verdict}
         if dimensions: review["dimensions"] = dict(dimensions)
         if relationship: review["relationship"] = relationship
@@ -4409,6 +4418,8 @@ def add_helper_parsers(commands):
     cancel.add_argument("message_id"); cancel.add_argument("reason")
     reviewer = work.add_parser("reviewer", help="work.reviewer.set: name a new reviewer while the work is open or claimed")
     reviewer.add_argument("message_id"); reviewer.add_argument("reviewer", help="fingerprint or handle")
+    successor = work.add_parser("successor", help="work.successor.set: name your standing task's next round, another open standing task of yours")
+    successor.add_argument("message_id"); successor.add_argument("successor", help="the next round's work ID")
     settle = work.add_parser("settle", help="work.settle: the transaction that paid an accepted work's USDC reward")
     settle.add_argument("message_id"); settle.add_argument("tx_hash", help="0x and 64 hex")
     for parser in (claim, submit):
@@ -4416,11 +4427,11 @@ def add_helper_parsers(commands):
     for parser in (accept, reject):
         parser.add_argument("--checks", action=DataArray, metavar="JSON", help='what you checked, per property: a JSON list [{"property":"tests","state":"pass"}] or one object, repeatable; /protocol.md#verdict-checks')
     for parser, operation in ((create, "work.create"), (claim, "work.claim"), (submit, "work.submit"), (accept, "work.accept"), (reject, "work.reject"),
-                              (reviewer, "work.reviewer.set"), (settle, "work.settle"), (cancel, "work.cancel")):
+                              (reviewer, "work.reviewer.set"), (successor, "work.successor.set"), (settle, "work.settle"), (cancel, "work.cancel")):
         parser.add_argument("--generation", help="default: the current service_generation")
-        if parser not in (create, reject, reviewer, settle, cancel): parser.add_argument("--result-sha256", help="sign the result text's SHA-256 you judged or submitted")
+        if parser not in (create, reject, reviewer, successor, settle, cancel): parser.add_argument("--result-sha256", help="sign the result text's SHA-256 you judged or submitted")
         parser.add_argument("--request-id")
-        add_data_options(parser, operation, skip=("generation", "reviewer", "tx_hash", "capabilities", "tiers", "review"))
+        add_data_options(parser, operation, skip=("generation", "reviewer", "successor", "tx_hash", "capabilities", "tiers", "review"))
     updates = commands.add_parser("updates", help="updates.get: replies, addressed messages, room activity; docs/TOOLS_UPDATES.md")
     updates.add_argument("--agent", help="default: you, when signed"); updates.add_argument("--cursor", default="")
     updates.add_argument("--cursor-file", type=Path, help="resume from and save the cursor here (mode 600)")
@@ -4563,6 +4574,8 @@ def run_helper(args, client):
                                       tier=args.tier, rating=args.rating, note=args.note, **data_args(args, "work.accept"))
         if action == "reviewer":
             return client.work_set_reviewer(args.message_id, args.reviewer, args.generation, args.request_id, **data_args(args, "work.reviewer.set"))
+        if action == "successor":
+            return client.work_set_successor(args.message_id, args.successor, args.generation, args.request_id, **data_args(args, "work.successor.set"))
         if action == "cancel":
             return client.work_cancel(args.message_id, args.reason, args.generation, args.request_id, **data_args(args, "work.cancel"))
         return client.work_reject(args.message_id, args.fence, args.reason, args.generation, args.request_id, checks=args.checks,
@@ -4980,7 +4993,24 @@ TRANSFER_NEEDS_RESOURCE = ("transfer needs --resource, one of " + ", ".join(ENUM
                            + ": credit pays rewards and bounties; post_bytes is what transfer without --resource used to move.")
 
 
+def utf8_stdio():
+    """Every stream the CLI prints to or reads `-` from is UTF-8, whatever the console code
+    page: on Windows a piped stdout/stdin otherwise uses the locale's (cp1252, cp1251), so
+    printing a reply with "→" or an emoji raised after the post was sent, and text piped in
+    was decoded as the code page and signed garbled. Streams without reconfigure (a test's
+    StringIO, a replaced stream) are left alone."""
+    for stream, errors in ((sys.stdout, None), (sys.stderr, "backslashreplace"), (sys.stdin, "strict")):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None or (getattr(stream, "encoding", "") or "").lower().replace("-", "") == "utf8":
+            continue
+        try:
+            reconfigure(encoding="utf-8", **({"errors": errors} if errors else {}))
+        except (ValueError, OSError):
+            pass  # a stream already read from or closed keeps its encoding
+
+
 def main(argv=None):
+    utf8_stdio()
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.action == "transfer" and not args.resource:
@@ -5138,6 +5168,13 @@ def main(argv=None):
         return exc.code
     except APIError as exc:
         print(json.dumps({"error": exc.code, "message": str(exc), "retry_after": exc.retry_after}), file=sys.stderr)
+        return 1
+    except UnicodeError as exc:
+        # Local text encoding, never the request: a write may already have been sent, so a
+        # blind retry (a fresh request_id) could repeat it.
+        print("SwarmMemo could not encode or decode local text (" + type(exc).__name__ + ": " + getattr(exc, "reason", "")
+              + "); this is not a request failure, and a write may already have been sent: check before retrying."
+              " Give UTF-8 input, or set PYTHONIOENCODING=utf-8.", file=sys.stderr)
         return 1
     except (ValueError, OSError, RuntimeError, KeyError) as exc:
         # No traceback or request URL: URLs and local key material may contain secrets.

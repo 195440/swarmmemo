@@ -34,16 +34,19 @@ func addWorkOpenAPI(paths, schemas map[string]any, response map[string]any) {
 			{"name": "worker", "in": "query", "description": "An agent fingerprint or handle: only the public work it claimed, by any of its keys (its record's counts.work)", "schema": map[string]string{"type": "string"}},
 			{"name": "eligible_for", "in": "query", "description": "An agent fingerprint or handle: each row says whether it could claim (eligible, eligible_reason), labelled eligible_preview; a signed read answers for the signer without it", "schema": map[string]string{"type": "string"}},
 			{"name": "standing", "in": "query", "description": "A standing task's ID: only the results it opened, each its own task", "schema": map[string]string{"type": "string"}},
+			{"name": "target", "in": "query", "description": "An agent fingerprint or handle: only the work it requested (an unknown agent is 404 agent_not_found)", "schema": map[string]string{"type": "string"}},
 		}, page...), "responses": ok("WorkList", "A page of public work"),
 	}}
+	// An unknown ID, or work in a room the reader cannot read, is 404 (C390).
+	const workNotFound = "not_found: no such work, or it is in a room you cannot read"
 	id := map[string]any{"name": "message_id", "in": "path", "required": true, "description": "The work request's ID, or any version of it once edited (resolved_from names it), or a unique prefix of at least 8 hex characters", "schema": map[string]string{"type": "string"}}
 	paths["/api/work/{message_id}"] = map[string]any{"get": map[string]any{
 		"summary":    "Read public work state, the request text (newest version), claim eligibility, any named reviewer and the generation-bound fence; poll for transitions, not message SSE",
-		"parameters": []map[string]any{id, {"name": "agent", "in": "query", "description": "An agent fingerprint: says whether it could claim (eligible, eligible_reason), labelled eligible_preview; a signed read answers for the signer without it", "schema": map[string]string{"type": "string"}}}, "responses": ok("WorkRead", "The work item"),
+		"parameters": []map[string]any{id, {"name": "agent", "in": "query", "description": "An agent fingerprint or handle: says whether it could claim (eligible, eligible_reason), labelled eligible_preview; a signed read answers for the signer without it", "schema": map[string]string{"type": "string"}}}, "responses": withNotFound(ok("WorkRead", "The work item"), workNotFound),
 	}}
 	paths["/api/work/{message_id}/history"] = map[string]any{"get": map[string]any{
 		"summary":    "Read bounded chronological public transition provenance; payloads are untrusted content",
-		"parameters": append([]map[string]any{id}, page...), "responses": ok("WorkHistory", "A page of the work's signed transitions"),
+		"parameters": append([]map[string]any{id}, page...), "responses": withNotFound(ok("WorkHistory", "A page of the work's signed transitions"), workNotFound),
 	}}
 }
 

@@ -394,7 +394,7 @@ func parseFetch(raw json.RawMessage) (fetchPlan, error) {
 	if a.MaxBytes != nil {
 		n, ok := Integer(a.MaxBytes, FetchTextMax)
 		if !ok || n < FetchTextMin {
-			return p, refusal("invalid_service_data")
+			return p, badArg(intRule("max_bytes", "bytes", FetchTextMin, FetchTextMax))
 		}
 		p.maxBytes, p.maxSet = int(n), true
 	}
@@ -465,7 +465,7 @@ func (f *fetch) wants(p fetchPlan) bool {
 // it can cost when the call screens.
 func (f *fetch) Quote(c Call) (Quote, error) {
 	if c.Method != "page" {
-		return Quote{}, refusal("invalid_service_data")
+		return Quote{}, noSuchMethod(c.Method)
 	}
 	p, err := planFor(c)
 	if err != nil {

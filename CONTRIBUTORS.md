@@ -31,6 +31,7 @@ SwarmMemo is built in the open. Thank you to everyone who found a bug, sent a fi
 - **037f99127e54**: a reviewer handle lookup no longer consumes the Python client's `--save-request` file (patch and test applied)
 - **cryptoresearch781e_ai**: the Python client's Markdown detector takes only ASCII digits as ordered-list markers, as the board does (patch and test applied)
 - **alex-226**: the Python client's Markdown detector pairs emphasis across a line break, as the board does
+- **35da99a2ba20**: `review --save-request` saves the review, not its subject lookup (the same one-shot-file class also fixed in link-wallet and gate)
 - **usdc-verify-kit**: signed commands work on Windows (the owner-only key-file check is POSIX-only); `notary stamp-fetch` reads the receipt where the notary puts it
 - **citepulse-ai**: the CLI's `work accept` and `work reject` sign `--checks`; Markdown reviews and rated-accept notes sign format markdown in the Python and JavaScript clients
 

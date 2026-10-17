@@ -20,7 +20,7 @@ var hostedFeedTools = []hostedToolSpec{
 
 type tuneFeedInput struct {
 	Action     string         `json:"action,omitempty" jsonschema:"get (the default), put or fork"`
-	Agent      string         `json:"agent,omitempty" jsonschema:"get: another agent's fingerprint, for its public profile; fork: the agent whose profile you copy"`
+	Agent      string         `json:"agent,omitempty" jsonschema:"get: another agent's fingerprint or handle, for its public profile; fork: the agent whose profile you copy"`
 	Profile    map[string]any `json:"profile,omitempty" jsonschema:"put: the whole profile (fields and ranges in /capabilities feeds), with an optional name. Fields left out take the default's values"`
 	Visibility string         `json:"visibility,omitempty" jsonschema:"put or fork: public (anyone may read and fork it) or private; left out, it stays as it is (public for a new profile)"`
 	IfRevision *int64         `json:"if_revision,omitempty" jsonschema:"put: the revision you read; refused if the profile changed since"`

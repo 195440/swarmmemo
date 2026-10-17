@@ -101,3 +101,45 @@ func TestWorkSSRStandingTaskResultsMax(t *testing.T) {
 		t.Error("/work does not read the capped task as full")
 	}
 }
+
+// C391: a standing task that takes no claim and names a claimable next
+// round links it on its page.
+func TestWorkSSRStandingNextRound(t *testing.T) {
+	standingID, nextID := strings.Repeat("a", 32), strings.Repeat("b", 32)
+	standing := &board.WorkStanding{WorkStandingSeats: board.WorkStandingSeats{Seats: 3, Full: true, Paid: 3, PerAgentDay: 1}, Results: 3, ResultsMax: 3, DayMax: 3,
+		VerdictTTL: board.WorkStandingVerdictTTL, ResultsUntil: 1788912000, Tiers: []board.WorkStandingTier{{Name: "reward", Credits: 300}}, Successor: nextID, NextRound: nextID}
+	root := board.Work{ID: standingID, Room: "bounties", Title: "Standing bug bounty, round 4", State: "open", StoredState: "open", Requester: board.AgentRef{ID: strings.Repeat("4", 64)},
+		Eligibility: "open", Deadline: 1789171200, Standing: standing}
+	s := &testService{execute: func(c board.Command) (board.Result, error) {
+		switch c.Operation {
+		case "room.get":
+			return board.Result{OK: true, Room: &board.Room{Name: c.Room, Visibility: "public"}}, nil
+		case "work.get":
+			return board.Result{OK: true, Data: map[string]any{"work": root}}, nil
+		case "works.list":
+			return board.Result{OK: true, Data: map[string]any{"works": []board.Work{}}}, nil
+		case "work.history":
+			return board.Result{OK: true, Data: map[string]any{"work_id": c.MessageID, "transitions": []board.WorkTransition{}}}, nil
+		}
+		return board.Result{OK: true}, nil
+	}}
+	get := func() string {
+		w := httptest.NewRecorder()
+		Handler(s).ServeHTTP(w, httptest.NewRequest("GET", "/work/"+standingID, nil))
+		if w.Code != 200 {
+			t.Fatalf("/work/%s: %d", standingID, w.Code)
+		}
+		return w.Body.String()
+	}
+	if body := get(); !strings.Contains(body, `<strong>This round is full</strong> — the open round is <a href="/work/`+nextID+`">`) {
+		t.Error("a full round does not link the open round")
+	}
+	root.State = "cancelled"
+	if body := get(); !strings.Contains(body, `<strong>This round is closed</strong> — the open round is <a href="/work/`+nextID+`">`) {
+		t.Error("a closed round does not link the open round")
+	}
+	standing.NextRound = ""
+	if body := get(); strings.Contains(body, "the open round is") {
+		t.Error("a round with no claimable successor links one")
+	}
+}

@@ -431,7 +431,7 @@ func (r *receiver) Quote(c Call) (Quote, error) {
 	case "rotate", "delete":
 		_, err = parseReceiverRef(c.Args)
 	default:
-		err = refusal("invalid_service_data")
+		err = noSuchMethod(c.Method)
 	}
 	if err != nil {
 		return Quote{}, err
@@ -552,7 +552,7 @@ func (r *receiver) Run(ctx context.Context, tx *sql.Tx, c Call) (Result, error) 
 		v.RotatedAt = c.Now
 		return Result{Body: r.receiverBody(v), Used: c.Price.For(0), Public: json.RawMessage(`{}`), Once: r.once(id, token)}, nil
 	}
-	return Result{}, refusal("invalid_service_data")
+	return Result{}, noSuchMethod(c.Method)
 }
 
 func (r *receiver) receiverBody(v ReceiverView) json.RawMessage {
@@ -700,7 +700,7 @@ func (r *receiver) Read(ctx context.Context, q allowance.Querier, c Call) (json.
 		}
 		return json.Marshal(map[string]any{"items": items, "next_after": next, "has_more": more, "note": UntrustedNote})
 	}
-	return nil, refusal("invalid_service_data")
+	return nil, noSuchMethod(c.Method)
 }
 
 func receiverList(ctx context.Context, q allowance.Querier, query string, args ...any) ([]ReceiverView, error) {

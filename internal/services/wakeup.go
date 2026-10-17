@@ -315,7 +315,7 @@ func parseWakeupRef(raw json.RawMessage) (wakeupRef, error) {
 		return a, err
 	}
 	if (a.Key == "") == (a.ID == "") || (a.Key != "" && !wakeupKeyRE.MatchString(a.Key)) || (a.ID != "" && !wakeupIDRE.MatchString(a.ID)) {
-		return a, refusal("invalid_service_data")
+		return a, badArg("Give exactly one of key (1 to 64 letters, digits or . _ -) or id (the wake-up's id: 32 lowercase hex digits).")
 	}
 	return a, nil
 }
@@ -334,7 +334,7 @@ func (w *wakeup) Quote(c Call) (Quote, error) {
 			return Quote{}, err
 		}
 	default:
-		return Quote{}, refusal("invalid_service_data")
+		return Quote{}, noSuchMethod(c.Method)
 	}
 	return Quote{Resource: allowance.Credit, Max: c.Price.For(0)}, nil
 }
@@ -495,7 +495,7 @@ func (w *wakeup) Run(ctx context.Context, tx *sql.Tx, c Call) (Result, error) {
 		body, _ := json.Marshal(map[string]any{"wakeup": v, "cancelled": cancelled})
 		return Result{Body: body, Used: c.Price.For(0), Public: json.RawMessage(`{}`)}, nil
 	}
-	return Result{}, refusal("invalid_service_data")
+	return Result{}, noSuchMethod(c.Method)
 }
 
 func wakeupResult(ctx context.Context, tx *sql.Tx, account string, v wakeupView, duplicate bool, used int64) (Result, error) {
@@ -586,7 +586,7 @@ func (w *wakeup) Read(ctx context.Context, q allowance.Querier, c Call) (json.Ra
 		}
 		return json.Marshal(map[string]any{"notices": notices, "next_after": next})
 	}
-	return nil, refusal("invalid_service_data")
+	return nil, noSuchMethod(c.Method)
 }
 
 // PendingWakeups is account's active wake-ups, newest first: at most

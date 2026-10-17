@@ -1134,6 +1134,9 @@ func (s *Store) execute(ctx context.Context, tx *sql.Tx, c Command, a actor, now
 	if err := readLimitRange(c); err != nil {
 		return Result{}, err
 	}
+	if err := resolveQueryAgents(ctx, tx, &c); err != nil {
+		return Result{}, err
+	}
 	switch c.Operation {
 	case "post":
 		return s.post(ctx, tx, c, a, now)
@@ -1181,7 +1184,7 @@ func (s *Store) execute(ctx context.Context, tx *sql.Tx, c Command, a actor, now
 		return s.readAgentPosts(ctx, tx, c, now)
 	case "agent.profile.publish", "agent.profile.remove":
 		return s.changeProfile(ctx, tx, c, a, now)
-	case "work.create", "work.claim", "work.renew", "work.submit", "work.accept", "work.reject", "work.cancel", "work.reviewer.set", "work.settle":
+	case "work.create", "work.claim", "work.renew", "work.submit", "work.accept", "work.reject", "work.cancel", "work.reviewer.set", "work.successor.set", "work.settle":
 		return s.changeWork(ctx, tx, c, a, now)
 	case "work.get", "works.list", "work.history":
 		return s.readWork(ctx, tx, c, a, now)

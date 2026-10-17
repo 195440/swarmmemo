@@ -122,26 +122,26 @@ func (ds *pdDataset) parseParams(raw json.RawMessage, now int64) (*pdParams, err
 	}
 	var obj map[string]json.RawMessage
 	if err := StrictObject(raw, &obj); err != nil || obj == nil {
-		return nil, refusal("invalid_service_data")
+		return nil, badArg("params is a JSON object of " + ds.ID + "'s parameters; public_data.datasets lists them.")
 	}
 	for name, v := range obj {
 		spec := ds.param(name)
 		if spec == nil {
-			return nil, refusal("invalid_service_data")
+			return nil, badArg(ds.unknownParam(name))
 		}
 		val, ok := spec.parse(v)
 		if !ok {
-			return nil, refusal("invalid_service_data")
+			return nil, badArg("params." + spec.Name + " " + spec.rule() + "; public_data.datasets documents " + ds.ID + "'s parameters.")
 		}
 		p.vals[name] = val
 	}
 	for _, spec := range ds.Params {
 		if spec.Required && !p.Has(spec.Name) {
-			return nil, refusal("invalid_service_data")
+			return nil, badArg("params." + spec.Name + " is required for " + ds.ID + "; public_data.datasets documents its parameters.")
 		}
 	}
 	if ds.Validate != nil && !ds.Validate(p, time.Unix(now, 0).UTC().Truncate(24*time.Hour)) {
-		return nil, refusal("invalid_service_data")
+		return nil, badArg("These params do not fit together for " + ds.ID + " (a date range, or a combination its parameters' docs rule out); public_data.datasets documents them.")
 	}
 	return p, nil
 }
@@ -153,6 +153,50 @@ func (ds *pdDataset) param(name string) *pdParam {
 		}
 	}
 	return nil
+}
+
+// unknownParam names a parameter ds does not take (echoed as UnknownArg
+// echoes) and the ones it does.
+func (ds *pdDataset) unknownParam(name string) string {
+	names := make([]string, 0, len(ds.Params))
+	for _, p := range ds.Params {
+		names = append(names, p.Name)
+	}
+	what := "That parameter"
+	if EchoesArg(name) {
+		what = "params." + name
+	}
+	if len(names) == 0 {
+		return what + " is not taken by " + ds.ID + ", which takes no parameters."
+	}
+	return what + " is not taken by " + ds.ID + "; its parameters are " + strings.Join(names, ", ") + "."
+}
+
+// unknownDataset is the refusal text for a dataset id not in the catalogue.
+func unknownDataset(id string) string {
+	what := "That dataset"
+	if EchoesArg(id) {
+		what = `Dataset "` + id + `"`
+	}
+	return what + " is not in the catalogue; public_data.datasets lists the dataset ids."
+}
+
+// rule is what spec takes, for a refusal: "is TYPE ...", never the value
+// sent.
+func (spec *pdParam) rule() string {
+	switch spec.Kind {
+	case "int":
+		return "is an integer from " + itoa(spec.Min) + " to " + itoa(spec.Max)
+	case "date":
+		return "is a date, YYYY-MM-DD"
+	case "enum":
+		return "is one of " + strings.Join(spec.Enum, ", ")
+	}
+	max := spec.MaxLen
+	if max == 0 {
+		max = publicDataStringMax
+	}
+	return "is printable text of at most " + itoa(int64(max)) + " bytes in the form its doc gives"
 }
 
 func (spec *pdParam) parse(raw json.RawMessage) (any, bool) {

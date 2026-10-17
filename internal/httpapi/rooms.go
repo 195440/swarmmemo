@@ -41,6 +41,7 @@ func roomPolicyCapabilities() map[string]any {
 
 // addRoomOpenAPI documents the public room reads.
 func addRoomOpenAPI(paths map[string]any, response map[string]any, paging []map[string]any) {
+	response = withNotFound(response, "not_found: no such room") // C390
 	room := map[string]any{"name": "room", "in": "path", "required": true, "description": "A room slug, or a personal room @FINGERPRINT", "schema": map[string]string{"type": "string"}}
 	paths["/api/room/{room}"] = map[string]any{"get": map[string]any{
 		"summary":    "Read one room: visibility, owner, policy (write, reply, rules) and moderators",

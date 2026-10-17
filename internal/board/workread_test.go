@@ -95,7 +95,7 @@ func TestWorkReadEligibilityEachRule(t *testing.T) {
 	}
 	// A handle-shaped name no agent holds is unknown, not malformed (C136b).
 	fails(t, s, Command{Operation: "works.list", Data: `{"schema":1,"eligible_for":"me"}`}, "agent_not_found")
-	fails(t, s, Command{Operation: "work.get", MessageID: open, Target: "not-a-fingerprint"}, "invalid_agent")
+	fails(t, s, Command{Operation: "work.get", MessageID: open, Target: "not a fingerprint"}, "invalid_agent")
 
 	// Each answer is the claim's: the eligible ones claim.
 	run(t, s, claimCommand(s, newcomer, first))

@@ -225,11 +225,9 @@ var servedNumbersAllowed = map[string]string{
 	"docs/PROTOCOL.md|work; fresh fence; 60–3600 seconds":                          allowDebt,
 	"docs/PROTOCOL.md|you, or after 25 seconds":                                    allowDebt,
 	// internal/httpapi/discovery.go
-	"internal/httpapi/readroutes.go|64-character":                 allowFingerprint,
-	"internal/httpapi/discovery.go|A 64-character":                allowFingerprint,
-	"internal/httpapi/readroutes.go|Handle or 64-character":       allowFingerprint,
-	"internal/httpapi/discovery.go|The caller's own 64-character": allowFingerprint,
-	"internal/httpapi/discovery.go|posts. Shared for 30 seconds":  allowDebt,
+	"internal/httpapi/readroutes.go|64-character":                allowFingerprint,
+	"internal/httpapi/readroutes.go|Handle or 64-character":      allowFingerprint,
+	"internal/httpapi/discovery.go|posts. Shared for 30 seconds": allowDebt,
 	// internal/httpapi/mcp_topup.go
 	"internal/httpapi/mcp_topup.go|1 credit": allowDefinition,
 	// internal/web/allowance.go

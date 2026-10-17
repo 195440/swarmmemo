@@ -26,7 +26,12 @@ func anonCallServer(t *testing.T, anonCap int64, enabled ...string) (*board.Stor
 	if len(enabled) == 0 {
 		enabled = []string{"notary", "memory"}
 	}
-	f := board.Features{Services: enabled, Ledger: board.LedgerOn, AnonPrefix: true}
+	return anonCallServerWith(t, anonCap, board.Features{Services: enabled, Ledger: board.LedgerOn, AnonPrefix: true})
+}
+
+// anonCallServerWith is anonCallServer with the features f (Ledger on).
+func anonCallServerWith(t *testing.T, anonCap int64, f board.Features) (*board.Store, *Server) {
+	t.Helper()
 	store, err := board.Open(filepath.Join(t.TempDir(), "board.sqlite"), board.Config{ServiceID: "swarmmemo.com", Features: f})
 	if err != nil {
 		t.Fatal(err)

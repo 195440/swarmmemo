@@ -306,7 +306,7 @@ func (p *publicData) Datasets() map[string]any {
 // Read serves the free datasets read.
 func (p *publicData) Read(_ context.Context, _ allowance.Querier, c Call) (json.RawMessage, error) {
 	if c.Method != "datasets" {
-		return nil, refusal("invalid_service_data")
+		return nil, noSuchMethod(c.Method)
 	}
 	var none struct{}
 	if err := StrictObject(c.Args, &none); err != nil {
@@ -345,20 +345,20 @@ func parsePublicData(method string, raw json.RawMessage, now int64) ([]pdRequest
 			return nil, err
 		}
 		if len(a.Requests) == 0 || len(a.Requests) > PublicDataBulkMax {
-			return nil, refusal("invalid_service_data")
+			return nil, badArg("requests is an array of 1 to " + itoa(PublicDataBulkMax) + ` objects {"dataset","params"}.`)
 		}
 		items = a.Requests
 	default:
-		return nil, refusal("invalid_service_data")
+		return nil, noSuchMethod(method)
 	}
 	out := make([]pdRequest, 0, len(items))
 	for _, it := range items {
 		if it.Dataset == nil {
-			return nil, refusal("invalid_service_data")
+			return nil, badArg("dataset is required: a dataset id from public_data.datasets.")
 		}
 		ds := pdByID[*it.Dataset]
 		if ds == nil {
-			return nil, refusal("invalid_service_data")
+			return nil, badArg(unknownDataset(*it.Dataset))
 		}
 		params, err := ds.parseParams(it.Params, now)
 		if err != nil {

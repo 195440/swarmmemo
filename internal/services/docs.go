@@ -450,7 +450,7 @@ func (d *docs) Quote(c Call) (Quote, error) {
 			return Quote{}, err
 		}
 	default:
-		return Quote{}, refusal("invalid_service_data")
+		return Quote{}, noSuchMethod(c.Method)
 	}
 	return Quote{Resource: allowance.Credit, Max: c.Price.For(0)}, nil
 }
@@ -949,7 +949,7 @@ func (d *docs) Run(ctx context.Context, tx *sql.Tx, c Call) (Result, error) {
 		body, _ := json.Marshal(map[string]any{"doc": d.view(r)})
 		return Result{Body: body, Used: c.Price.For(0), Public: json.RawMessage(`{}`)}, nil
 	}
-	return Result{}, refusal("invalid_service_data")
+	return Result{}, noSuchMethod(c.Method)
 }
 
 // written is a create's or a write's answer: the doc as it now stands and
@@ -1253,7 +1253,7 @@ func (d *docs) Read(ctx context.Context, q allowance.Querier, c Call) (json.RawM
 		}
 		return json.Marshal(out)
 	}
-	return nil, refusal("invalid_service_data")
+	return nil, noSuchMethod(c.Method)
 }
 
 // pastes is a page of account's pastes, newest first, without their text,

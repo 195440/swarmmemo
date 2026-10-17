@@ -164,15 +164,15 @@ func corroborateKey(addresses []string, asOf int64) string {
 }
 
 // Quote and Run are never reached: corroborate has no write method.
-func (*corroborateSvc) Quote(Call) (Quote, error) { return Quote{}, refusal("invalid_service_data") }
+func (*corroborateSvc) Quote(c Call) (Quote, error) { return Quote{}, noSuchMethod(c.Method) }
 
-func (*corroborateSvc) Run(context.Context, *sql.Tx, Call) (Result, error) {
-	return Result{}, refusal("invalid_service_data")
+func (*corroborateSvc) Run(_ context.Context, _ *sql.Tx, c Call) (Result, error) {
+	return Result{}, noSuchMethod(c.Method)
 }
 
 // Read is never reached for resolve: ReadRemote serves it.
-func (*corroborateSvc) Read(context.Context, allowance.Querier, Call) (json.RawMessage, error) {
-	return nil, refusal("invalid_service_data")
+func (*corroborateSvc) Read(_ context.Context, _ allowance.Querier, c Call) (json.RawMessage, error) {
+	return nil, noSuchMethod(c.Method)
 }
 
 // ReadRemote checks the arguments and the caller's window in the command's

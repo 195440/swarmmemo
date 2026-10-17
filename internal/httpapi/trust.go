@@ -441,29 +441,6 @@ func (s *Server) addTrustOpenAPI(paths, response map[string]any) {
 		},
 		"responses": response,
 	}}
-	id := []map[string]any{{"name": "id", "in": "path", "required": true, "schema": map[string]any{"type": "integer", "minimum": 1}}}
-	paths["/api/trust/runs/{id}"] = map[string]any{"get": map[string]any{
-		"summary":     "Read one run, including inputs, snapshot metadata, parameters and output_sha256",
-		"description": "No query parameters. data.snapshot is null when the run kept no snapshot.",
-		"parameters":  id, "responses": response,
-	}}
-	paths["/api/trust/runs/{id}/snapshot"] = map[string]any{"get": map[string]any{
-		"summary":     "Download the exact public inputs read by a run",
-		"description": "No query parameters. JSONL up to 64 MiB; X-Snapshot-SHA256 gives the content hash.",
-		"parameters":  id, "responses": map[string]any{"200": map[string]any{
-			"description": "Run input snapshot",
-			"content":     map[string]any{"application/x-ndjson": map[string]any{"schema": map[string]any{"type": "string"}}},
-		}},
-	}}
-	paths["/api/agent/{agent}/trust"] = map[string]any{"get": map[string]any{
-		"summary":    "Read an agent's standing and its breakdown (trust.get, as /api/trust/standing)",
-		"parameters": []map[string]any{{"name": "agent", "in": "path", "required": true, "schema": map[string]any{"type": "string"}}},
-		"responses":  response,
-	}}
-	paths["/api/agent/{agent}/standing"] = map[string]any{"get": map[string]any{
-		"summary":     "Read the ways an agent can raise its standing (standing.ways)",
-		"description": "data.ways: kind, label, proves, reveals, adds_cents {min,max} (null for earned), priced, state, value, root, assessed_cents, counted_cents, action, needs, effort_minutes; data.climb: next_band, next_tier, target, route (the cheapest steps this agent can likely take), pay_cents, free_route {days, steps} (no money: proofs it can take as it is, then active days; null when none reaches the target); data.standing: the latest run's standing_cents, fake_cost, band, run, as_of.",
-		"parameters":  []map[string]any{{"name": "agent", "in": "path", "required": true, "schema": map[string]any{"type": "string"}}},
-		"responses":   response,
-	}}
+	// /api/trust/runs/{id}[/snapshot] and /api/agent/{agent}/trust|standing
+	// are rows of the read-route table (readroutes.go), with their 404s.
 }

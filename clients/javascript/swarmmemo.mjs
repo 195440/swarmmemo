@@ -45,7 +45,7 @@ export const CONTRACT = Object.freeze({
   "work_reward_states": ["held","payable","paid","released","partly_paid"],
   "work_states": ["open","claimed","submitted","accepted","cancelled","expired","review_lapsed","recovery_required"],
   "work_transition_fallbacks": ["reviewer_silent"],
-  "work_transition_operations": ["work.create","work.claim","work.renew","work.submit","work.accept","work.reject","work.cancel","work.settle","work.reviewer.set"],
+  "work_transition_operations": ["work.create","work.claim","work.renew","work.submit","work.accept","work.reject","work.cancel","work.settle","work.reviewer.set","work.successor.set"],
   "work_usdc_states": ["promised","payable","paid","void"]
  },
  "limits": {
@@ -264,6 +264,7 @@ export const CONTRACT = Object.freeze({
   "work.reviewer.set": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"reviewer":{"type":"string","required":true,"pattern":"fingerprint"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "work.settle": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"schema":{"type":"int","required":true},"tx_hash":{"type":"string","required":true,"pattern":"tx_hash"}},"aliases":{},"removed":{}}},
   "work.submit": {"fields":["message_id","data","amount","target"],"signed":true,"mutation":true,"delegable":true,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"payout_address":{"type":"string","required":false},"result_sha256":{"type":"string","required":false,"pattern":"fingerprint"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
+  "work.successor.set": {"fields":["message_id","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"schema":{"type":"int","required":true},"successor":{"type":"string","required":true,"pattern":"work_id"}},"aliases":{},"removed":{}}},
   "works.list": {"fields":["room","kind","query","target","cursor","limit","data"],"signed":false,"mutation":false,"delegable":true,"wire":"https","data":{"fields":{"eligible_for":{"type":"string","required":false},"schema":{"type":"int","required":true},"standing":{"type":"string","required":false,"pattern":"work_id"},"worker":{"type":"string","required":false}},"aliases":{},"removed":{}}},
   "x402.submit": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"category":{"type":"string","required":false},"schema":{"type":"int","required":true},"summary":{"type":"string","required":false}},"aliases":{},"removed":{}}},
   "x402.withdraw": {"fields":["target"],"signed":true,"mutation":true,"delegable":false,"wire":"https"}
@@ -325,7 +326,7 @@ export const CONTRACT = Object.freeze({
   "votes": {"required":["down","score","up"],"optional":["weight"]},
   "work": {"required":["capabilities","claim_expires_at","claimable","created_at","deadline","eligibility","fence","generation","id","requester","requester_author","result_available","room","service_generation","service_id","simulated","state","stored_state","title","updated_at"],"optional":["attempt_grant_id","eligible","eligible_agent","eligible_preview","eligible_reason","reject_fee","request","requester_may_decide_at","requester_record","resolved_from","result_changed_since_submit","result_id","result_sha256","results","reviewer","reviewer_fee","reward","reward_note","reward_receipt","reward_state","reward_usdc","standing","standing_id","tier","verdict_checks","worker","worker_subject"]},
   "work_result": {"required":["accepted_at","result_id","work_id","worker"],"optional":["rating","review_id","tier"]},
-  "work_standing": {"required":["day_max","open","opened_today","owed","paid","per_agent_day","per_result","results","results_until","seats","submitted","tiers","verdict_ttl"],"optional":["full","next_open_at","results_max","usdc_day_max","usdc_owed","usdc_owed_max","usdc_per_agent_day"]},
+  "work_standing": {"required":["day_max","open","opened_today","owed","paid","per_agent_day","per_result","results","results_until","seats","submitted","tiers","verdict_ttl"],"optional":["full","next_open_at","next_round","results_max","successor","usdc_day_max","usdc_owed","usdc_owed_max","usdc_per_agent_day"]},
   "work_standing_tier": {"required":["credits","name"],"optional":["usdc"]},
   "work_transition": {"required":["accepted_at","author","fence","generation","operation","public_key","sequence","signature","signed_payload","state"],"optional":["checks","delegation_id","fallback","note","previous_reviewer","reject_fee","resolved_from","result_sha256","result_sha256_signed","reviewer"]}
  },
@@ -1914,6 +1915,12 @@ export class Client {
     const fingerprint = await this.#reviewer(reviewer);
     const data = await this.#workData('work.reviewer.set', messageId, generation, {reviewer: fingerprint, ...fields});
     return this.send(this.prepare({operation: 'work.reviewer.set', message_id: messageId, data, ...(requestId ? {request_id: requestId} : {})}));
+  }
+  // work.successor.set: your standing task's next round, another open standing task of yours; once this one takes
+  // no claim, its reads carry standing.next_round (/protocol.md#standing-tasks).
+  async setWorkSuccessor(messageId, successor, {generation, requestId, ...fields} = {}) {
+    const data = await this.#workData('work.successor.set', messageId, generation, {successor, ...fields});
+    return this.send(this.prepare({operation: 'work.successor.set', message_id: messageId, data, ...(requestId ? {request_id: requestId} : {})}));
   }
   // Wake-ups (docs/TOOLS_UPDATES.md). Signed, updates reads your own inbox; wait (1-25 s) holds a read with a cursor until news.
   async updates({agent = this.#key?.fingerprint, cursor, limit, wait, counts = false, ...data} = {}) {

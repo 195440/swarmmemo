@@ -68,7 +68,7 @@ func parseEcho(raw json.RawMessage, simulate bool) (echoPlan, error) {
 	}
 	p := echoPlan{text: a.Text}
 	if a.Simulate != nil && !simulate {
-		return p, refusal("invalid_service_data")
+		return p, badArg("simulate is for test deployments and is off here; send text alone.")
 	}
 	if s := a.Simulate; s != nil {
 		switch s.Mode {
@@ -78,12 +78,12 @@ func parseEcho(raw json.RawMessage, simulate bool) (echoPlan, error) {
 		case "async":
 			p.mode = Async
 		default:
-			return p, refusal("invalid_service_data")
+			return p, badArg(`simulate.mode is "local", "remote" or "async".`)
 		}
 		if s.DelayMS != nil {
 			ms, ok := Integer(s.DelayMS, EchoDelayMax)
 			if !ok {
-				return p, refusal("invalid_service_data")
+				return p, badArg(intRule("simulate.delay_ms", "milliseconds", 0, EchoDelayMax))
 			}
 			p.delay = time.Duration(ms) * time.Millisecond
 		}
@@ -91,7 +91,7 @@ func parseEcho(raw json.RawMessage, simulate bool) (echoPlan, error) {
 		// A Local call runs inside the command's transaction: it may fail,
 		// but never waits or crashes there.
 		if p.mode == Local && (p.delay > 0 || p.crash) {
-			return p, refusal("invalid_service_data")
+			return p, badArg(`simulate.delay_ms and simulate.crash need simulate.mode "remote" or "async".`)
 		}
 	}
 	return p, nil

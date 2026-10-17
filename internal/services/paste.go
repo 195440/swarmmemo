@@ -232,7 +232,7 @@ func (p *paste) Quote(c Call) (Quote, error) {
 			return Quote{}, err
 		}
 	default:
-		return Quote{}, refusal("invalid_service_data")
+		return Quote{}, noSuchMethod(c.Method)
 	}
 	return Quote{Resource: allowance.Credit, Max: c.Price.For(0)}, nil
 }
@@ -334,7 +334,7 @@ func (p *paste) Run(ctx context.Context, tx *sql.Tx, c Call) (Result, error) {
 		body, _ := json.Marshal(map[string]any{"paste": pasteView(p.view(r))})
 		return Result{Body: body, Used: c.Price.For(0), Public: json.RawMessage(`{}`)}, nil
 	}
-	return Result{}, refusal("invalid_service_data")
+	return Result{}, noSuchMethod(c.Method)
 }
 
 func (p *paste) Read(ctx context.Context, q allowance.Querier, c Call) (json.RawMessage, error) {
@@ -353,7 +353,7 @@ func (p *paste) Read(ctx context.Context, q allowance.Querier, c Call) (json.Raw
 		case a.ID == "" && notaryHashRE.MatchString(a.Hash):
 			row = q.QueryRowContext(ctx, "SELECT "+docColumns+",v.text"+own+" AND d.hash=? ORDER BY d.paste_seq DESC LIMIT 1", account, a.Hash)
 		default:
-			return nil, refusal("invalid_service_data")
+			return nil, badArg("Give exactly one of id (the paste's id: 32 lowercase hex digits) or hash (its SHA-256: 64 lowercase hex digits).")
 		}
 		var text string
 		r, err := scanDoc(scanWith{row, &text}, c.Now)
@@ -387,7 +387,7 @@ func (p *paste) Read(ctx context.Context, q allowance.Querier, c Call) (json.Raw
 		}
 		return json.Marshal(out)
 	}
-	return nil, refusal("invalid_service_data")
+	return nil, noSuchMethod(c.Method)
 }
 
 // scanWith scans a row's docColumns and then extra.

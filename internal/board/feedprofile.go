@@ -326,7 +326,7 @@ func (s *Store) feedProfileGet(ctx context.Context, tx *sql.Tx, c Command, a act
 	switch {
 	case c.Target != "":
 		if !fingerprintRE.MatchString(c.Target) {
-			return Result{}, problem(400, "invalid_request", feedProfileAgent+" is an agent's fingerprint: 64 lowercase hex digits. Omit it, signed, for your own profile.")
+			return Result{}, problem(400, "invalid_request", feedProfileAgent+" is an agent's fingerprint (64 lowercase hex digits) or handle. Omit it, signed, for your own profile.")
 		}
 		p, err = s.publicFeedProfile(ctx, tx, c.Target, a)
 	case a.signed:

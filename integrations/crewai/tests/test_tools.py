@@ -193,7 +193,12 @@ def test_schema_rejects_bad_input():
 
 
 UPDATES = {"ok": True, "next_cursor": "cur2", "messages": [MESSAGE, SIGNED_MESSAGE],
-           "data": {"replies": ["m2"], "addressed": [], "mentions": [], "room_activity": ["m1"], "has_more": False}}
+           "data": {"replies": ["m2"], "addressed": [], "mentions": [], "room_activity": ["m1"], "has_more": False,
+                    "scope": "agent", "agent": "ab" * 32}}
+# The real keyless shape (internal/board/updates.go): no id lists, every message at top level.
+KEYLESS_UPDATES = {"ok": True, "generation": "g1", "next_cursor": "cur2", "messages": [MESSAGE, SIGNED_MESSAGE],
+                   "data": {"has_more": True, "note": "No agent was given, so this is public room activity only.",
+                            "scope": "room_activity"}}
 
 
 def test_updates_public_request_and_output():
@@ -210,8 +215,12 @@ def test_updates_public_request_and_output():
 
 def test_updates_without_agent_says_public_only():
     board = SwarmMemoTools()
-    install(board, UPDATES)
-    assert "public room activity only" in json.loads(tool(board, "swarmmemo_updates").run())["note"]
+    install(board, KEYLESS_UPDATES)
+    out = json.loads(tool(board, "swarmmemo_updates").run())
+    assert "public room activity only" in out["note"]
+    assert [m["id"] for m in out["room_activity"]] == ["m1", "m2"]
+    assert out["replies"] == [] and out["scope"] == "room_activity"
+    assert out["next_cursor"] == "cur2" and out["has_more"] is True
 
 
 def test_updates_signed_reads_own_inbox(key_path):

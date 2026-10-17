@@ -389,6 +389,10 @@ def _standing(standing):
             or any(type(standing[name]) is not int or not 0 <= standing[name] < 2**63 for name in STANDING_COUNTS)
             or any(name in standing and _usdc_units(standing[name]) is None for name in ("usdc_per_agent_day", "usdc_day_max", "usdc_owed", "usdc_owed_max"))
             or ("next_open_at" in standing and (type(standing["next_open_at"]) is not int or not 0 < standing["next_open_at"] < 2**63))
+            # successor: the next round the requester named; next_round: the first claimable one along
+            # that chain, only beside a successor (C391).
+            or any(name in standing and (not isinstance(standing[name], str) or not re.fullmatch(HEX32, standing[name])) for name in ("successor", "next_round"))
+            or ("next_round" in standing and "successor" not in standing)
             or not isinstance(standing.get("tiers"), list) or not 1 <= len(standing["tiers"]) <= LIMITS["work_standing_tiers_maximum"]
             or any(not isinstance(t, dict) or set(t) - {"name", "credits", "usdc"} or not isinstance(t.get("name"), str) or not re.fullmatch(STANDING_TIER, t["name"])
                    or type(t.get("credits")) is not int or ("usdc" in t and _usdc_units(t["usdc"]) is None) for t in standing["tiers"])):
@@ -536,7 +540,9 @@ def _transition(profile, item, work_id):
             if field in ("timestamp", "ttl", "amount"):
                 if type(value) is not int or not 0 <= value < 2**63: raise ValueError()
             elif not isinstance(value, str) or "\x00" in value: raise ValueError()
-        expected_state = {"work.create": "open", "work.claim": "claimed", "work.renew": "claimed", "work.submit": "submitted", "work.accept": "accepted", "work.reject": "open", "work.cancel": "cancelled", "work.reviewer.set": item["state"], "work.settle": "accepted"}[item["operation"]]
+        expected_state = {"work.create": "open", "work.claim": "claimed", "work.renew": "claimed", "work.submit": "submitted", "work.accept": "accepted", "work.reject": "open", "work.cancel": "cancelled", "work.reviewer.set": item["state"], "work.successor.set": item["state"], "work.settle": "accepted"}[item["operation"]]
+        # Naming a standing task's next round leaves its state as it was.
+        if item["operation"] == "work.successor.set" and item["state"] not in ("open", "cancelled"): raise ValueError()
         # A reviewer change leaves the state as it was, open or claimed.
         if item["operation"] == "work.reviewer.set" and item["state"] not in ("open", "claimed"): raise ValueError()
         if item["operation"] == "work.claim" and "target" in command: expected_state = "submitted"
@@ -575,6 +581,10 @@ def _transition(profile, item, work_id):
                     or (item.get("previous_reviewer") and not re.fullmatch(HEX64, item["previous_reviewer"]))): raise ValueError()
             data_fields = data_fields | {"reviewer"}
         elif "reviewer" in item or "previous_reviewer" in item: raise ValueError()
+        # A standing task's next round signs the successor's work ID, never the task itself.
+        if item["operation"] == "work.successor.set":
+            if not isinstance(data, dict) or not isinstance(data.get("successor"), str) or not re.fullmatch(HEX32, data["successor"]) or data["successor"] == work_id: raise ValueError()
+            data_fields = data_fields | {"successor"}
         # A USDC reward (RFC 0016): a claim or submit may sign the payout address;
         # a settle signs the paying transaction.
         if isinstance(data, dict) and "payout_address" in data and item["operation"] in ("work.claim", "work.submit"):

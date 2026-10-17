@@ -197,6 +197,14 @@ func parseIDs(raw string, max int) ([]int32, *board.Error) {
 	return out, nil
 }
 
+// graphLevelParams are the semantic-zoom reads of /graph under /api/graph/
+// and the query parameters each takes beside gen and format: the router
+// serves exactly these (C397).
+var graphLevelParams = map[string][]string{
+	"universe": {}, "children": {"ids"}, "node": {"id"}, "stats": {"ids"},
+	"search": {"q"}, "locate": {"keys"}, "bridge": {"id"}, "replay": {"id"}, "agent": {"id"},
+}
+
 // graphLevels serves the semantic-zoom reads of /graph under /api/graph/:
 // universe, children, node, stats, search, locate, bridge, replay and agent.
 func (s *Server) graphLevels(w http.ResponseWriter, r *http.Request, route string) {
@@ -205,10 +213,7 @@ func (s *Server) graphLevels(w http.ResponseWriter, r *http.Request, route strin
 		return
 	}
 	q := r.URL.Query()
-	allowed := map[string][]string{
-		"universe": {}, "children": {"ids"}, "node": {"id"}, "stats": {"ids"},
-		"search": {"q"}, "locate": {"keys"}, "bridge": {"id"}, "replay": {"id"}, "agent": {"id"},
-	}[route]
+	allowed := graphLevelParams[route]
 	for key, values := range q {
 		ok := key == "gen" || key == "format"
 		for _, a := range allowed {

@@ -194,7 +194,7 @@ func (m *memory) Quote(c Call) (Quote, error) {
 		}
 		return Quote{Resource: allowance.MemoryBytes, Max: c.Price.For(0)}, nil
 	}
-	return Quote{}, refusal("invalid_service_data")
+	return Quote{}, noSuchMethod(c.Method)
 }
 
 type memoryUsage struct {
@@ -260,7 +260,7 @@ func (m *memory) Run(ctx context.Context, tx *sql.Tx, c Call) (Result, error) {
 		body, _ := json.Marshal(map[string]any{"key": a.Key, "deleted": true, "usage": usage})
 		return Result{Body: body, Used: c.Price.For(0), Public: json.RawMessage(`{}`)}, nil
 	}
-	return Result{}, refusal("invalid_service_data")
+	return Result{}, noSuchMethod(c.Method)
 }
 
 // MemoryItem is one of an agent's memory items with its value, as
@@ -366,8 +366,11 @@ func PutOwnMemory(ctx context.Context, tx *sql.Tx, account, key, value, visibili
 	if err := memoryKeyError(key); err != nil {
 		return 0, err
 	}
-	if len(value) > MemoryValueBytes || visibility != "private" && visibility != "public" {
-		return 0, refusal("invalid_service_data")
+	if len(value) > MemoryValueBytes {
+		return 0, tooLarge("invalid_service_data", len(value), MemoryValueBytes)
+	}
+	if visibility != "private" && visibility != "public" {
+		return 0, badArg(`visibility is "private" or "public".`)
 	}
 	usage, err := usageOf(ctx, tx, account)
 	if err != nil {
@@ -512,5 +515,5 @@ func (m *memory) Read(ctx context.Context, q allowance.Querier, c Call) (json.Ra
 		}
 		return json.Marshal(out)
 	}
-	return nil, refusal("invalid_service_data")
+	return nil, noSuchMethod(c.Method)
 }

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
-import fcntl
+try:
+    import fcntl
+except ImportError:  # Windows has no fcntl file locks
+    raise ImportError("swarmmemo_outbox is Linux-only (it needs fcntl file locks), see docs/OUTBOX.md; on Windows use swarmmemo.py directly") from None
 import hashlib
 import json
 import os
@@ -55,6 +58,33 @@ SAFE_CODES.update({"invalid_private_read_context", "invalid_private_read_data", 
                    "private_read_epoch_mismatch", "private_read_already_revoked", "private_read_rate_limited",
                    "private_read_response_limit", "invalid_limit"})
 SAFE_CODES.update({"signed_only", "prefix_blocked", "standing_required", "handle_reserved", "service_unavailable", "no_share"})
+# Acknowledgement shapes, in one place. The client contract (memo.CONTRACT) names each
+# operation's request fields but not its result, so the keys a result carries are named here:
+# the required ones, and the optional ones each with the signed intent's data field that brings
+# it (None: the service may add it on any such result). A server that adds an optional key no
+# longer fails a queued write as invalid_acknowledgement (C396).
+DELEGATION_ACK = {"grant_id", "child_id", "generation", "service_id", "state", "accepted_at", "expires_at", "ceiling_bytes"}
+WORK_ACK = {"work_id", "state", "fence", "generation", "service_id", "accepted_at", "deadline", "claim_expires_at"}
+# resolved_from: the command named an edited version of the request and work_id is its root;
+# result_sha256 echoes a hash the command signed; note is the service's advice on a submit,
+# an accept or a reject fee.
+ACK_OPTIONAL = {"delegation.create": {"spend_limit": "spend_limit"},
+                "work.*": {"resolved_from": None, "result_sha256": None, "note": None}}
+# Keys of data beside "ack": a rated accept returns the requester's review receipt.
+RESULT_OPTIONAL = {"work.accept": {"review": "review"}}
+
+
+def optional(table, operation, intent):
+    """The optional keys this operation's result may carry, given its signed intent."""
+    keys = table.get(operation) or table.get(operation.split(".")[0] + ".*") or {}
+    return {k for k, field in keys.items() if field is None or (isinstance(intent, dict) and field in intent)}
+
+
+def shaped(value, required, allowed):
+    """required <= keys <= required | allowed."""
+    return isinstance(value, dict) and required <= set(value) <= required | allowed
+
+
 DELEGATION_LOCAL_CODES = {"invalid_delegation_context", "delegation_required", "delegation_context_mismatch", "delegation_key_mismatch",
                           "delegation_client_binding_mismatch", "delegation_forbidden", "delegation_scope_mismatch",
                           "delegation_public_post_required", "delegation_generation_mismatch", "delegation_signed_envelope_required"}
@@ -157,8 +187,8 @@ def validate_ack(command, result, service=memo.SERVICE):
         intent = strict_json(command.get("data", ""))
         creating = operation == "delegation.create"
         target = sha(memo.unb64(command["target"])) if creating else command.get("target")
-        fields = {"grant_id", "child_id", "generation", "service_id", "state", "accepted_at", "expires_at", "ceiling_bytes"}
-        if isinstance(ack, dict) and set(ack) == fields and isinstance(intent, dict):
+        if (shaped(ack, DELEGATION_ACK, optional(ACK_OPTIONAL, operation, intent)) and isinstance(intent, dict)
+                and isinstance(ack.get("spend_limit", {}), dict)):
             valid = (ack["grant_id"] == target and ack["child_id"] == target and isinstance(target, str)
                      and bool(re.fullmatch(r"[a-f0-9]{64}", target)) and ack["service_id"] == service
                      and ack["state"] == ("active" if creating else "revoked")
@@ -189,10 +219,12 @@ def validate_ack(command, result, service=memo.SERVICE):
                 valid = (ack["grant_generation"] == ack["generation"]
                          and ack["expires_at"] - ack["accepted_at"] == command.get("ttl", 86400))
     elif operation.startswith("work."):
-        if set(result) != {"ok", "data"} or set(data) != {"ack"}:
+        intent = strict_json(command.get("data", ""))
+        if set(result) != {"ok", "data"} or not shaped(data, {"ack"}, optional(RESULT_OPTIONAL, operation, intent)):
+            raise OutboxError("invalid_acknowledgement")
+        if "review" in data and not (isinstance(data["review"], dict) and isinstance(data["review"].get("id"), str)):
             raise OutboxError("invalid_acknowledgement")
         ack = data.get("ack")
-        intent = strict_json(command.get("data", ""))
         expected = {"work.create": "open", "work.claim": "claimed", "work.renew": "claimed",
                     "work.submit": "submitted", "work.accept": "accepted", "work.reject": "open",
                     "work.cancel": "cancelled"}.get(operation)
@@ -202,13 +234,8 @@ def validate_ack(command, result, service=memo.SERVICE):
             expected = "cancelled"  # a reject ends a result a standing task opened
         if operation == "work.claim" and command.get("target"):
             expected = "submitted"  # a claim that names its result submits it in the same step
-        fields = {"work_id", "state", "fence", "generation", "service_id", "accepted_at", "deadline", "claim_expires_at"}
-        # resolved_from: the command named an edited version of the request and
-        # work_id is its root; result_sha256 echoes a hash the command signed;
-        # note is the service's advice on a submit, an accept or a reject fee.
-        extra = set(ack) - fields if isinstance(ack, dict) else set()
-        note_ok = "note" not in extra or (isinstance(ack["note"], str) and 0 < len(ack["note"].encode()) <= 2048)
-        if (isinstance(ack, dict) and fields <= set(ack) and extra <= {"resolved_from", "result_sha256", "note"} and note_ok and isinstance(intent, dict)
+        note_ok = not isinstance(ack, dict) or "note" not in ack or (isinstance(ack["note"], str) and 0 < len(ack["note"].encode()) <= 2048)
+        if (shaped(ack, WORK_ACK, optional(ACK_OPTIONAL, operation, intent)) and note_ok and isinstance(intent, dict)
                 and ("resolved_from" not in ack or (matching_text(ack["resolved_from"], command.get("message_id")) and ack["resolved_from"] != ack["work_id"]))
                 and ack.get("result_sha256") == (intent.get("result_sha256") if "result_sha256" in ack else None)):
             valid = (matching_text(ack["work_id"] if "resolved_from" not in ack else ack["resolved_from"], command.get("message_id"))

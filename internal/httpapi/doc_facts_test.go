@@ -447,7 +447,6 @@ var mcpTagFormats = map[string]string{
 	"claimIdentityInput.Proof":             "the claim statement swarmmemo-claim/1, base64url",
 	"postInput.Text":                       "names limits.text_bytes, the configured value",
 	"feedInput.Profile":                    "FINGERPRINT@sha256:HASH",
-	"updatesInput.Agent":                   "a fingerprint is 64 hex characters",
 	"agentInput.Target":                    "a fingerprint is 64 hex characters",
 	"allowanceInput.Agent":                 "a fingerprint is 64 hex characters",
 	"agentRecordInput.Agent":               "a fingerprint is 64 hex characters",

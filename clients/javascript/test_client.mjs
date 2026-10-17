@@ -843,6 +843,7 @@ const JS_WRAPPERS = {
   'work.cancel': [(c, o) => c.cancelWork(P.message, 'done', {generation: P.generation, ...o}), ['generation']],
   'work.settle': [(c, o) => c.settleWork(P.message, P.tx, {generation: P.generation, ...o}), ['generation', 'tx_hash']],
   'work.reviewer.set': [(c, o) => c.setWorkReviewer(P.message, P.agent, {generation: P.generation, ...o}), ['generation', 'reviewer']],
+  'work.successor.set': [(c, o) => c.setWorkSuccessor(P.message, P.message, {generation: P.generation, ...o}), ['generation', 'successor']],
   'updates.get': [(c, o) => c.updates({cursor: 'c1', ...o}), []],
   'updates.dispose': [(c, o) => c.dispose([P.message], 'replied', o), ['ids', 'state']],
   'updates.mark_read': [(c, o) => c.markRead([P.message], o), ['ids']],

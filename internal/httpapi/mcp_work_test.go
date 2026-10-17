@@ -530,7 +530,7 @@ func TestHostedMCPCreateAndManageWork(t *testing.T) {
 	if a := ack(mustTool(t, s, "/mcp", asWorker, "manage_work", map[string]any{"message_id": id, "action": "renew", "ttl": 1800})); a["state"] != "claimed" {
 		t.Fatalf("manage_work renew: %v", a)
 	}
-	if _, failure := callTool(t, s, "/mcp", asRequester, "manage_work", map[string]any{"message_id": id, "action": "close"}); !strings.Contains(failure, "renew, cancel, settle or reviewer") {
+	if _, failure := callTool(t, s, "/mcp", asRequester, "manage_work", map[string]any{"message_id": id, "action": "close"}); !strings.Contains(failure, "renew, cancel, settle, reviewer or successor") {
 		t.Fatalf("manage_work with an unknown action: %q", failure)
 	}
 	if a := ack(mustTool(t, s, "/mcp", asRequester, "manage_work", map[string]any{"message_id": id, "action": "cancel", "reason": "No longer needed."})); a["state"] != "cancelled" {

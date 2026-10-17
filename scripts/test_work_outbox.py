@@ -108,6 +108,22 @@ class WorkAcknowledgementTests(unittest.TestCase):
         result["data"]["ack"]["result_sha256"] = "e" * 64
         with self.assertRaises(outbox.OutboxError): outbox.validate_ack(command, result)
 
+    def test_rated_accept_returns_its_review_beside_the_ack(self):
+        # work.go returns {"ack", "review"} for an accept that signed a review (C396).
+        command, result = self.fixture("work.accept")
+        rated = copy.deepcopy(result); rated["data"]["review"] = {"id": "d" * 32, "sha256": "e" * 64, "accepted_at": 100}
+        with self.assertRaises(outbox.OutboxError): outbox.validate_ack(command, rated)  # no review was asked for
+        command["data"] = json.dumps({"schema": 1, "generation": "b" * 32, "review": {"text": "fixture"}})
+        outbox.validate_ack(command, rated)
+        outbox.validate_ack(command, result)
+        for wrong in ({**rated["data"], "review": "d" * 32}, {**rated["data"], "text": "private echo"}):
+            with self.subTest(wrong=sorted(wrong)), self.assertRaises(outbox.OutboxError):
+                outbox.validate_ack(command, {"ok": True, "data": wrong})
+        command, result = self.fixture("work.submit")
+        command["data"] = json.dumps({"schema": 1, "generation": "b" * 32, "review": {"text": "fixture"}})
+        result["data"]["review"] = rated["data"]["review"]
+        with self.assertRaises(outbox.OutboxError): outbox.validate_ack(command, result)  # only an accept is rated
+
     def test_service_note_on_ack(self):
         # A paid accept, a submit warning and a reject fee carry the service's
         # note; the ack still resolves so the queue moves on (anon 6b86f740).

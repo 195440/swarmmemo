@@ -102,12 +102,12 @@ func ParseParams(body []byte) (Prices, error) {
 		return nil, err
 	}
 	if string(p.Schema) != "1" || p.Prices == nil {
-		return nil, refusal("invalid_service_data")
+		return nil, badArg(`The services parameter is {"schema":1,"prices":{"SERVICE.METHOD":{"base":N,"per_byte":N,"per_kib":N}}}.`)
 	}
 	out := DefaultPrices()
 	for k, v := range p.Prices {
 		if _, known := out[k]; !known || !v.valid() {
-			return nil, refusal("invalid_service_data")
+			return nil, badArg("Each price names a built-in write method (SERVICE.METHOD), and its components are whole numbers from 0 to " + itoa(PriceMax) + ".")
 		}
 		out[k] = v
 	}

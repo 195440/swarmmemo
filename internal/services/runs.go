@@ -427,12 +427,14 @@ func (r *runs) plan(raw json.RawMessage) (runPlan, error) {
 	if cfg == nil {
 		return runPlan{}, refusal("service_unavailable")
 	}
-	bad := refusal("invalid_service_data")
 	if a.Code != nil && len(*a.Code) > RunsCodeBytes {
 		return runPlan{}, tooLarge("invalid_service_data", len(*a.Code), RunsCodeBytes)
 	}
-	if !slices.Contains(cfg.Languages, a.Language) || a.Code == nil || *a.Code == "" {
-		return runPlan{}, bad
+	if !slices.Contains(cfg.Languages, a.Language) {
+		return runPlan{}, badArg("language is one of " + strings.Join(cfg.Languages, ", ") + ".")
+	}
+	if a.Code == nil || *a.Code == "" {
+		return runPlan{}, badArg("code is required: the program's source text.")
 	}
 	p := runPlan{language: a.Language, code: *a.Code, input: a.Input, cpuMs: cfg.Limits.CPUMsDefault, wallMs: cfg.Limits.WallMsDefault}
 	if len(p.input) == 0 {
@@ -444,12 +446,12 @@ func (r *runs) plan(raw json.RawMessage) (runPlan, error) {
 	var ok bool
 	if a.CPUMs != nil {
 		if p.cpuMs, ok = Integer(a.CPUMs, cfg.Limits.CPUMsMax); !ok || p.cpuMs < 1 {
-			return runPlan{}, bad
+			return runPlan{}, badArg(intRule("cpu_ms", "milliseconds", 1, cfg.Limits.CPUMsMax))
 		}
 	}
 	if a.WallMs != nil {
 		if p.wallMs, ok = Integer(a.WallMs, cfg.Limits.WallMsMax); !ok || p.wallMs < RunsWallMsMin {
-			return runPlan{}, bad
+			return runPlan{}, badArg(intRule("wall_ms", "milliseconds", RunsWallMsMin, cfg.Limits.WallMsMax))
 		}
 	}
 	p.asked = a.Network != nil
@@ -457,12 +459,14 @@ func (r *runs) plan(raw json.RawMessage) (runPlan, error) {
 		p.network = true
 		p.maxRequests, p.maxBytesOut, p.maxBytesIn = cfg.Egress.MaxRequests, cfg.Egress.MaxBytesOut, cfg.Egress.MaxBytesIn
 		for _, f := range []struct {
-			raw json.RawMessage
-			dst *int64
-		}{{n.MaxRequests, &p.maxRequests}, {n.MaxBytesOut, &p.maxBytesOut}, {n.MaxBytesIn, &p.maxBytesIn}} {
+			name string
+			raw  json.RawMessage
+			dst  *int64
+		}{{"network.max_requests", n.MaxRequests, &p.maxRequests}, {"network.max_bytes_out", n.MaxBytesOut, &p.maxBytesOut}, {"network.max_bytes_in", n.MaxBytesIn, &p.maxBytesIn}} {
 			if f.raw != nil {
-				if *f.dst, ok = Integer(f.raw, *f.dst); !ok {
-					return runPlan{}, bad
+				limit := *f.dst
+				if *f.dst, ok = Integer(f.raw, limit); !ok {
+					return runPlan{}, badArg(intRule(f.name, "", 0, limit))
 				}
 			}
 		}
@@ -477,7 +481,7 @@ func runsCost(p Price, cpuMs, egressBytes int64) int64 {
 
 func (r *runs) Quote(c Call) (Quote, error) {
 	if c.Method != "run" {
-		return Quote{}, refusal("invalid_service_data")
+		return Quote{}, noSuchMethod(c.Method)
 	}
 	p, err := r.plan(c.Args)
 	if err != nil {
@@ -1074,14 +1078,20 @@ func (rec runRecord) body(out runOutput) json.RawMessage {
 // Read is service.read runs log {"run":RUN_ID}: the caller's own full run
 // record, owner only.
 func (r *runs) Read(ctx context.Context, q allowance.Querier, c Call) (json.RawMessage, error) {
-	if c.Method != "log" || !c.Subject.Signed {
-		return nil, refusal("invalid_service_data")
+	if c.Method != "log" {
+		return nil, noSuchMethod(c.Method)
+	}
+	if !c.Subject.Signed {
+		return nil, refusal("signature_required")
 	}
 	var a struct {
 		Run string `json:"run"`
 	}
-	if err := StrictObject(c.Args, &a); err != nil || !runIDRE.MatchString(a.Run) {
-		return nil, refusal("invalid_service_data")
+	if err := StrictObject(c.Args, &a); err != nil {
+		return nil, err
+	}
+	if !runIDRE.MatchString(a.Run) {
+		return nil, badArg("run is the run's id from its receipt: 32 lowercase hex digits.")
 	}
 	var row struct {
 		createdAt, finishedAt, networkRequested, cpuLimit, wallLimit, cpu, wall, egressBytes, cost, flagged int64

@@ -58,6 +58,12 @@ func errAgentFingerprint() error {
 	return problem(400, "invalid_agent", "An agent is a 64-character lowercase hex fingerprint.")
 }
 
+// errQueryAgent refuses an agent query parameter (resolveQueryAgents) that
+// is neither a fingerprint nor a handle.
+func errQueryAgent() error {
+	return problem(400, "invalid_agent", "Name the agent by its fingerprint (64 lowercase hex digits) or its handle.")
+}
+
 func errNameTheAgent() error {
 	return problem(400, "invalid_agent", "Name the agent: target is its fingerprint or handle.")
 }

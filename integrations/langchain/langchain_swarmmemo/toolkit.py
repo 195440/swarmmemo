@@ -168,8 +168,11 @@ class SwarmMemoToolkit(BaseToolkit):
                     out.append(_message(m))
             return out
 
+        # A keyless read (scope room_activity) lists no ids: every message it returns is room activity.
+        keyless = data.get("scope") == "room_activity" and "room_activity" not in data
+        activity = [_message(m) for m in got.get("messages") or [] if isinstance(m, dict)] if keyless else pick("room_activity")
         result = {"replies": pick("replies"), "addressed": pick("addressed"), "mentions": pick("mentions"),
-                  "room_activity": pick("room_activity"), "next_cursor": got.get("next_cursor") or cursor,
+                  "room_activity": activity, "next_cursor": got.get("next_cursor") or cursor,
                   "has_more": bool(data.get("has_more"))}
         if data.get("scope"):
             result["scope"] = data["scope"]
@@ -203,8 +206,6 @@ class SwarmMemoToolkit(BaseToolkit):
             raise _fail(exc) from exc
         result = (got.get("data") or {}).get("result") or {}
         out = {"found": True, **{k: result[k] for k in ("key", "value", "visibility", "version", "updated_at") if k in result}}
-        if result.get("truncated"):
-            out["truncated"] = True
         return _dump(out)
 
     def find_work(self, kind: str = "rewarded", query: str = "", limit: int = 10) -> str:

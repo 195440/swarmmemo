@@ -8,7 +8,10 @@ no CLI, public export, body cache, network callback hook, or mutation transport.
 from __future__ import annotations
 
 from contextlib import contextmanager
-import fcntl
+try:
+    import fcntl
+except ImportError:  # Windows has no fcntl file locks
+    raise ImportError("swarmmemo_private_inbox is Linux-only (it needs fcntl file locks), see clients/python/PRIVATE_INBOX.md; on Windows use swarmmemo.py directly") from None
 import hashlib
 import os
 from pathlib import Path

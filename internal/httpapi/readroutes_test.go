@@ -1,31 +1,96 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"net/http/httptest"
 	"net/url"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"swarmmemo/internal/board"
 )
 
-// readRouteRig is a real store with the transparency log signed and the
-// notary and memory services on: every route of the table is served.
-func readRouteRig(t *testing.T) (get func(path string) (int, string)) {
+// readRouteFeatures turns on every feature a read route of the table
+// depends on, so the rig serves (and /openapi.json declares) them all.
+var readRouteFeatures = board.Features{Services: []string{"notary", "memory"}, Ledger: board.LedgerOn, AnonPrefix: true,
+	Trust: board.TrustOn, Reviews: true, Moderation: true, VoteRecords: true, ExportEndorsements: true}
+
+// recordingStore is the real store, recording each command it executes so
+// a drift test can ask which operation a route ran (C397).
+type recordingStore struct {
+	*board.Store
+	mu       sync.Mutex
+	commands []board.Command
+}
+
+func (r *recordingStore) Execute(ctx context.Context, c board.Command, peer string) (board.Result, error) {
+	r.mu.Lock()
+	r.commands = append(r.commands, c)
+	r.mu.Unlock()
+	return r.Store.Execute(ctx, c, peer)
+}
+
+// last is the command the latest request ran, if it ran one since mark.
+func (r *recordingStore) since(mark int) (board.Command, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.commands) <= mark {
+		return board.Command{}, false
+	}
+	return r.commands[len(r.commands)-1], true
+}
+
+func (r *recordingStore) mark() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.commands)
+}
+
+// readRig is a real store with the transparency log signed, the notary and
+// memory services and every feature of readRouteFeatures on: every route of
+// the table is served.
+type readRig struct {
+	s     *Server
+	store *recordingStore
+	n     int
+}
+
+func newReadRig(t *testing.T) *readRig {
 	t.Helper()
-	store, s := anonCallServer(t, 2000)
+	store, base := anonCallServerWith(t, 2000, readRouteFeatures)
 	if _, err := store.SignCheckpoint(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	n := 0
-	return func(path string) (int, string) {
-		// One address per request: the network rate limit is not under test.
-		n++
-		w := getFrom(s, "https://swarmmemo.com"+path, "", fmt.Sprintf("198.51.%d.%d:1234", n/250, n%250+1))
-		return w.Code, w.Body.String()
+	rec := &recordingStore{Store: store}
+	return &readRig{s: New(rec, nil, base.cfg), store: rec}
+}
+
+// get answers path; a stream's request ends after a moment.
+func (g *readRig) get(path string) (int, string) {
+	// One address per request: the network rate limit is not under test.
+	g.n++
+	r := httptest.NewRequest("GET", "https://swarmmemo.com"+path, nil)
+	r.RemoteAddr = fmt.Sprintf("198.51.%d.%d:1234", g.n/250, g.n%250+1)
+	if strings.HasPrefix(path, "/api/stream") {
+		ctx, cancel := context.WithTimeout(r.Context(), 200*time.Millisecond)
+		defer cancel()
+		r = r.WithContext(ctx)
 	}
+	w := httptest.NewRecorder()
+	g.s.ServeHTTP(w, r)
+	return w.Code, w.Body.String()
+}
+
+func readRouteRig(t *testing.T) (get func(path string) (int, string)) {
+	t.Helper()
+	return newReadRig(t).get
 }
 
 // probe is the route's URL with every path parameter and every query
@@ -63,8 +128,12 @@ func (rt readRoute) probe(drop []string, extra url.Values) string {
 // exactly-one-of group, is a 400, as is giving two members; a strict route
 // refuses an unknown parameter and accepts each declared one.
 func TestReadRoutesMatchHandlers(t *testing.T) {
-	get := readRouteRig(t)
+	rig := newReadRig(t)
+	get := rig.get
 	for _, rt := range readRoutes() {
+		if !rig.s.routeFeatureOn(rt.Feature) {
+			t.Fatalf("%s: the rig leaves its feature %s off", rt.Path, rt.Feature)
+		}
 		t.Run(rt.Path, func(t *testing.T) {
 			_, has404 := rt.Errors[404]
 			code, body := get(rt.probe(nil, nil))
@@ -124,7 +193,8 @@ func TestReadRoutesMatchHandlers(t *testing.T) {
 // TestReadRoutesOpenAPI: /openapi.json carries each table route as the
 // table says: its parameters, and exactly 200, its errors and 429.
 func TestReadRoutesOpenAPI(t *testing.T) {
-	get := readRouteRig(t)
+	rig := newReadRig(t)
+	get := rig.get
 	code, raw := get("/openapi.json")
 	var spec map[string]any
 	if err := json.Unmarshal([]byte(raw), &spec); err != nil || code != 200 {
@@ -151,11 +221,12 @@ func TestReadRoutesOpenAPI(t *testing.T) {
 			t.Errorf("%s responses: %v, want %v", rt.Path, got, want)
 		}
 		params, _ := op["parameters"].([]any)
-		if len(params) != len(rt.Params) {
-			t.Errorf("%s: %d parameters, the table has %d", rt.Path, len(params), len(rt.Params))
+		declared := rt.params(rig.s.routeFeatureOn)
+		if len(params) != len(declared) {
+			t.Errorf("%s: %d parameters, the table has %d", rt.Path, len(params), len(declared))
 			continue
 		}
-		for i, p := range rt.Params {
+		for i, p := range declared {
 			m := params[i].(map[string]any)
 			if m["name"] != p.Name || m["in"] != p.In || (m["required"] == true) != (p.Required || p.In == "path") {
 				t.Errorf("%s parameter %d: %v, want %+v", rt.Path, i, m, p)
@@ -185,6 +256,31 @@ func TestReadRoutesOpenAPI(t *testing.T) {
 	for _, path := range []string{"/api/notary/{hash}", "/api/memory/{agent}/{key}"} {
 		if dig(spec, "paths", path, "get", "responses", "404") == nil {
 			t.Errorf("%s: no 404", path)
+		}
+	}
+}
+
+// TestHandBuiltReadRoutes404 covers the read routes built outside the table
+// whose handlers answer 404 for an unknown ID (C390): each declares it, and
+// each handler does answer 404 for an ID that names nothing.
+func TestHandBuiltReadRoutes404(t *testing.T) {
+	get := readRouteRig(t)
+	code, raw := get("/openapi.json")
+	var spec map[string]any
+	if err := json.Unmarshal([]byte(raw), &spec); err != nil || code != 200 {
+		t.Fatalf("%d %v %.300s", code, err, raw)
+	}
+	for path, probe := range map[string]string{
+		"/api/work/{message_id}":         "/api/work/" + exampleMessageID,
+		"/api/work/{message_id}/history": "/api/work/" + exampleMessageID + "/history",
+		"/api/room/{room}":               "/api/room/no-such-room",
+		"/api/room/{room}/modlog":        "/api/room/no-such-room/modlog",
+	} {
+		if dig(spec, "paths", path, "get", "responses", "404") == nil {
+			t.Errorf("%s: /openapi.json declares no 404", path)
+		}
+		if code, body := get(probe); code != 404 {
+			t.Errorf("%s: %d, want the 404 /openapi.json declares: %s", probe, code, body)
 		}
 	}
 }

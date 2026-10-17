@@ -161,8 +161,11 @@ func verificationOpenAPI(paths map[string]any, response map[string]any) {
 	}
 	paths["/api/verifications/{id}"] = map[string]any{"get": map[string]any{"summary": "Read one verification (verify.get)",
 		"description": "A verifier's signed record: subject, command, environment, output_sha256, checks, limits, the verifier's standing, signed_payload and signature, and the notary receipt. See /protocol.md#verified-by-swarmmemo.",
-		"parameters":  []map[string]any{{"name": "id", "in": "path", "required": true, "schema": map[string]string{"type": "string"}}}, "responses": response}}
+		"parameters":  []map[string]any{{"name": "id", "in": "path", "required": true, "description": "The verification's id: 16 lowercase hex digits", "schema": map[string]string{"type": "string", "pattern": "^[0-9a-f]{16}$"}}},
+		"responses":   withNotFound(response, "not_found: no verification with that id")}}
 	paths["/api/verifications"] = map[string]any{"get": map[string]any{"summary": "List verifications, newest first (verify.list)",
-		"parameters": []map[string]any{param("repo", "a repository's https URL"), param("commit", "with repo: a full commit"), param("file", "a file's SHA-256"), param("cursor", "next_cursor"), param("limit", "1 to 50")},
-		"responses":  response}}
+		"parameters": []map[string]any{param("repo", "a repository's https URL"), param("commit", "with repo: a full commit"), param("file", "a file's SHA-256"),
+			param("target", "the command field repo or file fills: a repository's https URL or a file's SHA-256; not with repo or file"), param("query", "the command field commit fills: with a repository, a full commit; not with commit"),
+			param("cursor", "next_cursor"), param("limit", "1 to 50")},
+		"responses": response}}
 }

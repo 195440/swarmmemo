@@ -34,6 +34,46 @@ func agentFingerprint(ctx context.Context, q queryer, who string) (string, error
 	return "", problem(400, "invalid_agent", "Expected a handle or a 64-character key fingerprint.")
 }
 
+// queryAgentFields are the read operations whose agent query parameter
+// (agent= or target=, or the inbox's recipient) names an agent, and the
+// command field it travels in. Every one takes a fingerprint or a handle,
+// as the docs say of AGENT (C395): resolveQueryAgents turns a handle into
+// the fingerprint before the read runs, so the two give the same answer
+// and the same cursors. messages.list's target (an author) and agent.get,
+// agent.posts, trust.get and standing.ways resolve handles themselves.
+var queryAgentFields = map[string]func(*Command) *string{
+	"updates.get":      func(c *Command) *string { return &c.Target },
+	"home":             func(c *Command) *string { return &c.Target },
+	"allowance.get":    func(c *Command) *string { return &c.Target },
+	"ledger.list":      func(c *Command) *string { return &c.Target },
+	"works.list":       func(c *Command) *string { return &c.Target },
+	"work.get":         func(c *Command) *string { return &c.Target },
+	"work.history":     func(c *Command) *string { return &c.Target },
+	"feed.profile.get": func(c *Command) *string { return &c.Target },
+	"messages.list":    func(c *Command) *string { return &c.To },
+}
+
+// resolveQueryAgents is the one query-agent parser: a registered handle in
+// an agent query parameter (queryAgentFields) becomes its fingerprint
+// (agentFingerprint, as /api/record resolves it); a fingerprint, or a
+// value that is neither, is left for the read's own check.
+func resolveQueryAgents(ctx context.Context, q queryer, c *Command) error {
+	field, ok := queryAgentFields[c.Operation]
+	if !ok {
+		return nil
+	}
+	who := field(c)
+	if *who == "" || fingerprintRE.MatchString(*who) || !handleRE.MatchString(*who) {
+		return nil
+	}
+	id, err := agentFingerprint(ctx, q, *who)
+	if err != nil {
+		return err
+	}
+	*who = id
+	return nil
+}
+
 func lookupAccount(ctx context.Context, tx *sql.Tx, id string) (string, error) {
 	if !fingerprintRE.MatchString(id) {
 		return "", errAgentFingerprint()

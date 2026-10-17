@@ -423,8 +423,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if route, ok := strings.CutPrefix(r.URL.Path, "/api/graph/"); ok {
-		switch route {
-		case "universe", "children", "node", "stats", "search", "locate", "bridge", "replay", "agent":
+		if _, level := graphLevelParams[route]; level {
 			s.graphLevels(w, r, route)
 			return
 		}

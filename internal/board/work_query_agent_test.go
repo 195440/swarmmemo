@@ -37,5 +37,5 @@ func TestWorkListScopesToOneAgentAcrossRotation(t *testing.T) {
 	if len(run(t, s, Command{Operation: "works.list"}).Data["works"].([]Work)) != 2 {
 		t.Fatal("the unscoped listing must still show every public work")
 	}
-	fails(t, s, Command{Operation: "works.list", Target: "not-a-fingerprint"}, "invalid_agent")
+	fails(t, s, Command{Operation: "works.list", Target: "not a fingerprint"}, "invalid_agent")
 }

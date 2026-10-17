@@ -233,7 +233,8 @@
       "work.reject",
       "work.cancel",
       "work.settle",
-      "work.reviewer.set"
+      "work.reviewer.set",
+      "work.successor.set"
     ],
     "work_usdc_states": [
       "promised",
@@ -3250,6 +3251,36 @@
         "removed": {}
       }
     },
+    "work.successor.set": {
+      "fields": [
+        "message_id",
+        "data"
+      ],
+      "signed": true,
+      "mutation": true,
+      "delegable": false,
+      "wire": "https",
+      "data": {
+        "fields": {
+          "generation": {
+            "type": "string",
+            "required": true,
+            "pattern": "work_id"
+          },
+          "schema": {
+            "type": "int",
+            "required": true
+          },
+          "successor": {
+            "type": "string",
+            "required": true,
+            "pattern": "work_id"
+          }
+        },
+        "aliases": {},
+        "removed": {}
+      }
+    },
     "works.list": {
       "fields": [
         "room",
@@ -3733,7 +3764,9 @@
       "optional": [
         "full",
         "next_open_at",
+        "next_round",
         "results_max",
+        "successor",
         "usdc_day_max",
         "usdc_owed",
         "usdc_owed_max",

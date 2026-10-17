@@ -377,14 +377,14 @@ func (x *x402) plan(c Call) (x402Plan, error) {
 	}
 	q := u.Query()
 	if len(a.Query) > X402QueryParamsMax {
-		return x402Plan{}, refusal("invalid_service_data")
+		return x402Plan{}, badArg("query has at most " + itoa(X402QueryParamsMax) + " parameters.")
 	}
 	for k, v := range a.Query {
 		if len(v) > X402QueryValueBytes {
 			return x402Plan{}, tooLarge("invalid_service_data", len(v), X402QueryValueBytes)
 		}
 		if !slices.Contains(res.Query, k) || q.Has(k) || !utf8.ValidString(v) {
-			return x402Plan{}, refusal("invalid_service_data")
+			return x402Plan{}, badArg("query takes only the parameters this resource lists (its query field), as UTF-8 text; the resource fixes the others.")
 		}
 		q.Set(k, v)
 	}
@@ -394,14 +394,16 @@ func (x *x402) plan(c Call) (x402Plan, error) {
 		return x402Plan{}, tooLarge("invalid_service_data", len(p.url), X402URLBytes)
 	}
 	switch {
-	case len(a.Body) > 0 && (!res.Body || !isObject(a.Body)):
-		return x402Plan{}, refusal("invalid_service_data")
+	case len(a.Body) > 0 && !res.Body:
+		return x402Plan{}, badArg("This resource takes no body; send its inputs in query.")
+	case len(a.Body) > 0 && !isObject(a.Body):
+		return x402Plan{}, badArg("body is a JSON object.")
 	case res.Method == http.MethodPost:
 		var b bytes.Buffer
 		if len(a.Body) == 0 {
 			b.WriteString("{}")
 		} else if err := json.Compact(&b, a.Body); err != nil {
-			return x402Plan{}, refusal("invalid_service_data")
+			return x402Plan{}, badArg("body is a JSON object.")
 		}
 		p.body = b.Bytes()
 	}

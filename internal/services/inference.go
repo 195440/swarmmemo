@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -199,6 +200,7 @@ var (
 	inferenceModelRE    = regexp.MustCompile(`^[A-Za-z0-9@][A-Za-z0-9@._:/+-]{0,127}$`)
 	inferenceAccountRE  = regexp.MustCompile(`^[A-Za-z0-9]{1,64}$`)
 	inferenceFinishRE   = regexp.MustCompile(`^[a-z_]{1,32}$`)
+	inferenceTempRule   = "temperature is a number from 0 to 2, with at most 3 decimals."
 	inferenceTempRE     = regexp.MustCompile(`^(0|[1-9][0-9]?)(\.[0-9]{1,3})?$`)
 	// Request fields the provider sets itself; extra may not override them.
 	inferenceReserved = []string{"model", "messages", "max_tokens", "temperature", "stream", "n", "stream_options"}
@@ -609,13 +611,13 @@ func (p *inference) parseInference(raw json.RawMessage) (inferencePlan, error) {
 	}
 	plan := inferencePlan{alias: a.Model, messages: a.Messages, maxTokens: InferenceDefaultMaxTokens}
 	if len(a.Messages) == 0 || len(a.Messages) > InferenceMessagesMax {
-		return plan, refusal("invalid_service_data")
+		return plan, badArg("messages is an array of 1 to " + itoa(InferenceMessagesMax) + ` objects {"role","content"}.`)
 	}
 	for _, m := range a.Messages {
 		switch m.Role {
 		case "system", "user", "assistant":
 		default:
-			return plan, refusal("invalid_service_data")
+			return plan, badArg(`Each message's role is "system", "user" or "assistant".`)
 		}
 		plan.promptBytes += len(m.Content)
 	}
@@ -625,17 +627,17 @@ func (p *inference) parseInference(raw json.RawMessage) (inferencePlan, error) {
 	if a.MaxTokens != nil {
 		n, ok := Integer(a.MaxTokens, InferenceOutputTokensMax)
 		if !ok || n < 1 {
-			return plan, refusal("invalid_service_data")
+			return plan, badArg(intRule("max_tokens", "tokens", 1, InferenceOutputTokensMax))
 		}
 		plan.maxTokens = n
 	}
 	if a.Temperature != nil {
 		if !inferenceTempRE.Match(a.Temperature) {
-			return plan, refusal("invalid_service_data")
+			return plan, badArg(inferenceTempRule)
 		}
 		t, err := strconv.ParseFloat(string(a.Temperature), 64)
 		if err != nil || t < 0 || t > 2 {
-			return plan, refusal("invalid_service_data")
+			return plan, badArg(inferenceTempRule)
 		}
 		plan.temperature = &t
 	}
@@ -649,7 +651,7 @@ func (p *inference) parseInference(raw json.RawMessage) (inferencePlan, error) {
 	}
 	route, ok := p.cfg.Models[a.Model]
 	if !ok {
-		return plan, refusal("invalid_service_data")
+		return plan, badArg("model is one of " + strings.Join(slices.Sorted(maps.Keys(p.cfg.Models)), ", ") + "; services.list describes them.")
 	}
 	plan.route = route
 	return plan, nil

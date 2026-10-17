@@ -273,6 +273,11 @@ const (
 // verdict). A held reviewer_fee stays held and goes to whoever reviews.
 const WorkReviewerSet = "work.reviewer.set"
 
+// WorkSuccessorSet is the requester's command that names a standing task's
+// successor (C391): another open standing task of its own, the next round,
+// where readers of a full or closed round are sent (standing.next_round).
+const WorkSuccessorSet = "work.successor.set"
+
 // WorkFallbackReviewerSilent is work.history's fallback on a verdict the
 // requester gave in a silent reviewer's place; WorkReviewerSilentNote is its
 // note in words. The reviewer_fee is released with the same reason.
@@ -315,6 +320,7 @@ type workData struct {
 	PayoutAddress     string
 	TxHash            string
 	Reviewer          string
+	Successor         string // work.successor.set: the standing task that follows (C391)
 	ReviewerFee       int64
 	RejectFee         int64
 	RejectFeeSet      bool // reject_fee was sent (refused while WORK_REJECT_FEE is off)
@@ -347,7 +353,7 @@ func workResultHashOp(operation string) bool {
 
 // workDataRule is the whole rule for work.* data, the message of an
 // invalid_work_data refusal; a refusal that can name its field says so first.
-const workDataRule = "Data must be strict schema-1 JSON with a current lowercase 32-hex generation; creation also requires a 1–160 UTF-8 byte title and up to 16 unique lowercase capability slugs, and may add a reward (whole credits, or an object with credits and usdc, a decimal string), a reviewer (a 64-hex agent fingerprint) with an optional reviewer_fee, an eligibility (open, first_work, linked or new_agent) and a reward_note (one line, display only); work.reviewer.set takes reviewer, the new one's fingerprint; work.claim and work.submit may add payout_address (0x and 40 hex, where a USDC reward is paid); work.settle takes tx_hash, the payment's transaction; submit, accept and a claim with a result may add result_sha256, the 64-hex SHA-256 of the result text; accept and reject may add checks, the verifier's per-property list; the requester's accept may add review, its own signed review post of the worker (a rated accept); a standing task's create may add seats (1–50) with per_agent_day, day_max, results_max, tiers, usdc_per_agent_day and usdc_day_max, and an accept of one of its results may add tier."
+const workDataRule = "Data must be strict schema-1 JSON with a current lowercase 32-hex generation; creation also requires a 1–160 UTF-8 byte title and up to 16 unique lowercase capability slugs, and may add a reward (whole credits, or an object with credits and usdc, a decimal string), a reviewer (a 64-hex agent fingerprint) with an optional reviewer_fee, an eligibility (open, first_work, linked or new_agent) and a reward_note (one line, display only); work.reviewer.set takes reviewer, the new one's fingerprint; work.successor.set takes successor, the standing task that follows a standing task; work.claim and work.submit may add payout_address (0x and 40 hex, where a USDC reward is paid); work.settle takes tx_hash, the payment's transaction; submit, accept and a claim with a result may add result_sha256, the 64-hex SHA-256 of the result text; accept and reject may add checks, the verifier's per-property list; the requester's accept may add review, its own signed review post of the worker (a rated accept); a standing task's create may add seats (1–50) with per_agent_day, day_max, results_max, tiers, usdc_per_agent_day and usdc_day_max, and an accept of one of its results may add tier."
 
 // workDataAliases is the field a name work data does not take was likely
 // meant to be: a tiny fixed map, no fuzzy matching. ttl is the command field
@@ -462,6 +468,8 @@ func parseWorkData(raw string, operation string) (workData, error) {
 			dest = &d.TxHash
 		case "reviewer":
 			dest = &d.Reviewer
+		case "successor":
+			dest = &d.Successor
 		case "reviewer_fee":
 			dest = &d.ReviewerFee
 		case "reject_fee":
@@ -561,6 +569,12 @@ func parseWorkData(raw string, operation string) (workData, error) {
 	if operation == WorkSettle {
 		if !seen["tx_hash"] || !services.ValidTxHash(d.TxHash) {
 			return workData{}, problem(400, "invalid_work_data", WorkSettle+" data names the payment: tx_hash, 0x and 64 lowercase hex digits. "+workDataRule)
+		}
+		want++
+	}
+	if operation == WorkSuccessorSet {
+		if !seen["successor"] || !workIDRE.MatchString(d.Successor) {
+			return workData{}, problem(400, "invalid_work_data", WorkSuccessorSet+" data names the round that follows: successor, the 32-hex ID of another standing task of yours. "+workDataRule)
 		}
 		want++
 	}
@@ -926,6 +940,10 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 			if !allowed && a.account == w.Requester {
 				return Result{}, errUSDCOwedOnAccept()
 			}
+		case WorkSuccessorSet:
+			// A full, cancelled or expired round is the one that needs it;
+			// a transition re-binds the generation, so not one to recover.
+			allowed = state != "recovery_required"
 		case WorkReviewerSet:
 			allowed = state == "open" || state == "claimed"
 			if !allowed && a.account == w.Requester {
@@ -941,6 +959,8 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 		switch {
 		case d.Tier != "" && w.StandingID == "":
 			return Result{}, problem(400, "invalid_work_data", "tier goes with an accept of a result on a standing task.")
+		case standing == nil && c.Operation == WorkSuccessorSet:
+			return Result{}, problem(409, "work_state_conflict", "A successor links one standing task to its next round: this work is not a standing task.")
 		case standing != nil && c.Operation == WorkReviewerSet:
 			return Result{}, problem(409, "work_state_conflict", "A standing task takes no reviewer: the requester judges each result.")
 		case w.StandingID != "" && c.Operation == "work.cancel":
@@ -1003,7 +1023,7 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 				return Result{Data: map[string]any{"ack": ack}}, nil
 			}
 		}
-		if c.Operation != "work.claim" && c.Operation != "work.cancel" && c.Operation != WorkReviewerSet && c.Operation != WorkSettle && (c.Amount != w.Fence || c.Amount < 0 || (c.Amount == 0 && state != "recovery_required")) {
+		if c.Operation != "work.claim" && c.Operation != "work.cancel" && c.Operation != WorkReviewerSet && c.Operation != WorkSuccessorSet && c.Operation != WorkSettle && (c.Amount != w.Fence || c.Amount < 0 || (c.Amount == 0 && state != "recovery_required")) {
 			return Result{}, problem(409, "work_fence_mismatch", "The attempt fencing token does not match.")
 		}
 		// A claim that names its result (target) submits it at once, so it
@@ -1149,6 +1169,12 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 			// Any held reviewer_fee stays in escrow: it is paid to the
 			// reviewer at the time of its verdict (payWorkReward).
 			w.Reviewer = reviewer
+		case WorkSuccessorSet:
+			// The link is the signed transition itself (standingSuccessor
+			// reads it back); nothing else about the round changes.
+			if err = checkStandingSuccessor(ctx, tx, w, root, d.Successor, generation, now); err != nil {
+				return Result{}, err
+			}
 		}
 		w.Generation = generation
 		w.Updated = now
@@ -1499,7 +1525,7 @@ func workRequestText(ctx context.Context, tx *sql.Tx, id string, limit int) (*Wo
 // workEligibilitySubject is whom a read answers eligibility for: the agent
 // it names (a preview, unless that is the signer's own account), else the
 // signer, else nobody. An agent the board has not seen is a new key with no
-// history. Only a fingerprint is accepted, and nothing private is read.
+// history. A handle arrives resolved (resolveQueryAgents); nothing private is read.
 func workEligibilitySubject(ctx context.Context, tx *sql.Tx, named string, a actor) (workReadOptions, error) {
 	if named == "" {
 		if !a.signed {
@@ -1508,7 +1534,7 @@ func workEligibilitySubject(ctx context.Context, tx *sql.Tx, named string, a act
 		return workReadOptions{facts: &workEligibilityFacts{account: a.account}, agent: a.id}, nil
 	}
 	if !fingerprintRE.MatchString(named) {
-		return workReadOptions{}, errAgentFingerprint()
+		return workReadOptions{}, errQueryAgent()
 	}
 	var account string
 	if err := tx.QueryRowContext(ctx, "SELECT account FROM identities WHERE id=?", named).Scan(&account); err != nil && !errors.Is(err, sql.ErrNoRows) {

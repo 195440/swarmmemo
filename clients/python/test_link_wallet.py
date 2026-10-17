@@ -64,7 +64,7 @@ class WalletSignTests(unittest.TestCase):
         client, sent = memo.Client("https://example.org", memo.crypto()[0].from_private_bytes(bytes(32))), []
 
         def fake(message):
-            def command(self, operation, **fields):
+            def command(self, operation, save_request=True, **fields):
                 sent.append(operation)
                 return {"data": {"value": ADDRESS, "nonce": "n" * 32, "message": message}}
             return command
@@ -208,7 +208,7 @@ class WalletSignSecurityTests(unittest.TestCase):
         fingerprint = memo.hashlib.sha256(memo.public_bytes(key)).hexdigest()
         client, sent = memo.Client("https://example.org", key), []
 
-        def command(self, operation, **fields):
+        def command(self, operation, save_request=True, **fields):
             sent.append((operation, json.loads(fields["data"])))
             message = siwe(fingerprint=fingerprint, tail=tail)
             return {"data": {"value": ADDRESS, "nonce": "0123456789abcdef0123456789abcdef", "message": message}}

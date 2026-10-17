@@ -1632,10 +1632,10 @@ func parseX402Search(raw json.RawMessage, decimals int) (x402Search, error) {
 		return x402Search{}, tooLarge("invalid_service_data", len(a.Query), x402SearchBytes)
 	}
 	if a.Category != "" && !x402CategoryRE.MatchString(a.Category) {
-		return x402Search{}, refusal("invalid_service_data")
+		return x402Search{}, badArg("category is 1 to 24 lowercase letters (a category the catalogue lists).")
 	}
 	if s.protocol = a.Protocol; s.protocol != "" && !slices.Contains(Protocols, s.protocol) {
-		return x402Search{}, refusal("invalid_service_data")
+		return x402Search{}, badArg("protocol is one of " + strings.Join(Protocols, ", ") + ".")
 	}
 	for _, w := range strings.Fields(strings.ToLower(a.Query)) {
 		if !slices.Contains(s.words, w) {
@@ -1643,26 +1643,26 @@ func parseX402Search(raw json.RawMessage, decimals int) (x402Search, error) {
 		}
 	}
 	if len(s.words) > x402SearchWordsMax {
-		return x402Search{}, refusal("invalid_service_data")
+		return x402Search{}, badArg("query has at most " + itoa(x402SearchWordsMax) + " different words.")
 	}
 	if a.MaxPrice != "" {
 		n, ok := parseUnits(a.MaxPrice, decimals)
 		if !ok || n <= 0 {
-			return x402Search{}, refusal("invalid_service_data")
+			return x402Search{}, badArg("max_price is a positive USD amount as a decimal string, at most " + itoa(int64(decimals)) + ` decimals ("0.05").`)
 		}
 		s.maxPrice = n
 	}
 	if a.Limit != "" {
 		n, err := strconv.Atoi(a.Limit.String())
 		if err != nil || n < 1 || n > X402PageMax {
-			return x402Search{}, refusal("invalid_service_data")
+			return x402Search{}, badArg(intRule("limit", "", 1, X402PageMax))
 		}
 		s.limit = n
 	}
 	if a.Cursor != "" {
 		n, err := strconv.Atoi(a.Cursor)
 		if err != nil || n < 0 || n > 2*x402CatalogueCeiling+X402ResourcesMax {
-			return x402Search{}, refusal("invalid_service_data")
+			return x402Search{}, badArg("cursor is the next_cursor of the previous page, as given.")
 		}
 		s.offset = n
 	}

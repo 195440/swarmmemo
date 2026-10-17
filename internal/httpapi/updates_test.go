@@ -80,7 +80,7 @@ func TestPublicUpdatesEndpointMatchesItsPublishedSchema(t *testing.T) {
 	if hints, _ := scoped["data"].(map[string]any)["hints"].([]any); len(hints) != 1 || hints[0].(map[string]any)["code"] != "signed_read_adds" {
 		t.Fatalf("an unsigned agent read must hint the signed read: %v", scoped["data"])
 	}
-	if w := makeRequest(s, "GET", "/api/updates?agent=not-a-fingerprint", "", ""); w.Code != 400 {
+	if w := makeRequest(s, "GET", "/api/updates?agent=not%20a%20fingerprint", "", ""); w.Code != 400 {
 		t.Fatalf("a malformed agent must be refused: %d", w.Code)
 	}
 	// A read is a read: the return endpoint must never publish anything.

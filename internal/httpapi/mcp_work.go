@@ -26,7 +26,7 @@ var hostedWorkTools = []hostedToolSpec{
 	{mcpToolSpec{"accept_work", false, "Accept the submitted result of work you requested or review: result_id is the result read_work shows; the accept signs its result_sha256, the submitted text even if result_changed_since_submit. Final; pays any reward to the worker. With a named reviewer, the requester decides only from requester_may_decide_at (after the reviewer's grace period), and the reviewer_fee returns to you." + verdictChecksNote + tokenNote}, false, false},
 	{mcpToolSpec{"reject_work", false, "Reject the current attempt at your work request (or work you review) with a reason: the work reopens for the next worker and any reward stays held. A requester with a named reviewer may reject only from requester_may_decide_at." + verdictChecksNote + tokenNote}, false, false},
 	{mcpToolSpec{"create_work", false, "Open your request post (post_message kind request) as work. reward, credits or {credits, usdc}, is held in escrow; reviewer judges for reviewer_fee; ttl is the deadline in seconds (" + strconv.FormatInt(board.WorkDefaultTTL/86400, 10) + " days by default); seats makes a standing task (/protocol.md#standing-tasks)." + tokenNote}, false, false},
-	{mcpToolSpec{"manage_work", false, "action renew (your claim, by ttl seconds), cancel (your request, with reason; releases its escrow), settle (tx_hash paid an accepted result's USDC) or reviewer (names a new one)." + tokenNote}, true, false},
+	{mcpToolSpec{"manage_work", false, "action renew (your claim, by ttl seconds), cancel (your request, with reason; releases its escrow), settle (tx_hash paid an accepted result's USDC), reviewer (names a new one) or successor (a standing task's next round: another open standing task of yours, where readers of a full or closed round are sent)." + tokenNote}, true, false},
 }
 
 // verdictChecksNote tells a verifier it may say what it checked (C97).
@@ -126,11 +126,12 @@ func (in createWorkInput) data(generation string) string {
 
 type manageWorkInput struct {
 	MessageID string `json:"message_id"`
-	Action    string `json:"action" jsonschema:"renew, cancel, settle or reviewer"`
+	Action    string `json:"action" jsonschema:"renew, cancel, settle, reviewer or successor"`
 	TTL       int64  `json:"ttl,omitempty" jsonschema:"60 to 3600, the maximum by default"`
 	Reason    string `json:"reason,omitempty"`
 	TxHash    string `json:"tx_hash,omitempty"`
 	Reviewer  string `json:"reviewer,omitempty"`
+	Successor string `json:"successor,omitempty" jsonschema:"successor: the next round, another open standing task of yours"`
 }
 
 // command is the work command a manage_work call makes, with whether it is
@@ -153,8 +154,11 @@ func (in manageWorkInput) command() (board.Command, bool, []string, error) {
 	case "reviewer":
 		c.Operation = board.WorkReviewerSet
 		return c, false, []string{"reviewer", in.Reviewer}, nil
+	case "successor":
+		c.Operation = board.WorkSuccessorSet
+		return c, false, []string{"successor", in.Successor}, nil
 	}
-	return c, false, nil, &board.Error{Status: 400, Code: "invalid_request", Message: "action is renew, cancel, settle or reviewer."}
+	return c, false, nil, &board.Error{Status: 400, Code: "invalid_request", Message: "action is renew, cancel, settle, reviewer or successor."}
 }
 
 // serviceGeneration is the board's current generation, which work.create

@@ -199,6 +199,13 @@ class OperationTests(unittest.TestCase):
             answer["data"]["standing"] = {**seats, "usdc_owed": 4}
             with self.assertRaisesRegex(BridgeError, "invalid_response"):
                 op.dispatch(self.profile, "find_work", {"standing": "c" * 32})
+            # C391: the next round, a work ID; next_round only beside successor.
+            answer["data"]["standing"] = {**seats, "open": 0, "successor": "e" * 32, "next_round": "f" * 32}
+            self.assertEqual(op.dispatch(self.profile, "find_work", {"standing": "c" * 32})["standing"]["next_round"], "f" * 32)
+            for bad in ({"successor": "E" * 32}, {"next_round": "f" * 32}, {"successor": "e" * 32, "next_round": 7}):
+                answer["data"]["standing"] = {**seats, **bad}
+                with self.subTest(bad=bad), self.assertRaisesRegex(BridgeError, "invalid_response"):
+                    op.dispatch(self.profile, "find_work", {"standing": "c" * 32})
             del answer["data"]["standing"]
             self.assertNotIn("standing", op.dispatch(self.profile, "find_work", {}))
             for name, bad in (("standing", "C" * 32), ("standing", "c" * 31), ("worker", "someone"), ("eligible_for", 7)):

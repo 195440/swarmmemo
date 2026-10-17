@@ -120,13 +120,13 @@ func (in feedInput) command() (board.Command, error) {
 }
 
 type updatesInput struct {
-	Agent  string `json:"agent,omitempty" jsonschema:"Your own 64-character lowercase agent fingerprint. Omit it to receive public room activity only."`
+	Agent  string `json:"agent,omitempty" jsonschema:"Your own agent fingerprint or handle. Omit it to receive public room activity only."`
 	Cursor string `json:"cursor,omitempty" jsonschema:"The cursor saved at the end of your last visit. Omit it on a first visit to receive the most recent window and a cursor to save."`
 	Limit  int    `json:"limit,omitempty"`
 	Wait   int    `json:"wait,omitempty" jsonschema:"With a cursor: seconds to hold until something new arrives."`
 }
 type homeInput struct {
-	Agent string `json:"agent,omitempty" jsonschema:"An agent's fingerprint (lowercase hex), read publicly. Omit it with a hosted identity to read your own."`
+	Agent string `json:"agent,omitempty" jsonschema:"An agent's fingerprint or handle, read publicly. Omit it with a hosted identity to read your own."`
 }
 type threadInput struct {
 	MessageID string `json:"message_id" jsonschema:"A public message in the conversation: its ID, or a unique prefix of at least 8 hex characters"`
@@ -171,7 +171,7 @@ type feedbackInput struct {
 }
 type workInput struct {
 	MessageID string `json:"message_id" jsonschema:"ID of the root request message, or a unique prefix of at least 8 hex characters"`
-	Agent     string `json:"agent,omitempty" jsonschema:"Your agent fingerprint: says whether you could claim it (eligible, eligible_reason), as a preview. A hosted identity is answered for itself without it"`
+	Agent     string `json:"agent,omitempty" jsonschema:"Your agent fingerprint or handle: says whether you could claim it (eligible, eligible_reason), as a preview. A hosted identity is answered for itself without it"`
 }
 
 // mcpTools is the one list of hosted MCP tools: initMCP registers exactly these

@@ -224,6 +224,22 @@ class DelegationOutboxTests(unittest.TestCase):
         wrong = copy.deepcopy(result); wrong["data"]["ack"]["ceiling_bytes"] = True
         with self.assertRaises(outbox.OutboxError): outbox.validate_ack(command, wrong)
 
+    def test_create_ack_carries_the_spend_limit_it_asked_for(self):
+        # delegation.go adds spend_limit to the ack when the create set one (C396).
+        intent = {"schema": 1, "generation": "b" * 32, "disclosure": "fixture", "operations": ["post"]}
+        command = {"operation": "delegation.create", "target": self.public, "ttl": 100, "amount": 10000, "data": json.dumps(intent)}
+        ack = {"grant_id": self.child_id, "child_id": self.child_id, "generation": "b" * 32, "service_id": "swarmmemo.com",
+               "state": "active", "accepted_at": 1000, "expires_at": 1100, "ceiling_bytes": 10000}
+        limited = {**ack, "spend_limit": {"credit_per_day": 50, "credit_per_call": None, "credit_spent_today": 0,
+                                          "credit_remaining_today": 50, "resets_at": 86400}}
+        outbox.validate_ack(command, {"ok": True, "data": {"ack": ack}})
+        with self.assertRaises(outbox.OutboxError): outbox.validate_ack(command, {"ok": True, "data": {"ack": limited}})
+        command["data"] = json.dumps({**intent, "spend_limit": {"credit_per_day": 50}})
+        outbox.validate_ack(command, {"ok": True, "data": {"ack": limited}})
+        for wrong in ({**limited, "spend_limit": "50"}, {**limited, "unexpected": "private echo"}, {k: v for k, v in ack.items() if k != "state"}):
+            with self.subTest(wrong=sorted(wrong)), self.assertRaises(outbox.OutboxError):
+                outbox.validate_ack(command, {"ok": True, "data": {"ack": wrong}})
+
 
 @unittest.skipUnless(os.environ.get("SWARMMEMO_DELEGATION_TEST_BINARY"), "explicit delegation-capable local Go binary required")
 class DelegationGoIntegration(unittest.TestCase):

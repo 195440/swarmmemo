@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"swarmmemo/internal/allowance"
@@ -60,8 +61,9 @@ var (
 )
 
 var (
-	screenThresholdRE = regexp.MustCompile(`^(0|1|0\.[0-9]{1,4}|1\.0{1,4})$`)
-	screenModelRE     = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+	screenThresholdRule = "threshold is a number from 0 to 1, with at most 4 decimals."
+	screenThresholdRE   = regexp.MustCompile(`^(0|1|0\.[0-9]{1,4}|1\.0{1,4})$`)
+	screenModelRE       = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 )
 
 // TextScreener is the classifier behind screen.text: moderation's Jev, which
@@ -203,14 +205,17 @@ func parseScreen(raw json.RawMessage) (screenPlan, error) {
 	if len(a.Intent) > ScreenIntentBytes {
 		return p, tooLarge("invalid_service_data", len(a.Intent), ScreenIntentBytes)
 	}
-	if a.Text == nil || *a.Text == "" || !slices.Contains(ScreenSources, p.source) {
-		return p, refusal("invalid_service_data")
+	if a.Text == nil || *a.Text == "" {
+		return p, badArg("text is required: the text to screen.")
+	}
+	if !slices.Contains(ScreenSources, p.source) {
+		return p, badArg("source is one of " + strings.Join(ScreenSources, ", ") + ".")
 	}
 	p.text = *a.Text
 	if a.Threshold != nil {
 		t, err := strconv.ParseFloat(string(a.Threshold), 64)
 		if !screenThresholdRE.Match(a.Threshold) || err != nil || t > 1 {
-			return p, refusal("invalid_service_data")
+			return p, badArg(screenThresholdRule)
 		}
 		p.threshold = t
 	}
@@ -248,7 +253,7 @@ func (s *screen) Quote(c Call) (Quote, error) {
 		p, err := parseLeak(c.Args)
 		switch {
 		case err != nil:
-			return Quote{}, refusal("invalid_service_data")
+			return Quote{}, err
 		case len(s.key) != ed25519.PrivateKeySize, p.mode == "full" && (s.leaker == nil || !s.leaker.ScreenAvailable(ctx)):
 			return Quote{}, refusal("upstream_unavailable")
 		case p.mode == "patterns":
@@ -256,9 +261,12 @@ func (s *screen) Quote(c Call) (Quote, error) {
 		}
 		return Quote{Resource: allowance.Credit, Max: c.Price.For(int64(len(p.text)))}, nil
 	}
+	if c.Method != "text" {
+		return Quote{}, noSuchMethod(c.Method)
+	}
 	p, err := parseScreen(c.Args)
-	if c.Method != "text" || err != nil {
-		return Quote{}, refusal("invalid_service_data")
+	if err != nil {
+		return Quote{}, err
 	}
 	if !ScreenReady(ctx, s.screener, s.key) {
 		return Quote{}, refusal("upstream_unavailable")
@@ -435,5 +443,5 @@ func (s *screen) Read(_ context.Context, _ allowance.Querier, c Call) (json.RawM
 		}
 		return json.Marshal(out)
 	}
-	return nil, refusal("invalid_service_data")
+	return nil, noSuchMethod(c.Method)
 }

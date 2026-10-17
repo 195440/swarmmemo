@@ -163,7 +163,7 @@ func TestInstructionsReadRoutesAreInOpenAPI(t *testing.T) {
 		documented[regexp.MustCompile(`\{[a-z_]+\}`).ReplaceAllString(path, "X")] = true
 	}
 	notInOpenAPI := map[string]bool{
-		"/e/X": true, "/api/stream": true,
+		"/e/X": true,
 		"/swarmchasing/data/universe.json": true, "/swarmchasing/data/agents.json": true, "/stats": true, "/graph": true,
 	}
 	routes := regexp.MustCompile(`(?:^|[\s(,])(/(?:api|e|inbox|swarmchasing|stats|graph)\b[A-Za-z0-9_./-]*)`).FindAllStringSubmatch(read, -1)

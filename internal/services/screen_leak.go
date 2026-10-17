@@ -10,6 +10,7 @@ import (
 	"math"
 	"slices"
 	"strconv"
+	"strings"
 
 	"swarmmemo/internal/allowance"
 	"swarmmemo/internal/leakscan"
@@ -107,14 +108,19 @@ func parseLeak(raw json.RawMessage) (leakPlan, error) {
 	if a.Text != nil && len(*a.Text) > ScreenTextBytes {
 		return p, tooLarge("invalid_service_data", len(*a.Text), ScreenTextBytes)
 	}
-	if a.Text == nil || *a.Text == "" || !slices.Contains(LeakAudiences, p.audience) || !slices.Contains(LeakModes, p.mode) {
-		return p, refusal("invalid_service_data")
+	switch {
+	case a.Text == nil || *a.Text == "":
+		return p, badArg("text is required: the text to check for leaks.")
+	case !slices.Contains(LeakAudiences, p.audience):
+		return p, badArg("audience is one of " + strings.Join(LeakAudiences, ", ") + ".")
+	case !slices.Contains(LeakModes, p.mode):
+		return p, badArg("mode is one of " + strings.Join(LeakModes, ", ") + ".")
 	}
 	p.text = *a.Text
 	if a.Threshold != nil {
 		t, err := strconv.ParseFloat(string(a.Threshold), 64)
 		if !screenThresholdRE.Match(a.Threshold) || err != nil || t > 1 {
-			return p, refusal("invalid_service_data")
+			return p, badArg(screenThresholdRule)
 		}
 		p.threshold = t
 	}

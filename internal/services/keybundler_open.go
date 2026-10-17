@@ -143,6 +143,7 @@ type BundlerOpen struct {
 
 var (
 	bundlerToolRE       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:@-]{0,199}$`)
+	bundlerToolRule     = "The tool is its id from tools_search (tool:NAME): 1 to 200 letters, digits or . _ : @ -."
 	bundlerCapabilityRE = regexp.MustCompile(`^[a-z0-9][a-z0-9 _./-]{0,63}$`)
 	bundlerSearchIDRE   = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,80}$`)
 	bundlerHostRE       = regexp.MustCompile(`^[a-z0-9.-]{1,253}$`)
@@ -436,13 +437,13 @@ func (x *x402) parseBundlerSearch(raw json.RawMessage) (bundlerSearch, error) {
 		a.Queries = []string{a.Query}
 	case a.Query == "" && len(a.Queries) >= 2 && len(a.Queries) <= bundlerQueriesMax:
 	default:
-		return bundlerSearch{}, refusal("invalid_service_data")
+		return bundlerSearch{}, badArg("Give query (one search) or queries (2 to " + itoa(bundlerQueriesMax) + " searches), not both.")
 	}
 	seen := map[string]bool{}
 	for _, q := range a.Queries {
 		n := normalizeQuery(q)
 		if n == "" || seen[n] {
-			return bundlerSearch{}, refusal("invalid_service_data")
+			return bundlerSearch{}, badArg("Each query needs words in it, and queries must differ from each other.")
 		}
 		seen[n] = true
 		s.queries = append(s.queries, n)
@@ -450,13 +451,13 @@ func (x *x402) parseBundlerSearch(raw json.RawMessage) (bundlerSearch, error) {
 	if a.Capability != "" {
 		s.capability = strings.ToLower(strings.TrimSpace(a.Capability))
 		if !bundlerCapabilityRE.MatchString(s.capability) {
-			return bundlerSearch{}, refusal("invalid_service_data")
+			return bundlerSearch{}, badArg("capability is 1 to 64 lowercase letters, digits, spaces or _ . / -, starting with a letter or digit.")
 		}
 	}
 	if a.MaxPrice != "" {
 		n, ok := parseUnits(a.MaxPrice, 6)
 		if !ok || n <= 0 {
-			return bundlerSearch{}, refusal("invalid_service_data")
+			return bundlerSearch{}, badArg(`max_price is a positive USD amount as a decimal string, at most 6 decimals ("0.05").`)
 		}
 		s.maxPrice = min(n, s.maxPrice)
 	}
@@ -792,7 +793,7 @@ func bundlerToolArg(raw json.RawMessage) (string, error) {
 	}
 	tool := strings.TrimPrefix(strings.TrimPrefix(a.ID, BundlerPrefix), bundlerLegacyPrefix)
 	if !bundlerToolRE.MatchString(tool) {
-		return "", refusal("invalid_service_data")
+		return "", badArg(bundlerToolRule)
 	}
 	return tool, nil
 }
@@ -971,8 +972,13 @@ func (x *x402) bundlerPlan(c Call, tool string, a x402Args) (x402Plan, error) {
 	if !x.fr.b.Ready() {
 		return x402Plan{}, refusal("service_unavailable")
 	}
-	if !bundlerToolRE.MatchString(tool) || len(a.Query) > 0 || (len(a.Body) > 0 && !isObject(a.Body)) {
-		return x402Plan{}, refusal("invalid_service_data")
+	switch {
+	case !bundlerToolRE.MatchString(tool):
+		return x402Plan{}, badArg(bundlerToolRule)
+	case len(a.Query) > 0:
+		return x402Plan{}, badArg("query is not taken by a tool call; put the tool's inputs in body.")
+	case len(a.Body) > 0 && !isObject(a.Body):
+		return x402Plan{}, badArg("body is a JSON object of the tool's inputs.")
 	}
 	limit := affordable(c.Price, c.MaxCost, min(x.fr.cfg.MaxPrice, x.cfg.PerCall))
 	if limit <= 0 {
@@ -986,7 +992,7 @@ func (x *x402) bundlerPlan(c Call, tool string, a x402Args) (x402Plan, error) {
 	if len(a.Body) > 0 {
 		var b bytes.Buffer
 		if err := json.Compact(&b, a.Body); err != nil {
-			return x402Plan{}, refusal("invalid_service_data")
+			return x402Plan{}, badArg("body is a JSON object of the tool's inputs.")
 		}
 		p.body = b.Bytes()
 	}

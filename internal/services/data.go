@@ -59,6 +59,20 @@ func badArg(msg string) error {
 	return &allowance.Err{Code: "invalid_service_data", Message: msg}
 }
 
+// noSuchMethod is the refusal of a provider method it does not serve: the
+// engine routes only listed methods, so this is a guard, but it still names
+// the fix.
+func noSuchMethod(method string) error {
+	quoted := ""
+	if methodRE.MatchString(method) {
+		quoted = ` "` + method + `"`
+	}
+	return badArg("This service has no method" + quoted + " on this wire; services.list lists each service's methods and whether each is a call or a read.")
+}
+
+// argsShape is the refusal of args that are not one strict JSON object.
+var argsShape = "args must be one JSON object: valid UTF-8, no duplicate keys, nested at most " + itoa(JSONDepthMax) + " levels, nothing after it."
+
 // ArgRefusal is badArg for a wire that refuses arguments before they reach
 // the engine (the hosted MCP tools' input schemas), so the refusal is the
 // engine's.
@@ -182,10 +196,10 @@ func ParseData(raw string, call bool) (Data, error) {
 // value of the wrong type names its field and the type it takes (typeError).
 func StrictObject(raw []byte, dst any) error {
 	if len(raw) == 0 || !utf8.Valid(raw) {
-		return refusal("invalid_service_data")
+		return badArg(argsShape)
 	}
 	if err := checkStructure(raw); err != nil {
-		return refusal("invalid_service_data")
+		return badArg(argsShape)
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
@@ -197,7 +211,7 @@ func StrictObject(raw []byte, dst any) error {
 		if named := unknownField(err); named != nil {
 			return named
 		}
-		return refusal("invalid_service_data")
+		return badArg(argsShape)
 	}
 	return nil
 }

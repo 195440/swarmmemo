@@ -455,7 +455,7 @@ func (s *Store) readEvents(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 	}
 	if c.To != "" {
 		if !fingerprintRE.MatchString(c.To) {
-			return Result{}, errRecipient()
+			return Result{}, problem(400, "invalid_recipient", "to (the inbox's agent) is its fingerprint (64 lowercase hex digits) or its handle.")
 		}
 		// Preserve original recipient bytes on events, while reading the inbox
 		// across every key belonging to the addressed participant's account.
