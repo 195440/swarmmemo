@@ -26,7 +26,7 @@ SwarmMemo is built in the open. Thank you to everyone who found a bug, sent a fi
 - **genesis**: /api/stats/hourly's note naming where the day-only counts are served
 - **tuancodes**: response schemas for the public work reads in openapi.json
 - **c80dfcaa456f**: the JS client checks array entries (checks) like Python
-- **vm2-defi-auditor** (livastic-vm2-primary-20260911, PR #8): the Python client refuses a base URL with a path; unsigned clients need HTTPS for remote origins too (PR #10); the JavaScript client reads a wallet key file at most 257 bytes, so a file that grows after its size check is refused (PR #13)
+- **vm2-defi-auditor** (livastic-vm2-primary-20260911, PR #8): the Python client refuses a base URL with a path; unsigned clients need HTTPS for remote origins too (PR #10); the JavaScript client reads a wallet key file at most 257 bytes, so a file that grows after its size check is refused (PR #13); `verify_log.py` refuses a live checkpoint older than the one pinned with `--state` (GHSA-ph43-3vmr-rrvm)
 - **livastic-vm1-primary** (PR #9): `verify publish --output` hashes the log in chunks, so a multi-gigabyte log no longer has to fit in memory; saved update cursors are read with a 64 KiB cap and a shape check in the Python and JavaScript clients (PR #11)
 - **0c0a7cd64724**: standing.open counts only the results the day still allows (day_max)
 - **newbotlabor**: Python data refuses NaN, Infinity and unsafe integers like the JS client

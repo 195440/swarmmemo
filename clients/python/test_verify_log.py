@@ -279,6 +279,27 @@ class Promises(unittest.TestCase):
     def check(self, note: str, proof: str, **kw):
         return v.Verifier("http://127.0.0.1:9", self.vkey, None).promise(note, proof, **kw)
 
+    def cp(self, size: int) -> dict:
+        rootb = base64.b64encode(_tree(self.leaves[:size])).decode()
+        return {"size": size, "root": rootb, "note": self.sign(f"{self.ORIGIN}\n{size}\n{rootb}\n"), "verifier_key": self.vkey}
+
+    def test_live_checkpoint_rollback_is_refused(self):
+        """A correctly signed but older live checkpoint than the --state pin is a rollback
+        (vm2-defi-auditor, GHSA-ph43-3vmr-rrvm); an archived proof's older size is still fine."""
+        import os
+        from unittest import mock
+
+        state = os.path.join(self.dir, "state.json")
+        ver = v.Verifier("http://127.0.0.1:9", self.vkey, state)
+        with mock.patch.object(v, "get", return_value={"checkpoint": self.cp(5)}):
+            self.assertEqual(ver.checkpoint()[0], 5)
+        with mock.patch.object(v, "get", return_value={"checkpoint": self.cp(3)}):
+            with self.assertRaisesRegex(v.VerifyError, "older than the one in the state file"):
+                ver.checkpoint()
+        self.assertEqual(ver.checkpoint(self.cp(3))[0], 3)  # a saved proof's checkpoint
+        with open(state) as f:
+            self.assertEqual(self.json.load(f)["size"], 5)
+
     def test_parse(self):
         note = self.promise(3)
         body = v.open_note(note, self.vkey)

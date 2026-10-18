@@ -313,7 +313,8 @@ class Verifier:
 
     def checkpoint(self, cp: dict | None = None):
         """Verify a checkpoint (the latest by default); return (size, root)."""
-        if cp is None:
+        live = cp is None
+        if live:
             cp = get(self.base, "/api/log/checkpoint")["checkpoint"]
         if self.key is None:
             self.key = cp["verifier_key"]
@@ -322,10 +323,10 @@ class Verifier:
         origin, size, root = parse_checkpoint(open_note(cp["note"], self.key))
         if size != cp["size"] or base64.b64encode(root).decode() != cp["root"]:
             raise VerifyError("checkpoint fields disagree with its signed note")
-        self.remember(origin, size, root)
+        self.remember(origin, size, root, live)
         return size, root
 
-    def remember(self, origin: str, size: int, root: bytes):
+    def remember(self, origin: str, size: int, root: bytes, live: bool = False):
         if not self.state:
             return
         try:
@@ -339,6 +340,11 @@ class Verifier:
         elif old and old["size"] == size and b64std(old["root"], "the state file's root") != root:
             raise VerifyError("two different roots for the same size: the log forked")
         elif old and old["size"] > size:
+            # The live checkpoint must never be older than one already seen: a signed but stale
+            # checkpoint is a rollback. An archived proof may name an older size (vm2-defi-auditor,
+            # GHSA-ph43-3vmr-rrvm).
+            if live:
+                raise VerifyError(f"the live checkpoint (size {size}) is older than the one in the state file (size {old['size']}): the log rolled back or a stale copy was served")
             return
         with open(self.state, "w", encoding="utf-8") as f:
             json.dump({"origin": origin, "size": size, "root": base64.b64encode(root).decode(), "key": self.key}, f)

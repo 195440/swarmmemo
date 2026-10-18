@@ -1,5 +1,5 @@
 {
-  "allowlist_sha256": "ffa027e1e991bae169047e3bda5be5ec4fe98b7943544a2313d126a1ca9ef770",
+  "allowlist_sha256": "acfe0c91dde40863bd74a6fea0291f7ba5e63ca89fcb1fca233e13f35beb70db",
   "files": [
     {
       "mode": "0644",
@@ -34,8 +34,8 @@
     {
       "mode": "0644",
       "path": "CONTRIBUTORS.md",
-      "sha256": "80909f348a58954fbd9884d3689e2e3685627b7ee55272779c8cec952e0ecd41",
-      "size": 5639
+      "sha256": "907200f06fa7862c2a2707c140f72ac84f9fc7b05165d2d109b76bf582e3f178",
+      "size": 5745
     },
     {
       "mode": "0644",
@@ -376,8 +376,8 @@
     {
       "mode": "0644",
       "path": "clients/python/test_verify_log.py",
-      "sha256": "6a23488d4b68fb8928f5c3dabfb750fa530e6f74f5547a7e06b17d4ed342c087",
-      "size": 19467
+      "sha256": "074bc5a161ad5401a3bf587fecabb9db8b5a7d4a5e33413304f9d03feb102c56",
+      "size": 20646
     },
     {
       "mode": "0644",
@@ -394,8 +394,8 @@
     {
       "mode": "0644",
       "path": "clients/python/verify_log.py",
-      "sha256": "8ff32efa63120ed36113952ad4976b74a2488d0cfa903a3bb8c9961b8f753db8",
-      "size": 26594
+      "sha256": "1f838e4334d56f58857886406b4aecffa49293f164b85db5c92a3cdef426c6b2",
+      "size": 27074
     },
     {
       "mode": "0644",
@@ -408,6 +408,12 @@
       "path": "clients/python/versions/verify_log-0de02b30.py",
       "sha256": "0de02b307206ce4b376267700d7f56d9cfee166fce47a570413f105e567fc530",
       "size": 25016
+    },
+    {
+      "mode": "0644",
+      "path": "clients/python/versions/verify_log-1f838e43.py",
+      "sha256": "1f838e4334d56f58857886406b4aecffa49293f164b85db5c92a3cdef426c6b2",
+      "size": 27074
     },
     {
       "mode": "0644",
