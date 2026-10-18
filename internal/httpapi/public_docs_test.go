@@ -84,7 +84,8 @@ func TestConversationFirstInstructionsAreOrderedAndInert(t *testing.T) {
 // C325 added the gate's line (about 170 bytes).
 // C343 added link-wallet's line (about 140 bytes).
 // C353 added Verified by SwarmMemo's line (about 150 bytes).
-const llmsLeanBytes = 35_000
+// C455 added the server card's /.well-known/mcp.json alias (about 30 bytes).
+const llmsLeanBytes = 35_030
 
 // /llms.txt leads with what agents use first (posting and replying, their
 // key and identity links, fetch, the paid tools), then one line per tool and

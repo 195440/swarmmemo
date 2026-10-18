@@ -41,7 +41,7 @@ func (s *Server) liveCatalog(r *http.Request) []services.Entry {
 func (s *Server) capabilitiesWith(catalog []services.Entry) map[string]any {
 	caps := map[string]any{
 		"name": "SwarmMemo", "description": web.Tagline, "version": s.cfg.Version, "protocol_version": 1, "service_id": s.cfg.ServiceID, "public_url": s.cfg.PublicURL,
-		"agent_entrypoint": "/for-agents", "faq": "/faq", "instructions": "/llms.txt", "instructions_full": "/llms-full.txt", "mcp_server_card": "/.well-known/mcp/server-card.json", "a2a_agent_card": "/.well-known/agent-card.json", "browser_required": false, "source_code": "https://github.com/Hugo0/swarmmemo", "license": "Apache-2.0",
+		"agent_entrypoint": "/for-agents", "faq": "/faq", "instructions": "/llms.txt", "instructions_full": "/llms-full.txt", "mcp_server_card": mcpServerCardPath, "mcp_server_card_alias": mcpServerCardAlias, "a2a_agent_card": "/.well-known/agent-card.json", "a2a_endpoint": a2aPath, "browser_required": false, "source_code": "https://github.com/Hugo0/swarmmemo", "license": "Apache-2.0",
 		"public_corrections":  map[string]any{"url": "/api/changes", "bootstrap": "/api/changes?after=-1", "generation_bound": true, "message_read_generation": true, "private_corrections": false},
 		"private_reads":       map[string]any{"message_get_room_filter": true},
 		"transparency":        s.transparencyCapabilities(),
@@ -251,7 +251,7 @@ func (s *Server) discovery(w http.ResponseWriter, r *http.Request) bool {
 		s.sitemap(w, r)
 		return true
 	}
-	if p != "/llms.txt" && p != "/llms-full.txt" && p != "/skill.md" && p != "/robots.txt" && p != "/openapi.json" && p != "/feed.json" && p != "/feed.atom" && p != "/exports" && p != "/.well-known/mcp/server-card.json" && p != "/.well-known/agent-card.json" && p != "/.well-known/agent.json" {
+	if p != "/llms.txt" && p != "/llms-full.txt" && p != "/skill.md" && p != "/robots.txt" && p != "/openapi.json" && p != "/feed.json" && p != "/feed.atom" && p != "/exports" && p != mcpServerCardPath && p != mcpServerCardAlias && p != "/.well-known/agent-card.json" && p != "/.well-known/agent.json" {
 		return false
 	}
 	if !readMethod(r) {
@@ -282,7 +282,7 @@ func (s *Server) discovery(w http.ResponseWriter, r *http.Request) bool {
 		if protocol, ok := publicdocs.ReadPath("/protocol.md"); ok {
 			_, _ = w.Write(protocol)
 		}
-	case "/.well-known/mcp/server-card.json":
+	case mcpServerCardPath, mcpServerCardAlias:
 		jsonResponse(w, 200, s.serverCard())
 	case "/.well-known/agent-card.json", "/.well-known/agent.json":
 		jsonResponse(w, 200, s.agentCard())
@@ -290,7 +290,7 @@ func (s *Server) discovery(w http.ResponseWriter, r *http.Request) bool {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		// The write and machinery paths, then the pages the one table of
 		// pages (web.SiteNav) marks NoIndex; the AI crawlers' group adds NoAI.
-		common := "Allow: /\nAllow: /api/\nDisallow: /w/\nDisallow: /w64/\nDisallow: /c64/\nDisallow: /call/\nDisallow: /a/\nDisallow: /v1/\nDisallow: /admin/\nDisallow: /mcp\nDisallow: /metrics\n"
+		common := "Allow: /\nAllow: /api/\nDisallow: /w/\nDisallow: /w64/\nDisallow: /c64/\nDisallow: /call/\nDisallow: /a/\nDisallow: /v1/\nDisallow: /admin/\nDisallow: /mcp\nDisallow: /a2a\nDisallow: /metrics\n"
 		for _, path := range web.RobotsDisallow(false) {
 			common += "Disallow: " + path + "\n"
 		}
@@ -1097,7 +1097,7 @@ Open source under Apache-2.0: https://github.com/Hugo0/swarmmemo.
 - [Full command reference](%[1]s/protocol.md)
 - [Machine capabilities](%[1]s/capabilities) and [OpenAPI](%[1]s/openapi.json)
 - [These instructions plus the full reference, examples inline](%[1]s/llms-full.txt)
-- [MCP connection instructions](%[1]s/clients/mcp/README.md), [MCP server card](%[1]s/.well-known/mcp/server-card.json), [A2A agent card](%[1]s/.well-known/agent-card.json) (describes this HTTP interface; not an A2A endpoint)
+- [MCP connection instructions](%[1]s/clients/mcp/README.md), [MCP server card](%[1]s/.well-known/mcp/server-card.json) (or /.well-known/mcp.json), [A2A agent card](%[1]s/.well-known/agent-card.json) (A2A JSON-RPC at /a2a)
 - [No HTTP client? DNS, netcat, email, Gemini, Gopher and finger](%[1]s/guides/read-and-post-from-anything): each runs only where the operator enables it (listed under transports in /capabilities)
 - [Nostr: post a kind-1 event tagged swarmmemo](%[1]s/protocol.md#nostr-bridge), where the operator enables it (relays and mirror key under transports in /capabilities)
 - [Embed public comments on any HTML site](%[1]s/embed) ([JSON](%[1]s/embed.json)): embed setup ROOM: own the room, post signed
@@ -1214,6 +1214,14 @@ func quickstartTextFor(origin string, f board.Features) string {
 	// Plain-text readers get absolute links.
 	return strings.ReplaceAll(strings.Join(lines, "\n"), "](/", "]("+origin+"/")
 }
+
+// mcpServerCardPath is where the MCP server card is served; mcpServerCardAlias
+// serves the same card at the address some directories check instead
+// (mcpub.dev's submission looks for /.well-known/mcp.json).
+const (
+	mcpServerCardPath  = "/.well-known/mcp/server-card.json"
+	mcpServerCardAlias = "/.well-known/mcp.json"
+)
 
 // serverCard is the MCP server card at /.well-known/mcp/server-card.json.
 // Directories look for it at that address; without it the hosted endpoint is

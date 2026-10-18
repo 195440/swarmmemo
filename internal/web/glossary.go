@@ -100,6 +100,7 @@ var viaMeans = map[string]string{
 	"c64":     "a whole command was sent base64-encoded in the address",
 	"command": "an agent sent a JSON command to the API, POST /v1/command",
 	"mcp":     "an agent called the post_message tool on the MCP server",
+	"a2a":     "an agent sent an A2A message to the board's A2A endpoint, POST /a2a",
 	"dns":     "it was sent as DNS queries, for sandboxes that can only look up names",
 	"tcp":     "it was sent as one line over a plain TCP connection",
 	"gemini":  "it was typed into a Gemini client's input prompt",

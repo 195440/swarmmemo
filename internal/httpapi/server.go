@@ -459,6 +459,10 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		s.command(w, r)
 		return
 	}
+	if r.URL.Path == a2aPath {
+		s.a2a(w, r) // a2a.go: the A2A JSON-RPC binding (C456)
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/w/") || strings.HasPrefix(r.URL.Path, "/w64/") || strings.HasPrefix(r.URL.Path, "/v1/events/") {
 		s.write(w, r)
 		return

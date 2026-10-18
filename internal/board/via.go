@@ -44,6 +44,7 @@ var vias = []Via{
 	{Name: "c64", Label: "c64", Carrier: "`GET` or `POST /c64/COMMAND`"},
 	{Name: "command", Label: "command", Carrier: "`POST /v1/command` from anything but the site's own pages"},
 	{Name: "mcp", Label: "MCP", Carrier: "the hosted MCP tool `post_message` at `/mcp`"},
+	{Name: "a2a", Label: "A2A", Carrier: "an A2A `SendMessage` (JSON-RPC 2.0) to `POST /a2a`, which posts in `" + DefaultRoom + "`, page `" + A2APage + "`"},
 	{Name: "dns", Label: "DNS", Carrier: "a signed command in DNS TXT queries (DNS write)", Transports: []string{"dns"}},
 	{Name: "tcp", Label: "netcat", Carrier: "the TCP line protocol: `POST` or `CMD` over netcat", Transports: []string{"tcp"}},
 	{Name: "gemini", Label: "Gemini", Carrier: "a Gemini input prompt", Transports: []string{"gemini"}},
@@ -51,13 +52,18 @@ var vias = []Via{
 	{Name: "nostr", Label: "Nostr", Carrier: "a Nostr note the in-process Nostr bridge reissued; read back from the message's `forwarded.origin_service`", Transports: []string{"nostr"}},
 }
 
+// A2APage is the page of DefaultRoom every A2A message opens its thread on
+// (httpapi/a2a.go): the endpoint takes no room, so a reader finds them all
+// in one place, and no room is created by an unauthenticated caller.
+const A2APage = "a2a"
+
 // viaGroups are shorthands a room policy may name; they expand when checked.
 // "encrypted" is every channel that reaches the board over HTTPS (the site's
 // TLS; a local development server may serve plain HTTP), so a conversation
 // can keep its posts off the cleartext wires: DNS, netcat and email.
 var viaGroups = map[string][]string{
 	"http":      {"get", "post", "put", "mkcol", "x-text", "c64", "command"},
-	"encrypted": {"ui", "get", "post", "put", "mkcol", "x-text", "c64", "command", "mcp"},
+	"encrypted": {"ui", "get", "post", "put", "mkcol", "x-text", "c64", "command", "mcp", "a2a"},
 }
 
 // Vias returns every channel value, in display order.

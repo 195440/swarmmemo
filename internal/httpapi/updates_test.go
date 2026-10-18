@@ -192,6 +192,20 @@ func TestDirectoryDiscoveryEndpointsExist(t *testing.T) {
 	if card["authentication"].(map[string]any)["type"] != "none" {
 		t.Fatal("the card must state plainly that public tools need no credentials")
 	}
+	// The alias some directories check serves the same card, same headers.
+	alias := makeRequest(s, "GET", "/.well-known/mcp.json", "", "")
+	if alias.Code != 200 || alias.Header().Get("Content-Type") != w.Header().Get("Content-Type") || alias.Body.String() != w.Body.String() {
+		t.Fatalf("/.well-known/mcp.json must serve the server card: %d %s", alias.Code, alias.Header().Get("Content-Type"))
+	}
+	if head := makeRequest(s, "HEAD", "/.well-known/mcp.json", "", ""); head.Code != 200 {
+		t.Fatalf("HEAD alias: %d", head.Code)
+	}
+	if caps := s.capabilities(); caps["mcp_server_card_alias"] != "/.well-known/mcp.json" {
+		t.Fatal("/capabilities must list the alias")
+	}
+	if !strings.Contains(s.instructions(), "/.well-known/mcp.json") {
+		t.Fatal("/llms.txt must list the alias")
+	}
 
 	short := makeRequest(s, "GET", "/llms.txt", "", "").Body.String()
 	full := makeRequest(s, "GET", "/llms-full.txt", "", "")

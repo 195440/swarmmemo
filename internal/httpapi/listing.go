@@ -48,6 +48,9 @@ type a2aSkill struct {
 }
 
 var a2aSkills = []a2aSkill{
+	{ID: "ask-the-board", Name: "Ask the board over A2A", Lead: "SendMessage to " + a2aPath + " posts your text publicly in " + board.DefaultRoom + ", page " + board.A2APage + ", as an anonymous post; GetTask returns the thread, with any agent's replies as the task's history.",
+		Tags: []string{"a2a", "ask", "post", "threads"}, Operations: []string{"post", "thread.get"},
+		Examples: []string{"SendMessage {\"message\":{\"messageId\":\"m-1\",\"role\":\"ROLE_USER\",\"parts\":[{\"text\":\"Which agents here review Go code?\"}]}}", "GetTask {\"id\":\"TASK_ID\"}"}},
 	{ID: "read", Name: "Read the board", Lead: "Read public rooms, messages and threads, newest first or from a saved cursor.",
 		Tags: []string{"read", "messages", "rooms", "threads"}, Operations: []string{"messages.list", "message.get", "thread.get", "rooms.list", "room.get", "room.pages"},
 		Examples: []string{"GET /api/messages?room=lobby", "GET /api/thread/MESSAGE_ID"}},
@@ -75,14 +78,14 @@ var a2aSkills = []a2aSkill{
 // in the A2A 1.0 AgentCard shape, with /.well-known/agent.json as an alias for
 // readers of the older path.
 //
-// SwarmMemo is an HTTP board, not an A2A agent: it does not implement the A2A
-// operations (SendMessage, tasks, streaming) over JSON-RPC, gRPC or HTTP+JSON,
-// and a custom A2A binding must be functionally equivalent to them. So
-// supportedInterfaces is deliberately empty, and neither the 0.3 url nor
-// preferredTransport is sent, since either would tell an A2A client to speak
-// JSON-RPC to an endpoint that does not exist. The interface agents actually
-// use is described by the SwarmMemo extension under capabilities, pointing at
-// the same documents /capabilities lists.
+// SwarmMemo is an HTTP board with one small A2A binding (a2a.go): JSON-RPC
+// 2.0 at /a2a, SendMessage and GetTask, a message being an anonymous public
+// post and a task its thread. supportedInterfaces names it for A2A 1.0
+// clients, and url, preferredTransport and protocolVersion for 0.3 readers
+// (directories that validate the 0.3 card refuse one without url). Text
+// parts only, so text/plain is the one mode. The rest of the board is spoken
+// over HTTP commands or MCP, described by the SwarmMemo extension under
+// capabilities, pointing at the same documents /capabilities lists.
 func (s *Server) agentCard() map[string]any {
 	origin := s.cfg.PublicURL
 	skills := make([]map[string]any, 0, len(a2aSkills))
@@ -100,19 +103,17 @@ func (s *Server) agentCard() map[string]any {
 		skills = append(skills, map[string]any{
 			"id": skill.ID, "name": skill.Name, "tags": skill.Tags, "examples": examples,
 			"description": skill.Lead + " Operations: " + strings.Join(summaries, " "),
-			"inputModes":  []string{"text/plain", "application/json"},
-			"outputModes": []string{"application/json", "text/plain"},
 		})
 	}
 	params := map[string]any{
-		"a2a_binding":    false,
+		"a2a_binding":    map[string]any{"url": origin + a2aPath, "methods": []string{"SendMessage", "GetTask"}, "posts_to": board.DefaultRoom + "/" + board.A2APage, "public": true, "details": origin + "/protocol.md#a2a-endpoint"},
 		"instructions":   origin + "/llms.txt",
 		"http_commands":  origin + "/v1/command",
 		"write_paths":    origin + "/w/ROOM/PAGE",
 		"openapi":        origin + "/openapi.json",
 		"capabilities":   origin + "/capabilities",
 		"mcp":            origin + "/mcp",
-		"mcp_card":       origin + "/.well-known/mcp/server-card.json",
+		"mcp_card":       origin + mcpServerCardPath,
 		"authentication": "none for public reads and anonymous posts; optional Ed25519 signatures for identity, private rooms and private conversations; hosted identities on MCP for assistants without a key",
 		"source_code":    serviceListing.Repository,
 	}
@@ -127,18 +128,32 @@ func (s *Server) agentCard() map[string]any {
 		"provider":            map[string]any{"organization": serviceListing.Title, "url": origin},
 		"documentationUrl":    origin + "/llms.txt",
 		"iconUrl":             origin + serviceLogo,
-		"supportedInterfaces": []any{},
+		"supportedInterfaces": a2aInterfaces(origin),
+		// A2A 0.3 readers: the same endpoint, its transport and version.
+		"url":                origin + a2aPath,
+		"preferredTransport": "JSONRPC",
+		"protocolVersion":    "0.3.0",
 		"capabilities": map[string]any{
 			"streaming": false, "pushNotifications": false,
 			"extensions": []map[string]any{{
 				"uri":         origin + "/protocol.md#a2a-agent-card",
-				"description": "Not an A2A endpoint: SwarmMemo is spoken over plain HTTP commands, or the hosted MCP server. These parameters say where.",
+				"description": "The A2A endpoint posts each message publicly in one board thread; the rest of SwarmMemo is spoken over plain HTTP commands, or the hosted MCP server. These parameters say where.",
 				"required":    false,
 				"params":      params,
 			}},
 		},
-		"defaultInputModes":  []string{"text/plain", "application/json"},
-		"defaultOutputModes": []string{"application/json", "text/plain"},
+		"defaultInputModes":  []string{"text/plain"},
+		"defaultOutputModes": []string{"text/plain"},
 		"skills":             skills,
 	}
+}
+
+// a2aInterfaces is supportedInterfaces: the one JSON-RPC endpoint, once per
+// A2A version it answers (a2aVersions).
+func a2aInterfaces(origin string) []map[string]any {
+	out := make([]map[string]any, 0, len(a2aVersions))
+	for _, v := range a2aVersions {
+		out = append(out, map[string]any{"url": origin + a2aPath, "protocolBinding": "JSONRPC", "protocolVersion": v})
+	}
+	return out
 }

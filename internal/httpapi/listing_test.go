@@ -46,14 +46,28 @@ func TestAgentCardShapeAndHonesty(t *testing.T) {
 	if card["version"] != "1.17.0" || card["name"] != "SwarmMemo" || card["description"] != serviceListing.Description {
 		t.Fatalf("identity: %v %v %v", card["name"], card["version"], card["description"])
 	}
-	// No A2A binding exists, so none is claimed, not even by an older field.
-	if interfaces, ok := card["supportedInterfaces"].([]any); !ok || len(interfaces) != 0 {
-		t.Fatalf("supportedInterfaces must be an empty list: %v", card["supportedInterfaces"])
+	// The one A2A binding (a2a.go), named for 1.0 clients and 0.3 readers;
+	// nothing more is claimed: no other transport, no auth scheme.
+	interfaces, ok := card["supportedInterfaces"].([]any)
+	if !ok || len(interfaces) != len(a2aVersions) {
+		t.Fatalf("supportedInterfaces: %v", card["supportedInterfaces"])
 	}
-	for _, field := range []string{"url", "preferredTransport", "additionalInterfaces", "protocolVersion", "securitySchemes"} {
+	for i, raw := range interfaces {
+		in := raw.(map[string]any)
+		if in["url"] != "https://swarmmemo.com/a2a" || in["protocolBinding"] != "JSONRPC" || in["protocolVersion"] != a2aVersions[i] {
+			t.Fatalf("interface %d: %v", i, in)
+		}
+	}
+	if card["url"] != "https://swarmmemo.com/a2a" || card["preferredTransport"] != "JSONRPC" || card["protocolVersion"] != "0.3.0" {
+		t.Fatalf("0.3 fields: %v %v %v", card["url"], card["preferredTransport"], card["protocolVersion"])
+	}
+	for _, field := range []string{"additionalInterfaces", "securitySchemes"} {
 		if _, ok := card[field]; ok {
 			t.Fatalf("the card must not claim %s", field)
 		}
+	}
+	if !reflect.DeepEqual(card["defaultInputModes"], []any{"text/plain"}) || !reflect.DeepEqual(card["defaultOutputModes"], []any{"text/plain"}) {
+		t.Fatalf("the binding carries text parts only: %v %v", card["defaultInputModes"], card["defaultOutputModes"])
 	}
 	capabilities := card["capabilities"].(map[string]any)
 	if capabilities["streaming"] != false || capabilities["pushNotifications"] != false {
@@ -61,14 +75,15 @@ func TestAgentCardShapeAndHonesty(t *testing.T) {
 	}
 	extension := capabilities["extensions"].([]any)[0].(map[string]any)
 	params := extension["params"].(map[string]any)
-	if extension["required"] != false || params["a2a_binding"] != false || params["http_commands"] != "https://swarmmemo.com/v1/command" || params["mcp"] != "https://swarmmemo.com/mcp" {
+	binding, _ := params["a2a_binding"].(map[string]any)
+	if extension["required"] != false || binding["url"] != "https://swarmmemo.com/a2a" || binding["public"] != true || params["http_commands"] != "https://swarmmemo.com/v1/command" || params["mcp"] != "https://swarmmemo.com/mcp" {
 		t.Fatalf("the extension must describe the real interface: %v", extension)
 	}
 	if !strings.HasSuffix(extension["uri"].(string), "/protocol.md#a2a-agent-card") {
 		t.Fatalf("extension uri: %v", extension["uri"])
 	}
 	protocol, err := os.ReadFile("../../docs/PROTOCOL.md")
-	if err != nil || !strings.Contains(string(protocol), "\n### A2A agent card\n") {
+	if err != nil || !strings.Contains(string(protocol), "\n### A2A agent card\n") || !strings.Contains(string(protocol), "\n### A2A endpoint\n") {
 		t.Fatal("the extension uri must name a real PROTOCOL.md section")
 	}
 	if card["documentationUrl"] != "https://swarmmemo.com/llms.txt" {
@@ -100,8 +115,11 @@ func TestAgentCardShapeAndHonesty(t *testing.T) {
 	if caps := s.capabilities(); caps["a2a_agent_card"] != "/.well-known/agent-card.json" {
 		t.Fatal("/capabilities must link the agent card")
 	}
-	if !strings.Contains(s.instructions(), "/.well-known/agent-card.json") {
-		t.Fatal("/llms.txt must link the agent card")
+	if !strings.Contains(s.instructions(), "/.well-known/agent-card.json") || !strings.Contains(s.instructions(), "JSON-RPC at /a2a") {
+		t.Fatal("/llms.txt must link the agent card and the A2A endpoint")
+	}
+	if caps := s.capabilities(); caps["a2a_endpoint"] != "/a2a" {
+		t.Fatal("/capabilities must name the A2A endpoint")
 	}
 }
 

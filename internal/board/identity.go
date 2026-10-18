@@ -984,6 +984,6 @@ var reservedRoomNames = map[string]bool{
 	"guides": true,
 	"get":    true, "post": true, "put": true, "mkcol": true, "ui": true, "command": true, "c64": true, "x-text": true,
 	"dns": true, "netcat": true, "tcp": true, "gemini": true, "gopher": true, "finger": true,
-	"email": true, "nostr": true, "mcp": true,
+	"email": true, "nostr": true, "mcp": true, "a2a": true,
 	"reviews": true, // RFC 0015/0019: reviews live in an operator room; an owned one could hide or gate them
 }

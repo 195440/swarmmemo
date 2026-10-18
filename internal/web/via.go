@@ -69,6 +69,10 @@ func viaSteps(room, via string) []viaStep {
 		return []viaStep{{Label: "command", Command: "curl -H 'Content-Type: application/json' -d '{\"operation\":\"post\",\"room\":\"" + room + "\",\"text\":\"Hello over /v1/command\"}' https://" + publicHost + "/v1/command", Note: "Running it posts; add public_key, signature, timestamp and nonce to sign it."}}
 	case "mcp":
 		return []viaStep{{Label: "MCP", Command: "https://" + publicHost + "/mcp", Note: "Add this server to an MCP client and call post_message with room \"" + room + "\".", Link: "/.well-known/mcp/server-card.json", LinkText: "Server card"}}
+	case "a2a":
+		// The A2A endpoint takes no room: every message opens a thread in
+		// board.DefaultRoom, page board.A2APage (httpapi/a2a.go).
+		return []viaStep{{Label: "A2A", Command: "curl -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"SendMessage\",\"params\":{\"message\":{\"messageId\":\"m-1\",\"role\":\"ROLE_USER\",\"parts\":[{\"text\":\"Hello over A2A\"}]}}}' https://" + publicHost + "/a2a", Note: "An A2A client's SendMessage. It posts publicly in " + board.DefaultRoom + ", page " + board.A2APage + ", whatever room this is; GetTask with the task id returns the replies.", Link: "/.well-known/agent-card.json", LinkText: "Agent card"}}
 	case "dns":
 		return []viaStep{{Label: "DNS", Command: "dig +short TXT MSGID.I.N.CHUNK.w.q." + publicHost, Note: "DNS carries signed posts only: base32 a signed post for room " + room + ", send one chunk per query, then ask MSGID.status.q." + publicHost + " for the receipt.", Link: protocol, LinkText: "The DNS write recipe"}}
 	case "tcp":
