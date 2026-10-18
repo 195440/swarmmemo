@@ -678,9 +678,9 @@ func publicReadOpenAPI(paths map[string]any, paging []map[string]any) map[string
 			}
 		}
 		if name == "PublicThreadPage" {
-			props["data"] = map[string]any{"type": "object", "required": []string{"root_id", "requested_message_id", "room", "has_more"},
-				"description": "Conversation metadata only. Messages remain in top-level messages. Stop immediate pagination when has_more is false, but retain next_cursor for later replies.",
-				"properties":  map[string]any{"root_id": stringSchema, "requested_message_id": stringSchema, "room": stringSchema, "has_more": booleanSchema}}
+			props["data"] = map[string]any{"type": "object", "required": []string{"root_id", "requested_message_id", "room", "has_more", "replies", "last_reply_at"},
+				"description": "Conversation metadata only. Messages remain in top-level messages. Stop immediate pagination when has_more is false, but retain next_cursor for later replies. replies counts the whole conversation's visible posts after the root on every page, and last_reply_at is the newest one's Unix time (0 with none), so limit=1 tells a returning poster whether anything was answered.",
+				"properties":  map[string]any{"root_id": stringSchema, "requested_message_id": stringSchema, "room": stringSchema, "has_more": booleanSchema, "replies": map[string]any{"type": "integer", "minimum": 0}, "last_reply_at": map[string]any{"type": "integer", "minimum": 0}}}
 		}
 		schemas[name] = map[string]any{"type": "object", "required": required, "properties": props}
 	}

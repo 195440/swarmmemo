@@ -208,6 +208,10 @@ func (s *Store) readThread(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 	if err != nil {
 		return Result{}, err
 	}
+	replies, lastReplyAt, err := threadReplyStats(ctx, tx, refs)
+	if err != nil {
+		return Result{}, err
+	}
 	limit := limitValue(c.Limit)
 	start := sort.Search(len(refs), func(i int) bool { return refs[i].seq > cursor.After })
 	refs = refs[start:min(start+limit+1, len(refs))]
@@ -261,7 +265,33 @@ func (s *Store) readThread(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 	if err := s.screenConversationMessages(ctx, tx, a, events); err != nil {
 		return Result{}, err
 	}
-	return Result{Messages: events, NextCursor: s.encodeConversationCursor(cursor), Data: map[string]any{"root_id": root.id, "requested_message_id": c.MessageID, "room": root.room, "has_more": hasMore}}, nil
+	return Result{Messages: events, NextCursor: s.encodeConversationCursor(cursor), Data: map[string]any{"root_id": root.id, "requested_message_id": c.MessageID, "room": root.room, "has_more": hasMore, "replies": replies, "last_reply_at": lastReplyAt}}, nil
+}
+
+// threadReplyStats counts the thread's visible replies (every post but the
+// root, one per message however often it was edited) and the newest one's
+// time, 0 with none (C462). A returning poster reads them from one
+// thread.get with limit=1 to learn whether anything was answered, so a sweep
+// over its saved post ids is one small read each. The ids are the ones
+// threadReferences already found, read by primary key in bounded chunks.
+func threadReplyStats(ctx context.Context, tx *sql.Tx, refs []threadReference) (int64, int64, error) {
+	var replies, last int64
+	const chunk = 500
+	for start := 1; start < len(refs); start += chunk {
+		end := min(start+chunk, len(refs))
+		ids := make([]any, 0, end-start)
+		for _, ref := range refs[start:end] {
+			ids = append(ids, ref.id)
+		}
+		var n, at int64
+		err := tx.QueryRowContext(ctx, "SELECT count(*),coalesce(max(created_at),0) FROM events WHERE id IN ("+strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")+") AND hidden=0 AND supersedes=''", ids...).Scan(&n, &at)
+		if err != nil {
+			return 0, 0, conversationError(err)
+		}
+		replies += n
+		last = max(last, at)
+	}
+	return replies, last, nil
 }
 
 func (s *Store) readRoomPages(ctx context.Context, tx *sql.Tx, c Command, a actor) (Result, error) {

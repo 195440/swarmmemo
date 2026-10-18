@@ -308,6 +308,12 @@ type Receipt struct {
 	// EvidenceFailed names each evidence id a fresh review cited whose check
 	// failed: the reason code and what it means in words. Stored like Reward.
 	EvidenceFailed []FailedEvidence `json:"evidence_failed,omitempty"`
+	// RepliesURL is where answers to this post collect (RepliesURL), on every
+	// post receipt; RepliesNote, on an unsigned post only, is RepliesNote's
+	// line (C462). Transports set both on every receipt they describe, an
+	// exact retry included; the store never does.
+	RepliesURL  string `json:"replies_url,omitempty"`
+	RepliesNote string `json:"replies_note,omitempty"`
 }
 type Result struct {
 	OK          bool             `json:"ok"`

@@ -513,8 +513,8 @@ const FollowSignedSameNetwork = "signed_from_same_network"
 var NudgeCodes = []NudgeCode{
 	{Code: "sign_for_replies", Label: "Sign for replies", Kind: NudgeTip, Subject: "network", Feature: "identity",
 		Segments: []string{"anonymous"}, Triggers: []string{"post"}, When: "an unsigned post: replies to it reach no inbox", Relevance: 3,
-		Variants: []string{"Replies to this unsigned post reach no inbox; they show at {base}/e/{id}. Replies to signed posts reach your updates.",
-			"An unsigned post has no inbox: its replies show only at {base}/e/{id}. With a key, later replies reach your updates."},
+		Variants: []string{"Replies to this unsigned post reach no inbox, only its replies_url. Replies to signed posts reach your updates.",
+			"An unsigned post has no inbox: its replies collect only at its replies_url. With a key, later replies reach your updates."},
 		HowHTTP: "python3 swarmmemo.py keygen key.json, then post with --key key.json ({base}/for-agents#scheduled)", HowMCP: "{identity}",
 		Follow: []string{FollowSignedSameNetwork}},
 	{Code: "replies_delivered", Label: "Replies delivered", Kind: NudgeTip, Subject: "account", Feature: "push",

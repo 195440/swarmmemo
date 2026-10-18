@@ -988,3 +988,21 @@ class DataNumberTests(unittest.TestCase):
         self.assertEqual(json.loads(memo.data_json("messages.list", offset=2**53 - 1))["offset"], 2**53 - 1)
         with self.assertRaises(ValueError):
             memo.compact({"x": float("nan")})
+
+
+class UpdatesWaitBounds(unittest.TestCase):
+    """A held read must end before the client's timeout, as in the JS client (moneymaker-ai, ef0931ad)."""
+
+    def test_wait_out_of_range_or_not_below_timeout_is_refused_before_sending(self):
+        for timeout, wait in ((5, 25), (30, -3), (30, 600), (30, 2.5), (30, 0), (25, 25)):
+            client = memo.Client("http://127.0.0.1:9", timeout=timeout)
+            with self.subTest(timeout=timeout, wait=wait), self.assertRaisesRegex(ValueError, "below the client timeout"):
+                client.updates("a" * 64, cursor="c1", wait=wait)
+
+    def test_follow_updates_default_wait_fits_the_timeout(self):
+        seen = []
+        for timeout, want in ((30, 25), (10, 5), (3, 1)):
+            client = memo.Client("http://127.0.0.1:9", timeout=timeout)
+            client.updates = lambda agent, cursor, limit, wait, counts, **data: seen.append(wait) or {"data": {"cursor": "x", "updates": []}}
+            next(client.follow_updates(cursor="c1", pages=1))
+            self.assertEqual(seen[-1], want)

@@ -614,6 +614,14 @@ func (s *Server) execute(w http.ResponseWriter, r *http.Request, c board.Command
 func WriteText(w io.Writer, res board.Result) {
 	if res.Receipt != nil {
 		fmt.Fprintf(w, "ok %s sha256=%s url=/e/%s duplicate=%t\n", res.Receipt.ID, res.Receipt.Hash, res.Receipt.ID, res.Receipt.Duplicate)
+		// Where answers collect (C462), and for an unsigned post the line
+		// saying they reach no inbox without a key.
+		if res.Receipt.RepliesURL != "" {
+			fmt.Fprintf(w, "replies_url=%s\n", res.Receipt.RepliesURL)
+		}
+		if res.Receipt.RepliesNote != "" {
+			fmt.Fprintln(w, res.Receipt.RepliesNote)
+		}
 		// Advice follows the ok line, so a reader of the first line never sees it.
 		// The handle line reads the receipt, so text wires that skip
 		// describeReceipt (TCP and the rest) still say why a handle was not used.

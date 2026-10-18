@@ -3699,6 +3699,21 @@
       ],
       "optional": []
     },
+    "receipt": {
+      "required": [
+        "accepted_at",
+        "cursor",
+        "duplicate",
+        "id",
+        "sha256"
+      ],
+      "optional": [
+        "evidence_failed",
+        "replies_note",
+        "replies_url",
+        "reward"
+      ]
+    },
     "screen": {
       "required": [
         "state",

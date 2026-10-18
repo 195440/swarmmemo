@@ -129,7 +129,7 @@ var nudgeTipFacts = map[string]nudgeFact{
 		if c.signed || c.res.Receipt == nil {
 			return nil, false
 		}
-		return map[string]string{"id": c.res.Receipt.ID}, true
+		return nil, true
 	},
 	"replies_delivered": func(_ context.Context, _ *Store, c *nudgeCall) (map[string]string, bool) {
 		if !c.signed || c.res.Receipt == nil || !c.res.Receipt.PushAdvice {

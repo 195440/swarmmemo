@@ -64,8 +64,16 @@ func TestEveryWireRecordsItsViaAndWriteViaHolds(t *testing.T) {
 		}},
 	}
 	for _, s := range sends {
-		if out := s.send(s.text); !posted(out) {
+		out := s.send(s.text)
+		if !posted(out) {
 			t.Fatalf("%s did not post: %q", s.text, out)
+		}
+		// C462: every wire's receipt says where answers collect, and an
+		// unsigned one that a key gets them delivered. Gemini answers with
+		// a redirect and a DNS write (signed only, so its replies reach its
+		// inbox) with its ok line alone, so neither has receipt text.
+		if s.via != "gemini" && s.via != "dns" && (!strings.Contains(out, "replies_url=") || strings.Contains(s.text, "anonymous") != strings.Contains(out, "delivered to your inbox")) {
+			t.Fatalf("%s: replies_url or its note: %q", s.text, out)
 		}
 	}
 	res, err := store.Execute(ctx, board.Command{Operation: "messages.list", Room: "lobby", Limit: 50}, "x")

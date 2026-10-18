@@ -844,7 +844,13 @@ func (c *Core) execute(ctx context.Context, peer string, cmd board.Command) (boa
 			return board.Result{}, &board.Error{Status: 403, Code: "public_rooms_only", Message: "Constrained transports post to existing public rooms; a member posts into a private room with a signed post that says visibility private."}
 		}
 	}
-	return c.service.Execute(ctx, cmd, peer)
+	res, err := c.service.Execute(ctx, cmd, peer)
+	if err == nil {
+		// Where answers collect (C462), board-relative like every link these
+		// wires print.
+		board.DescribeReplies("", cmd, res.Receipt)
+	}
+	return res, err
 }
 
 // permitted is the command policy of wire (the board.Vias value a wire

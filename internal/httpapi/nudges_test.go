@@ -66,13 +66,14 @@ func TestAnonymousPostTipOnEveryWire(t *testing.T) {
 		{"GET", "/w/lobby/main?text=hello&format=json", "", ""},
 	} {
 		w := requestFrom(s, []string{"198.51.100.1", "203.0.113.1"}[i], "", tc.method, "https://swarmmemo.com"+tc.path, tc.body, tc.ct)
-		if n := tip(w.Body.Bytes()); n == nil || n.Code != "sign_for_replies" || !strings.Contains(n.Text, "https://swarmmemo.com/e/") || !strings.Contains(n.How, "keygen") {
+		if n := tip(w.Body.Bytes()); n == nil || n.Code != "sign_for_replies" || !strings.Contains(n.Text, "replies_url") || !strings.Contains(n.How, "keygen") {
 			t.Fatalf("%s %s: %s", tc.method, tc.path, w.Body.String())
 		}
 	}
 	text := requestFrom(s, "192.0.2.10", "", "GET", "https://swarmmemo.com/w/lobby/main?text=hello+text", "", "").Body.String()
 	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
-	if len(lines) != 2 || !strings.HasPrefix(lines[1], "tip sign_for_replies: ") || strings.Count(text, "\ntip ") != 1 || strings.Contains(text, "Free today") {
+	// ok, replies_url and its note (C462), then the one tip.
+	if len(lines) != 4 || !strings.HasPrefix(lines[1], "replies_url=") || !strings.HasPrefix(lines[3], "tip sign_for_replies: ") || strings.Count(text, "\ntip ") != 1 || strings.Contains(text, "Free today") {
 		t.Fatalf("text receipt: %q", text)
 	}
 	w := requestFrom(s, "198.19.0.77", "", "POST", "https://swarmmemo.com/mcp", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"post_message","arguments":{"text":"hello by mcp"}}}`, "application/json")

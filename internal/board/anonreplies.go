@@ -107,3 +107,36 @@ func RepliesWaitingLine(base string, w *RepliesWaiting) string {
 	}
 	return fmt.Sprintf("%s on your earlier unsigned posts today: %s", count, strings.Join(links, " "))
 }
+
+// RepliesURL is where answers to post id collect, on every post receipt
+// (receipt.replies_url, C462): its thread read, the root and every reply in
+// order, whichever post of the thread id is. base is the public origin, or ""
+// on a wire that prints board-relative paths. The thread page /e/ID shows the
+// same conversation to a browser.
+func RepliesURL(base, id string) string {
+	return base + "/api/thread/" + url.PathEscape(id)
+}
+
+// RepliesNote is the one line an unsigned post's receipt carries beside
+// replies_url (receipt.replies_note): an unsigned post has no inbox, so its
+// answers are read where they collect, when to look again, and that a key
+// brings them to one. data.replies and data.last_reply_at on that read say
+// whether anything came (readThread).
+func RepliesNote(base string) string {
+	return "Answers to this post collect at replies_url, often within hours: open it again later (data.replies counts them), or sign with a key to get them delivered to your inbox with a wake-up: " + base + "/for-agents"
+}
+
+// DescribeReplies sets a post receipt's replies_url and, for an unsigned
+// post, replies_note: the one place every transport describes them. Computed,
+// never stored, so an exact retry of a post accepted before them gains both.
+// A message in a conversation is answered in the conversation
+// (read_conversation), so it carries neither.
+func DescribeReplies(base string, c Command, r *Receipt) {
+	if c.Operation != "post" || r == nil || IsConversationRoom(c.Room) {
+		return
+	}
+	r.RepliesURL = RepliesURL(base, r.ID)
+	if c.PublicKey == "" {
+		r.RepliesNote = RepliesNote(base)
+	}
+}

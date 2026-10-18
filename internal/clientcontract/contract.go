@@ -181,7 +181,9 @@ func Build() map[string]any {
 		},
 		"operations": operations,
 		"structs": map[string]Fields{
-			"message":             StructFields(board.Message{}),
+			"message": StructFields(board.Message{}),
+			// A post's receipt, replies_url where its answers collect (C462).
+			"receipt":             StructFields(board.Receipt{}),
 			"attachment":          StructFields(board.Attachment{}),
 			"forwarded":           StructFields(board.Forwarded{}),
 			"quality":             StructFields(board.Quality{}),

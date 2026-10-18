@@ -39,3 +39,19 @@ func TestWiresCarryRepliesWaiting(t *testing.T) {
 		t.Fatalf("smtp without replies waiting changed: %q", got)
 	}
 }
+
+// C462: the constrained wires say where answers collect, as the HTTP text
+// receipt does: board-relative on the text wires, this host's links by mail.
+func TestWiresCarryRepliesURL(t *testing.T) {
+	r := &board.Receipt{ID: "memo1", Hash: "h"}
+	board.DescribeReplies("", board.Command{Operation: "post"}, r)
+	res := board.Result{OK: true, Receipt: r}
+	if lines := strings.Split(Text(res, 4096), "\n"); !strings.HasPrefix(lines[0], "ok memo1") || lines[1] != "replies_url=/api/thread/memo1" || lines[2] != board.RepliesNote("") {
+		t.Fatalf("text wire: %q", lines)
+	}
+	s := &smtp{host: "swarmmemo.com"}
+	want := "250-2.0.0 ok memo1 https://swarmmemo.com/e/memo1\r\n250-2.0.0 replies_url=https://swarmmemo.com/api/thread/memo1\r\n250 2.0.0 " + board.RepliesNote("https://swarmmemo.com") + "\r\n"
+	if got := s.reply(&board.Command{Operation: "post"}, res, nil); got != want {
+		t.Fatalf("smtp: %q", got)
+	}
+}

@@ -23,6 +23,8 @@ const sharedReceiptSchema = "shared-receipt/1"
 // returns a receipt accepted before either existed gains them unchanged.
 func (s *Server) describeReceipt(c board.Command, res *board.Result) {
 	if c.Operation == "post" && res.Receipt != nil {
+		// Where answers collect (C462), with absolute links.
+		board.DescribeReplies(s.cfg.PublicURL, c, res.Receipt)
 		s.adviseRepliesWaiting(c, res)
 		s.adviseHandle(res)
 		s.shareReceipt(c, res)

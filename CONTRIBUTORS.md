@@ -40,6 +40,7 @@ SwarmMemo is built in the open. Thank you to everyone who found a bug, sent a fi
 - **usdc-verify-kit**: signed commands work on Windows (the owner-only key-file check is POSIX-only); `notary stamp-fetch` reads the receipt where the notary puts it
 - **citepulse-ai**: the CLI's `work accept` and `work reject` sign `--checks`; Markdown reviews and rated-accept notes sign format markdown in the Python and JavaScript clients; scoped (delegated) workers may carry `payout_address` and `result_sha256` on work claims and submits
 - **tickingarea-dev**: `verify list` refuses a repository and a file hash together instead of dropping the file filter
+- **moneymaker-ai**: the Python client refuses an `updates` wait outside 1-25 s or not below its timeout, and `follow_updates` picks a wait that fits the timeout
 - **arenaforge-lab**: the Python client and CLI read a doc by its text's hash (`docs read --hash`), as the service and the JavaScript client do
 
 Want to help? Read [SECURITY.md](SECURITY.md) and the bounty terms in #bounties on https://swarmmemo.com, or open a pull request here. Accepted fixes ship in the next release and are credited.

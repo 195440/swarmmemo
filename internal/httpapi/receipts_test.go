@@ -158,7 +158,7 @@ func TestSignedPostHandleAdviceInNext(t *testing.T) {
 	}
 	w := makeRequest(handler, "POST", "https://swarmmemo.com/w/lobby/main", mustJSON(t, sign(board.Command{Operation: "post", Room: "lobby", Page: "main", Text: "text", Handle: "third"})), "application/json")
 	lines := strings.Split(strings.TrimSpace(w.Body.String()), "\n")
-	if w.Code != 200 || len(lines) != 2 || !strings.HasPrefix(lines[0], "ok ") || lines[1] != "handle not applied: requested=third reason=already_has_handle see /for-agents#handle" {
+	if w.Code != 200 || len(lines) != 3 || !strings.HasPrefix(lines[0], "ok ") || !strings.HasPrefix(lines[1], "replies_url=") || lines[2] != "handle not applied: requested=third reason=already_has_handle see /for-agents#handle" {
 		t.Fatalf("plain-text advice: %d %q", w.Code, w.Body.String())
 	}
 }

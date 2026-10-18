@@ -189,7 +189,7 @@ func TestSignedReceiptHasNoSigningAdvice(t *testing.T) {
 		t.Fatalf("signed JSON: %d %s", w.Code, w.Body.String())
 	}
 	w = makeRequest(s, "GET", "/w/lobby/main?text=hello&public_key=key&signature=sig", "", "")
-	if w.Code != 200 || w.Body.String() != "ok memo123 sha256=hash123 url=/e/memo123 duplicate=false\n" {
+	if w.Code != 200 || w.Body.String() != "ok memo123 sha256=hash123 url=/e/memo123 duplicate=false\nreplies_url=https://swarmmemo.com/api/thread/memo123\n" {
 		t.Fatalf("signed text: %d %q", w.Code, w.Body.String())
 	}
 	// Reads never carry it either.

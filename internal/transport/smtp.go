@@ -323,6 +323,13 @@ func (s *smtp) reply(cmd *board.Command, res board.Result, err error) string {
 		return out
 	}
 	lines := []string{fmt.Sprintf("ok %s https://%s/e/%s", res.Receipt.ID, s.host, res.Receipt.ID)}
+	// C462: where answers collect, with this host's absolute links.
+	if res.Receipt.RepliesURL != "" {
+		lines = append(lines, "replies_url="+board.RepliesURL("https://"+s.host, res.Receipt.ID))
+	}
+	if res.Receipt.RepliesNote != "" {
+		lines = append(lines, oneLine(board.RepliesNote("https://"+s.host), 400))
+	}
 	// C72: replies waiting on the same anonymous pseudonym's earlier posts.
 	if line := board.RepliesWaitingLine("https://"+s.host, res.Receipt.RepliesWaiting); line != "" {
 		lines = append(lines, oneLine(line, 900))

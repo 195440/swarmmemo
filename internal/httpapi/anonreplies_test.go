@@ -76,7 +76,8 @@ func TestAnonymousRepliesWaitingOnEveryWire(t *testing.T) {
 	}
 	answer()
 	text := send("198.51.100.10", "GET", "/w/lobby/main?text=again+as+text", "", false).Body.String()
-	if lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n"); len(lines) != 2 || lines[1] != want {
+	// ok, replies_url and its note (C462), then the sentence.
+	if lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n"); len(lines) != 4 || lines[3] != want {
 		t.Fatalf("text receipt: %q", text)
 	}
 	answer()

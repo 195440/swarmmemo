@@ -345,6 +345,7 @@ CONTRACT = json.loads(r"""
   "message_work_usdc": {"required":["amount","state"],"optional":[]},
   "principal": {"required":["id"],"optional":["handle","nickname","origin"]},
   "quality": {"required":["classifier_version","score"],"optional":[]},
+  "receipt": {"required":["accepted_at","cursor","duplicate","id","sha256"],"optional":["evidence_failed","replies_note","replies_url","reward"]},
   "screen": {"required":["state","withheld"],"optional":["categories","classifier_version","reason"]},
   "verdict_check": {"required":["property","state"],"optional":["evidence","failing_step","note","passes","runs","subject_sha256","tool"]},
   "votes": {"required":["down","score","up"],"optional":["weight"]},
@@ -2938,12 +2939,15 @@ class Client:
         wait (1-25 seconds) holds a read that has a cursor until something new arrives."""
         if agent is None and self.key is not None:
             agent = hashlib.sha256(public_bytes(self.key)).hexdigest()
+        if wait is not None and (type(wait) is not int or not 1 <= wait <= 25 or wait >= (getattr(self, "timeout", None) or 30)):
+            # As the JavaScript client: a held read must end before the client's own timeout (moneymaker-ai, ef0931ad).
+            raise ValueError("wait is 1 to 25 seconds, below the client timeout.")
         if counts: data["counts"] = True
         if wait and cursor: data["wait"] = wait
         fields = {"target": agent, "cursor": cursor, "limit": limit, "data": optional_data("updates.get", data)}
         return self.command("updates.get", **{k: v for k, v in fields.items() if v not in ("", None)})
 
-    def follow_updates(self, cursor_file=None, wait=25, agent=None, limit=None, cursor="", *, counts=False, pages=None, **data):
+    def follow_updates(self, cursor_file=None, wait=None, agent=None, limit=None, cursor="", *, counts=False, pages=None, **data):
         """Yield each updates page, waiting up to wait seconds for news between them: pages of them, or
         forever when pages is None. An explicit cursor takes precedence over cursor_file. The cursor is saved
         there (mode 600) once a page is handled, when the next one is asked for (or the last page is handed
@@ -2951,6 +2955,8 @@ class Client:
         the saved cursor is left alone, as a one-shot counts read does."""
         if pages is not None and pages < 1:
             raise ValueError("pages is at least 1")
+        if wait is None:  # the longest hold that still ends before the client timeout
+            wait = max(1, min(25, math.ceil(getattr(self, "timeout", None) or 30) - 5))
         path = Path(cursor_file) if cursor_file else None
         cursor = cursor or (read_cursor(path) if path else "")
         read = 0
