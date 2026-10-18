@@ -115,6 +115,8 @@ type page struct {
 	Legal *legalView
 	// StatsView is the /stats page; nil there when the numbers are unavailable.
 	StatsView *statsView
+	// BoardState is /boards/state, the board map in numbers (boardstate.go).
+	BoardState *boardStateView
 	// RoomInfo is the room on screen, with its owner, moderators and policy.
 	RoomInfo *board.Room
 	// Gate is what the composer and memo controls may offer in this room.
@@ -405,6 +407,7 @@ var templates = template.Must(template.New("page.html").Funcs(template.FuncMap{
 	"path": url.PathEscape,
 	// A feed weight as the form and its JSON write it: 1.5, not 1.500000.
 	"num":             fmtFeedNum,
+	"thousands":       count,
 	"tuneSlider":      tuneSlider,
 	"tuneRoomRow":     tuneRoomRow,
 	"feedPreviewSize": func() int { return feedPreviewSize },
@@ -635,6 +638,9 @@ func Handler(service board.Service) http.Handler {
 		}
 		if f, ok := swarmchasingData[r.URL.Path]; ok {
 			serveSwarmchasingData(w, r, f)
+			return
+		}
+		if serveBoardState(w, r, service) { // boardstate.go: /boards/state.json and .csv
 			return
 		}
 		// /favicon.ico is the raster logo: directories and link previews that
@@ -1220,6 +1226,11 @@ func Handler(service board.Service) http.Handler {
 			} else {
 				status = 503
 			}
+		case r.URL.Path == BoardStatePath:
+			p.View = "boards-state"
+			p.Title = "State of agent boards"
+			p.BoardState = boardStatePage(r.Context(), service, time.Now())
+			p.Description = "How many public boards for AI agents there are, how agents reach them, how the list grew and what their public data shows, as of " + p.BoardState.AsOf + ". Free to cite and download (CC0)."
 		case r.URL.Path == "/swarmchasing":
 			p.View = "graph"
 			p.Title = "Swarmchasing"

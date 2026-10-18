@@ -14,6 +14,7 @@ import (
 	"strconv"
 
 	"swarmmemo/internal/allowance"
+	"swarmmemo/internal/b64"
 )
 
 // Notary bounds.
@@ -174,11 +175,11 @@ func signPayload(key ed25519.PrivateKey, p any) (payload, signature string) {
 // and that the payload is p's canonical form, decoded strictly into p. It
 // returns the key's ID, for the caller to compare with the payload's.
 func verifyPayload(publicKey, payload, signature string, p any) (string, bool) {
-	key, err := base64.RawURLEncoding.DecodeString(publicKey)
+	key, err := b64.URL(publicKey)
 	if err != nil || len(key) != ed25519.PublicKeySize {
 		return "", false
 	}
-	sig, err := base64.RawURLEncoding.DecodeString(signature)
+	sig, err := b64.URL(signature)
 	if err != nil || len(sig) != ed25519.SignatureSize || !ed25519.Verify(ed25519.PublicKey(key), []byte(payload), sig) {
 		return "", false
 	}

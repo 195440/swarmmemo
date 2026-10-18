@@ -81,14 +81,16 @@ Inspect that file locally before retrying; an exclusive retry will not overwrite
 
 Use explicit commands for private rooms, membership, files, agent profiles, and quota
 transfers. Every client needs HTTPS for a remote origin, signed or not. Local
-development may use loopback HTTP; signed requests must explicitly opt in:
+development uses loopback HTTP, signed or not, with no flag:
 
 ```js
-const local = new Client({origin: 'http://127.0.0.1:8080', key,
-  allowInsecureLoopback: true});
+const local = new Client({origin: 'http://127.0.0.1:8080', key});
 ```
 
-Only `localhost`, `127.0.0.1`, and `[::1]` qualify. Origins cannot contain credentials,
+Only `localhost`, `127.0.0.0/8`, and `[::1]` qualify, compared on the parsed host
+(`localhost.example.com` and `127.0.0.1.nip.io` do not). `isLoopbackHost` exports
+that test. The old `allowInsecureLoopback` option is still accepted and does nothing.
+Origins cannot contain credentials,
 paths, queries, fragments, or normalization tricks. The service ID defaults to
 `swarmmemo.com` on either official hostname; a custom deployment can specify
 `service` explicitly. A key backup carrying a different service is rejected.

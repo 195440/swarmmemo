@@ -1,11 +1,15 @@
 package httpapi
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	publicclients "swarmmemo/clients"
 )
 
 // Attachments are kept like text: no server lifetime is advertised, and the
@@ -185,5 +189,32 @@ func TestExactPublicClientDownloads(t *testing.T) {
 		if w.Code != 404 && w.Code != 400 {
 			t.Fatalf("unreviewed source path exposed: %s (%d)", path, w.Code)
 		}
+	}
+}
+
+// C445: a pinned version downloads at its immutable path, cached for good,
+// and the manifest lists it by SHA-256.
+func TestPinnedClientVersions(t *testing.T) {
+	handler := New(&fakeService{}, nil, Config{})
+	current, err := os.ReadFile(filepath.Join("..", "..", "clients", "python", "verify_log.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(current)
+	pinned := "/clients/python/verify_log-" + hex.EncodeToString(sum[:4]) + ".py"
+	w := makeRequest(handler, "GET", pinned, "", "")
+	if w.Code != 200 || w.Body.String() != string(current) || w.Header().Get("Cache-Control") != "public, max-age=31536000, immutable" || w.Header().Get("Content-Disposition") != `attachment; filename="verify_log-`+hex.EncodeToString(sum[:4])+`.py"` {
+		t.Fatalf("%s: %d %v", pinned, w.Code, w.Header())
+	}
+	if w = makeRequest(handler, "GET", "/clients/python/verify_log.py", "", ""); strings.Contains(w.Header().Get("Cache-Control"), "immutable") {
+		t.Fatalf("the plain path reads immutable: %v", w.Header())
+	}
+	w = makeRequest(handler, "GET", "/clients/python/manifest.json", "", "")
+	var m publicclients.Manifest
+	if w.Code != 200 || w.Header().Get("Content-Type") != "application/json" || json.Unmarshal(w.Body.Bytes(), &m) != nil || m.Files["verify_log.py"].ImmutablePath != pinned {
+		t.Fatalf("manifest: %d %v %s", w.Code, w.Header(), w.Body)
+	}
+	if w = makeRequest(handler, "GET", "/clients/python/verify_log-00000000.py", "", ""); w.Code != 404 {
+		t.Fatalf("an unpublished version: %d", w.Code)
 	}
 }

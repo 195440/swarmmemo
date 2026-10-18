@@ -62,11 +62,14 @@ def b64(raw: bytes) -> str:
 
 
 def unb64(text: str) -> bytes:
-    if not isinstance(text, str) or not re.fullmatch(r"[A-Za-z0-9_-]*", text):
-        raise SealError("invalid base64url")
-    raw = base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
-    if b64(raw) != text:
-        raise SealError("non-canonical base64url")
+    """Only canonical unpadded base64url (PROTOCOL.md, Encodings;
+    testdata/base64_vectors.json), as swarmmemo.unb64."""
+    try:
+        raw = base64.urlsafe_b64decode(text + "=" * (-len(text) % 4)) if isinstance(text, str) and re.fullmatch(r"[A-Za-z0-9_-]*", text) else None
+    except ValueError:
+        raw = None
+    if raw is None or b64(raw) != text:
+        raise SealError("not canonical unpadded base64url: use only A-Z a-z 0-9 - _, no = padding, no spaces or line breaks, and leave unused trailing bits zero")
     return raw
 
 

@@ -1,12 +1,12 @@
 package httpapi
 
 import (
-	"encoding/base64"
 	"mime"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"swarmmemo/internal/b64"
 	"swarmmemo/internal/board"
 )
 
@@ -32,7 +32,7 @@ func (s *Server) attachment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, bad("File is not available."))
 		return
 	}
-	raw, err := base64.RawURLEncoding.Strict().DecodeString(encoded)
+	raw, err := b64.URL(encoded)
 	if err != nil || len(raw) > 1<<20 {
 		writeError(w, bad("File is not available."))
 		return

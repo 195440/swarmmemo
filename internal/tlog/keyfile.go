@@ -11,6 +11,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"swarmmemo/internal/b64"
 )
 
 // KeyFileName is the log key file's name in DATA_DIR when LOG_KEY_FILE does
@@ -93,7 +95,7 @@ func loadKey(path string) (ed25519.PrivateKey, error) {
 	if err = json.Unmarshal(raw, &kf); err != nil || kf.Version != 1 || kf.Type != keyFileType {
 		return nil, fmt.Errorf("log key file %s is not a version 1 %s key", path, keyFileType)
 	}
-	seed, err := base64.RawURLEncoding.DecodeString(kf.Seed)
+	seed, err := b64.URL(kf.Seed)
 	if err != nil || len(seed) != ed25519.SeedSize {
 		return nil, fmt.Errorf("log key file %s has a malformed seed", path)
 	}

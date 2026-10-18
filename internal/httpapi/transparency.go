@@ -16,6 +16,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	publicclients "swarmmemo/clients"
 	"swarmmemo/internal/board"
 )
 
@@ -47,7 +48,11 @@ var LogPaths = map[string]string{
 	"record":      "/api/record/HANDLE_OR_FINGERPRINT",
 	"proofs":      "/api/record/HANDLE_OR_FINGERPRINT/proofs",
 	"verifier":    "/clients/python/verify_log.py",
-	"page":        "/verify",
+	// verifier_pinned is each published version, unchanged for good (C445):
+	// SHA8 is the first 8 hex digits of its SHA-256, which the manifest lists.
+	"verifier_pinned":   "/clients/python/verify_log-SHA8.py",
+	"verifier_manifest": "/clients/python/" + publicclients.ManifestName,
+	"page":              "/verify",
 }
 
 // logQuery parses the named non-negative integers; absent ones are -1.

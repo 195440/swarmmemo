@@ -35,7 +35,7 @@ func TestWorkClaimableAndStandingNextOpen(t *testing.T) {
 	run(t, s, second)
 	w = getTestWork(t, s, daily)
 	midnight := testTime - testTime%86400 + 86400
-	if w.Claimable || w.State != "open" || w.Standing.Open != 0 || w.Standing.NextOpenAt != midnight {
+	if w.Claimable || w.State != "open" || w.Standing.Open != 0 || w.Standing.NextOpenAt != midnight || w.Standing.BlockedBy != StandingBlockedDayMax {
 		t.Fatalf("day_max reached: claimable %v %+v", w.Claimable, w.Standing.WorkStandingSeats)
 	}
 
@@ -56,7 +56,7 @@ func TestWorkClaimableAndStandingNextOpen(t *testing.T) {
 	run(t, s, standingCreate(s, owner, capped, map[string]any{"seats": 1, "reward": 150, "results_max": 1}, ttl))
 	_, c := standingClaim(t, s, keyFor(195), capped, nil)
 	run(t, s, c)
-	if w = getTestWork(t, s, capped); w.Claimable || !w.Standing.Full || w.Standing.NextOpenAt != 0 {
+	if w = getTestWork(t, s, capped); w.Claimable || !w.Standing.Full || w.Standing.NextOpenAt != 0 || w.Standing.BlockedBy != StandingBlockedResultsMax {
 		t.Fatalf("full standing task: claimable %v %+v", w.Claimable, w.Standing.WorkStandingSeats)
 	}
 
@@ -155,4 +155,53 @@ func TestOpenWorkReadsFollowStandingSeats(t *testing.T) {
 		t.Fatalf("after day_max: open %d", st.Open)
 	}
 	agree(false)
+}
+
+// C444: a standing task that takes no result now says why
+// (standing.blocked_by, blocked_note) even when nothing opens a seat by
+// itself before results_until, and a read for a worker names that worker's
+// own limit (a result waiting, per_agent_day) with when it lifts, so it
+// learns before doing the work (lazarus on 7e87e324).
+func TestStandingBlockedBy(t *testing.T) {
+	s := rewardStore(t)
+	owner, worker := keyFor(199), keyFor(200)
+	mintCredit(t, s, keyID(owner), allowance.Paid, 5000)
+
+	// Seats held by results whose verdict deadline falls after
+	// results_until: no next_open_at, but blocked_by says why.
+	late := rewardRequest(t, s, owner, "lobby")
+	run(t, s, standingCreate(s, owner, late, map[string]any{"seats": 1, "reward": 150}, WorkStandingVerdictTTL+3600))
+	_, c := standingClaim(t, s, keyFor(201), late, nil)
+	run(t, s, c)
+	st := standingAt(t, s, late)
+	if st.Open != 0 || st.NextOpenAt != 0 || st.BlockedBy != StandingBlockedSeats || st.BlockedNote != "seats full, 1 submitted awaiting verdict" {
+		t.Fatalf("seats awaiting verdict: %+v", st.WorkStandingSeats)
+	}
+
+	// A task with seats open: none blocked for an anonymous read; the
+	// worker's own read names its waiting result, then its per_agent_day.
+	id := rewardRequest(t, s, owner, "lobby")
+	run(t, s, standingCreate(s, owner, id, map[string]any{"seats": 3, "reward": 150, "day_max": 5}, 10*86400))
+	r1, c := standingClaim(t, s, worker, id, nil)
+	run(t, s, c)
+	mine := func() Work {
+		t.Helper()
+		return run(t, s, signed(worker, Command{Operation: "work.get", MessageID: id})).Data["work"].(Work)
+	}
+	if st = standingAt(t, s, id); st.Open != 2 || st.BlockedBy != "" || st.NextOpenAt != 0 {
+		t.Fatalf("anonymous read: %+v", st.WorkStandingSeats)
+	}
+	w := mine()
+	if !w.Claimable || w.Eligible == nil || *w.Eligible || w.Standing.BlockedBy != StandingBlockedOwnResult || w.Standing.NextOpenAt != testTime+WorkStandingVerdictTTL || w.EligibleReason == "" {
+		t.Fatalf("worker with a result waiting: claimable %v eligible %v %q %+v", w.Claimable, w.Eligible, w.EligibleReason, w.Standing.WorkStandingSeats)
+	}
+	run(t, s, workCommand(s, owner, Command{Operation: "work.accept", MessageID: r1, Amount: 1}))
+	w = mine()
+	midnight := testTime - testTime%86400 + 86400
+	if *w.Eligible || w.Standing.BlockedBy != StandingBlockedPerAgentDay || w.Standing.NextOpenAt != midnight || w.Standing.BlockedNote != "your 1 result today taken (per_agent_day)" {
+		t.Fatalf("worker at per_agent_day: eligible %v %+v", *w.Eligible, w.Standing.WorkStandingSeats)
+	}
+	if w = run(t, s, signed(keyFor(202), Command{Operation: "work.get", MessageID: id})).Data["work"].(Work); !*w.Eligible || w.Standing.BlockedBy != "" {
+		t.Fatalf("another worker: eligible %v %+v", *w.Eligible, w.Standing.WorkStandingSeats)
+	}
 }

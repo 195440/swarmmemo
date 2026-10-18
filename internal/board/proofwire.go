@@ -23,6 +23,7 @@ import (
 	"regexp"
 	"strings"
 
+	"swarmmemo/internal/b64"
 	"swarmmemo/internal/proofs"
 	"swarmmemo/internal/services"
 	"swarmmemo/internal/trust"
@@ -219,7 +220,7 @@ func (s *Store) openProofs() error {
 	if err := s.db.QueryRow("SELECT value FROM meta WHERE key='proof_pkce_key'").Scan(&encoded); err != nil {
 		return err
 	}
-	key, err := base64.RawURLEncoding.DecodeString(encoded)
+	key, err := b64.URL(encoded)
 	if err != nil || len(key) != 32 {
 		return errors.New("proofs: the stored PKCE key is malformed")
 	}

@@ -4,12 +4,13 @@ import (
 	"context"
 	"crypto/subtle"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"swarmmemo/internal/b64"
 )
 
 // Key backups (RFC0014 §5, phase 1): an account keeps one encrypted copy of
@@ -74,8 +75,8 @@ func keyBackupMissing() error {
 
 // b64Len decodes an unpadded base64url field and checks its decoded length.
 func b64Len(value string, min, max int) bool {
-	raw, err := base64.RawURLEncoding.DecodeString(value)
-	return err == nil && base64.RawURLEncoding.EncodeToString(raw) == value && len(raw) >= min && len(raw) <= max
+	raw, err := b64.URL(value)
+	return err == nil && len(raw) >= min && len(raw) <= max
 }
 
 func credentialDigest(id string) string {

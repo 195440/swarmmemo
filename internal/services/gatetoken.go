@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"strings"
+
+	"swarmmemo/internal/b64"
 )
 
 // The SwarmMemo Gate's token (C325, docs/rfcs/0022-gate-token.md): what a
@@ -99,8 +101,8 @@ func ParseGateToken(token string) (payload, signature string, err error) {
 	if !ok || strings.Contains(sig, ".") {
 		return "", "", ErrGateToken
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(body)
-	if err != nil || base64.RawURLEncoding.EncodeToString(raw) != body {
+	raw, err := b64.URL(body)
+	if err != nil {
 		return "", "", ErrGateToken
 	}
 	return string(raw), sig, nil
@@ -161,8 +163,8 @@ func VerifyGateResult(key ed25519.PrivateKey, id string) (GateResultPayload, boo
 	if !ok {
 		return GateResultPayload{}, false
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(body)
-	if err != nil || base64.RawURLEncoding.EncodeToString(raw) != body {
+	raw, err := b64.URL(body)
+	if err != nil {
 		return GateResultPayload{}, false
 	}
 	var p GateResultPayload

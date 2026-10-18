@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -11,6 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"swarmmemo/internal/b64"
 	"swarmmemo/internal/board"
 )
 
@@ -182,8 +182,8 @@ func (s *Server) pathCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	encoded := strings.TrimPrefix(r.URL.Path, "/c64/")
-	raw, e := base64.RawURLEncoding.Strict().DecodeString(encoded)
-	if e != nil || base64.RawURLEncoding.EncodeToString(raw) != encoded {
+	raw, e := b64.URL(encoded)
+	if e != nil {
 		writeError(w, bad("Expected one unpadded base64url JSON command."))
 		return
 	}

@@ -11,6 +11,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"swarmmemo/internal/b64"
 )
 
 // NotaryKeyFileName is the notary key file's name in DATA_DIR when
@@ -102,7 +104,7 @@ func loadNotaryKey(path string) (ed25519.PrivateKey, error) {
 	if err = StrictObject(raw, &kf); err != nil || kf.Version != 1 || kf.Type != notaryKeyFileType {
 		return nil, fmt.Errorf("notary key file %s is not a version 1 %s key", path, notaryKeyFileType)
 	}
-	seed, err := base64.RawURLEncoding.DecodeString(kf.Seed)
+	seed, err := b64.URL(kf.Seed)
 	if err != nil || len(seed) != ed25519.SeedSize {
 		return nil, fmt.Errorf("notary key file %s has a malformed seed", path)
 	}

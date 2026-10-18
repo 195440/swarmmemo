@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"swarmmemo/internal/allowance"
 )
 
 // Work addressed through an edited request, and results bound by their text,
@@ -151,6 +153,35 @@ func TestWorkVersionResolutionRefusesOthers(t *testing.T) {
 		t.Fatalf("read through a visible version beside a hidden one: %+v", w)
 	}
 	run(t, s, workCommand(s, worker, Command{Operation: "work.claim", MessageID: edit, TTL: 600}))
+}
+
+// C448: a requester amends its standing task's text (a stale pin, say) by
+// editing the request: work.get shows the new version, and the seats, the
+// results and the pool are untouched; a worker replying to the newest
+// version opens a result on the same task.
+func TestWorkStandingRequestAmended(t *testing.T) {
+	s := rewardStore(t)
+	owner := keyFor(255)
+	mintCredit(t, s, keyID(owner), allowance.Paid, 5000)
+	id := rewardRequest(t, s, owner, "lobby")
+	run(t, s, standingCreate(s, owner, id, map[string]any{"seats": 3, "reward": 150, "day_max": 5}, 10*86400))
+	_, c := standingClaim(t, s, keyFor(1), id, nil)
+	run(t, s, c)
+	before := getTestWork(t, s, id)
+
+	edit := editPost(t, s, owner, "lobby", "request", id, "Review my patch for credits. Pin: /clients/python/verify_log-63bbbaad.py")
+	after := getTestWork(t, s, edit)
+	if after.ID != id || after.Request == nil || after.Request.VersionID != edit || after.Request.Versions != 2 || !strings.Contains(after.Request.Text, "verify_log-63bbbaad") {
+		t.Fatalf("amended request: %+v", after.Request)
+	}
+	if after.Standing.WorkStandingSeats != before.Standing.WorkStandingSeats || after.Standing.Results != 1 || after.Reward.Amount != before.Reward.Amount || after.Fence != before.Fence {
+		t.Fatalf("the edit changed the seats: %+v, was %+v", after.Standing, before.Standing)
+	}
+	reply := run(t, s, signedNow(s, keyFor(2), Command{Operation: "post", Room: "lobby", ReplyTo: edit, Text: "Result against the amended pin"})).Receipt.ID
+	run(t, s, workWith(s, keyFor(2), Command{Operation: "work.claim", MessageID: edit, Target: reply}, nil))
+	if st := standingAt(t, s, id); st.Results != 2 || st.Submitted != 2 {
+		t.Fatalf("a result on the amended task: %+v", st)
+	}
 }
 
 func TestWorkResultBoundBySHA256(t *testing.T) {

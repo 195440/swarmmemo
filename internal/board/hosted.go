@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"swarmmemo/internal/allowance"
+	"swarmmemo/internal/b64"
 	"swarmmemo/internal/services"
 )
 
@@ -125,7 +126,7 @@ func (s *Store) openHosted() error {
 	if err := s.db.QueryRow("SELECT value FROM meta WHERE key='hosted_hold_key'").Scan(&encoded); err != nil {
 		return err
 	}
-	holdKey, err := base64.RawURLEncoding.DecodeString(encoded)
+	holdKey, err := b64.URL(encoded)
 	if err != nil || len(holdKey) != 32 {
 		return errors.New("hosted identities: the stored hold key is malformed")
 	}
@@ -187,7 +188,7 @@ func loadHostedKEKs(path string) ([]hostedKEK, error) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		key, err := base64.RawURLEncoding.Strict().DecodeString(line)
+		key, err := b64.URL(line)
 		if err != nil || len(key) != 32 {
 			return nil, fmt.Errorf("HOSTED_KEK_FILE %s line %d is not 32 bytes in unpadded base64url", path, n)
 		}
@@ -247,7 +248,7 @@ func (s *Store) sealSeed(account string, seed []byte) (sealed, kekID string) {
 // caller zeroes the key after its one signature.
 func (s *Store) openSeed(account, sealed, kekID string) (ed25519.PrivateKey, error) {
 	k := s.hostedKEK(kekID)
-	raw, err := base64.RawURLEncoding.DecodeString(sealed)
+	raw, err := b64.URL(sealed)
 	if k == nil || err != nil {
 		return nil, errors.New("hosted key cannot be opened")
 	}
@@ -852,12 +853,12 @@ func (s *Store) claimHosted(ctx context.Context, tx *sql.Tx, c Command, a actor,
 		subtle.ConstantTimeCompare([]byte(hostedHash(d.RecoveryCode)), []byte(stored)) != 1 {
 		return Result{}, recoveryInvalid()
 	}
-	key, err := base64.RawURLEncoding.DecodeString(d.NewPublicKey)
-	if err != nil || len(key) != ed25519.PublicKeySize || base64.RawURLEncoding.EncodeToString(key) != d.NewPublicKey {
+	key, err := b64.URL(d.NewPublicKey)
+	if err != nil || len(key) != ed25519.PublicKeySize {
 		return Result{}, problem(400, "invalid_target_key", "new_public_key must be a raw Ed25519 public key in unpadded base64url.")
 	}
-	proof, err := base64.RawURLEncoding.DecodeString(d.Proof)
-	if err != nil || base64.RawURLEncoding.EncodeToString(proof) != d.Proof || !ed25519.Verify(key, []byte(HostedClaimContext+a.account+"\x00"+d.NewPublicKey), proof) {
+	proof, err := b64.URL(d.Proof)
+	if err != nil || !ed25519.Verify(key, []byte(HostedClaimContext+a.account+"\x00"+d.NewPublicKey), proof) {
 		return Result{}, problem(401, "invalid_rotation_proof", `The new key must sign "swarmmemo-claim/1\x00" + account + "\x00" + new_public_key.`)
 	}
 	result, err := s.rotateIdentity(ctx, tx, c.Operation, a, key, now)

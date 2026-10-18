@@ -6,7 +6,6 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +18,7 @@ import (
 	"time"
 
 	"swarmmemo/internal/allowance"
+	"swarmmemo/internal/b64"
 )
 
 // The funnel's records (schema 36; definitions in funnel.go). Operator-only:
@@ -383,7 +383,7 @@ func (s *Store) funnelLogNudge(n nudgeShown) {
 // accountOfKey is the account a public key signs for: its identity's, or a
 // worker key's principal; "" when unknown.
 func (s *Store) accountOfKey(ctx context.Context, publicKey string) string {
-	raw, err := base64.RawURLEncoding.DecodeString(publicKey)
+	raw, err := b64.URL(publicKey)
 	if err != nil || len(raw) != ed25519.PublicKeySize {
 		return ""
 	}

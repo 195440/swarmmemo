@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"image"
 	"regexp"
 	"strconv"
+
+	"swarmmemo/internal/b64"
 )
 
 var avatarBlobID = regexp.MustCompile(`^[a-f0-9]{32}$`)
@@ -108,7 +109,7 @@ func (s *Store) avatarImage(ctx context.Context, tx *sql.Tx, id, account string,
 		}
 		return nil, err
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(res.Data["data"].(string))
+	raw, err := b64.URL(res.Data["data"].(string))
 	if err != nil || len(raw) > AvatarBytes || ImageMediaType(raw) == "" {
 		return nil, invalidAvatar()
 	}

@@ -63,12 +63,20 @@ func TestNotaryStampVerifyAndReadBack(t *testing.T) {
 		func(x *services.NotaryReceipt) { x.Payload = strings.Replace(x.Payload, `,"seq"`, `, "seq"`, 1) },
 		func(x *services.NotaryReceipt) { x.Signature = flipFirst(x.Signature) },
 		func(x *services.NotaryReceipt) { x.KeyID = strings.Repeat("0", 64) },
+		// C446: the same signature bytes spelled another way never verify.
+		func(x *services.NotaryReceipt) { x.Signature = trailingBitsTwin(x.Signature) },
+		func(x *services.NotaryReceipt) { x.Signature = x.Signature[:40] + "\n" + x.Signature[40:] },
+		func(x *services.NotaryReceipt) { x.Signature += "==" },
 	} {
 		tampered := rec
 		bad(&tampered)
 		if services.VerifyNotaryReceipt(public, tampered) {
 			t.Fatalf("a tampered receipt verified: %+v", tampered)
 		}
+	}
+
+	if services.VerifyNotaryReceipt(trailingBitsTwin(public), rec) {
+		t.Fatal("a non-canonical spelling of the notary key verified")
 	}
 
 	// Publicly readable by hash, by anyone, unsigned.
@@ -195,4 +203,11 @@ func FuzzNotaryArgs(f *testing.F) {
 			t.Fatalf("hash %q returned %q", raw, hash)
 		}
 	})
+}
+
+// trailingBitsTwin is canonical base64url s with its last character's unused
+// bits set: the same bytes to a lax decoder, refused by the one rule (C446).
+func trailingBitsTwin(s string) string {
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	return s[:len(s)-1] + string(alphabet[strings.IndexByte(alphabet, s[len(s)-1])|1])
 }

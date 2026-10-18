@@ -9,7 +9,7 @@ import {spawn, spawnSync} from 'node:child_process';
 import {gzipSync} from 'node:zlib';
 import {fileURLToPath} from 'node:url';
 import {createECDH, createPrivateKey, createPublicKey, randomBytes, sign, verify} from 'node:crypto';
-import {Client, DelegatedClient, ClientError, CONTRACT, FIELDS, canonical, delegationContext, generateKey, importKey, writeKey, loadKey, conversationRoom, loadSeal, agentSubjectID, workCreateData, standingTier, WORK_STANDING_CREATE, markdownAuto, MARKDOWN_POST_DATA, keccak256, walletAddress, personalSign, loadWalletKey, walletChallengeOK, WALLET_KEY_ENV, dataFor, workRatingPost, USER_AGENT} from './swarmmemo.mjs';
+import {Client, DelegatedClient, ClientError, CONTRACT, FIELDS, canonical, delegationContext, generateKey, importKey, writeKey, loadKey, conversationRoom, loadSeal, agentSubjectID, workCreateData, standingTier, WORK_STANDING_CREATE, markdownAuto, MARKDOWN_POST_DATA, keccak256, walletAddress, personalSign, loadWalletKey, walletChallengeOK, WALLET_KEY_ENV, dataFor, workRatingPost, USER_AGENT, isLoopbackHost, unb64} from './swarmmemo.mjs';
 
 const vector = JSON.parse(await readFile(new URL('../python/signing-vector.json', import.meta.url), 'utf8'));
 const fixtureKey = importKey({private_key: Buffer.from(vector.seed_hex, 'hex').toString('base64url'), public_key: vector.command.public_key});
@@ -19,6 +19,19 @@ test('the generated CONTRACT block is exactly clients/contract.json', async () =
   const contract = JSON.parse(await readFile(new URL('../contract.json', import.meta.url), 'utf8'));
   assert.deepEqual(JSON.parse(JSON.stringify(CONTRACT)), contract);
   assert.deepEqual([...FIELDS], contract.command.fields);
+});
+
+test('base64url decodes only its one canonical spelling (testdata/base64_vectors.json, C446)', async () => {
+  const vectors = JSON.parse(await readFile(new URL('../../testdata/base64_vectors.json', import.meta.url), 'utf8')).base64url;
+  for (const v of vectors.accept) assert.equal(unb64(v.value).toString('hex'), v.hex, v.value);
+  for (const v of vectors.reject) assert.throws(() => unb64(v.value), error => error.code === 'invalid_key' && /canonical unpadded base64url/.test(error.message), `${JSON.stringify(v.value)}: ${v.why}`);
+  assert.throws(() => unb64('aGVsbG8', 32), error => error.code === 'invalid_key' && /Expected 32 bytes/.test(error.message));
+  // The split C446 closes: a signature with its unused trailing bits set names
+  // the same bytes, and the client's verifier refuses it before checking.
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  const sig = vector.command.signature, twin = sig.slice(0, -1) + alphabet[alphabet.indexOf(sig.at(-1)) | 1];
+  assert.notEqual(twin, sig);
+  assert.throws(() => unb64(twin, 64), error => error.code === 'invalid_key');
 });
 
 test('find types and review options are checked against the contract before any network', async () => {
@@ -246,15 +259,29 @@ test('conversation and sealed commands are signed exactly, with the shared seal 
   for (const body of bodies) assert.equal(verify(null, canonical(body), createPublicKey({key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), Buffer.from(body.public_key, 'base64url')]), format: 'der', type: 'spki'}), Buffer.from(body.signature, 'base64url')), true);
 });
 
-test('origins are plain, signed HTTP is explicit loopback only, dispatch is bound', async () => {
+test('origins are plain, signed HTTP is loopback only, dispatch is bound', async () => {
   for (const origin of ['https://user:pass@swarmmemo.com', 'https://swarmmemo.com/path', 'https://swarmmemo.com/?', 'https://swarmmemo.com/#', 'https://swarmmemo.com?x=1', 'https://swarmmemo.com/../', ' https://swarmmemo.com', 'https://@swarmmemo.com', 'file:///tmp/test']) assert.throws(() => new Client({origin}), errorCode('invalid_origin'));
-  assert.throws(() => new Client({origin: 'http://localhost', key: fixtureKey}), errorCode('https_required'));
   assert.throws(() => new Client({origin: 'http://example.com', key: fixtureKey, allowInsecureLoopback: true}), errorCode('https_required'));
   const client = new Client(), prepared = client.prepare({operation: 'messages.list'});
   await assert.rejects(client.send({...prepared}), errorCode('binding_mismatch'));
   await assert.rejects(new Client({origin: 'https://publicbbs.com'}).send(prepared), errorCode('binding_mismatch'));
-  const local = new Client({origin: 'http://127.0.0.1', key: fixtureKey, allowInsecureLoopback: true});
-  await assert.rejects(new Client({origin: local.origin}).send(local.prepare({operation: 'messages.list'})), errorCode('https_required'));
+});
+
+test('one transport rule (C454): plain HTTP only to loopback, signed or not, no flag', () => {
+  // Same cases as the Python client and the MCP bridge (test_helpers.py, test_policy.py).
+  for (const origin of ['http://localhost', 'http://localhost:8080', 'http://127.0.0.1:8080', 'http://127.0.0.2', 'http://127.255.255.254:9', 'http://[::1]:8080', 'http://[::ffff:7f00:1]']) {
+    for (const key of [null, fixtureKey]) assert.equal(new Client({origin, key}).origin, origin);
+    assert.equal(new Client({origin, key: fixtureKey, allowInsecureLoopback: true}).origin, origin, 'the deprecated flag stays accepted');
+    assert.equal(new Client({origin, key: fixtureKey, allowInsecureLoopback: false}).origin, origin, 'the deprecated flag is a no-op');
+  }
+  for (const origin of ['http://localhost.evil.com', 'http://127.0.0.1.nip.io', 'http://evil.com', 'http://128.0.0.1', 'http://10.0.0.1', 'http://0.0.0.0', 'http://[::2]', 'http://[::ffff:808:808]', 'http://[::]', 'http://localhost.:8080']) {
+    for (const key of [null, fixtureKey]) assert.throws(() => new Client({origin, key}), error => error.code === 'https_required' && /needs HTTPS/.test(error.message), origin);
+  }
+  // Userinfo and normalized forms never reach the host test.
+  for (const origin of ['http://127.0.0.1@evil.com', 'http://evil.com@127.0.0.1', 'http://127.1', 'http://2130706433', 'http://0x7f.1', 'http://LOCALHOST', 'http://[::ffff:127.0.0.1]']) assert.throws(() => new Client({origin, key: fixtureKey}), errorCode('invalid_origin'), origin);
+  assert.throws(() => new Client({origin: 'http://localhost', allowInsecureLoopback: 'yes'}), errorCode('invalid_option'));
+  for (const host of ['localhost', '127.0.0.1', '127.9.9.9', '[::1]', '::1', '[::ffff:7f00:1]', '::ffff:127.0.0.1']) assert.equal(isLoopbackHost(host), true, host);
+  for (const host of ['', 'localhost.evil.com', 'evil.localhost.com', '127.0.0.1.nip.io', 'nip.io', '128.0.0.1', '[::2]', '::ffff:8.8.8.8', '::1%eth0', undefined, null, 127]) assert.equal(isLoopbackHost(host), false, String(host));
 });
 
 test('unsigned clients need HTTPS for remote origins; loopback HTTP stays local development', async () => {
@@ -264,7 +291,6 @@ test('unsigned clients need HTTPS for remote origins; loopback HTTP stays local 
     assert.throws(() => new Client({origin, allowInsecureLoopback: true}), errorCode('https_required'));
   }
   for (const origin of ['http://localhost:8080', 'http://127.0.0.1:8080', 'http://[::1]:8080']) assert.equal(new Client({origin}).origin, origin);
-  assert.throws(() => new Client({origin: 'http://127.0.0.1:8080', key: fixtureKey}), errorCode('https_required'));
 });
 
 test('lost response retries the exact signed envelope and stable request ID', async t => {

@@ -6,7 +6,6 @@ import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"database/sql"
-	"encoding/base64"
 	"errors"
 	"regexp"
 	"slices"
@@ -14,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"swarmmemo/internal/b64"
 	"swarmmemo/internal/services"
 )
 
@@ -117,7 +117,7 @@ func sealError(code string) error {
 }
 
 func decodeSealBytes(value string, size int) bool {
-	raw, err := base64.RawURLEncoding.Strict().DecodeString(value)
+	raw, err := b64.URL(value)
 	return err == nil && len(raw) == size
 }
 
@@ -180,7 +180,7 @@ func SealKid(x25519 []byte) string { return fingerprint(x25519)[:32] }
 // sealKidOf is the id of a published sealing key (base64url), or "" for a
 // value that is not one.
 func sealKidOf(x25519 string) string {
-	raw, err := base64.RawURLEncoding.DecodeString(x25519)
+	raw, err := b64.URL(x25519)
 	if err != nil || len(raw) != 32 {
 		return ""
 	}
@@ -291,7 +291,7 @@ func (s *Store) checkSealedPost(ctx context.Context, tx *sql.Tx, conv conversati
 	if match == nil || !decodeSealBytes(match[2], 12) {
 		return sealError("invalid_envelope")
 	}
-	if raw, err := base64.RawURLEncoding.Strict().DecodeString(match[3]); err != nil || len(raw) < 16 {
+	if raw, err := b64.URL(match[3]); err != nil || len(raw) < 16 {
 		return sealError("invalid_envelope")
 	}
 	epoch, _ := strconv.ParseInt(match[1], 10, 64)
@@ -381,7 +381,7 @@ var sealProbe = sync.OnceValues(func() (*ecdh.PrivateKey, error) { return ecdh.X
 // normalizeX25519Key accepts the canonical base64url of a 32-byte X25519
 // public key that is not of small order.
 func normalizeX25519Key(raw string) (string, bool) {
-	key, err := base64.RawURLEncoding.Strict().DecodeString(raw)
+	key, err := b64.URL(raw)
 	if err != nil || len(key) != 32 || key[31]&0x80 != 0 || bytes.Equal(key, make([]byte, 32)) {
 		return "", false
 	}

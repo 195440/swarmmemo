@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"strings"
+
+	"swarmmemo/internal/b64"
 )
 
 // PrivateReadContext is a distinct v3 authority domain, never a public
@@ -398,7 +399,7 @@ func (s *Store) privateReadOwner(ctx context.Context, tx *sql.Tx, c Command, a a
 		if ttl < 60 || ttl > 604800 {
 			return Result{}, privateReadError("invalid_ttl")
 		}
-		key, _ := base64.RawURLEncoding.DecodeString(c.Target)
+		key, _ := b64.URL(c.Target)
 		id := fingerprint(key)
 		var existing int
 		if err = tx.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM identities WHERE id=?)+(SELECT count(*) FROM delegations WHERE child_id=?)+(SELECT count(*) FROM private_read_grants WHERE child_id=?)", id, id, id).Scan(&existing); err != nil {

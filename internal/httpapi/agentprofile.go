@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"swarmmemo/internal/b64"
 	"swarmmemo/internal/board"
 )
 
@@ -176,7 +177,7 @@ func agentKeys(a *board.Agent) []agentJWK {
 	if a == nil || a.Successor != "" || a.Custody == "claimed" {
 		return keys
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(a.PublicKey)
+	raw, err := b64.URL(a.PublicKey)
 	if err != nil || len(raw) != ed25519.PublicKeySize {
 		return keys
 	}

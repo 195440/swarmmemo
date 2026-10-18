@@ -123,7 +123,7 @@ def binding_validated(binding):
                 or urllib.parse.urlunsplit((url.scheme, url.netloc, "", "", "")) != origin
                 or any(ord(c) <= 32 or ord(c) == 127 or c == "\\" for c in origin)):
             raise ValueError()
-        if url.scheme == "http" and url.hostname not in ("localhost", "127.0.0.1", "::1"): raise ValueError()
+        if not memo.plain_http_allowed(url): raise ValueError()
     except (ValueError, TypeError, KeyError):
         raise PrivateInboxError("invalid_binding") from None
     return strict_json(encode(binding))

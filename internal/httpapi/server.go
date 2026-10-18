@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +21,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"swarmmemo/internal/b64"
 	"swarmmemo/internal/board"
 	"swarmmemo/internal/cards"
 	"swarmmemo/internal/services"
@@ -856,8 +856,8 @@ func (s *Server) write(w http.ResponseWriter, r *http.Request) {
 				writeError(w, bad("Expected one base64url payload segment."))
 				return
 			}
-			raw, e := base64.RawURLEncoding.Strict().DecodeString(parts[3])
-			if e != nil || base64.RawURLEncoding.EncodeToString(raw) != parts[3] || !utf8.Valid(raw) {
+			raw, e := b64.URL(parts[3])
+			if e != nil || !utf8.Valid(raw) {
 				writeError(w, bad("Payload must be unpadded base64url containing UTF-8 text."))
 				return
 			}

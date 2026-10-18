@@ -14,7 +14,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +21,7 @@ import (
 	"strings"
 
 	"swarmmemo/internal/allowance"
+	"swarmmemo/internal/b64"
 )
 
 // endorsementSchema is migration fragment E (§7): endorsement_records,
@@ -476,11 +476,11 @@ func VerifyEndorsementRecord(serviceID string, r EndorsementRecord) error {
 	if r.Signature == nil || r.Type == "legacy_vote" {
 		return errors.New("unsigned record: weight 0, nothing to verify")
 	}
-	key, err := base64.RawURLEncoding.DecodeString(r.PublicKey)
+	key, err := b64.URL(r.PublicKey)
 	if err != nil || len(key) != ed25519.PublicKeySize {
 		return errors.New("public_key is not an unpadded base64url Ed25519 key")
 	}
-	sig, err := base64.RawURLEncoding.DecodeString(*r.Signature)
+	sig, err := b64.URL(*r.Signature)
 	if err != nil || len(sig) != ed25519.SignatureSize {
 		return errors.New("signature is not an unpadded base64url Ed25519 signature")
 	}

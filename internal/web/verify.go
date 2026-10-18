@@ -445,7 +445,10 @@ python3 - <<'EOF'
 import base64, hashlib, json
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 v = json.load(open("v.json"))["data"]["verification"]
-b = lambda s: base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+def b(s):  # only canonical unpadded base64url (PROTOCOL.md, Encodings)
+    raw = base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+    assert base64.urlsafe_b64encode(raw).rstrip(b"=").decode() == s, "not canonical base64url"
+    return raw
 key, payload = b(v["verifier"]["public_key"]), v["signed_payload"].encode()
 Ed25519PublicKey.from_public_bytes(key).verify(b(v["signature"]), payload)
 assert hashlib.sha256(key).hexdigest() == v["verifier"]["fingerprint"]

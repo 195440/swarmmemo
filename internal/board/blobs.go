@@ -11,6 +11,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"swarmmemo/internal/b64"
 )
 
 const blobColumns = "id,room,filename,media_type,hash,size,created_at,expires_at,deleted"
@@ -39,8 +41,8 @@ func (s *Store) blob(ctx context.Context, tx *sql.Tx, c Command, a actor, now in
 		if c.Visibility != "" && c.Visibility != r.Visibility {
 			return Result{}, problem(409, "visibility_mismatch", "Requested visibility does not match the existing room; the attachment was not stored.")
 		}
-		data, err := base64.RawURLEncoding.DecodeString(c.Data)
-		if err != nil || base64.RawURLEncoding.EncodeToString(data) != c.Data {
+		data, err := b64.URL(c.Data)
+		if err != nil {
 			return Result{}, problem(400, "invalid_base64", "Attachment data must use canonical unpadded base64url.")
 		}
 		if len(data) == 0 || len(data) > AttachmentBytes {

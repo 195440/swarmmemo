@@ -15,6 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"swarmmemo/internal/b64"
 	"swarmmemo/internal/references"
 	"swarmmemo/internal/web"
 )
@@ -103,8 +104,8 @@ func parseReferenceCursor(raw string, q referenceQuery, snapshot string) (int, b
 	if len(raw) > 4096 {
 		return 0, false, errors.New("invalid reference cursor")
 	}
-	decoded, err := base64.RawURLEncoding.DecodeString(raw)
-	if err != nil || base64.RawURLEncoding.EncodeToString(decoded) != raw {
+	decoded, err := b64.URL(raw)
+	if err != nil {
 		return 0, false, errors.New("invalid reference cursor")
 	}
 	var cursor referenceCursor

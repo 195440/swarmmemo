@@ -171,7 +171,7 @@ def binding_validated(binding):
                 or urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, "", "", "")) != origin
                 or any(ord(c) <= 32 or ord(c) == 127 or c == "\\" for c in origin)):
             raise ValueError()
-        if parsed.scheme != "https" and parsed.hostname not in ("localhost", "127.0.0.1", "::1"): raise ValueError()
+        if not memo.plain_http_allowed(parsed): raise ValueError()
     except (ValueError, TypeError): raise InboxError("invalid_origin") from None
     return strict_json(encode(binding))
 

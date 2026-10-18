@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"swarmmemo/internal/allowance"
+	"swarmmemo/internal/b64"
 	"swarmmemo/internal/ledger"
 	paywire "swarmmemo/internal/pay"
 	"swarmmemo/internal/services"
@@ -82,7 +83,7 @@ func (s *Store) openTopup() error {
 	if err := s.db.QueryRow("SELECT value FROM meta WHERE key='topup_quote_key'").Scan(&encoded); err != nil {
 		return err
 	}
-	key, err := base64.RawURLEncoding.DecodeString(encoded)
+	key, err := b64.URL(encoded)
 	if err != nil || len(key) != 32 {
 		return errors.New("topup: the stored quote key is malformed")
 	}

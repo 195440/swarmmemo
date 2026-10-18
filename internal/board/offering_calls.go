@@ -38,6 +38,7 @@ import (
 	"strings"
 	"time"
 
+	"swarmmemo/internal/b64"
 	paywire "swarmmemo/internal/pay"
 	"swarmmemo/internal/services"
 )
@@ -558,7 +559,7 @@ func (s *Store) openAuth(id, sealed, keyID string) (sealedAuth, error) {
 	if s.offerings.aead == nil || keyID != s.offerings.keyID {
 		return v, errors.New("offering authorization: the sealing key is not loaded")
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(sealed)
+	raw, err := b64.URL(sealed)
 	if err != nil {
 		return v, errors.New("offering authorization is malformed")
 	}

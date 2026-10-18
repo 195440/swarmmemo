@@ -3,9 +3,12 @@ package web
 import (
 	"context"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
+	"sync"
 
+	publicdocs "swarmmemo/docs"
 	"swarmmemo/internal/board"
 )
 
@@ -50,6 +53,7 @@ var SiteNav = []NavPage{
 	{Path: "/glossary", Label: "Glossary", Foot: FootLearn, Hub: HubLearn, Blurb: "One word per concept, and what was renamed.", Index: true, Moved: []string{"/migration"}},
 	{Path: "/docs", Label: "Docs", Foot: FootLearn, Top: true, Views: []string{"docs"}, Index: true, Landing: true},
 	{Path: "/swarmchasing", Label: "Research: Swarmchasing", Foot: FootLearn, Views: []string{"graph"}, Index: true, Landing: true, Moved: []string{"/graph", "/graph/*"}},
+	{Path: BoardStatePath, Label: "State of agent boards", Foot: FootLearn, Views: []string{"boards-state"}, Index: true, Landing: true, LLMs: "State of agent boards"},
 	// Trust and record
 	{Path: "/trust", Label: "Trust and allowance", Foot: FootTrust, Views: []string{"trust"}, Index: true, Landing: true, LLMs: "Trust and allowance", Moved: []string{"/limits"}},
 	{Path: "/trust-model", Label: "Trust model", Foot: FootTrust, Index: true},
@@ -358,6 +362,70 @@ func LandingPath(path string) bool {
 		}
 	}
 	return false
+}
+
+// landingStatic is every fixed page under a Landing row's Prefix (the /for
+// pages, the tool and job pages, the published guides), served or not: they
+// keep their path in LandingKey, where any other sub-page is an entity.
+var landingStatic = sync.OnceValue(func() map[string]bool {
+	out := map[string]bool{}
+	for _, list := range [][]string{PlatformPaths(), FrameworkPaths(), PublicGuidePaths(), publicdocs.ToolPaths(), publicdocs.JobPaths()} {
+		for _, path := range list {
+			out[path] = true
+		}
+	}
+	return out
+})
+
+// landingWord is a sub-page segment LandingKey keeps after an entity's ID
+// (/e/{id}/proof): a short lowercase word with no digit, so never an ID.
+var landingWord = regexp.MustCompile(`^[a-z][a-z-]{0,23}$`)
+
+// LandingKey folds a landing page's path (LandingPath) to the page it is,
+// for counting which pages are fetched (board.ValidAssistantPath): a Landing
+// row or a fixed page of its family keeps its path; an entity page keeps its
+// prefix with the ID as {id} (a room's name as {room}) and at most two more
+// segments, each a fixed word or {id}. The query is never part of path.
+// It is "" for a path that is not a landing page.
+func LandingKey(path string) string {
+	if !LandingPath(path) {
+		return ""
+	}
+	for _, n := range SiteNav {
+		if n.Landing && n.Path == path {
+			return path
+		}
+	}
+	if landingStatic()[path] {
+		return path
+	}
+	prefix := ""
+	for _, n := range SiteNav {
+		if n.Landing && n.Prefix != "" && strings.HasPrefix(path, n.Prefix) && len(n.Prefix) > len(prefix) {
+			prefix = n.Prefix
+		}
+	}
+	for _, p := range landingEntityPrefixes {
+		if strings.HasPrefix(path, p) && len(p) > len(prefix) {
+			prefix = p
+		}
+	}
+	placeholder := "{id}"
+	if prefix == "/r/" {
+		placeholder = "{room}"
+	}
+	out := prefix + placeholder
+	segments := strings.Split(path[len(prefix):], "/")[1:]
+	for i, seg := range segments {
+		if i == 2 || seg == "" {
+			break
+		}
+		if !landingWord.MatchString(seg) {
+			seg = "{id}"
+		}
+		out += "/" + seg
+	}
+	return out
 }
 
 // LLMsPages is /llms.txt's generated Pages line: each row with an LLMs name,

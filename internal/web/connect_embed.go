@@ -1,10 +1,10 @@
 package web
 
 import (
-	"encoding/base64"
 	"html/template"
 	"net/http"
 
+	"swarmmemo/internal/b64"
 	"swarmmemo/internal/board"
 )
 
@@ -48,8 +48,8 @@ func connectEmbedRequest(r *http.Request) (connectEmbedView, string) {
 	if !board.ValidWebOrigin(view.Origin) {
 		return view, "This sign-in link names no valid site origin (https://host, no path). Start again from the comment section."
 	}
-	key, err := base64.RawURLEncoding.DecodeString(view.Pub)
-	if err != nil || len(key) != 32 || base64.RawURLEncoding.EncodeToString(key) != view.Pub {
+	key, err := b64.URL(view.Pub)
+	if err != nil || len(key) != 32 {
 		return view, "This sign-in link carries no valid site key. Start again from the comment section."
 	}
 	if view.Action != "" && view.Action != "signout" {

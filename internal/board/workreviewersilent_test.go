@@ -234,7 +234,7 @@ func TestWorkCreateWrongKindSaysWhich(t *testing.T) {
 	if !errors.As(err, &e) || e.Code != "invalid_work_root" || e.Status != 400 {
 		t.Fatalf("got %v", err)
 	}
-	if want := "work.create needs a signed root post of kind request; this post is an offer. Post the task again with kind request."; e.Message != want {
+	if want := "work.create needs a signed root post of kind request; this post is an offer. Post the task again with kind request (CLI: post --kind request)."; e.Message != want {
 		t.Fatalf("message %q", e.Message)
 	}
 }

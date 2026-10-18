@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"swarmmemo/internal/b64"
 	"swarmmemo/internal/services"
 )
 
@@ -191,12 +191,12 @@ func delegationError(code string) error {
 }
 
 func verifyDelegationProof(c Command, canonical []byte) error {
-	key, err := base64.RawURLEncoding.DecodeString(c.Target)
-	if err != nil || len(key) != ed25519.PublicKeySize || base64.RawURLEncoding.EncodeToString(key) != c.Target {
+	key, err := b64.URL(c.Target)
+	if err != nil || len(key) != ed25519.PublicKeySize {
 		return delegationError("invalid_delegation_proof")
 	}
-	proof, err := base64.RawURLEncoding.DecodeString(c.Proof)
-	if err != nil || len(proof) != ed25519.SignatureSize || base64.RawURLEncoding.EncodeToString(proof) != c.Proof || !ed25519.Verify(key, canonical, proof) {
+	proof, err := b64.URL(c.Proof)
+	if err != nil || len(proof) != ed25519.SignatureSize || !ed25519.Verify(key, canonical, proof) {
 		return delegationError("invalid_delegation_proof")
 	}
 	return nil
@@ -422,7 +422,7 @@ func (s *Store) changeDelegation(ctx context.Context, tx *sql.Tx, c Command, a a
 		if r.Visibility != "public" {
 			return Result{}, delegationError("delegation_forbidden")
 		}
-		key, _ := base64.RawURLEncoding.DecodeString(c.Target)
+		key, _ := b64.URL(c.Target)
 		id := fingerprint(key)
 		var exists int
 		if err = tx.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM identities WHERE id=?)+(SELECT count(*) FROM delegations WHERE child_id=?)+(SELECT count(*) FROM private_read_grants WHERE child_id=?)", id, id, id).Scan(&exists); err != nil {

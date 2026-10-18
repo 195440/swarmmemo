@@ -2,14 +2,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import base64
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import stat
+import sys
 from urllib.parse import urlsplit
+
+# The bridge drives the Python client (operations.py), and shares its one
+# transport rule (C454: plain http:// only to a loopback host, no flag) and
+# its one base64 rule (C446).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
+import swarmmemo as memo  # noqa: E402
+from swarmmemo import is_loopback_host  # noqa: E402
 
 SAFE_CODES = frozenset("bridge_error invalid_profile unsafe_path invalid_origin invalid_key binding_mismatch binding_missing invalid_arguments tool_unavailable generation_mismatch intent_too_large response_too_large invalid_response scope_mismatch public_not_found transport_error unknown_intent intent_id_conflict intent_digest_mismatch outbox_not_head outbox_busy queue_item_limit queue_byte_limit invalid_acknowledgement delegation_inactive delegation_context_mismatch delegation_forbidden delegation_scope_mismatch delegation_generation_mismatch delegation_quota_exhausted stale_signature key_rotated invalid_signature idempotency_conflict quota_exhausted text_too_large invalid_ttl cursor_reset invalid_cursor work_state_conflict work_generation_mismatch work_fence_mismatch work_result_changed seats_full results_max_reached seat_limit result_in_use standing_needs_result blocked signed_only prefix_blocked sanctioned standing_required no_share handle_reserved service_unavailable".split())
 
@@ -108,15 +115,15 @@ def load_profile(path) -> Profile:
         if host != "::1" and not re.fullmatch(r"[a-z0-9][a-z0-9.-]*", host): raise ValueError()
         authority = ("[::1]" if host == "::1" else host) + (":" + str(port) if port is not None else "")
         if origin != u.scheme + "://" + authority: raise ValueError()
-        if u.scheme == "http" and host not in ("127.0.0.1", "localhost", "::1"): raise ValueError()
+        if u.scheme == "http" and not is_loopback_host(host): raise ValueError()
     except (ValueError, TypeError): raise BridgeError("invalid_origin") from None
     for key, pattern in (("room", r"[a-z0-9][a-z0-9_-]{0,63}"), ("service_id", r"[A-Za-z0-9.-]{1,128}")):
         if not isinstance(value[key], str) or not re.fullmatch(pattern, value[key]): raise BridgeError("invalid_profile")
     try:
         public = value["public_key"]
-        if not isinstance(public, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", public): raise ValueError()
-        key = base64.urlsafe_b64decode(public + "=")
-        if len(key) != 32 or base64.urlsafe_b64encode(key).decode().rstrip("=") != public: raise ValueError()
+        if not isinstance(public, str): raise ValueError()
+        key = memo.unb64(public)  # the one base64 rule (PROTOCOL.md, Encodings)
+        if len(key) != 32: raise ValueError()
     except (ValueError, TypeError): raise BridgeError("invalid_key") from None
     d = value["delegation"]
     if (not isinstance(d, dict) or set(d) != {"schema", "grant_id", "generation"}

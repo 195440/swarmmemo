@@ -485,6 +485,19 @@ func (s *Server) dailyStats(w http.ResponseWriter, r *http.Request) {
 			wakeDays[d.Day] = d
 		}
 	}
+	// Landing pages assistants fetched for their users, by day.
+	var fetches map[string]board.AssistantDay
+	if fs, ok := s.service.(assistantFetchStore); ok {
+		list, err := fs.ReadAssistantFetches(r.Context(), c.now(), days)
+		if err != nil {
+			writeError(w, errDailyStatsStorage())
+			return
+		}
+		fetches = map[string]board.AssistantDay{}
+		for _, d := range list {
+			fetches[d.Day] = d
+		}
+	}
 	out := make([]map[string]any, 0, len(stats))
 	today := c.now().UTC().Format("2006-01-02")
 	for _, day := range stats {
@@ -512,6 +525,9 @@ func (s *Server) dailyStats(w http.ResponseWriter, r *http.Request) {
 			"distinct_readers": distinct,
 			"posts":            map[string]int64{"first_post_keys": day.FirstPostKeys, "returning_keys": day.ReturningKeys},
 			"clients":          clientsJSON(day.Clients),
+		}
+		if fetches != nil {
+			entry["assistant_fetches"] = assistantFetchesJSON(fetches[day.Day])
 		}
 		if content != nil {
 			entry["content"] = contentJSON(content[day.Day])
@@ -586,6 +602,25 @@ type wakeStatsStore interface {
 	WakeStats(context.Context, int) (services.WakeStats, error)
 }
 
+type assistantFetchStore interface {
+	ReadAssistantFetches(context.Context, time.Time, int) ([]board.AssistantDay, error)
+}
+
+// assistantFetchesJSON is one day's assistant fetches as /api/stats/daily
+// serves them: by family, each published folded path and its count, and
+// other for the rest.
+func assistantFetchesJSON(d board.AssistantDay) map[string]any {
+	out := map[string]any{}
+	for _, f := range d.Families {
+		paths := map[string]int64{}
+		for _, p := range f.Paths {
+			paths[p.Name] = p.Count
+		}
+		out[f.Family] = map[string]any{"paths": paths, "other": f.Other}
+	}
+	return out
+}
+
 // contentJSON is one day's paste and doc use, split by kind: counts only.
 func contentJSON(d services.ContentDay) map[string]any {
 	return map[string]any{
@@ -613,6 +648,7 @@ var dailyStatsNotes = []string{
 	distinctReadersNote,
 	"content counts paste and shared-doc use on every day, today so far: pastes created (private or unlisted), answered opens of docs and pastes (docs.open and paste.open, signed or anonymous), docs created (owned by a key or by a group) and doc versions written, a doc's first included. Counts only.",
 	"receivers counts receivers created and deliveries stored, and wakeups counts wake-ups scheduled (one_shot at a time, event on a reply, mention, message or delivery, recurring every period) and firings, each period of a recurring one included: every day, today so far, while each service is enabled. Counts only.",
+	"assistant_fetches counts GET and HEAD requests for landing pages by the fetchers assistants send when their user asks them to read a page (" + strings.Join(board.AssistantFetchFamilies, ", ") + "), by family: paths are the pages folded to their shape (no query; a post, agent, room or task as {id} or {room}), each published from " + strconv.Itoa(board.ClientCountMinimum) + ", with other for the rest; at most " + strconv.Itoa(board.AssistantPathsPerDay) + " paths are kept per family per day. Only the family is read from the User-Agent, which is then discarded. Only written counts are served.",
 	"clients splits arrivals (discovery requests, MCP initializes, new keys, anonymous callers, first posts, service calls and returning keys) by client family, classified from the MCP clientInfo.name and the User-Agent, which are then discarded. Only written counts are served. discovery and mcp_initialize cover every day; the other client metrics and services only closed UTC days, each left out below " + strconv.Itoa(board.ClientCountMinimum) + ". " + unknownMCPClientsNote,
 }
 

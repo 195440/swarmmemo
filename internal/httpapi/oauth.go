@@ -47,6 +47,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"swarmmemo/internal/b64"
 	"swarmmemo/internal/board"
 	"swarmmemo/internal/safenet"
 	"swarmmemo/internal/services"
@@ -789,8 +790,8 @@ func (s *Server) signRequest(req authRequest) string {
 func (s *Server) openRequest(r *http.Request, signed string) (authRequest, bool) {
 	var req authRequest
 	encoded, sum, ok := strings.Cut(signed, ".")
-	payload, err1 := base64.RawURLEncoding.DecodeString(encoded)
-	got, err2 := base64.RawURLEncoding.DecodeString(sum)
+	payload, err1 := b64.URL(encoded)
+	got, err2 := b64.URL(sum)
 	if !ok || err1 != nil || err2 != nil {
 		return req, false
 	}

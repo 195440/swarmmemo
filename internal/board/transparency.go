@@ -55,6 +55,7 @@ import (
 	"time"
 
 	"swarmmemo/internal/allowance"
+	"swarmmemo/internal/b64"
 	"swarmmemo/internal/ots"
 	"swarmmemo/internal/services"
 	"swarmmemo/internal/tlog"
@@ -1814,7 +1815,7 @@ func (s *Store) decodeRecordProofsCursor(raw, account string) (recordProofsCurso
 	if generation != s.generation {
 		return recordProofsCursor{}, problem(409, "cursor_reset", "The server generation changed; start again without a cursor.")
 	}
-	b, err := base64.RawURLEncoding.DecodeString(sealed)
+	b, err := b64.URL(sealed)
 	if err != nil {
 		return recordProofsCursor{}, invalid
 	}

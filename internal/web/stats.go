@@ -48,7 +48,10 @@ type statsView struct {
 	// Clients is the arrivals-by-client table (stats_clients.go); nil when
 	// the service keeps no client counts.
 	Clients *clientsView
-	Table   []statsRow
+	// Assistants is the pages-assistants-fetch table (stats_assistants.go);
+	// nil when the service keeps no referrer counts.
+	Assistants *assistantsView
+	Table      []statsRow
 	// Allowance is the share rule and standing numbers (allowance.go);
 	// nil while the ledger and trust are off.
 	Allowance *allowanceSection
@@ -343,6 +346,7 @@ func buildStats(ctx context.Context, service board.Service, hourly bool) (*stats
 		v.Table = append(v.Table, statsRow{Day: d.Start.Format("2006-01-02"), Signed: count(d.Posts.Signed), Anonymous: count(d.Posts.Anonymous), TextBytes: count(d.Bytes.Native()), Agents: count(d.Agents), NewAgents: count(d.NewAgents), Replies: count(d.Replies), Rooms: count(d.Rooms), Work: count(d.WorkAccepted), Reads: count(d.Reads), Readers: count(d.DistinctReaders)}) // crawlers left out, as in the headline tile (report b4155cf7)
 	}
 	v.Clients = buildClientStats(ctx, service, time.Now())
+	v.Assistants = buildAssistantStats(ctx, service, time.Now())
 	v.Allowance = buildAllowanceSection(ctx, service, a.Generated)
 	v.Moderation = buildModerationStats(ctx, service)
 	v.X402 = buildX402Stats(ctx, service)

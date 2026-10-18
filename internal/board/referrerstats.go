@@ -21,6 +21,8 @@ import (
 //	referrer:YYYY-MM-DD:agent:FAMILY  requests from a known crawler or agent family
 //	referrer:YYYY-MM-DD:ref:VENUE     landing-page visits that carried ?ref=VENUE
 //	referrer:YYYY-MM-DD:ref-other     ?ref= venues past the day's named ones
+//	referrer:YYYY-MM-DD:fetch:FAMILY:PATH  landing-page GET/HEADs by a user-initiated assistant fetcher (C451)
+//	referrer:YYYY-MM-DD:fetch-other:FAMILY that family's landing fetches past its named paths
 //
 // DOMAIN is a lowercase ASCII domain reduced to its registrable part by the
 // caller (never a path, query, port, user name or full URL), and FAMILY is one
@@ -32,6 +34,16 @@ import (
 // smallest are folded into other, asset-other and ref-other. These counts are
 // for the operator only (swarmmemo stats referrers) and are never served over
 // HTTP.
+//
+// The fetch rows answer "which pages do assistants fetch for their users?":
+// FAMILY is one of AssistantFetchFamilies, the fetchers an assistant sends
+// when its user asks it to read a page (never a crawler), and PATH is the
+// landing page folded by web.LandingKey (no query, every ID a placeholder,
+// ValidAssistantPath). At most AssistantPathsPerDay paths are kept per family
+// per day, the rest folded into fetch-other:FAMILY. Unlike the referrer
+// rows these name only public pages, so ReadAssistantFetches publishes them
+// (/api/stats/daily assistant_fetches and /stats), each path from
+// ClientCountMinimum; swarmmemo stats assistants shows them all.
 
 // ReferrerHostsPerDay bounds the named domains stored for one day.
 const ReferrerHostsPerDay = 200
@@ -54,6 +66,36 @@ var UserAgentFamilies = []string{
 }
 
 const referrerScopePrefix = "referrer:"
+
+// AssistantFetchFamilies are the UserAgentFamilies an assistant sends to
+// fetch a page its user asked about, as opposed to a crawler indexing ahead.
+var AssistantFetchFamilies = []string{"ChatGPT-User", "Claude-User", "Perplexity-User", "MistralAI-User", "meta-externalfetcher"}
+
+// IsAssistantFetchFamily reports whether family is one of AssistantFetchFamilies.
+func IsAssistantFetchFamily(family string) bool {
+	for _, f := range AssistantFetchFamilies {
+		if f == family {
+			return true
+		}
+	}
+	return false
+}
+
+// AssistantPathsPerDay bounds the named paths stored per assistant family per day.
+const AssistantPathsPerDay = 50
+
+// AssistantPathBytes is the longest folded path stored.
+const AssistantPathBytes = 128
+
+// assistantPath is a folded landing path: "/" or slash-separated segments of
+// [a-z0-9._-] (starting with a letter or digit), {id} or {room}.
+var assistantPath = regexp.MustCompile(`^/(?:(?:[a-z0-9][a-z0-9._-]*|\{id\}|\{room\})(?:/(?:[a-z0-9][a-z0-9._-]*|\{id\}|\{room\}))*)?$`)
+
+// ValidAssistantPath reports whether path may be stored as a folded landing
+// path: never a query, an upper-case ID or anything but the page's shape.
+func ValidAssistantPath(path string) bool {
+	return len(path) <= AssistantPathBytes && assistantPath.MatchString(path)
+}
 
 // referrerHost is a stored domain: two or more LDH labels, ASCII lowercase.
 var referrerHost = regexp.MustCompile(`^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})$`)
@@ -86,14 +128,24 @@ func validReferrerKey(key string) bool {
 				return true
 			}
 		}
+	case strings.HasPrefix(key, "fetch:"):
+		family, path, ok := strings.Cut(key[len("fetch:"):], ":")
+		return ok && IsAssistantFetchFamily(family) && ValidAssistantPath(path)
+	case strings.HasPrefix(key, "fetch-other:"):
+		return IsAssistantFetchFamily(key[len("fetch-other:"):])
 	}
 	return false
 }
 
 // AddReferrerCounts adds counts for one UTC day in one transaction, then keeps
 // only the ReferrerHostsPerDay largest domains and ReferrerRefsPerDay largest
-// venues of that day, folding the rest into other and ref-other. Keys are
-// "host:DOMAIN", "agent:FAMILY", "ref:VENUE", "other" or "ref-other".
+// venues of that day, folding the rest into other and ref-other, and the
+// AssistantPathsPerDay largest paths of each assistant family it touched,
+// folding the rest into fetch-other:FAMILY. Keys are "host:DOMAIN",
+// "asset:DOMAIN", "agent:FAMILY", "ref:VENUE", "fetch:FAMILY:PATH",
+// "other", "asset-other", "ref-other" or "fetch-other:FAMILY". It runs in
+// its own transaction on the store's one connection, from the background
+// flush only: nothing else may hold a transaction around it.
 func (s *Store) AddReferrerCounts(ctx context.Context, day string, counts map[string]int64) error {
 	if _, err := time.Parse("2006-01-02", day); err != nil || !readerDay.MatchString(day) {
 		return fmt.Errorf("referrer counts: invalid day")
@@ -109,11 +161,24 @@ func (s *Store) AddReferrerCounts(ctx context.Context, day string, counts map[st
 	}
 	defer tx.Rollback()
 	prefix := referrerScopePrefix + day + ":"
+	touched := map[string]bool{}
 	for key, n := range counts {
 		if n == 0 {
 			continue
 		}
 		if err = addCounter(ctx, tx, prefix+key, n); err != nil {
+			return err
+		}
+		if rest, ok := strings.CutPrefix(key, "fetch:"); ok {
+			family, _, _ := strings.Cut(rest, ":")
+			touched[family] = true
+		}
+	}
+	for _, family := range AssistantFetchFamilies {
+		if !touched[family] {
+			continue
+		}
+		if err = foldReferrers(ctx, tx, prefix, "fetch:"+family, "fetch-other:"+family, AssistantPathsPerDay); err != nil {
 			return err
 		}
 	}
@@ -167,6 +232,26 @@ type ReferrerDay struct {
 	Agents     []ReferrerCount
 	Refs       []ReferrerCount
 	RefOther   int64
+	// Assistants are the landing pages each assistant fetch family read
+	// that day, in AssistantFetchFamilies order, families with none left out.
+	Assistants []AssistantFetches
+}
+
+// AssistantFetches is one assistant fetch family's landing pages for one
+// day: folded paths largest first, and the fetches past the named paths.
+type AssistantFetches struct {
+	Family string
+	Paths  []ReferrerCount
+	Other  int64
+}
+
+// Total is every landing-page fetch the family made that day.
+func (a AssistantFetches) Total() int64 {
+	n := a.Other
+	for _, p := range a.Paths {
+		n += p.Count
+	}
+	return n
 }
 
 // ReadReferrerStats returns `days` consecutive UTC days ending with the day
@@ -187,6 +272,18 @@ func (s *Store) ReadReferrerStats(ctx context.Context, end time.Time, days int) 
 		return nil, err
 	}
 	defer rows.Close()
+	fetches := make([]map[string]*AssistantFetches, days)
+	fetch := func(i int, family string) *AssistantFetches {
+		if fetches[i] == nil {
+			fetches[i] = map[string]*AssistantFetches{}
+		}
+		a := fetches[i][family]
+		if a == nil {
+			a = &AssistantFetches{Family: family}
+			fetches[i][family] = a
+		}
+		return a
+	}
 	for rows.Next() {
 		var scope string
 		var value int64
@@ -199,6 +296,12 @@ func (s *Store) ReadReferrerStats(ctx context.Context, end time.Time, days int) 
 			continue
 		}
 		switch {
+		case strings.HasPrefix(key, "fetch:"):
+			family, path, _ := strings.Cut(key[len("fetch:"):], ":")
+			a := fetch(i, family)
+			a.Paths = append(a.Paths, ReferrerCount{path, value})
+		case strings.HasPrefix(key, "fetch-other:"):
+			fetch(i, key[len("fetch-other:"):]).Other += value
 		case key == "other":
 			out[i].Other += value
 		case key == "asset-other":
@@ -219,10 +322,53 @@ func (s *Store) ReadReferrerStats(ctx context.Context, end time.Time, days int) 
 		return nil, err
 	}
 	for i := range out {
+		for _, family := range AssistantFetchFamilies {
+			if a := fetches[i][family]; a != nil {
+				sortReferrerCounts(a.Paths)
+				out[i].Assistants = append(out[i].Assistants, *a)
+			}
+		}
 		for _, list := range [][]ReferrerCount{out[i].Hosts, out[i].Assets, out[i].Agents, out[i].Refs} {
-			sort.Slice(list, func(a, b int) bool {
-				return list[a].Count > list[b].Count || list[a].Count == list[b].Count && list[a].Name < list[b].Name
-			})
+			sortReferrerCounts(list)
+		}
+	}
+	return out, nil
+}
+
+func sortReferrerCounts(list []ReferrerCount) {
+	sort.Slice(list, func(a, b int) bool {
+		return list[a].Count > list[b].Count || list[a].Count == list[b].Count && list[a].Name < list[b].Name
+	})
+}
+
+// AssistantDay is one UTC day of published assistant fetches.
+type AssistantDay struct {
+	Day      string
+	Families []AssistantFetches
+}
+
+// ReadAssistantFetches is the public part of ReadReferrerStats: for each
+// day, newest first, each assistant fetch family's folded landing paths
+// with a count of at least ClientCountMinimum, the smaller ones added to
+// Other. It never reads or returns a referrer domain, venue or crawler.
+func (s *Store) ReadAssistantFetches(ctx context.Context, end time.Time, days int) ([]AssistantDay, error) {
+	stats, err := s.ReadReferrerStats(ctx, end, days)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]AssistantDay, len(stats))
+	for i, d := range stats {
+		out[i].Day = d.Day
+		for _, a := range d.Assistants {
+			pub := AssistantFetches{Family: a.Family, Other: a.Other}
+			for _, p := range a.Paths {
+				if p.Count >= ClientCountMinimum {
+					pub.Paths = append(pub.Paths, p)
+				} else {
+					pub.Other += p.Count
+				}
+			}
+			out[i].Families = append(out[i].Families, pub)
 		}
 	}
 	return out, nil

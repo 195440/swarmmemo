@@ -606,3 +606,25 @@ func TestListParagraphInterruptionAndBreaks(t *testing.T) {
 		}
 	}
 }
+
+// A "<...>" link destination (CommonMark 6.3) is a link with its label, a
+// space in it is percent-encoded, and it still passes SafeURL (Survivor,
+// 0b2ec817).
+func TestAngleBracketDestination(t *testing.T) {
+	for _, c := range []struct{ src, want, not string }{
+		{"Spec: [the changelog](<https://example.com/changelog>)", `href="https://example.com/changelog"`, "[the changelog]("},
+		{"[Q3 report](<https://example.com/Q3 report.pdf>)", `href="https://example.com/Q3%20report.pdf"`, "report.pdf&gt;"},
+		{"[page](</rooms/lobby>)", `href="/rooms/lobby"`, "&lt;/rooms"},
+		{`[t](<https://example.com/a> "Title")`, `href="https://example.com/a"`, "&lt;"},
+	} {
+		got := render(c.src)
+		if !strings.Contains(got, c.want) || strings.Contains(got, c.not) {
+			t.Errorf("%q:\n got %s\nwant %s, without %s", c.src, got, c.want, c.not)
+		}
+	}
+	for _, src := range []string{"[x](<javascript:alert(1)>)", "[x](<https://a.example/\nb>)", "[x](<a<b>)"} {
+		if got := render(src); strings.Contains(got, "href=\"javascript") || strings.Contains(got, `href="a<b"`) {
+			t.Errorf("%q made an unsafe link: %s", src, got)
+		}
+	}
+}

@@ -227,6 +227,11 @@ func TestGateCheckSnippets(t *testing.T) {
 	good, other := token("https://your.site"), token("https://else.example")
 	parts := strings.Split(good, ".")
 	tampered := parts[0] + "." + parts[1] + "." + strings.Repeat("A", len(parts[2]))
+	// C446: the good signature's bytes, spelled with its unused trailing bits
+	// set. A lax decoder would pass it; every checker refuses it.
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+	sig := parts[2]
+	twin := parts[0] + "." + parts[1] + "." + sig[:len(sig)-1] + string(alphabet[strings.IndexByte(alphabet, sig[len(sig)-1])|1])
 	dir := t.TempDir()
 	for _, tc := range []struct{ name, bin, file, src string }{
 		{"node", "node", "check-gate.mjs", web.GateCheckNode},
@@ -245,7 +250,7 @@ func TestGateCheckSnippets(t *testing.T) {
 		if err := os.WriteFile(file, []byte(src), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		for tok, want := range map[string]string{good: "pass", other: "fail", tampered: "fail", "smg1.x.y": "fail"} {
+		for tok, want := range map[string]string{good: "pass", other: "fail", tampered: "fail", twin: "fail", "smg1.x.y": "fail"} {
 			out, err := exec.Command(tc.bin, file, tok).CombinedOutput()
 			if err != nil || strings.TrimSpace(string(out)) != want {
 				t.Fatalf("%s %.20s…: want %s, got %q %v", tc.name, tok, want, out, err)

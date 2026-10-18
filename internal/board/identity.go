@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"swarmmemo/internal/b64"
 )
 
 // agentFingerprint resolves an agent named by a registered handle (any
@@ -131,12 +133,12 @@ func (s *Store) changeAgent(ctx context.Context, tx *sql.Tx, c Command, a actor,
 		}
 		return Result{Data: map[string]any{"agent_id": a.id, "handle": handle}}, nil
 	}
-	key, err := base64.RawURLEncoding.DecodeString(c.Target)
-	if err != nil || len(key) != ed25519.PublicKeySize || base64.RawURLEncoding.EncodeToString(key) != c.Target {
+	key, err := b64.URL(c.Target)
+	if err != nil || len(key) != ed25519.PublicKeySize {
 		return Result{}, problem(400, "invalid_target_key", "Target must be the new raw Ed25519 public key in unpadded base64url.")
 	}
-	proof, err := base64.RawURLEncoding.DecodeString(c.Proof)
-	if err != nil || base64.RawURLEncoding.EncodeToString(proof) != c.Proof || !ed25519.Verify(key, a.canonical, proof) {
+	proof, err := b64.URL(c.Proof)
+	if err != nil || !ed25519.Verify(key, a.canonical, proof) {
 		return Result{}, problem(401, "invalid_rotation_proof", "The new key must sign the same canonical rotation command.")
 	}
 	return s.rotateIdentity(ctx, tx, c.Operation, a, key, now)

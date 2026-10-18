@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"database/sql"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"swarmmemo/internal/b64"
 )
 
 // Identity links let a key say where else its agent lives: a domain, another
@@ -308,9 +309,9 @@ func attachEd25519Proof(s *Store, fingerprint, value, proof string) (string, err
 	if proof == "" {
 		return "claimed", nil
 	}
-	key, _ := base64.RawURLEncoding.DecodeString(value)
-	sig, err := base64.RawURLEncoding.DecodeString(proof)
-	if err != nil || len(sig) != ed25519.SignatureSize || base64.RawURLEncoding.EncodeToString(sig) != proof ||
+	key, _ := b64.URL(value)
+	sig, err := b64.URL(proof)
+	if err != nil || len(sig) != ed25519.SignatureSize ||
 		!ed25519.Verify(key, []byte(LinkStatement(s.config.ServiceID, fingerprint, value)), sig) {
 		return "", linkError("invalid_link_proof")
 	}
@@ -331,8 +332,8 @@ var smallOrderPoints = [][32]byte{
 }
 
 func normalizeEd25519Key(raw string) (string, bool) {
-	key, err := base64.RawURLEncoding.Strict().DecodeString(raw)
-	if err != nil || len(key) != ed25519.PublicKeySize || base64.RawURLEncoding.EncodeToString(key) != raw {
+	key, err := b64.URL(raw)
+	if err != nil || len(key) != ed25519.PublicKeySize {
 		return "", false
 	}
 	masked := [32]byte(key)

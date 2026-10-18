@@ -18,9 +18,12 @@ const SwarmMemoCore = (() => {
     return new TextEncoder().encode(JSON.stringify({version: 1, service, command: ordered}).replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029'));
   }
   function b64(bytes) { let text = ''; for (const b of new Uint8Array(bytes)) text += String.fromCharCode(b); return btoa(text).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+  // Only the canonical spelling decodes (PROTOCOL.md, Encodings).
   function unb64(text) {
-    if (typeof text !== 'string' || !/^[A-Za-z0-9_-]+$/.test(text)) throw Error('Invalid base64url key.');
-    return Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - text.length % 4) % 4)), c => c.charCodeAt(0));
+    let bytes;
+    try { bytes = /^[\w-]+$/.test(text) && Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - text.length % 4) % 4)), c => c.charCodeAt(0)); } catch (_) {}
+    if (!bytes || b64(bytes) !== text) throw Error('Not canonical unpadded base64url (A-Z a-z 0-9 - _, no =, unused bits zero).');
+    return bytes;
   }
   // A key's sigil: a mirrored 5x5 block figure drawn from its fingerprint (or a
   // profile's chosen seed), so the same key always looks the same at a glance.

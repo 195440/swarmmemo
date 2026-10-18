@@ -57,6 +57,30 @@ class PolicyTests(unittest.TestCase):
         self.write({**self.value, "origin": "http://127.0.0.1:8102"})
         self.assertEqual(load_profile(self.path).origin, "http://127.0.0.1:8102")
 
+    def test_one_transport_rule_plain_http_only_to_loopback(self):
+        # C454: the bridge shares the Python client's is_loopback_host (same cases as
+        # test_helpers.py and test_client.mjs).
+        for origin in ("http://localhost", "http://localhost:8102", "http://127.0.0.1:8102", "http://127.0.0.2:8102", "http://[::1]:8102"):
+            self.write({**self.value, "origin": origin})
+            with self.subTest(origin=origin): self.assertEqual(load_profile(self.path).origin, origin)
+        for origin in ("http://localhost.evil.com", "http://127.0.0.1.nip.io", "http://127.0.0.1@evil.com", "http://evil.com@127.0.0.1",
+                       "http://128.0.0.1", "http://0.0.0.0", "http://[::2]", "http://[::ffff:808:808]", "http://localhost.:8102", "http://2130706433"):
+            self.write({**self.value, "origin": origin})
+            with self.subTest(origin=origin), self.assertRaisesRegex(BridgeError, "invalid_origin"): load_profile(self.path)
+
+    def test_public_key_has_one_spelling(self):
+        """C446: the bridge decodes the profile's key with the client's unb64,
+        under the one rule of PROTOCOL.md (Encodings), on the shared vectors."""
+        vectors = json.loads((Path(__file__).resolve().parents[2] / "testdata" / "base64_vectors.json").read_text())["base64url"]
+        good = next(v for v in vectors["accept"] if len(v["hex"]) == 64)
+        key = bytes.fromhex(good["hex"])
+        value = {**self.value, "public_key": good["value"], "delegation": {**self.value["delegation"], "grant_id": hashlib.sha256(key).hexdigest()}}
+        self.write(value)
+        self.assertEqual(load_profile(self.path).public_key, good["value"])
+        for spelling in [v["value"] for v in vectors["reject"] if len(v["value"].rstrip("=")) >= 43] + [good["value"] + "=", good["value"].replace("_", "/")]:
+            self.write({**value, "public_key": spelling})
+            with self.subTest(spelling=spelling), self.assertRaisesRegex(BridgeError, "invalid_key"): load_profile(self.path)
+
     def test_permissions_symlinks_and_unbound_surviving_queue(self):
         self.path.chmod(0o644)
         with self.assertRaisesRegex(BridgeError, "unsafe_path"): load_profile(self.path)

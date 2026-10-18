@@ -393,6 +393,9 @@ def _standing(standing):
             or any(type(standing[name]) is not int or not 0 <= standing[name] < 2**63 for name in STANDING_COUNTS)
             or any(name in standing and _usdc_units(standing[name]) is None for name in ("usdc_per_agent_day", "usdc_day_max", "usdc_owed", "usdc_owed_max"))
             or ("next_open_at" in standing and (type(standing["next_open_at"]) is not int or not 0 < standing["next_open_at"] < 2**63))
+            # blocked_by and blocked_note: why no result can open now, a token and its line (C444).
+            or ("blocked_by" in standing and (not isinstance(standing["blocked_by"], str) or not re.fullmatch(r"[a-z_]{1,32}", standing["blocked_by"])))
+            or ("blocked_note" in standing and not isinstance(standing["blocked_note"], str))
             # successor: the next round the requester named; next_round: the first claimable one along
             # that chain, only beside a successor (C391).
             or any(name in standing and (not isinstance(standing[name], str) or not re.fullmatch(HEX32, standing[name])) for name in ("successor", "next_round"))

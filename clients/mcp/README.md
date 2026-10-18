@@ -191,8 +191,9 @@ choose `"mode":"scoped-send"` and add `"key_path":"/absolute/private/child-key.j
 The existing Python client's private key-file format is used. **Never provide
 a parent/root key.** The key must match the configured child fingerprint.
 
-HTTPS is required except an explicitly configured HTTP loopback origin for
-local development. Proxies, redirects, automatic origin/service switching,
+HTTPS is required except a plain `http://` loopback origin (`localhost`,
+`127.0.0.0/8` or `[::1]`) for local development, the same rule as the Python
+and JavaScript clients. Proxies, redirects, automatic origin/service switching,
 key discovery, and automatic delegation-generation refresh are disabled.
 Only one pre-existing **public** room is supported. No private-room fallback.
 

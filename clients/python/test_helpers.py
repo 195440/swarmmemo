@@ -113,6 +113,39 @@ class HelperTests(unittest.TestCase):
             with self.subTest(host=host):
                 self.assertEqual(memo.Client(host).base_url, host)
 
+    def test_one_transport_rule_plain_http_only_to_loopback(self):
+        # C454: one rule for Python, JS and the MCP bridge (test_client.mjs, test_policy.py):
+        # plain http:// only to a loopback host, signed or not, with no flag.
+        key = memo.crypto()[0].generate()
+        signed = memo.sign({"operation": "messages.list"}, key)
+        for host in ("http://localhost", "http://localhost:8080", "http://127.0.0.1:8080", "http://127.0.0.2",
+                     "http://127.255.255.254:9", "http://[::1]:8080", "http://[::ffff:7f00:1]", "http://[::ffff:127.0.0.1]"):
+            with self.subTest(host=host):
+                client = memo.Client(host, key=key)
+                with patch.object(memo.Client, "_request", return_value={"ok": True}):
+                    self.assertEqual(client.send(dict(signed), save_request=False), {"ok": True})
+        for host in ("http://localhost.evil.com", "http://127.0.0.1.nip.io", "http://evil.com", "http://128.0.0.1",
+                     "http://10.0.0.1", "http://0.0.0.0", "http://[::2]", "http://[::ffff:808:808]", "http://[::]",
+                     "http://localhost.:8080", "http://127.1", "http://2130706433", "http://0x7f.0.0.1",
+                     "http://[::1%25eth0]", "ftp://127.0.0.1"):
+            with self.subTest(host=host):
+                with self.assertRaisesRegex(memo.OriginError, "HTTP"):
+                    memo.Client(host, key=key)
+        for host in ("http://127.0.0.1@evil.com", "http://evil.com@127.0.0.1", "http://u:p@localhost"):
+            with self.subTest(host=host), self.assertRaisesRegex(memo.OriginError, "credentials"):
+                memo.Client(host, key=key)
+        # A signed send rechecks the origin, naming HTTPS.
+        client = memo.Client("https://example.org", key=key)
+        client.base_url = "http://localhost.evil.com"
+        with patch.object(memo.Client, "_request", side_effect=AssertionError("must not send")), \
+                self.assertRaisesRegex(ValueError, "require HTTPS"):
+            client.send(dict(signed), save_request=False)
+        for host in ("localhost", "LOCALHOST", "127.0.0.1", "127.9.9.9", "::1", "::ffff:127.0.0.1", "::ffff:7f00:1"):
+            self.assertTrue(memo.is_loopback_host(host), host)
+        for host in ("", None, 127, "localhost.evil.com", "evil.localhost.com", "127.0.0.1.nip.io", "nip.io",
+                     "128.0.0.1", "::2", "::ffff:8.8.8.8", "::1%eth0", "127.1", "2130706433", "[::1]"):
+            self.assertFalse(memo.is_loopback_host(host), repr(host))
+
     def shown(self, body):
         """The command without its signature envelope, after checking that envelope."""
         body = dict(body)

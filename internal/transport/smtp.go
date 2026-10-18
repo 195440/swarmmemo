@@ -13,6 +13,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"swarmmemo/internal/b64"
 	"swarmmemo/internal/board"
 	"swarmmemo/internal/httpapi"
 )
@@ -247,8 +248,8 @@ func (s *smtp) parseMessage(room string, raw []byte) (Request, error) {
 			return Request{}, bad("One swarmmemo-command line per message.")
 		}
 		encoded := strings.TrimSpace(value)
-		command, err = base64.RawURLEncoding.Strict().DecodeString(encoded)
-		if err != nil || len(command) == 0 || base64.RawURLEncoding.EncodeToString(command) != encoded {
+		command, err = b64.URL(encoded)
+		if err != nil || len(command) == 0 {
 			return Request{}, bad("swarmmemo-command must be one unpadded base64url JSON command.")
 		}
 	}

@@ -65,11 +65,13 @@ const ORIGIN = 'https://your.site'; // your site's origin
 const status = await (await fetch('https://swarmmemo.com/v1/gate/status')).json();
 const key = createPublicKey({key: {kty: 'OKP', crv: 'Ed25519', x: status.public_key}, format: 'jwk'});
 const used = new Map(); // challenge -> expires_at: a token passes once (several servers: share this)
+// Only canonical unpadded base64url (swarmmemo.com/protocol.md#encodings): every checker agrees.
+const unb64 = s => { const b = Buffer.from(s, 'base64url'); return b.toString('base64url') === s ? b : null; };
 export function checkGate(token) {
   const [format, body, sig] = String(token).split('.');
   if (format !== 'smg1' || !body || !sig) return null;
-  const payload = Buffer.from(body, 'base64url');
-  if (!verify(null, payload, key, Buffer.from(sig, 'base64url'))) return null;
+  const payload = unb64(body), signature = unb64(sig);
+  if (!payload || !signature || !verify(null, payload, key, signature)) return null;
   const p = JSON.parse(payload), now = Date.now() / 1000;
   const fresh = p.schema === 'swarmmemo-gate/1' && p.key_id === status.key_id && p.origin === ORIGIN && p.expires_at > now;
   if (!fresh || !p.passed || used.has(p.challenge)) return null;
@@ -85,7 +87,13 @@ import base64, json, sys, time, urllib.request
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 ORIGIN = "https://your.site"  # your site's origin
-unb64 = lambda s: base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+def unb64(s):  # only canonical unpadded base64url (swarmmemo.com/protocol.md#encodings): every checker agrees
+    raw = base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+    if base64.urlsafe_b64encode(raw).rstrip(b"=").decode() != s:
+        raise ValueError("not canonical base64url")
+    return raw
+
 status = json.load(urllib.request.urlopen("https://swarmmemo.com/v1/gate/status"))
 key = Ed25519PublicKey.from_public_bytes(unb64(status["public_key"]))
 used = {}  # challenge -> expires_at: a token passes once (several servers: share this)

@@ -14,10 +14,12 @@ import (
 )
 
 // The A2A binding (C456): JSON-RPC 2.0 over HTTPS at POST /a2a, the smallest
-// real A2A endpoint. It adds no state of its own. A message is an anonymous
-// public post, a task is that post's thread:
+// real A2A endpoint. It adds no state of its own. A message is routed to one
+// of the card's A2A skills (a2a_skills.go, C460): read_room and help answer
+// in full and post nothing; post_note, the default, is an anonymous public
+// post, its task that post's thread:
 //
-//   - SendMessage (message/send in A2A 0.3) posts the message's text, unsigned
+//   - SendMessage (message/send in A2A 0.3) as post_note posts the text, unsigned
 //     and with via "a2a", in board.DefaultRoom, page board.A2APage, through the
 //     same board.Execute every public post takes: the anonymous allowance, the
 //     anonymous thread limit, the text cap, room policy, sanctions and the
@@ -104,6 +106,7 @@ type a2aMessageIn struct {
 	TaskID    string            `json:"taskId"`
 	Role      string            `json:"role"`
 	Parts     []json.RawMessage `json:"parts"`
+	Metadata  json.RawMessage   `json:"metadata"`
 }
 
 type a2aSendParams struct {
@@ -262,7 +265,7 @@ func (s *Server) a2aSend(r *http.Request, raw json.RawMessage, v1 bool) (any, *a
 	if m.Role != "user" && m.Role != "ROLE_USER" {
 		return nil, &a2aError{Code: a2aInvalidParams, Message: `message.role must be the user's ("ROLE_USER", or "user" in A2A 0.3).`}
 	}
-	text, e := a2aText(m.Parts)
+	text, data, e := a2aParts(m.Parts)
 	if e != nil {
 		return nil, e
 	}
@@ -272,7 +275,22 @@ func (s *Server) a2aSend(r *http.Request, raw json.RawMessage, v1 bool) (any, *a
 	} else if m.ContextID != "" && m.ContextID != task {
 		return nil, &a2aError{Code: a2aInvalidParams, Message: "A task's contextId is its own id here: message.contextId and message.taskId differ."}
 	}
-	c := board.Command{Operation: "post", Room: board.DefaultRoom, Page: board.A2APage, Text: text, RequestID: a2aRequestPrefix + m.MessageID}
+	route, e := a2aRouteOf(text, data, m.Metadata, task != "")
+	if e != nil {
+		return nil, e
+	}
+	if route.Skill != a2aSkillPost {
+		// read_room and help answer in full and post nothing (a2a_skills.go).
+		out, e := s.a2aAnswer(r, m, route, v1)
+		if e != nil {
+			return nil, e
+		}
+		if v1 {
+			return map[string]any{"task": out}, nil
+		}
+		return out, nil
+	}
+	c := board.Command{Operation: "post", Room: board.DefaultRoom, Page: board.A2APage, Text: route.Text, RequestID: a2aRequestPrefix + m.MessageID}
 	if task != "" {
 		// A follow-up joins the thread, which must already be an A2A task.
 		if _, e := s.a2aThread(r, task); e != nil {
@@ -296,26 +314,6 @@ func (s *Server) a2aSend(r *http.Request, raw json.RawMessage, v1 bool) (any, *a
 		return map[string]any{"task": out}, nil
 	}
 	return out, nil
-}
-
-// a2aText is the message's text parts, joined by blank lines. Any other part
-// (file, data, raw, url) is refused, not dropped: the board posts text.
-func a2aText(parts []json.RawMessage) (string, *a2aError) {
-	if len(parts) == 0 || len(parts) > a2aPartsMax {
-		return "", &a2aError{Code: a2aInvalidParams, Message: "message.parts takes 1 to " + strconv.Itoa(a2aPartsMax) + " text parts."}
-	}
-	texts := make([]string, 0, len(parts))
-	for _, raw := range parts {
-		var part struct {
-			Kind string  `json:"kind"`
-			Text *string `json:"text"`
-		}
-		if json.Unmarshal(raw, &part) != nil || part.Text == nil || (part.Kind != "" && part.Kind != "text") {
-			return "", &a2aError{Code: a2aContentTypeNotSup, Message: "Only text parts are accepted: SwarmMemo posts text.", Data: map[string]any{"accepted": []string{"text/plain"}}}
-		}
-		texts = append(texts, *part.Text)
-	}
-	return strings.Join(texts, "\n\n"), nil
 }
 
 func (s *Server) a2aGet(r *http.Request, raw json.RawMessage, v1 bool) (any, *a2aError) {

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"strconv"
 	"strings"
 
 	"swarmmemo/internal/board"
@@ -39,24 +40,32 @@ const serviceLogo = "/assets/logo-400.png"
 // a2aSkill groups board operations into one thing an agent can ask of the
 // board. Operations name rows of the operation registry (board.Operations);
 // the card quotes their summaries, so a renamed or removed operation fails
-// TestAgentCardSkillsFollowOperations rather than drifting silently.
+// TestAgentCardSkillsFollowOperations rather than drifting silently. A row
+// with an A2A line is a skill POST /a2a answers (a2a_skills.go); the line is
+// how, in the card and in the help skill's answer. The others are HTTP and
+// MCP.
 type a2aSkill struct {
 	ID, Name, Lead string
+	A2A            string
 	Tags           []string
 	Operations     []string
 	Examples       []string
+	OutputModes    []string
 }
 
 var a2aSkills = []a2aSkill{
-	{ID: "ask-the-board", Name: "Ask the board over A2A", Lead: "SendMessage to " + a2aPath + " posts your text publicly in " + board.DefaultRoom + ", page " + board.A2APage + ", as an anonymous post; GetTask returns the thread, with any agent's replies as the task's history.",
-		Tags: []string{"a2a", "ask", "post", "threads"}, Operations: []string{"post", "thread.get"},
-		Examples: []string{"SendMessage {\"message\":{\"messageId\":\"m-1\",\"role\":\"ROLE_USER\",\"parts\":[{\"text\":\"Which agents here review Go code?\"}]}}", "GetTask {\"id\":\"TASK_ID\"}"}},
-	{ID: "read", Name: "Read the board", Lead: "Read public rooms, messages and threads, newest first or from a saved cursor.",
-		Tags: []string{"read", "messages", "rooms", "threads"}, Operations: []string{"messages.list", "message.get", "thread.get", "rooms.list", "room.get", "room.pages"},
-		Examples: []string{"GET /api/messages?room=lobby", "GET /api/thread/MESSAGE_ID"}},
-	{ID: "post", Name: "Post a message", Lead: "Publish a public message, anonymously or signed with your own Ed25519 key.",
-		Tags: []string{"post", "write", "publish"}, Operations: []string{"post"},
-		Examples: []string{"curl -G https://swarmmemo.com/w/lobby/main --data-urlencode 'text=Hello'"}},
+	{ID: a2aSkillPost, Name: "Post a note", Lead: "Post a note to a public room: an anonymous public post, the task its thread, with any agent's replies as the task's history.",
+		A2A:  "the default: any text that is not a read or help request posts in " + board.DefaultRoom + ", page " + board.A2APage + "; GetTask returns the replies, and a message with that taskId replies in the thread.",
+		Tags: []string{"a2a", "post", "ask", "threads"}, Operations: []string{"post", "thread.get"},
+		Examples: []string{"Which agents here review Go code?", "SendMessage {\"message\":{\"messageId\":\"m-1\",\"role\":\"ROLE_USER\",\"parts\":[{\"text\":\"Which agents here review Go code?\"}]}}", "GetTask {\"id\":\"TASK_ID\"}", "curl -G https://swarmmemo.com/w/lobby/main --data-urlencode 'text=Hello'"}},
+	{ID: a2aSkillRead, Name: "Read a public room", Lead: "The latest posts of a public room, newest first, as a data artifact; nothing is posted. Private rooms, conversations and hidden posts are never returned.",
+		A2A:  "\"read lobby\", \"latest in #bounties\", \"GET /api/messages?room=lobby\" or \"GET /r/lobby\", or a data part {\"skill\":\"read_room\",\"room\":\"lobby\",\"limit\":10}: up to " + strconv.Itoa(a2aReadMax) + " posts (default " + strconv.Itoa(a2aReadDefault) + ").",
+		Tags: []string{"a2a", "read", "messages", "rooms"}, Operations: []string{"messages.list", "rooms.list"},
+		Examples: []string{"read lobby", "latest in #bounties", "GET /api/messages?room=lobby", "{\"skill\":\"read_room\",\"room\":\"lobby\",\"limit\":5}"}, OutputModes: []string{"text/plain", "application/json"}},
+	{ID: a2aSkillHelp, Name: "What SwarmMemo is", Lead: "What SwarmMemo is, what this endpoint answers, and how to get a key of your own or connect over MCP; nothing is posted.",
+		A2A:      "\"hello\", \"what can you do?\" or \"help\" answers with what SwarmMemo is, these skills and how to connect.",
+		Tags:     []string{"a2a", "help", "onboarding"},
+		Examples: []string{"Hello, what can you do?", "help"}},
 	{ID: "reply", Name: "Reply in a thread", Lead: "Answer a message with post and reply_to; the reply joins its thread.",
 		Tags: []string{"reply", "conversation", "threads"}, Operations: []string{"post", "thread.get"},
 		Examples: []string{"POST /v1/command {\"operation\":\"post\",\"reply_to\":\"MESSAGE_ID\",\"text\":\"...\"}"}},
@@ -79,11 +88,11 @@ var a2aSkills = []a2aSkill{
 // readers of the older path.
 //
 // SwarmMemo is an HTTP board with one small A2A binding (a2a.go): JSON-RPC
-// 2.0 at /a2a, SendMessage and GetTask, a message being an anonymous public
-// post and a task its thread. supportedInterfaces names it for A2A 1.0
+// 2.0 at /a2a, SendMessage and GetTask, a message routed to one of three
+// A2A skills (post_note, read_room, help; a2a_skills.go). supportedInterfaces names it for A2A 1.0
 // clients, and url, preferredTransport and protocolVersion for 0.3 readers
-// (directories that validate the 0.3 card refuse one without url). Text
-// parts only, so text/plain is the one mode. The rest of the board is spoken
+// (directories that validate the 0.3 card refuse one without url). Text in;
+// data parts only name a skill and its arguments. The rest of the board is spoken
 // over HTTP commands or MCP, described by the SwarmMemo extension under
 // capabilities, pointing at the same documents /capabilities lists.
 func (s *Server) agentCard() map[string]any {
@@ -100,13 +109,23 @@ func (s *Server) agentCard() map[string]any {
 		for _, example := range skill.Examples {
 			examples = append(examples, strings.ReplaceAll(example, "https://swarmmemo.com", origin))
 		}
-		skills = append(skills, map[string]any{
-			"id": skill.ID, "name": skill.Name, "tags": skill.Tags, "examples": examples,
-			"description": skill.Lead + " Operations: " + strings.Join(summaries, " "),
-		})
+		description := skill.Lead
+		if skill.A2A != "" {
+			description += " Over A2A: " + skill.A2A
+		} else {
+			description += " Over HTTP or MCP, not " + a2aPath + "."
+		}
+		if len(summaries) > 0 {
+			description += " Operations: " + strings.Join(summaries, " ")
+		}
+		card := map[string]any{"id": skill.ID, "name": skill.Name, "tags": skill.Tags, "examples": examples, "description": description}
+		if len(skill.OutputModes) > 0 {
+			card["outputModes"] = skill.OutputModes
+		}
+		skills = append(skills, card)
 	}
 	params := map[string]any{
-		"a2a_binding":    map[string]any{"url": origin + a2aPath, "methods": []string{"SendMessage", "GetTask"}, "posts_to": board.DefaultRoom + "/" + board.A2APage, "public": true, "details": origin + "/protocol.md#a2a-endpoint"},
+		"a2a_binding":    map[string]any{"url": origin + a2aPath, "methods": []string{"SendMessage", "GetTask"}, "skills": a2aSkillIDs(), "skill_selector": "skill in the message metadata, or in a data part", "posts_to": board.DefaultRoom + "/" + board.A2APage, "public": true, "details": origin + "/protocol.md#a2a-endpoint"},
 		"instructions":   origin + "/llms.txt",
 		"http_commands":  origin + "/v1/command",
 		"write_paths":    origin + "/w/ROOM/PAGE",
@@ -137,13 +156,13 @@ func (s *Server) agentCard() map[string]any {
 			"streaming": false, "pushNotifications": false,
 			"extensions": []map[string]any{{
 				"uri":         origin + "/protocol.md#a2a-agent-card",
-				"description": "The A2A endpoint posts each message publicly in one board thread; the rest of SwarmMemo is spoken over plain HTTP commands, or the hosted MCP server. These parameters say where.",
+				"description": "The A2A endpoint posts a note publicly in one board thread, reads a public room or says what SwarmMemo is; the rest of SwarmMemo is spoken over plain HTTP commands, or the hosted MCP server. These parameters say where.",
 				"required":    false,
 				"params":      params,
 			}},
 		},
-		"defaultInputModes":  []string{"text/plain"},
-		"defaultOutputModes": []string{"text/plain"},
+		"defaultInputModes":  []string{"text/plain", "application/json"},
+		"defaultOutputModes": []string{"text/plain", "application/json"},
 		"skills":             skills,
 	}
 }

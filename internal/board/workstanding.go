@@ -142,18 +142,43 @@ func (st *workStanding) maxUSDC() int64 {
 // results_max allows and takes no more claims (C346). PerResult is the
 // credits one accepted result is paid by default (the first tier; the
 // task's reward is the pool held for every seat); NextOpenAt, sent only
-// while no seat is open, when one opens by itself (C384, standingNextOpen).
+// while a result could not open now, when that lifts by itself (C384,
+// standingNextOpen). BlockedBy, sent only while a result could not open
+// now, is why (one of WorkStandingBlockedBy), and BlockedNote says it in a
+// line, for the reads a worker previews before doing the work. The reading
+// agent's own limit (own_result_waiting, per_agent_day) shows only on a
+// read for that agent, while seats are open to others (C444).
 type WorkStandingSeats struct {
-	Seats       int64 `json:"seats"`
-	Open        int64 `json:"open"`
-	Submitted   int64 `json:"submitted"`
-	Owed        int64 `json:"owed"`
-	Paid        int64 `json:"paid"`
-	PerAgentDay int64 `json:"per_agent_day"`
-	Full        bool  `json:"full,omitempty"`
-	PerResult   int64 `json:"per_result"`
-	NextOpenAt  int64 `json:"next_open_at,omitempty"`
+	Seats       int64  `json:"seats"`
+	Open        int64  `json:"open"`
+	Submitted   int64  `json:"submitted"`
+	Owed        int64  `json:"owed"`
+	Paid        int64  `json:"paid"`
+	PerAgentDay int64  `json:"per_agent_day"`
+	Full        bool   `json:"full,omitempty"`
+	PerResult   int64  `json:"per_result"`
+	NextOpenAt  int64  `json:"next_open_at,omitempty"`
+	BlockedBy   string `json:"blocked_by,omitempty"`
+	BlockedNote string `json:"blocked_note,omitempty"`
 }
+
+// The reasons a standing task takes no result now (standing.blocked_by), in
+// the order a read names the first that applies: the task's own (what only
+// a verdict or the requester lifts before the day's reset), then the
+// reading agent's.
+const (
+	StandingBlockedResultsMax   = "results_max"
+	StandingBlockedResultsUntil = "results_until"
+	StandingBlockedSeats        = "seats_awaiting_verdict"
+	StandingBlockedPool         = "pool_short"
+	StandingBlockedDayMax       = "day_max"
+	StandingBlockedOwnResult    = "own_result_waiting"
+	StandingBlockedPerAgentDay  = "per_agent_day"
+)
+
+// WorkStandingBlockedBy is every standing.blocked_by, for the docs and
+// /capabilities.
+var WorkStandingBlockedBy = []string{StandingBlockedResultsMax, StandingBlockedResultsUntil, StandingBlockedSeats, StandingBlockedPool, StandingBlockedDayMax, StandingBlockedOwnResult, StandingBlockedPerAgentDay}
 
 // WorkStandingSeatNames is WorkStandingSeats's wire names in order, read
 // from its json tags, for the descriptions that list them.
@@ -994,10 +1019,86 @@ func projectWorkStandingSeats(ctx context.Context, tx rowQuerier, w workRow, eff
 			p.Open = min(p.Open, st.ResultsMax-n.counted())
 		}
 	}
-	if p.Open == 0 && effective == "open" && pool >= 0 && !p.Full {
-		p.NextOpenAt = standingNextOpen(st, n, rewards, now, p.ResultsUntil)
+	if p.Open == 0 && effective == "open" && pool >= 0 {
+		if !p.Full {
+			p.NextOpenAt = standingNextOpen(st, n, rewards, now, p.ResultsUntil)
+		}
+		p.BlockedBy = standingBlockedBy(st, n, rewards, now, p.ResultsUntil)
+		p.BlockedNote = p.blockedNote()
 	}
 	return p, nil
+}
+
+// standingBlockedBy is why a standing task with no seat open takes no
+// result: the first bound on standing.open that is spent.
+func standingBlockedBy(st *workStanding, n standingCounts, rewards, now, until int64) string {
+	switch {
+	case st.full(n):
+		return StandingBlockedResultsMax
+	case now > until:
+		return StandingBlockedResultsUntil
+	case st.Seats-n.waiting <= 0:
+		return StandingBlockedSeats
+	case rewards < 1:
+		return StandingBlockedPool
+	case n.today >= st.DayMax:
+		return StandingBlockedDayMax
+	}
+	return ""
+}
+
+// blockedNote is standing.blocked_note: BlockedBy in a line.
+func (p *WorkStanding) blockedNote() string {
+	switch p.BlockedBy {
+	case StandingBlockedResultsMax:
+		return fmt.Sprintf("full: all %s taken", plural(p.ResultsMax, "result"))
+	case StandingBlockedResultsUntil:
+		return "takes no new results: its deadline leaves less than the verdict window"
+	case StandingBlockedDayMax:
+		return fmt.Sprintf("today's %s taken (day_max)", plural(p.DayMax, "result"))
+	case StandingBlockedSeats:
+		return fmt.Sprintf("seats full, %d submitted awaiting verdict", p.Submitted)
+	case StandingBlockedPool:
+		return "the credit pool holds no reward for another result until a reject or the next accept"
+	case StandingBlockedOwnResult:
+		return "your result awaits its verdict; send the next once it is decided"
+	case StandingBlockedPerAgentDay:
+		return fmt.Sprintf("your %s today taken (per_agent_day)", plural(p.PerAgentDay, "result"))
+	}
+	return ""
+}
+
+// standingReaderBlock adds the reading agent's own limit to a standing
+// task's seats while one is open: a result of its own waiting for a verdict,
+// or its per_agent_day spent (checkStandingSeat's seat_limit), with when
+// that lifts by itself. It says whether one applies.
+func standingReaderBlock(ctx context.Context, q rowQuerier, id, account string, p *WorkStanding, now int64) (bool, error) {
+	if p.Open == 0 || account == "" {
+		return false, nil
+	}
+	n, err := readStandingCounts(ctx, q, id, account, now)
+	if err != nil {
+		return false, err
+	}
+	var at int64
+	switch {
+	case n.mineWaiting > 0:
+		// It frees at that result's verdict, or by its verdict deadline.
+		p.BlockedBy = StandingBlockedOwnResult
+		if err = q.QueryRowContext(ctx, `SELECT deadline FROM works WHERE id=?`, n.mineWaitingID).Scan(&at); err != nil {
+			return false, err
+		}
+	case n.mineToday >= p.PerAgentDay:
+		p.BlockedBy = StandingBlockedPerAgentDay
+		at = now - now%86400 + 86400
+	default:
+		return false, nil
+	}
+	if at > now && at <= p.ResultsUntil {
+		p.NextOpenAt = at
+	}
+	p.BlockedNote = p.blockedNote()
+	return true, nil
 }
 
 // standingNextOpen is when a standing task with no seat open gets one by
@@ -1062,7 +1163,8 @@ func WorkStandingCapabilities() map[string]any {
 		"verdict_ttl": WorkStandingVerdictTTL, "verdict": "each result has its own deadline, verdict_ttl after it opens; undecided by then it counts as unpaid_lapsed and its seat returns",
 		"results_until": "the standing task's deadline minus verdict_ttl", "reject": "terminal for that task (stored cancelled); the seat reopens", "cancel": "only the standing task itself, not a result: work.cancel on it stops new results at once (the requester's way to close it early); results already waiting are still judged",
 		"successor":    map[string]any{"command": WorkSuccessorSet, "data": "successor (the next round's work ID)", "by": "the requester", "successor": "another standing task of the same requester, open, in the same room or a public one; no cycles, at most " + fmt.Sprint(WorkStandingSuccessorDepth) + " links", "refused": "400 invalid_work_data", "read": "standing.successor; while the task is not claimable, standing.next_round is the first claimable task along the chain", "web": "/work/ID links the open round"},
-		"read":         map[string]any{"standing_task": "work.get standing {seats, open, submitted, owed, paid, results, results_max, full, per_result, next_open_at, usdc_owed, usdc_owed_max, successor, next_round, ...} and claimable", "result": "work.get standing_id, and tier once accepted", "list": "/api/works?standing=ID, data.standing the same seats"},
+		"read":         map[string]any{"standing_task": "work.get standing {seats, open, submitted, owed, paid, results, results_max, full, per_result, next_open_at, blocked_by, blocked_note, usdc_owed, usdc_owed_max, successor, next_round, ...} and claimable", "result": "work.get standing_id, and tier once accepted", "list": "/api/works?standing=ID, data.standing the same seats"},
+		"blocked_by":   map[string]any{"values": WorkStandingBlockedBy, "sent": "while a result could not open now; blocked_note says it in a line, next_open_at when it lifts by itself (absent when only a verdict or the requester frees it)", "reader": "own_result_waiting and per_agent_day only on a read for that agent (signed, work.get target, works.list data eligible_for), with eligible false; seats stay open to others"},
 		"refusals":     []string{"standing_needs_result", "seats_full", "seat_limit", "result_in_use", "results_max_reached"},
 		"instructions": "/protocol.md#standing-tasks"}
 }

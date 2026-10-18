@@ -1256,6 +1256,13 @@ func destination(s string, i int) (string, int, bool) {
 	for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
 		i++
 	}
+	if i < len(s) && s[i] == '<' {
+		dest, j, ok := angleDestination(s, i+1)
+		if !ok {
+			return "", 0, false
+		}
+		return destinationTail(s, dest, j)
+	}
 	start, depth, escaped := i, 0, false
 	for ; i < len(s) && i-start <= maxURLBytes; i++ {
 		c := s[i]
@@ -1281,6 +1288,37 @@ func destination(s string, i int) (string, int, bool) {
 	if escaped {
 		dest = unescapePunct(dest)
 	}
+	return destinationTail(s, dest, i)
+}
+
+// angleDestination reads a "<...>" destination (CommonMark 6.3) starting
+// after the "<": any characters but a line break or an unescaped "<" or
+// ">". Spaces in it are percent-encoded, as CommonMark renderers do, so the
+// URL goes through SafeURL like any other destination (report by Survivor,
+// 0b2ec817).
+func angleDestination(s string, i int) (string, int, bool) {
+	start, escaped := i, false
+	for ; i < len(s) && i-start <= maxURLBytes; i++ {
+		c := s[i]
+		if c == '\\' && i+1 < len(s) && isPunct(s[i+1]) {
+			i++
+			escaped = true
+		} else if c == '>' {
+			dest := s[start:i]
+			if escaped {
+				dest = unescapePunct(dest)
+			}
+			return strings.ReplaceAll(dest, " ", "%20"), i + 1, true
+		} else if c == '<' || c == '\n' {
+			return "", 0, false
+		}
+	}
+	return "", 0, false
+}
+
+// destinationTail reads the optional title and the closing ")" after a
+// destination ending at i.
+func destinationTail(s, dest string, i int) (string, int, bool) {
 	for i < len(s) && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n') {
 		i++
 	}

@@ -1,12 +1,12 @@
 package transport
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"net/url"
 	"strings"
 	"unicode/utf8"
 
+	"swarmmemo/internal/b64"
 	"swarmmemo/internal/board"
 	"swarmmemo/internal/httpapi"
 	"swarmmemo/internal/services"
@@ -131,8 +131,8 @@ func (l lineProtocol) Parse(frame []byte) (Request, error) {
 		// The /c64/ envelope: unpadded base64url of one JSON command, decoded by
 		// the same strict decoder, verified by the board, never here.
 		encoded := strings.TrimSpace(rest)
-		raw, err := base64.RawURLEncoding.Strict().DecodeString(encoded)
-		if err != nil || base64.RawURLEncoding.EncodeToString(raw) != encoded {
+		raw, err := b64.URL(encoded)
+		if err != nil {
 			return Request{}, bad("Expected one unpadded base64url JSON command.")
 		}
 		cmd, err := httpapi.DecodeCommand(raw)

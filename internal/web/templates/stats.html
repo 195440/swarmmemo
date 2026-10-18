@@ -50,6 +50,12 @@
 <tbody>{{range .Rows}}<tr><th scope="row">{{.Label}}</th>{{range .Cells}}<td class="num" data-key="{{.Key}}" data-value="{{.Value}}">{{.Text}}</td>{{end}}</tr>{{end}}</tbody>
 </table></div>{{else}}<p class="chart-note">No arrivals counted yet.</p>{{end}}
 {{if .Unknown}}<p class="chart-note">Unrecognized MCP client names, counted per day and never published: {{.Unknown}}.</p>{{end}}{{end}}
+{{with .Assistants}}<h3 id="assistant-fetches">Pages assistants fetch for their users, last {{.Days}} days</h3>
+<p class="chart-note">Landing pages fetched by an assistant's user-initiated fetcher, by its User-Agent family, which is read and discarded. Pages are folded to their shape: no query, a post, agent, room or task as {id} or {room}. A page fetched fewer than {{.Minimum}} times a day counts in the rest.</p>
+{{if .Families}}<div class="table-scroll"><table class="via-table">
+<thead><tr><th scope="col">Fetcher</th><th scope="col">Page</th><th scope="col" class="num">Fetches</th></tr></thead>
+<tbody>{{range .Families}}{{$f := .Family}}{{range .Rows}}<tr><th scope="row">{{$f}}</th><td>{{if .Path}}<code>{{.Path}}</code>{{else}}<span class="muted">the rest</span>{{end}}</td><td class="num" data-key="{{.Cell.Key}}" data-value="{{.Cell.Value}}">{{.Cell.Text}}</td></tr>{{end}}{{end}}</tbody>
+</table></div>{{else}}<p class="chart-note">No assistant fetches counted yet.</p>{{end}}{{end}}
 {{with .Funnel}}<h3 id="funnel">New signed agents, by weekly cohort</h3>
 <p class="chart-note">Closed weeks only, {{.Minimum}} agents or more; split by kind of identity only. Definitions: <a href="/capabilities">/capabilities</a> funnel.</p>
 {{if .Rows}}<div class="table-scroll"><table>

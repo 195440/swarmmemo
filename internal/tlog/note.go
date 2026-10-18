@@ -13,6 +13,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"swarmmemo/internal/b64"
 )
 
 // Signed notes (C2SP signed-note, the format of the Go checksum database and
@@ -72,7 +74,7 @@ func ParseVerifierKey(vkey string) (name string, pub ed25519.PublicKey, err erro
 	name, rest, ok1 := strings.Cut(vkey, "+")
 	hash16, key64, ok2 := strings.Cut(rest, "+")
 	hash, err1 := strconv.ParseUint(hash16, 16, 32)
-	key, err2 := base64.StdEncoding.DecodeString(key64)
+	key, err2 := b64.Std(key64)
 	if !ok1 || !ok2 || len(hash16) != 8 || err1 != nil || err2 != nil || !validNoteName(name) || len(key) != 1+ed25519.PublicKeySize || key[0] != algEd25519 {
 		return "", nil, errors.New("tlog: malformed verifier key")
 	}
@@ -109,8 +111,8 @@ func OpenNote(note []byte, vkey string) (string, error) {
 		if !ok {
 			return "", errors.New("tlog: malformed signature line")
 		}
-		signer, b64, _ := strings.Cut(rest, " ")
-		raw, err := base64.StdEncoding.DecodeString(b64)
+		signer, encoded, _ := strings.Cut(rest, " ")
+		raw, err := b64.Std(encoded)
 		if err != nil || len(raw) < 5 || !validNoteName(signer) {
 			return "", errors.New("tlog: malformed signature line")
 		}
@@ -178,7 +180,7 @@ func ParseCheckpoint(text string) (Checkpoint, error) {
 	if err != nil || size < 0 || strconv.FormatInt(size, 10) != lines[1] {
 		return Checkpoint{}, errors.New("tlog: malformed checkpoint size")
 	}
-	root, err := base64.StdEncoding.DecodeString(lines[2])
+	root, err := b64.Std(lines[2])
 	if err != nil || len(root) != 32 {
 		return Checkpoint{}, errors.New("tlog: malformed checkpoint root")
 	}
@@ -235,7 +237,7 @@ func ParsePromise(text string) (Promise, error) {
 	var ok [6]bool
 	p.Index, ok[0] = number(2, "index")
 	leaf, okLeaf := field(3, "leaf")
-	raw, err := base64.StdEncoding.DecodeString(leaf)
+	raw, err := b64.Std(leaf)
 	ok[1] = okLeaf && err == nil && len(raw) == len(p.Leaf)
 	p.Kind, ok[2] = field(4, "kind")
 	p.ID, ok[3] = field(5, "id")
@@ -261,7 +263,7 @@ func ParseHash(s string) (Hash, error) {
 	if len(s) == 64 {
 		raw, err = hex.DecodeString(s)
 	} else {
-		raw, err = base64.StdEncoding.DecodeString(s)
+		raw, err = b64.Std(s)
 	}
 	if err != nil || len(raw) != 32 {
 		return h, errors.New("tlog: malformed hash")

@@ -11,11 +11,11 @@ import (
 	"swarmmemo/internal/board"
 )
 
-const statsUsage = "usage: swarmmemo stats referrers [--days N] (N from 1 to 90, default 7)"
+const statsUsage = "usage: swarmmemo stats referrers|assistants [--days N] (N from 1 to 90, default 7)"
 
-// referrerDays parses "referrers [--days N]".
-func referrerDays(args []string) (int, error) {
-	if len(args) == 0 || args[0] != "referrers" {
+// statsDays parses "referrers|assistants [--days N]".
+func statsDays(args []string) (int, error) {
+	if len(args) == 0 || args[0] != "referrers" && args[0] != "assistants" {
 		return 0, errors.New(statsUsage)
 	}
 	switch {
@@ -31,10 +31,11 @@ func referrerDays(args []string) (int, error) {
 	return 0, errors.New(statsUsage)
 }
 
-// operatorStats prints the private daily referrer and agent counts, newest day
+// operatorStats prints the private daily referrer and agent counts, or with
+// assistants the landing pages each assistant fetch family read, newest day
 // first. Counts written in the last half minute may not be stored yet.
 func operatorStats(ctx context.Context, store *board.Store, args []string, out io.Writer) error {
-	days, err := referrerDays(args)
+	days, err := statsDays(args)
 	if err != nil {
 		return err
 	}
@@ -42,8 +43,39 @@ func operatorStats(ctx context.Context, store *board.Store, args []string, out i
 	if err != nil {
 		return err
 	}
+	if args[0] == "assistants" {
+		printAssistantStats(out, stats)
+		return nil
+	}
 	printReferrerStats(out, stats)
 	return nil
+}
+
+// printAssistantStats prints each day's assistant fetch families: landing
+// fetches out of all their requests, then the folded paths, largest first.
+func printAssistantStats(out io.Writer, stats []board.ReferrerDay) {
+	for _, day := range stats {
+		fmt.Fprintf(out, "%s UTC\n", day.Day)
+		if len(day.Assistants) == 0 {
+			fmt.Fprintln(out, "  assistant fetches: none")
+			continue
+		}
+		for _, a := range day.Assistants {
+			var requests int64
+			for _, agent := range day.Agents {
+				if agent.Name == a.Family {
+					requests = agent.Count
+				}
+			}
+			fmt.Fprintf(out, "  %s: %d landing-page fetches of %d requests\n", a.Family, a.Total(), requests)
+			for _, path := range a.Paths {
+				fmt.Fprintf(out, "    %8d  %s\n", path.Count, path.Name)
+			}
+			if a.Other > 0 {
+				fmt.Fprintf(out, "    %8d  (other)\n", a.Other)
+			}
+		}
+	}
 }
 
 func printReferrerStats(out io.Writer, stats []board.ReferrerDay) {

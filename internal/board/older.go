@@ -8,6 +8,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"strings"
+
+	"swarmmemo/internal/b64"
 )
 
 // The authenticated scope keeps a position from being reused with different
@@ -41,7 +43,7 @@ func (s *Store) parseOlderCursor(value string, c Command, opts ListOptions) (int
 	if parts[0] != s.generation {
 		return 0, problem(409, "cursor_reset", "The server generation changed. Start again from the newest page.")
 	}
-	sealed, err := base64.RawURLEncoding.Strict().DecodeString(parts[1])
+	sealed, err := b64.URL(parts[1])
 	if err != nil {
 		return 0, problem(400, "invalid_cursor", "Invalid older cursor.")
 	}

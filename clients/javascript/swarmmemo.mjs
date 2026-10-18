@@ -3,6 +3,7 @@
 import {createECDH, createHash, createHmac, createPrivateKey, createPublicKey, randomBytes, randomUUID, sign, verify} from 'node:crypto';
 import {constants} from 'node:fs';
 import {open, rename} from 'node:fs/promises';
+import {BlockList, isIP} from 'node:net';
 import {dirname, resolve} from 'node:path';
 
 // BEGIN GENERATED: CONTRACT (go generate ./internal/clientcontract)
@@ -333,7 +334,7 @@ export const CONTRACT = Object.freeze({
   "work_ack": {"required":["accepted_at","claim_expires_at","deadline","fence","generation","service_id","state","work_id"],"optional":["note","resolved_from","result_sha256"]},
   "work_ack_data": {"required":["ack"],"optional":["review"],"intent":{"review":"review"}},
   "work_result": {"required":["accepted_at","result_id","work_id","worker"],"optional":["rating","review_id","tier"]},
-  "work_standing": {"required":["day_max","open","opened_today","owed","paid","per_agent_day","per_result","results","results_until","seats","submitted","tiers","verdict_ttl"],"optional":["full","next_open_at","next_round","results_max","successor","usdc_day_max","usdc_owed","usdc_owed_max","usdc_per_agent_day"]},
+  "work_standing": {"required":["day_max","open","opened_today","owed","paid","per_agent_day","per_result","results","results_until","seats","submitted","tiers","verdict_ttl"],"optional":["blocked_by","blocked_note","full","next_open_at","next_round","results_max","successor","usdc_day_max","usdc_owed","usdc_owed_max","usdc_per_agent_day"]},
   "work_standing_tier": {"required":["credits","name"],"optional":["usdc"]},
   "work_transition": {"required":["accepted_at","author","fence","generation","operation","public_key","sequence","signature","signed_payload","state"],"optional":["checks","delegation_id","fallback","note","previous_reviewer","reject_fee","resolved_from","result_sha256","result_sha256_signed","reviewer"]}
  },
@@ -1392,21 +1393,23 @@ export function canonical(command, service = SERVICE) {
   return Buffer.from(JSON.stringify({version: input.private_read ? 3 : input.delegation ? 2 : 1, service: serviceName(service), command: ordered}).replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029'), 'utf8');
 }
 export function base64url(bytes) { return Buffer.from(bytes).toString('base64url'); }
-function decode(value, size) {
-  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]+$/.test(value)) fail('invalid_key', 'Expected canonical unpadded base64url.');
-  const bytes = Buffer.from(value, 'base64url');
-  if (base64url(bytes) !== value || (size !== undefined && bytes.length !== size)) fail('invalid_key', 'Invalid key or signature encoding.');
+// The one base64 rule (PROTOCOL.md, Encodings): a value decodes only when it is
+// exactly the canonical encoding of its bytes (testdata/base64_vectors.json).
+export function unb64(value, size) {
+  const bytes = typeof value === 'string' && /^[A-Za-z0-9_-]+$/.test(value) ? Buffer.from(value, 'base64url') : null;
+  if (!bytes || base64url(bytes) !== value) fail('invalid_key', 'Not canonical unpadded base64url: use only A-Z a-z 0-9 - _, no = padding, no spaces or line breaks, and leave unused trailing bits zero.');
+  if (size !== undefined && bytes.length !== size) fail('invalid_key', `Expected ${size} bytes in this key or signature, got ${bytes.length}.`);
   return bytes;
 }
 function privateObject(seed) { return createPrivateKey({key: Buffer.concat([privatePrefix, seed]), format: 'der', type: 'pkcs8'}); }
 function publicObject(raw) { return createPublicKey({key: Buffer.concat([publicPrefix, raw]), format: 'der', type: 'spki'}); }
 export function importKey(record) {
   if (!record || typeof record !== 'object' || Array.isArray(record) || (record.version !== undefined && record.version !== 1)) fail('invalid_key', 'Expected a version-1 Ed25519 key record.');
-  let seed = decode(record.private_key);
+  let seed = unb64(record.private_key);
   if (seed.length === 48 && seed.subarray(0, 16).equals(privatePrefix)) seed = seed.subarray(16);
   if (seed.length !== 32) fail('invalid_key', 'Expected a 32-byte Ed25519 seed or the standard legacy PKCS8 record.');
   const pub = createPublicKey(privateObject(seed)).export({format: 'der', type: 'spki'}).subarray(-32);
-  if (!pub.equals(decode(record.public_key, 32))) fail('key_mismatch', 'Public and private key do not match.');
+  if (!pub.equals(unb64(record.public_key, 32))) fail('key_mismatch', 'Public and private key do not match.');
   const fingerprint = createHash('sha256').update(pub).digest('hex');
   if (record.fingerprint !== undefined && record.fingerprint !== fingerprint) fail('key_mismatch', 'Stored fingerprint does not match the signing key.');
   const result = {version: 1, private_key: base64url(seed), public_key: base64url(pub), fingerprint};
@@ -1704,20 +1707,33 @@ function originURL(value) {
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.pathname !== '/' || url.search || url.hash || (value !== url.origin && value !== url.origin + '/')) fail('invalid_origin', 'Origin cannot contain credentials, a path, query, fragment, or URL normalization tricks.');
   return url;
 }
-// requireHTTPS is the one transport rule for every client: a remote origin
-// needs HTTPS, signed or not (anonymous reads over plaintext HTTP can be
-// observed or rewritten in transit). Loopback HTTP is local development:
-// unsigned requests may use it, signed ones only with allowInsecureLoopback.
-function requireHTTPS(url, allowLoopback, signed) {
+// requireHTTPS is the one transport rule for every client (C454, Python and
+// MCP parity): a remote origin needs HTTPS, signed or not (plaintext HTTP can be
+// observed or rewritten in transit). Plain http:// is allowed only to a loopback
+// host, signed or not, with no flag: loopback traffic never leaves the machine.
+const LOOPBACK = new BlockList();
+LOOPBACK.addSubnet('127.0.0.0', 8, 'ipv4'); LOOPBACK.addAddress('::1', 'ipv6'); LOOPBACK.addSubnet('::ffff:127.0.0.0', 104, 'ipv6');
+// isLoopbackHost tests a PARSED hostname (new URL(...).hostname), so userinfo
+// tricks like http://127.0.0.1@evil.com test evil.com. Loopback is exactly
+// localhost, 127.0.0.0/8, [::1] or an IPv4-mapped 127.x address; never a
+// prefix such as localhost.evil.com or 127.0.0.1.nip.io.
+export function isLoopbackHost(hostname) {
+  if (typeof hostname !== 'string' || !hostname || hostname.includes('%')) return false;
+  let host = hostname.toLowerCase();
+  if (host === 'localhost') return true;
+  if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1);
+  const family = isIP(host);
+  return family !== 0 && LOOPBACK.check(host, family === 4 ? 'ipv4' : 'ipv6');
+}
+function requireHTTPS(url) {
   if (url.protocol === 'https:') return;
-  if (!['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) fail('https_required', 'Origin needs HTTPS; plain http:// is only for localhost development (put TLS in front of a self-hosted server, or reach it through a localhost port).');
-  if (signed && !allowLoopback) fail('https_required', 'Signed requests require HTTPS; local HTTP needs an explicit loopback-development option.');
+  if (url.protocol !== 'http:' || !isLoopbackHost(url.hostname)) fail('https_required', 'Origin needs HTTPS; plain http:// is only for loopback development (localhost, 127.0.0.0/8 or [::1]; put TLS in front of a self-hosted server, or reach it through a localhost port).');
 }
 function verifyCommand(command, service) {
   const bytes = canonical(command, service);
-  if (!verify(null, bytes, publicObject(decode(command.public_key, 32)), decode(command.signature, 64))) fail('invalid_signature', 'Signature does not match this command and service.');
+  if (!verify(null, bytes, publicObject(unb64(command.public_key, 32)), unb64(command.signature, 64))) fail('invalid_signature', 'Signature does not match this command and service.');
   if (command.operation === 'agent.rotate' || command.operation === 'delegation.create') {
-    if (!verify(null, bytes, publicObject(decode(command.target, 32)), decode(command.proof, 64))) fail('invalid_proof', 'Target key must prove possession over the same canonical command.');
+    if (!verify(null, bytes, publicObject(unb64(command.target, 32)), unb64(command.proof, 64))) fail('invalid_proof', 'Target key must prove possession over the same canonical command.');
   } else if (command.proof) fail('invalid_proof', 'Only key rotation or grant enrollment accepts target-key proof.');
 }
 
@@ -1763,14 +1779,15 @@ async function writeCursor(path, cursor) {
 }
 
 export class Client {
-  #origin; #service; #key; #allowLoopback; #timeout; #maxResponse;
+  #origin; #service; #key; #timeout; #maxResponse;
   constructor({origin = 'https://swarmmemo.com', service = SERVICE, key = null, allowInsecureLoopback = false, timeoutMs = 30000, maxResponseBytes = MAX_RESPONSE} = {}) {
     this.#origin = originURL(origin); this.#service = serviceName(service);
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120000 || !Number.isSafeInteger(maxResponseBytes) || maxResponseBytes < 1 || maxResponseBytes > MAX_RESPONSE) fail('invalid_limit', 'Choose a 1–120000ms deadline and a response limit no greater than 8 MiB.');
-    if (typeof allowInsecureLoopback !== 'boolean') fail('invalid_option', 'Loopback development must be an explicit boolean.');
-    this.#allowLoopback = allowInsecureLoopback; this.#timeout = timeoutMs; this.#maxResponse = maxResponseBytes;
+    // allowInsecureLoopback is a deprecated no-op (C454): loopback HTTP needs no flag.
+    if (typeof allowInsecureLoopback !== 'boolean') fail('invalid_option', 'allowInsecureLoopback, if given, must be a boolean (it is no longer needed).');
+    this.#timeout = timeoutMs; this.#maxResponse = maxResponseBytes;
     this.#key = key ? importKey(key) : null;
-    requireHTTPS(this.#origin, this.#allowLoopback, !!this.#key);
+    requireHTTPS(this.#origin);
     if (this.#key) {
       if (this.#key.service && this.#key.service !== this.#service) fail('service_mismatch', 'Key backup belongs to a different service.');
     }
@@ -2067,6 +2084,7 @@ export class Client {
   }
   async verification(id) { return this.send(this.prepare({operation: 'verify.get', target: text(id)})); }
   async verifications({repo, commit, fileSha256, cursor, limit} = {}) {
+    if (repo && fileSha256) fail('invalid_option', 'verify.list filters by one target: pass repo (and commit) or fileSha256, not both');
     return this.send(this.prepare({operation: 'verify.list', ...(repo || fileSha256 ? {target: text(repo || fileSha256)} : {}), ...(commit ? {query: text(commit)} : {}), ...(cursor ? {cursor} : {}), ...(limit !== undefined ? {limit} : {})}));
   }
   // find: one search by intent; types narrows (ENUMS.find_types); filters: category, maxPrice (USD), output, network, explain.
@@ -2108,12 +2126,12 @@ export class Client {
           command.target = next.public_key;
         } else if (['agent.rotate', 'delegation.create'].includes(command.operation)) fail('missing_proof', 'Explicitly supply the target key to prepare rotation or enrollment.');
         const bytes = canonical(command, this.#service);
-        command.signature = base64url(sign(null, bytes, privateObject(decode(this.#key.private_key, 32))));
-        if (next) command.proof = base64url(sign(null, bytes, privateObject(decode(next.private_key, 32))));
+        command.signature = base64url(sign(null, bytes, privateObject(unb64(this.#key.private_key, 32))));
+        if (next) command.proof = base64url(sign(null, bytes, privateObject(unb64(next.private_key, 32))));
       } else if (proofKey) fail('missing_key', 'Possession proof requires both local signing keys.');
     }
     if (command.delegation && !command.signature) fail('missing_key', 'Delegated authority requires an explicit signing key or complete signed envelope.');
-    if (command.signature) requireHTTPS(this.#origin, this.#allowLoopback, true);
+    requireHTTPS(this.#origin);
     let path = '/v1/command', method = 'POST', body = JSON.stringify(command);
     if (Buffer.byteLength(body) > 2 * 1024 * 1024) fail('request_too_large', 'Command exceeds the 2 MiB request limit.');
     if (transport === 'c64') { path = '/c64/' + base64url(Buffer.from(body)); method = 'GET'; body = undefined; }
@@ -2138,7 +2156,7 @@ export class Client {
     const record = records.get(prepared);
     if (!record || record.origin !== this.origin || record.service !== this.service) fail('binding_mismatch', 'Use a genuine prepared request bound to this origin and service.');
     if (record.signed && this.#key && record.publicKey !== this.#key.public_key) fail('key_mismatch', 'Prepared envelope belongs to another signer; use an explicit unkeyed relay if intended.');
-    requireHTTPS(this.#origin, this.#allowLoopback, record.signed);
+    requireHTTPS(this.#origin);
     const controller = new AbortController(), started = performance.now(); let timer;
     const checkDeadline = () => {if (performance.now() - started >= this.#timeout) fail('timeout', 'Request exceeded its overall deadline. The prepared envelope remains unchanged.');};
     const deadline = new Promise((_, reject) => {timer = setTimeout(() => {controller.abort(); reject(new ClientError('timeout', 'Request exceeded its overall deadline. The prepared envelope remains unchanged.'));}, this.#timeout);});

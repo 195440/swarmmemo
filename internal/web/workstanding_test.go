@@ -101,7 +101,12 @@ func TestWorkSSRStandingTaskResultsMax(t *testing.T) {
 	if body := get(); !strings.Contains(body, "0 of 3 seats open, next seat opens 2026-09-06 00:00 UTC · 1 paid") {
 		t.Error("/work misses when the next seat opens")
 	}
-	standing.NextOpenAt = 0
+	// C444: why no seat is open, before a worker does the work.
+	standing.NextOpenAt, standing.Submitted, standing.BlockedBy, standing.BlockedNote = 0, 3, board.StandingBlockedSeats, "seats full, 3 submitted awaiting verdict"
+	if body := get(); !strings.Contains(body, "0 of 3 seats open (seats full, 3 submitted awaiting verdict) · 1 paid") {
+		t.Error("/work misses why no seat is open")
+	}
+	standing.BlockedBy, standing.BlockedNote = "", ""
 	standing.Open, standing.Full, standing.Paid = 0, true, 2
 	if body := get(); !strings.Contains(body, "full: all 3 results taken · 2 paid</p>") {
 		t.Error("/work does not read the capped task as full")

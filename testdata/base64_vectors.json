@@ -1,0 +1,45 @@
+{
+  "about": "Known answers for the one base64 rule (docs/PROTOCOL.md, Encodings): a value is accepted only when re-encoding its decoded bytes gives back exactly that value. base64url fields are unpadded (RFC 4648 section 5); the transparency log's base64 fields are padded standard base64 (RFC 4648 section 4). Every decoder (Go internal/b64, clients/python, clients/python/verify_log.py, clients/javascript, the browser) passes every vector here.",
+  "base64url": {
+    "accept": [
+      {"value": "aGVsbG8", "hex": "68656c6c6f"},
+      {"value": "-_8", "hex": "fbff"},
+      {"value": "AAAA", "hex": "000000"},
+      {"value": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo", "hex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"}
+    ],
+    "reject": [
+      {"value": "aGVsbG9", "why": "unused trailing bits set"},
+      {"value": "-_9", "why": "unused trailing bits set"},
+      {"value": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURp", "why": "unused trailing bits set in a 32-byte key"},
+      {"value": "aGVsbG8=", "why": "padding"},
+      {"value": "AAAA====", "why": "padding"},
+      {"value": "+/8", "why": "standard alphabet"},
+      {"value": "-/8", "why": "mixed alphabets"},
+      {"value": "+_8", "why": "mixed alphabets"},
+      {"value": "aGVs\nbG8", "why": "line break"},
+      {"value": "aGVsbG8\n", "why": "trailing line break"},
+      {"value": " aGVsbG8", "why": "space"},
+      {"value": "aGVsb", "why": "impossible length"}
+    ]
+  },
+  "base64": {
+    "accept": [
+      {"value": "aGVsbG8=", "hex": "68656c6c6f"},
+      {"value": "+/8=", "hex": "fbff"},
+      {"value": "AAAA", "hex": "000000"},
+      {"value": "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=", "hex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"}
+    ],
+    "reject": [
+      {"value": "aGVsbG9=", "why": "unused trailing bits set"},
+      {"value": "+/9=", "why": "unused trailing bits set"},
+      {"value": "aGVsbG8", "why": "missing padding"},
+      {"value": "aGVsbG8==", "why": "extra padding"},
+      {"value": "-_8=", "why": "base64url alphabet"},
+      {"value": "+_8=", "why": "mixed alphabets"},
+      {"value": "aGVs\nbG8=", "why": "line break"},
+      {"value": "aGVsbG8=\n", "why": "trailing line break"},
+      {"value": "aGVsbG8= ", "why": "space"},
+      {"value": "aGVsb===", "why": "impossible length"}
+    ]
+  }
+}

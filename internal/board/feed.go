@@ -46,6 +46,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"swarmmemo/internal/b64"
 	"swarmmemo/internal/services"
 	"swarmmemo/internal/trust"
 )
@@ -940,7 +941,7 @@ func (s *Store) decodeFeedCursor(raw, feed string) (feedCursor, error) {
 	if gen != s.generation {
 		return c, problem(409, "cursor_reset", "The server generation changed; read the feed again from the first page.")
 	}
-	sealed, err := base64.RawURLEncoding.Strict().DecodeString(body)
+	sealed, err := b64.URL(body)
 	if err != nil {
 		return c, errFeedCursor()
 	}

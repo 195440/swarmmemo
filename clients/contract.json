@@ -3846,6 +3846,8 @@
         "verdict_ttl"
       ],
       "optional": [
+        "blocked_by",
+        "blocked_note",
         "full",
         "next_open_at",
         "next_round",

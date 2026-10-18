@@ -275,7 +275,7 @@ func TestDailyStatsEndpointShapeAndBound(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	s := New(store, nil, Config{ServiceID: "swarmmemo.com"})
 	body := readDaily(t, s, "")
-	if !body.OK || body.Timezone != "UTC" || body.Days != 14 || body.MaximumDays != 90 || len(body.Daily) != 14 || len(body.Notes) != 8 {
+	if !body.OK || body.Timezone != "UTC" || body.Days != 14 || body.MaximumDays != 90 || len(body.Daily) != 14 || len(body.Notes) != 9 {
 		t.Fatalf("default shape: %+v", body)
 	}
 	if body.Daily[13].Day != time.Now().UTC().Format("2006-01-02") || body.Daily[0].Day >= body.Daily[13].Day {

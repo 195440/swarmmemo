@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+
+	"swarmmemo/internal/b64"
 )
 
 // Private room invites: the owner of a private room makes a one-time secret
@@ -128,7 +130,7 @@ func (s *Store) roomInvite(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 
 func (s *Store) acceptInvite(ctx context.Context, tx *sql.Tx, c Command, a actor, now int64) (Result, error) {
 	invalid := problem(403, "invite_invalid", "This invite is not valid: it may be wrong, used, expired or for another room. Ask the room's owner for a new one.")
-	raw, err := base64.RawURLEncoding.Strict().DecodeString(c.Data)
+	raw, err := b64.URL(c.Data)
 	if err != nil || len(raw) != InviteSecretBytes {
 		return Result{}, invalid
 	}

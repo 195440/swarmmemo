@@ -30,10 +30,20 @@ import (
 // later new ones count as other, asset-other and ref-other. Nothing here is
 // ever served over HTTP; the operator reads it with swarmmemo stats
 // referrers.
+//
+// A GET/HEAD of a landing page by a user-initiated assistant fetcher
+// (board.AssistantFetchFamilies: Claude-User, ChatGPT-User and the like)
+// also adds "fetch:FAMILY:PATH", PATH the page folded by web.LandingKey (no
+// query, IDs as placeholders), so the operator learns which pages
+// assistants read for their users (swarmmemo stats assistants; /stats
+// publishes the paths, never anything about the request). At most
+// referrerPendingFetch paths per family per day are held between writes,
+// later new ones count as fetch-other:FAMILY.
 
 const (
 	referrerPendingHosts = 1000
 	referrerPendingRefs  = 200
+	referrerPendingFetch = 200
 	referrerHeaderBytes  = 2048
 	userAgentBytes       = 512
 )
@@ -215,6 +225,9 @@ func (s *Server) countReferrer(r *http.Request) {
 	}
 	if family := userAgentFamily(r.Header.Get("User-Agent")); family != "" {
 		keys = append(keys, "agent:"+family)
+		if key := assistantFetchKey(r, family); key != "" {
+			keys = append(keys, key)
+		}
 	}
 	if len(keys) == 0 {
 		return
@@ -241,11 +254,29 @@ func (s *Server) countReferrer(r *http.Request) {
 	}
 }
 
-// referrerDay is one day's unwritten counts and how many domains and venues
-// they name.
+// assistantFetchKey is "fetch:FAMILY:PATH" for a GET/HEAD of a landing page
+// by an assistant fetch family, PATH the page web.LandingKey folds it to,
+// "fetch-other:FAMILY" for one whose folded path cannot be stored, else "".
+func assistantFetchKey(r *http.Request, family string) string {
+	if !board.IsAssistantFetchFamily(family) || r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return ""
+	}
+	path := web.LandingKey(r.URL.Path)
+	switch {
+	case path == "":
+		return ""
+	case !board.ValidAssistantPath(path):
+		return "fetch-other:" + family
+	}
+	return "fetch:" + family + ":" + path
+}
+
+// referrerDay is one day's unwritten counts and how many domains, venues
+// and, per assistant family, paths they name.
 type referrerDay struct {
 	counts              map[string]int64
 	hosts, assets, refs int
+	fetches             map[string]int
 }
 
 // day returns the pending counts for day, creating them; c.mu is held.
@@ -260,7 +291,8 @@ func (c *referrerCounter) day(day string) *referrerDay {
 
 // add counts n for key, as other once referrerPendingHosts "host:" domains
 // are held, as asset-other once referrerPendingHosts "asset:" domains are,
-// and as ref-other once referrerPendingRefs venues are.
+// as ref-other once referrerPendingRefs venues are, and as
+// fetch-other:FAMILY once referrerPendingFetch of that family's paths are.
 func (d *referrerDay) add(key string, n int64) {
 	if _, held := d.counts[key]; !held {
 		switch {
@@ -276,6 +308,16 @@ func (d *referrerDay) add(key string, n int64) {
 			key = "ref-other"
 		case strings.HasPrefix(key, "ref:"):
 			d.refs++
+		case strings.HasPrefix(key, "fetch:"):
+			family, _, _ := strings.Cut(key[len("fetch:"):], ":")
+			if d.fetches == nil {
+				d.fetches = map[string]int{}
+			}
+			if d.fetches[family] >= referrerPendingFetch {
+				key = "fetch-other:" + family
+			} else {
+				d.fetches[family]++
+			}
 		}
 	}
 	d.counts[key] += n

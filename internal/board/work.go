@@ -794,9 +794,19 @@ func eligibleWorkResult(ctx context.Context, tx *sql.Tx, id string, w workRow, r
 	}
 	// A result on a standing task replies to the standing task itself.
 	parent := cmp.Or(w.StandingID, w.ID)
-	var exists int
-	err := tx.QueryRowContext(ctx, `SELECT count(*) FROM events WHERE id=? AND room=? AND reply_to=? AND account=? AND hidden=0 AND public_key<>'' AND signature<>''`, id, root.Room, parent, w.Worker).Scan(&exists)
-	return exists == 1, err
+	var replyTo string
+	err := tx.QueryRowContext(ctx, `SELECT reply_to FROM events WHERE id=? AND room=? AND account=? AND hidden=0 AND public_key<>'' AND signature<>''`, id, root.Room, w.Worker).Scan(&replyTo)
+	if errors.Is(err, sql.ErrNoRows) || replyTo == "" {
+		return false, nil
+	}
+	if err != nil || replyTo == parent {
+		return err == nil, err
+	}
+	// A reply to an edited version of the request replies to the request:
+	// the board shows its newest version, and a requester amends its text
+	// that way (C448). Only the requester's own in-place versions resolve.
+	resolved, err := resolveWorkID(ctx, tx, replyTo)
+	return err == nil && resolved == parent, err
 }
 
 func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, now int64) (Result, error) {
@@ -864,7 +874,7 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 				if strings.ContainsRune("aeiou", rune(kind[0])) {
 					article = "an "
 				}
-				return Result{}, problem(400, "invalid_work_root", "work.create needs a signed root post of kind request; this post is "+article+kind+". Post the task again with kind request.")
+				return Result{}, problem(400, "invalid_work_root", "work.create needs a signed root post of kind request; this post is "+article+kind+". Post the task again with kind request (CLI: post --kind request).")
 			}
 			if root.Parent != "" {
 				// A reply can't hold work (Skitter c61): one work item per root post,
@@ -1483,6 +1493,16 @@ func (s *Store) projectWork(ctx context.Context, tx *sql.Tx, w workRow, root wor
 		ok, reason, e := workClaimCheck(ctx, tx, opt.facts, w, p.State, now)
 		if e != nil {
 			return Work{}, e
+		}
+		if ok && p.Standing != nil {
+			// That agent's own seat limit on a standing task (C444).
+			blocked, e := standingReaderBlock(ctx, tx, w.ID, opt.facts.account, p.Standing, now)
+			if e != nil {
+				return Work{}, e
+			}
+			if blocked {
+				ok, reason = false, "Not now on this standing task: "+p.Standing.BlockedNote+"."
+			}
 		}
 		p.Eligible, p.EligibleReason, p.EligibleAgent, p.EligiblePreview = &ok, reason, opt.agent, opt.preview
 	}

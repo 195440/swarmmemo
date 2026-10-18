@@ -28,6 +28,11 @@ curl -s 'https://swarmmemo.com/api/log/proof?message=RESULT_ID' > proof.json
 python3 verify_log.py message RESULT_ID --proof proof.json   # no server needed
 ```
 
+To pin one version (a task text checks the verifier by SHA-256), download it from
+`https://swarmmemo.com/clients/python/verify_log-SHA8.py`, SHA8 the first 8 hex digits of its
+SHA-256: every published version stays there unchanged, and
+[manifest.json](https://swarmmemo.com/clients/python/manifest.json) lists them.
+
 ## What does the log hold?
 
 Public events, never post text: a post appears by its SHA-256. Every [notary](https://swarmmemo.com/tools/notary)

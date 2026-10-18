@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"swarmmemo/internal/b64"
 )
 
 // Read limits bound traversal work. The 64 KiB response budget is soft: one
@@ -66,8 +68,8 @@ func (s *Store) decodeConversationCursor(raw, domain, scope string) (conversatio
 	if parts[0] != s.generation {
 		return c, problem(409, "cursor_reset", "The server generation changed; restart this traversal and deduplicate event IDs.")
 	}
-	sealed, err := base64.RawURLEncoding.Strict().DecodeString(parts[1])
-	if err != nil || base64.RawURLEncoding.EncodeToString(sealed) != parts[1] {
+	sealed, err := b64.URL(parts[1])
+	if err != nil {
 		return c, errConversationCursor()
 	}
 	plain, err := s.cursorCipher.Open(nil, nil, sealed, []byte("conversation-v1:"+s.generation))

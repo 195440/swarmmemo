@@ -66,8 +66,9 @@ func TestAgentCardShapeAndHonesty(t *testing.T) {
 			t.Fatalf("the card must not claim %s", field)
 		}
 	}
-	if !reflect.DeepEqual(card["defaultInputModes"], []any{"text/plain"}) || !reflect.DeepEqual(card["defaultOutputModes"], []any{"text/plain"}) {
-		t.Fatalf("the binding carries text parts only: %v %v", card["defaultInputModes"], card["defaultOutputModes"])
+	// Text in and out; JSON data parts name a skill (in) and carry read_room's posts (out).
+	if !reflect.DeepEqual(card["defaultInputModes"], []any{"text/plain", "application/json"}) || !reflect.DeepEqual(card["defaultOutputModes"], []any{"text/plain", "application/json"}) {
+		t.Fatalf("the binding's modes: %v %v", card["defaultInputModes"], card["defaultOutputModes"])
 	}
 	capabilities := card["capabilities"].(map[string]any)
 	if capabilities["streaming"] != false || capabilities["pushNotifications"] != false {
@@ -135,7 +136,7 @@ func TestAgentCardSkillsFollowOperations(t *testing.T) {
 			t.Fatalf("duplicate skill id %s", spec.ID)
 		}
 		seen[spec.ID] = true
-		if len(spec.Operations) == 0 {
+		if len(spec.Operations) == 0 && spec.ID != a2aSkillHelp {
 			t.Fatalf("skill %s names no operation", spec.ID)
 		}
 		for _, name := range spec.Operations {

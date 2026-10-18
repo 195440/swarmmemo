@@ -6,6 +6,7 @@ import argparse
 import base64
 import bisect
 import hashlib
+import ipaddress
 import json
 import math
 import mimetypes
@@ -351,7 +352,7 @@ CONTRACT = json.loads(r"""
   "work_ack": {"required":["accepted_at","claim_expires_at","deadline","fence","generation","service_id","state","work_id"],"optional":["note","resolved_from","result_sha256"]},
   "work_ack_data": {"required":["ack"],"optional":["review"],"intent":{"review":"review"}},
   "work_result": {"required":["accepted_at","result_id","work_id","worker"],"optional":["rating","review_id","tier"]},
-  "work_standing": {"required":["day_max","open","opened_today","owed","paid","per_agent_day","per_result","results","results_until","seats","submitted","tiers","verdict_ttl"],"optional":["full","next_open_at","next_round","results_max","successor","usdc_day_max","usdc_owed","usdc_owed_max","usdc_per_agent_day"]},
+  "work_standing": {"required":["day_max","open","opened_today","owed","paid","per_agent_day","per_result","results","results_until","seats","submitted","tiers","verdict_ttl"],"optional":["blocked_by","blocked_note","full","next_open_at","next_round","results_max","successor","usdc_day_max","usdc_owed","usdc_owed_max","usdc_per_agent_day"]},
   "work_standing_tier": {"required":["credits","name"],"optional":["usdc"]},
   "work_transition": {"required":["accepted_at","author","fence","generation","operation","public_key","sequence","signature","signed_payload","state"],"optional":["checks","delegation_id","fallback","note","previous_reviewer","reject_fee","resolved_from","result_sha256","result_sha256_signed","reviewer"]}
  },
@@ -2100,12 +2101,18 @@ def work_rating_post(work: dict, rating: int, note=None) -> dict:
             "data": data_json("post", review=review, format="markdown" if markdown_auto(text) else None)}
 
 
+BASE64URL_RULE = "not canonical unpadded base64url: use only A-Z a-z 0-9 - _, no = padding, no spaces or line breaks, and leave unused trailing bits zero"
+
+
 def unb64(value: str) -> bytes:
-    if not re.fullmatch(r"[A-Za-z0-9_-]*", value):
-        raise ValueError("expected unpadded base64url")
-    result = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
-    if b64(result) != value:
-        raise ValueError("noncanonical base64url")
+    """Unpadded base64url under the one rule of PROTOCOL.md (Encodings): value
+    must be exactly the canonical encoding of its bytes (testdata/base64_vectors.json)."""
+    try:
+        result = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4)) if re.fullmatch(r"[A-Za-z0-9_-]*", value) else None
+    except ValueError:
+        result = None
+    if result is None or b64(result) != value:
+        raise ValueError(BASE64URL_RULE)
     return result
 
 
@@ -2460,6 +2467,33 @@ class OriginError(ValueError):
     """A base URL that is not a usable origin. Its message never contains the URL."""
 
 
+def is_loopback_host(host):
+    """The one transport rule's host test (C454), shared by every Python client:
+    plain http:// is allowed only to a loopback host, signed or not, with no flag,
+    since loopback traffic never leaves the machine. host is the PARSED hostname
+    (urlsplit(...).hostname), so userinfo tricks like http://127.0.0.1@evil.com
+    test evil.com. Loopback means exactly "localhost", 127.0.0.0/8, ::1 or an
+    IPv4-mapped 127.x address; never a prefix (localhost.evil.com,
+    127.0.0.1.nip.io), a zone ID, or a legacy form like 127.1 or 2130706433."""
+    if not isinstance(host, str) or not host or "%" in host:
+        return False
+    host = host.lower()
+    if host == "localhost":
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    if ip.version == 6 and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return ip.is_loopback
+
+
+def plain_http_allowed(url):
+    """True when a parsed URL may be used: https, or http to a loopback host."""
+    return url.scheme == "https" or (url.scheme == "http" and is_loopback_host(url.hostname))
+
+
 # Local input caps (C416). Text bound for a request (a message, memory value, review, a
 # raw command) can never exceed the server's body limit, so that is its cap; the server
 # still refuses smaller per-field limits with its own error. Local JSON state (keys,
@@ -2494,9 +2528,10 @@ class Client:
         if (url.scheme not in ("http", "https") or not url.netloc or url.username or url.password
                 or url.path not in ("", "/") or url.query or url.fragment):
             raise OriginError("base URL must be an HTTP(S) origin without path, credentials, query or fragment")
-        if url.scheme != "https" and url.hostname not in ("localhost", "127.0.0.1", "::1"):
-            raise OriginError("base URL needs HTTPS; plain http:// is only for localhost development"
-                              " (put TLS in front of a self-hosted server, or reach it through a localhost port)")
+        if not plain_http_allowed(url):
+            raise OriginError("base URL needs HTTPS; plain http:// is only for loopback development"
+                              " (localhost, 127.0.0.0/8 or ::1; put TLS in front of a self-hosted server,"
+                              " or reach it through a localhost port)")
         self.base_url, self.key, self.timeout, self.service = base_url.rstrip("/"), key, timeout, service
         self.save_request = save_request
         self.opener = urllib.request.build_opener(NoRedirect())
@@ -2551,11 +2586,10 @@ class Client:
         if "private_read" in command or command.get("operation", "").startswith("private_read."):
             if (transport != "command" or urllib.parse.urlunsplit((origin.scheme, origin.netloc, "", "", "")) != self.base_url
                     or origin.username is not None or origin.password is not None
-                    or origin.scheme not in ("https", "http")
-                    or (origin.scheme == "http" and origin.hostname not in ("localhost", "127.0.0.1", "::1"))):
+                    or not plain_http_allowed(origin)):
                 raise ValueError("private_read_https_json_required")
-        if command.get("signature") and origin.scheme != "https" and origin.hostname not in ("localhost", "127.0.0.1", "::1"):
-            raise ValueError("pre-signed commands require HTTPS except localhost development")
+        if command.get("signature") and not plain_http_allowed(origin):
+            raise ValueError("signed commands require HTTPS; plain http:// is only for loopback development")
         if save_request and self.save_request:
             fd = os.open(self.save_request, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as stream:
@@ -2948,6 +2982,8 @@ class Client:
 
     def verifications(self, repo=None, commit=None, file_sha256=None, cursor=None, limit=None):
         """verify.list: verifications newest first, for a repository (and commit) or a file's SHA-256."""
+        if repo and file_sha256:
+            raise ValueError("verify.list filters by one target: pass repo (and commit) or file_sha256, not both")
         fields = {"target": repo or file_sha256, "query": commit, "cursor": cursor, "limit": limit}
         return self.command("verify.list", **{k: v for k, v in fields.items() if v is not None})
 
@@ -4958,6 +4994,7 @@ def build_parser():
     post.add_argument("--request-id"); post.add_argument("--transport", choices=["command", "get", "base64", "c64"], default="command")
     post.add_argument("--attachment", action="append", default=[])
     post.add_argument("--reply-to", default="", help="answer this message (a comment's id, the part after #sm- in its Copy link)")
+    post.add_argument("--kind", help="the post's kind (default note); a task you will open with work create is kind request")
     post.add_argument("--format", choices=["markdown", "plain"], help="signed posts: default markdown when the text is Markdown that renders without loss, else plain")
     add_data_options(post, "post", skip=("format", "review"))
     read = commands.add_parser("read"); read.add_argument("room", nargs="?", default="")
@@ -5160,6 +5197,8 @@ def main(argv=None):
                 fields = {"attachments": args.attachment} if args.attachment else {}
                 if args.reply_to:
                     fields["reply_to"] = args.reply_to
+                if args.kind:
+                    fields["kind"] = args.kind
                 result = client.post(args.room, args.page, args.text, args.request_id, args.transport, format=args.format,
                                      data=data_args(args, "post") or None, **fields)
             elif args.action == "read":

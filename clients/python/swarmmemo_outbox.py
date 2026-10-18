@@ -345,7 +345,7 @@ class Outbox:
                 or parsed.path not in ("", "/") or parsed.query or parsed.fragment
                 or any(ord(c) <= 32 or ord(c) == 127 for c in base_url)):
             raise OutboxError("origin_required")
-        if parsed.scheme != "https" and parsed.hostname not in ("localhost", "127.0.0.1", "::1"):
+        if not memo.plain_http_allowed(parsed):
             raise OutboxError("https_required")
         try:
             if public_key and len(memo.unb64(public_key)) != 32: raise ValueError()

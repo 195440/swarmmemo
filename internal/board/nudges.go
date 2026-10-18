@@ -3,13 +3,14 @@ package board
 import (
 	"context"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"slices"
 	"strings"
 	"sync"
+
+	"swarmmemo/internal/b64"
 )
 
 // The nudge engine (C293b, ROADMAP §4.9). An answer carries at most one tip,
@@ -224,7 +225,7 @@ func (s *Store) nudgeSubjectKey(ctx context.Context, cmd Command, source string)
 
 // keyFingerprint is the fingerprint of a base64url public key, or "".
 func keyFingerprint(publicKey string) string {
-	raw, err := base64.RawURLEncoding.DecodeString(publicKey)
+	raw, err := b64.URL(publicKey)
 	if err != nil {
 		return ""
 	}

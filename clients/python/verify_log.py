@@ -111,9 +111,34 @@ def verify_consistency(m: int, n: int, proof: list[bytes], root_m: bytes, root_n
         raise VerifyError("consistency proof does not verify")
 
 
+def b64std(s: str, what: str = "a base64 value") -> bytes:
+    """Padded standard base64 (the log's C2SP fields), decoded under the one
+    rule of PROTOCOL.md (Encodings): s must be exactly the canonical encoding
+    of its bytes, so no verifier accepts what another refuses."""
+    return _canonical(s, what, url=False)
+
+
+def b64url(s: str, what: str = "a base64url value") -> bytes:
+    """Unpadded base64url (keys, signatures, receipts), under the same rule."""
+    return _canonical(s, what, url=True)
+
+
+def _canonical(s, what: str, url: bool) -> bytes:
+    raw = None
+    if isinstance(s, str) and s.isascii():
+        try:
+            raw = base64.urlsafe_b64decode(s + "=" * (-len(s) % 4)) if url else base64.b64decode(s, validate=True)
+        except ValueError:
+            raw = None
+    if raw is None or (base64.urlsafe_b64encode(raw).rstrip(b"=") if url else base64.b64encode(raw)).decode() != s:
+        form = "unpadded base64url (A-Z a-z 0-9 - _, no =)" if url else "padded base64 (A-Z a-z 0-9 + /, = to a multiple of 4)"
+        raise VerifyError(f"{what} is not canonical {form}: no spaces or line breaks, unused trailing bits zero")
+    return raw
+
+
 def parse_verifier_key(vkey: str):
     name, keyhash, key64 = vkey.split("+", 2)
-    raw = base64.b64decode(key64)
+    raw = b64std(key64, "the verifier key")
     if len(raw) != 33 or raw[0] != 1 or len(keyhash) != 8:
         raise VerifyError("malformed verifier key")
     if hashlib.sha256(name.encode() + b"\n" + raw).digest()[:4] != bytes.fromhex(keyhash):
@@ -136,7 +161,7 @@ def open_note(note: str, vkey: str) -> str:
         if not line.startswith("— "):
             raise VerifyError("malformed signature line")
         signer, _, b64 = line[2:].partition(" ")
-        raw = base64.b64decode(b64)
+        raw = b64std(b64, "a note signature")
         if signer != name or raw[:4] != keyhash:
             continue
         try:
@@ -149,10 +174,6 @@ def open_note(note: str, vkey: str) -> str:
     return text
 
 
-def b64url(s: str) -> bytes:
-    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
-
-
 def check_notary(receipt: dict, stamp: dict, key: dict) -> None:
     """Check a notary receipt against its stamp leaf and the logged key's leaf:
     the key's ID is its SHA-256, the receipt's signature verifies over its
@@ -161,11 +182,11 @@ def check_notary(receipt: dict, stamp: dict, key: dict) -> None:
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-    pub = b64url(key["public_key"])
+    pub = b64url(key["public_key"], "the logged key's public_key")
     if hashlib.sha256(pub).hexdigest() != key["key_id"] or key["key_id"] != stamp.get("key_id"):
         raise VerifyError("the stamp's key_id is not the logged key")
     try:
-        Ed25519PublicKey.from_public_bytes(pub).verify(b64url(receipt["signature"]), receipt["payload"].encode())
+        Ed25519PublicKey.from_public_bytes(pub).verify(b64url(receipt["signature"], "the receipt's signature"), receipt["payload"].encode())
     except InvalidSignature:
         raise VerifyError("the receipt's signature does not verify under the logged key") from None
     p = json.loads(receipt["payload"])
@@ -195,11 +216,11 @@ def check_message(proof: dict, leaf: dict) -> list[str]:
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
     cmd = json.loads(payload)["command"]
-    pub = b64url(cmd["public_key"])
+    pub = b64url(cmd["public_key"], "the signed payload's public_key")
     if hashlib.sha256(pub).hexdigest() != leaf.get("agent"):
         raise VerifyError("the signing key is not the leaf's agent")
     try:
-        Ed25519PublicKey.from_public_bytes(pub).verify(b64url(leaf["signature"]), payload.encode())
+        Ed25519PublicKey.from_public_bytes(pub).verify(b64url(leaf["signature"], "the leaf's signature"), payload.encode())
     except InvalidSignature:
         raise VerifyError("the signature does not verify over signed_payload") from None
     # The server's placement of a post that names no room (board.Store.post):
@@ -218,7 +239,7 @@ def parse_checkpoint(text: str):
     lines = text.split("\n")
     if len(lines) < 4 or not lines[1].isdigit():
         raise VerifyError("malformed checkpoint")
-    root = base64.b64decode(lines[2])
+    root = b64std(lines[2], "the checkpoint root")
     if len(root) != 32:
         raise VerifyError("malformed checkpoint root")
     return lines[0], int(lines[1]), root
@@ -244,10 +265,7 @@ def parse_promise(text: str) -> dict:
                 raise VerifyError("malformed promise")
             value = int(value)
         out[name] = value
-    try:
-        leaf = base64.b64decode(out["leaf"], validate=True)
-    except ValueError:
-        raise VerifyError("malformed promise leaf") from None
+    leaf = b64std(out["leaf"], "the promise leaf")
     if len(leaf) != 32 or out["merge-by"] < out["received"]:
         raise VerifyError("malformed promise")
     out["leaf"] = leaf
@@ -279,7 +297,7 @@ def get(base: str, path: str, raw: bool = False):
 
 
 def hashes(items: list[str]) -> list[bytes]:
-    return [base64.b64decode(h) for h in items]
+    return [b64std(h, "a proof hash") for h in items]
 
 
 class Verifier:
@@ -317,8 +335,8 @@ class Verifier:
             old = None
         if old and old["size"] < size:
             c = get(self.base, f"/api/log/consistency?from={old['size']}&to={size}")
-            verify_consistency(old["size"], size, hashes(c["proof"]), base64.b64decode(old["root"]), root)
-        elif old and old["size"] == size and base64.b64decode(old["root"]) != root:
+            verify_consistency(old["size"], size, hashes(c["proof"]), b64std(old["root"], "the state file's root"), root)
+        elif old and old["size"] == size and b64std(old["root"], "the state file's root") != root:
             raise VerifyError("two different roots for the same size: the log forked")
         elif old and old["size"] > size:
             return

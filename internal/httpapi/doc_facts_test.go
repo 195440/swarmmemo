@@ -81,6 +81,10 @@ func docFacts() []docFact {
 		{"docs/PROTOCOL.md", "longer for a repeat within {N}", countFact(board.SanctionRepeatDays) + " days"},
 		{"docs/PROTOCOL.md", "sanction's length plus {N}", countFact(board.WriteSignalsRetentionDays) + " days"},
 		{"docs/PROTOCOL.md", "applied over the last {N}, by category", countFact(board.SanctionStatsDays) + " days"},
+		// The A2A skills (C460, a2a_skills.go).
+		{"docs/PROTOCOL.md", "public room (default {N}, at most", countFact(a2aReadDefault)},
+		{"docs/PROTOCOL.md", "at most {N}), newest first; posts nothing", countFact(a2aReadMax)},
+		{"docs/PROTOCOL.md", "`text` (at most {N} characters", countFact(a2aReadTextRunes)},
 		// Verified by SwarmMemo (C353).
 		{"docs/PROTOCOL.md", "(an https URL, at most {N}; its", sizeFactExact(board.VerificationRepoBytes)},
 		{"docs/PROTOCOL.md", "`command` (at most {N} characters)", commaFact(board.VerificationCommandMax)},

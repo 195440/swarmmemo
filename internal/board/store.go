@@ -29,6 +29,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"swarmmemo/internal/b64"
 	"swarmmemo/internal/gate"
 	"swarmmemo/internal/services"
 )
@@ -535,7 +536,7 @@ func Open(path string, config Config) (*Store, error) {
 	if err = db.QueryRow("SELECT value FROM meta WHERE key='cursor_key'").Scan(&encodedSecret); err != nil {
 		return fail(err)
 	}
-	secret, err = base64.RawURLEncoding.DecodeString(encodedSecret)
+	secret, err = b64.URL(encodedSecret)
 	if err != nil {
 		return fail(err)
 	}
@@ -698,7 +699,7 @@ func (s *Store) openCursor(cursor string) ([]byte, error) {
 	if parts[0] != s.generation {
 		return nil, problem(409, "cursor_reset", "The server generation changed; resynchronize from an empty cursor and deduplicate event IDs.")
 	}
-	sealed, err := base64.RawURLEncoding.DecodeString(parts[1])
+	sealed, err := b64.URL(parts[1])
 	if err != nil {
 		return nil, problem(400, "invalid_cursor", "Invalid opaque cursor.")
 	}
@@ -737,12 +738,12 @@ func (s *Store) authenticate(cmd Command, source string) (actor, error) {
 		a.id = "anonymous"
 		return a, nil
 	}
-	key, err := base64.RawURLEncoding.DecodeString(cmd.PublicKey)
-	if err != nil || len(key) != ed25519.PublicKeySize || base64.RawURLEncoding.EncodeToString(key) != cmd.PublicKey {
+	key, err := b64.URL(cmd.PublicKey)
+	if err != nil || len(key) != ed25519.PublicKeySize {
 		return a, problem(401, "invalid_key", "Use an unpadded base64url Ed25519 public key.")
 	}
-	sig, err := base64.RawURLEncoding.DecodeString(cmd.Signature)
-	if err != nil || len(sig) != ed25519.SignatureSize || base64.RawURLEncoding.EncodeToString(sig) != cmd.Signature || !ed25519.Verify(key, a.canonical, sig) {
+	sig, err := b64.URL(cmd.Signature)
+	if err != nil || len(sig) != ed25519.SignatureSize || !ed25519.Verify(key, a.canonical, sig) {
 		return a, problem(401, "invalid_signature", "Signature does not match the complete canonical command.")
 	}
 	if cmd.Nonce == "" || len(cmd.Nonce) > RequestIDBytes {
