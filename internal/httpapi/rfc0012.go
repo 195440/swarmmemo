@@ -60,6 +60,7 @@ func (s *Server) rfc0012Capabilities(caps map[string]any, catalog []services.Ent
 		"reviews":      s.reviewsCapabilities(),
 		"find":         s.findCapabilities(),
 		"spend_limits": s.spendLimitCapabilities(),
+		"sanctions":    s.sanctionCapabilities(),
 	} {
 		if fragment != nil {
 			caps[key] = fragment

@@ -256,6 +256,14 @@ func migrateSchema(tx *sql.Tx, version int) error {
 	if err := migrateVerificationFlaky44(tx); err != nil {
 		return err
 	}
+	// Schema 45: the write signals' client hash, and abuse sanctions with their
+	// subjects (signals.go, sanctions.go, C449).
+	if err := migrateSignalsClient45(tx); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(sanctionSchema); err != nil {
+		return err
+	}
 	_, err := tx.Exec(fmt.Sprintf("PRAGMA user_version=%d;", SchemaVersion))
 	return err
 }

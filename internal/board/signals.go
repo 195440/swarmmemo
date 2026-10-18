@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -47,6 +48,12 @@ import (
 // to enumerate, so whoever holds the key can; it is operator-only for that
 // reason. It is never rotated silently: every row names its key (hash_key),
 // and rows under another key are never compared with the current one.
+//
+// Schema 45 (C449) adds client_hash: an HMAC under the same key of the
+// request's normalised client (User-Agent products cut to their major
+// version, Accept-Language tags, client hints; signalClientTuple). It is
+// collision-prone by design and only ever a co-signal beside the network
+// hash, for abuse sanctions (sanctions.go).
 //
 // Rows older than WriteSignalsRetentionDays are deleted by the hourly
 // maintenance loop (PruneWriteSignals). This is operator telemetry, not user
@@ -84,6 +91,17 @@ CREATE INDEX IF NOT EXISTS write_signals_full ON write_signals(ip_hash_full,crea
 CREATE INDEX IF NOT EXISTS write_signals_object ON write_signals(object_id);
 CREATE INDEX IF NOT EXISTS write_signals_created ON write_signals(created_at);
 `
+
+// migrateSignalsClient45 adds write_signals.client_hash (schema 45, C449),
+// after the table's original columns.
+func migrateSignalsClient45(tx *sql.Tx) error {
+	var exists int
+	if err := tx.QueryRow("SELECT count(*) FROM pragma_table_info('write_signals') WHERE name='client_hash'").Scan(&exists); err != nil || exists > 0 {
+		return err
+	}
+	_, err := tx.Exec("ALTER TABLE write_signals ADD COLUMN client_hash TEXT NOT NULL DEFAULT ''")
+	return err
+}
 
 // RequestSignals is what an adapter saw of a request besides its address.
 // Adapters set it with WithRequestSignals; the board cleans and bounds every
@@ -219,12 +237,48 @@ func (s *Store) signalHashes(source string) (full, net string) {
 	if err != nil {
 		return "", ""
 	}
-	mac := func(v string) string {
-		m := hmac.New(sha256.New, s.signals.key)
-		m.Write([]byte(v))
-		return hex.EncodeToString(m.Sum(nil)[:16])
+	return s.signalMAC("ip:" + addr.String()), s.signalMAC("net:" + prefix.String())
+}
+
+// signalMAC is the keyed hash every signal hash is: HMAC-SHA256 under the
+// signals key, its first 16 bytes in hex.
+func (s *Store) signalMAC(v string) string {
+	m := hmac.New(sha256.New, s.signals.key)
+	m.Write([]byte(v))
+	return hex.EncodeToString(m.Sum(nil)[:16])
+}
+
+// signalClientHash is the keyed hash of sig's normalised client tuple, or ""
+// without a key or a client (a bridge, an in-process caller). A co-signal
+// only: many honest agents share one client.
+func (s *Store) signalClientHash(sig RequestSignals) string {
+	tuple := signalClientTuple(sig)
+	if tuple == "" || len(s.signals.key) == 0 {
+		return ""
 	}
-	return mac("ip:" + addr.String()), mac("net:" + prefix.String())
+	return s.signalMAC("client:" + tuple)
+}
+
+var signalVersionRE = regexp.MustCompile(`(\d+)(?:\.[0-9a-z.]*)?`)
+
+// signalClientTuple is a request's client, normalised: the User-Agent
+// lowercased with every version cut to its major number ("chrome/126",
+// "python-requests/2"), the Accept-Language tags without weights, and the
+// client hints; "" when the request named none of them.
+func signalClientTuple(sig RequestSignals) string {
+	ua := signalVersionRE.ReplaceAllString(strings.ToLower(signalText(sig.UserAgent, SignalTextBytes)), "$1")
+	var tags []string
+	for _, tag := range strings.Split(strings.ToLower(signalText(sig.AcceptLanguage, 128)), ",") {
+		tag, _, _ = strings.Cut(tag, ";")
+		if tag = strings.TrimSpace(tag); tag != "" {
+			tags = append(tags, tag)
+		}
+	}
+	hints := strings.Join(strings.Fields(strings.ToLower(signalText(sig.ClientHints, SignalTextBytes))), " ")
+	if ua == "" && len(tags) == 0 && hints == "" {
+		return ""
+	}
+	return strings.Join(strings.Fields(ua), " ") + "\x00" + strings.Join(tags, ",") + "\x00" + hints
 }
 
 // signalText keeps printable text only (no control or C1 characters, which a
@@ -262,10 +316,7 @@ func SignalReferer(raw string) string {
 // answered from its receipt never reaches it.
 func (s *Store) recordWriteSignal(ctx context.Context, tx *sql.Tx, cmd Command, a actor, source string, result Result, now int64) error {
 	sig := RequestSignalsFrom(ctx)
-	via := wireFrom(ctx)
-	if f, ok := forwardedFrom(ctx); ok && via == "" {
-		via = f.OriginService
-	}
+	via := signalVia(ctx)
 	account, signer := "", ""
 	if a.signed {
 		account, signer = a.account, a.id
@@ -275,12 +326,32 @@ func (s *Store) recordWriteSignal(ctx context.Context, tx *sql.Tx, cmd Command, 
 		objectID = result.Receipt.ID
 	}
 	full, net := s.signalHashes(source)
-	_, err := tx.ExecContext(ctx, `INSERT INTO write_signals(created_at,operation,object_id,request_id,account,signer,via,hash_key,ip_hash_full,ip_hash_24,user_agent,referer,accept_language,sec_ch_ua,origin)
- VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	_, err := tx.ExecContext(ctx, `INSERT INTO write_signals(created_at,operation,object_id,request_id,account,signer,via,hash_key,ip_hash_full,ip_hash_24,user_agent,referer,accept_language,sec_ch_ua,origin,client_hash)
+ VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		now, cmd.Operation, signalText(objectID, SignalTextBytes), signalText(cmd.RequestID, SignalTextBytes), account, signer, signalText(via, 32), s.signals.id, full, net,
-		signalText(sig.UserAgent, SignalTextBytes), SignalReferer(sig.Referer), signalText(sig.AcceptLanguage, 128), signalText(sig.ClientHints, SignalTextBytes), signalText(sig.Origin, SignalTextBytes))
+		signalText(sig.UserAgent, SignalTextBytes), SignalReferer(sig.Referer), signalText(sig.AcceptLanguage, 128), signalText(sig.ClientHints, SignalTextBytes), signalText(sig.Origin, SignalTextBytes), s.signalClientHash(sig))
 	return err
 }
+
+// signalVia is the channel a write signal names: the adapter's, else a
+// forwarded write's origin service.
+func signalVia(ctx context.Context) string {
+	via := wireFrom(ctx)
+	if f, ok := forwardedFrom(ctx); ok && via == "" {
+		via = f.OriginService
+	}
+	return via
+}
+
+// signalRelayedVias are the channels whose address is not the writer's own:
+// none (an in-process caller), DNS (the resolver's network) and the email
+// and Nostr bridges. Their network hashes never link accounts (operator
+// links) or carry a network sanction (sanctions.go).
+var signalRelayedVias = []string{"", "dns", "email", "nostr"}
+
+// signalOwnAddress reports whether a write on via came from its writer's
+// own address.
+func signalOwnAddress(via string) bool { return !slices.Contains(signalRelayedVias, via) }
 
 // writeClient is one write's time, channel and User-Agent.
 type writeClient struct {
@@ -310,9 +381,13 @@ func (s *Store) accountWriteClients(ctx context.Context, account string, from, t
 
 // PruneWriteSignals deletes write signals older than
 // WriteSignalsRetentionDays, in bounded batches. The hourly maintenance loop
-// and `swarmmemo maintenance` call it.
+// and `swarmmemo maintenance` call it. It also blanks the network hashes of
+// sanctions over for as long (redactSanctionHashes): the same retention.
 func (s *Store) PruneWriteSignals(ctx context.Context) (int64, error) {
 	cutoff := s.now().Unix() - WriteSignalsRetentionDays*86400
+	if _, err := s.redactSanctionHashes(ctx, s.now().Unix()); err != nil {
+		return 0, err
+	}
 	var total int64
 	for {
 		r, err := s.db.ExecContext(ctx, "DELETE FROM write_signals WHERE seq IN (SELECT seq FROM write_signals WHERE created_at<? ORDER BY seq LIMIT ?)", cutoff, signalPruneBatch)
@@ -348,13 +423,14 @@ type WriteSignal struct {
 	AcceptLanguage string
 	SecCHUA        string
 	Origin         string
+	ClientHash     string // schema 45: the normalised client's keyed hash
 }
 
-const writeSignalColumns = "seq,created_at,operation,object_id,request_id,account,signer,via,hash_key,ip_hash_full,ip_hash_24,user_agent,referer,accept_language,sec_ch_ua,origin"
+const writeSignalColumns = "seq,created_at,operation,object_id,request_id,account,signer,via,hash_key,ip_hash_full,ip_hash_24,user_agent,referer,accept_language,sec_ch_ua,origin,client_hash"
 
 func scanWriteSignal(sc interface{ Scan(...any) error }) (WriteSignal, error) {
 	var w WriteSignal
-	err := sc.Scan(&w.Seq, &w.CreatedAt, &w.Operation, &w.ObjectID, &w.RequestID, &w.Account, &w.Signer, &w.Via, &w.HashKey, &w.IPHashFull, &w.IPHash24, &w.UserAgent, &w.Referer, &w.AcceptLanguage, &w.SecCHUA, &w.Origin)
+	err := sc.Scan(&w.Seq, &w.CreatedAt, &w.Operation, &w.ObjectID, &w.RequestID, &w.Account, &w.Signer, &w.Via, &w.HashKey, &w.IPHashFull, &w.IPHash24, &w.UserAgent, &w.Referer, &w.AcceptLanguage, &w.SecCHUA, &w.Origin, &w.ClientHash)
 	return w, err
 }
 
@@ -604,8 +680,9 @@ func (s *Store) SignalClusters(ctx context.Context, days, minAccounts int) ([]Si
 // the writer's own count: not DNS (the resolver's network), the email or
 // Nostr bridges, or an in-process caller.
 func readSignalNetworks(ctx context.Context, tx *sql.Tx, hashKey string, from, to int64) (map[string][]string, error) {
+	relayed := "'" + strings.Join(signalRelayedVias, "','") + "'"
 	rows, err := tx.QueryContext(ctx, `SELECT ip_hash_24,account FROM write_signals WHERE created_at>=? AND created_at<=? AND hash_key=?
- AND account<>'' AND ip_hash_24<>'' AND via NOT IN ('','dns','email','nostr') GROUP BY ip_hash_24,account`, from, to, hashKey)
+ AND account<>'' AND ip_hash_24<>'' AND via NOT IN (`+relayed+`) GROUP BY ip_hash_24,account`, from, to, hashKey)
 	if err != nil {
 		return nil, err
 	}

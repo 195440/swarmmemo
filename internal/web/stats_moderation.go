@@ -24,6 +24,16 @@ type moderationView struct {
 	Cards    []svcCard
 	Rows     []moderationRow // one per surface, in name order
 	DaysRows []moderationRow // one per day, newest first
+	// Sanctions are the abuse sanctions by category (board.SanctionStats,
+	// what /api/stats/moderation serves under sanctions); nil without them.
+	Sanctions     []sanctionRow
+	SanctionsDays int
+}
+
+type sanctionRow struct{ Label, Active, Applied string }
+
+type sanctionStatsReader interface {
+	SanctionStats(ctx context.Context) (board.SanctionStats, error)
 }
 
 type moderationRow struct{ Label, Allow, Flag, Hold, Hide, Block string }
@@ -72,6 +82,19 @@ func buildModerationStats(ctx context.Context, service board.Service) *moderatio
 		{Icon: "lock", Label: "Hidden or blocked", Value: count(all.Hide + all.Block), Note: "Only phishing, malware, slur harassment or extreme vulgarity, sexual content and doxxing are hidden, each with a public reason. Nothing is deleted."},
 		{Icon: "bell", Label: "Flagged or held", Value: count(all.Flag + all.Hold), Note: "Kept for a person to review."},
 		{Icon: "list", Label: "Awaiting review", Value: count(st.PendingReview), Note: strconv.FormatInt(st.Reviewed, 10) + " reviewed over " + period + "."},
+	}
+	if sr, ok := service.(sanctionStatsReader); ok {
+		if sst, err := sr.SanctionStats(ctx); err == nil {
+			v.SanctionsDays = sst.Days
+			for _, cat := range board.SanctionStatsCategories() {
+				if sst.Active[cat] > 0 || sst.Applied[cat] > 0 {
+					v.Sanctions = append(v.Sanctions, sanctionRow{capitalize(board.SanctionLabel(cat)), count(sst.Active[cat]), count(sst.Applied[cat])})
+				}
+			}
+			v.Cards = append(v.Cards,
+				svcCard{Icon: "lock", Label: "Sanctions in force", Value: count(sst.ActiveTotal), Note: "Writes paused for an attack: injection, phishing, malware, doxxing and the rest of the standard. Reading is never paused."},
+				svcCard{Icon: "shield", Label: "Sanctions applied", Value: count(sst.AppliedTotal), Note: "Over " + periodWords(sst.Days) + "."})
+		}
 	}
 	return v
 }

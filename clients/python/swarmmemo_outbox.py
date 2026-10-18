@@ -57,7 +57,7 @@ SAFE_CODES.update({"invalid_private_read_context", "invalid_private_read_data", 
                    "private_read_exists", "private_read_limit", "private_read_generation_mismatch",
                    "private_read_epoch_mismatch", "private_read_already_revoked", "private_read_rate_limited",
                    "private_read_response_limit", "invalid_limit"})
-SAFE_CODES.update({"signed_only", "prefix_blocked", "standing_required", "handle_reserved", "service_unavailable", "no_share"})
+SAFE_CODES.update({"signed_only", "prefix_blocked", "sanctioned", "standing_required", "handle_reserved", "service_unavailable", "no_share"})
 # Acknowledgement shapes come from the client contract (memo.CONTRACT["structs"], written
 # from the server's result types, C398): a result's data (*_ack_data) and its ack (*_ack).
 # An optional key the struct's "intent" names is accepted only when the operation takes that

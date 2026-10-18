@@ -126,6 +126,9 @@ type Store struct {
 	trust    trustState
 	// signals is the write signals' HMAC key (signals.go, C160).
 	signals signalsState
+	// sanctionKeyWarn logs once that network sanctions fail open for want
+	// of the signals key (sanctions.go, C449).
+	sanctionKeyWarn sync.Once
 	// The SwarmMemo Gate's pending challenges (gate.go, C325), in memory.
 	gateMu     sync.Mutex
 	gatekeeper *gate.Gate
@@ -349,7 +352,13 @@ CREATE TABLE IF NOT EXISTS leases (
 // C385). Additive, but a schema-43 binary cannot read back a record with a
 // flaky check (its parser refuses the state), so a rollback past 44 fails
 // verify.get on those.
-const SchemaVersion = 44
+//
+// 45: the write signals' client hash and the abuse sanctions with their
+// subjects (signals.go, sanctions.go, C449). Additive: a schema-44 binary
+// inserts write signals by column name (the new column defaults to empty)
+// and never reads the sanctions, so a rollback past 45 only stops enforcing
+// them until the next roll forward.
+const SchemaVersion = 45
 
 // connPragmas are the per-connection PRAGMAs, in modernc.org/sqlite's DSN
 // syntax. journal_mode=WAL is stored in the database file and set at Open.
@@ -931,6 +940,11 @@ func (s *Store) executeCommand(ctx context.Context, cmd Command, source string) 
 		return result, nil
 	}
 	if err = s.resolveDelegation(ctx, tx, cmd, &a); err != nil {
+		return empty, err
+	}
+	// C449: an abuse sanction refuses the write (403 sanctioned), once the
+	// account a delegated key acts for is known; reads never reach it.
+	if err = s.checkSanction(ctx, tx, cmd, a, source, now); err != nil {
 		return empty, err
 	}
 	if cmd.Operation == "delegation.create" {

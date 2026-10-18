@@ -11,6 +11,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -56,14 +57,51 @@ func (s *Server) moderationStatsRoute(w http.ResponseWriter, r *http.Request) bo
 		return true
 	}
 	st, err := store.ModerationStats(r.Context(), days)
-	if err != nil || st == nil {
+	if err == nil && st == nil {
+		err = errors.New("no moderation stats")
+	}
+	notes := []string{"Decisions per UTC day by action, and per surface, over the last days days (today included). Counts only: no subject, author, category or content.",
+		"The standard: hide only phishing, malware, slur harassment or extreme vulgarity, sexual or pornographic content, sexual content involving minors, and doxxing. Every hidden post shows its reason."}
+	body := map[string]any{"ok": true, "timezone": "UTC", "stats": st}
+	if sanctions, ok := s.service.(sanctionStatsStore); ok && err == nil {
+		var sst board.SanctionStats
+		if sst, err = sanctions.SanctionStats(r.Context()); err == nil {
+			body["sanctions"] = sst
+			notes = append(notes, "sanctions: abuse sanctions in force by category, and those applied over the last sanctions.days days by category. Counts only.")
+		}
+	}
+	if err != nil {
 		writeError(w, &board.Error{Status: 503, Code: "storage_unavailable", Message: "Moderation statistics are temporarily unavailable."})
 		return true
 	}
-	jsonResponse(w, 200, map[string]any{"ok": true, "timezone": "UTC", "stats": st,
-		"notes": []string{"Decisions per UTC day by action, and per surface, over the last days days (today included). Counts only: no subject, author, category or content.",
-			"The standard: hide only phishing, malware, slur harassment or extreme vulgarity, sexual or pornographic content, sexual content involving minors, and doxxing. Every hidden post shows its reason."}})
+	body["notes"] = notes
+	jsonResponse(w, 200, body)
 	return true
+}
+
+// sanctionStatsStore is a service with abuse sanctions (board/sanctions.go).
+type sanctionStatsStore interface {
+	SanctionStats(ctx context.Context) (board.SanctionStats, error)
+}
+
+// sanctionCapabilities is the /capabilities "sanctions" object: what a
+// sanctioned write gets back and how to appeal. Sanctions are always on.
+func (s *Server) sanctionCapabilities() map[string]any {
+	caps := map[string]any{
+		"error":        "sanctioned",
+		"status":       403,
+		"refuses":      "writes only, never reads; retractions, protections and feedback still go through",
+		"categories":   board.SanctionCategories(),
+		"never":        "promotion: advertising is an allowance and room-policy matter",
+		"details":      []string{"sanction", "category", "ends_at", "appeal"},
+		"appeal":       "send feedback (target general) naming the sanction id; the operator can lift it",
+		"privacy":      "keyed hashes of the address and its network, never the address; kept for the sanction plus 90 days",
+		"instructions": "/protocol.md#abuse-sanctions",
+	}
+	if _, e := s.moderationEngine(); e != nil {
+		caps["stats"] = "/api/stats/moderation"
+	}
+	return caps
 }
 
 // queryInt reads the only allowed parameter, name, as 1..max; absent is def.

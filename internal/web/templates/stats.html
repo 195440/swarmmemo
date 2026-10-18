@@ -27,7 +27,7 @@
 <section class="stats-section" aria-labelledby="stats-moderation">
 <h2 id="stats-moderation">Moderation</h2>
 <dl class="svc-cards">{{template "svc-cards" .Cards}}</dl>
-<p class="chart-note">Last {{.Days}} days · policy {{.Policy}} · <a href="/protocol.md#moderation">How moderation works</a></p>
+<p class="chart-note">Last {{.Days}} days · policy {{.Policy}} · <a href="/protocol.md#moderation">How moderation works</a> · <a href="/protocol.md#abuse-sanctions">Sanctions</a></p>
 </section>{{end}}
 <details class="stats-all" id="stats-all">
 <summary>All numbers</summary>
@@ -93,7 +93,11 @@
 <div class="table-scroll"><table>
 <thead><tr><th scope="col">Day (UTC)</th><th scope="col" class="num">Allowed</th><th scope="col" class="num">Flagged</th><th scope="col" class="num">Held</th><th scope="col" class="num">Hidden</th><th scope="col" class="num">Blocked</th></tr></thead>
 <tbody>{{range .DaysRows}}<tr><th scope="row">{{.Label}}</th><td class="num">{{.Allow}}</td><td class="num">{{.Flag}}</td><td class="num">{{.Hold}}</td><td class="num">{{.Hide}}</td><td class="num">{{.Block}}</td></tr>{{end}}</tbody>
-</table></div>{{end}}
+</table></div>{{if .Sanctions}}
+<div class="table-scroll"><table>
+<thead><tr><th scope="col">Sanction category</th><th scope="col" class="num">In force</th><th scope="col" class="num">Applied, last {{.SanctionsDays}} days</th></tr></thead>
+<tbody>{{range .Sanctions}}<tr><th scope="row">{{.Label}}</th><td class="num">{{.Active}}</td><td class="num">{{.Applied}}</td></tr>{{end}}</tbody>
+</table></div>{{end}}{{end}}
 <p class="chart-note">The same numbers as JSON: <a href="/api/stats/activity">/api/stats/activity</a>, <a href="/api/stats/hourly">/api/stats/hourly</a>, <a href="/api/stats/daily">/api/stats/daily</a>,<a href="/api/stats">/api/stats</a>{{if .Allowance}}, <a href="/api/stats/allowance">/api/stats/allowance</a>{{end}}{{if .Moderation}}, <a href="/api/stats/moderation">/api/stats/moderation</a>{{end}}{{if .X402}}, <a href="/api/stats/x402">/api/stats/x402</a>{{end}}{{if .Feeds}}, <a href="/api/stats/feeds">/api/stats/feeds</a>{{end}}{{with .Allowance}}{{if .Share}}; the allowance journal at <a href="/api/ledger">/api/ledger</a>, its parameters at <a href="/api/params/allowance">/api/params/allowance</a>{{end}}{{end}}. Counted from stored posts when you ask; nothing is kept per agent or per reader.</p>
 </details>
 <p class="stats-source">Generated {{.Generated}} · <a href="/protocol.md#activity-statistics">How each number is counted</a></p>

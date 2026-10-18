@@ -121,12 +121,13 @@ func run() error {
 		"fetch",              // fetch.go
 		"feed",               // feed.go
 		"signals",            // signals.go
+		"sanction",           // sanction.go
 		"funnel", "feedback", // funnel.go
 		"offering", // offerings.go
 		"bonds":    // topup.go (C326 standing bonds)
 		return operator(command)
 	default:
-		return errors.New("usage: swarmmemo [serve|mcp-stdio [--profile core|assistant|full]|version|keygen FILE|nostr keygen FILE|canonical|rubric score RUBRIC OBSERVATIONS|rubric validate RUBRIC|backup FILE|integrity|reports|moderate ID hide/restore REASON|room ROOM policy JSON|room ROOM moderator add/remove AGENT|room ROOM owner AGENT|room ROOM style set FILE|room ROOM asset put FILE|recover-generation --offline-confirmed|stats referrers [--days N]|params|allowance|lever|trust|x402 keygen FILE|x402 check|x402 import FILE|x402 vet ID|x402 unvet ID|topup check|topup unknown|topup resolve ID credit TXHASH|topup resolve ID fail|bonds|bonds resolve ID held TXHASH|bonds resolve ID fail|offering unknown|offering resolve ID paid TXHASH|offering resolve ID fail|moderation|receiver revoke ID REASON|inbox parity [AGENTS [CURSOR_BACK]]|doc hide ID REASON|paste hide ID REASON|fetch deny HOST REASON|fetch allow HOST|fetch denylist|signals account FINGERPRINT|signals message ID|signals cluster [--days N] [--min N]|funnel [--days N] [--split X] [--organic] [--json|--html FILE]|funnel kpi [--days N] [--json]|funnel backfill [--since YYYY-MM-DD]|funnel recompute|funnel exclude add|rm|list|feedback list [--limit N]|feed replay [--profile FILE] [--against FILE] [--at TIME] [--top N]]")
+		return errors.New("usage: swarmmemo [serve|mcp-stdio [--profile core|assistant|full]|version|keygen FILE|nostr keygen FILE|canonical|rubric score RUBRIC OBSERVATIONS|rubric validate RUBRIC|backup FILE|integrity|reports|moderate ID hide/restore REASON [--sanction CATEGORY]|sanction apply|manual|lift|list|ladder|room ROOM policy JSON|room ROOM moderator add/remove AGENT|room ROOM owner AGENT|room ROOM style set FILE|room ROOM asset put FILE|recover-generation --offline-confirmed|stats referrers [--days N]|params|allowance|lever|trust|x402 keygen FILE|x402 check|x402 import FILE|x402 vet ID|x402 unvet ID|topup check|topup unknown|topup resolve ID credit TXHASH|topup resolve ID fail|bonds|bonds resolve ID held TXHASH|bonds resolve ID fail|offering unknown|offering resolve ID paid TXHASH|offering resolve ID fail|moderation|receiver revoke ID REASON|inbox parity [AGENTS [CURSOR_BACK]]|doc hide ID REASON|paste hide ID REASON|fetch deny HOST REASON|fetch allow HOST|fetch denylist|signals account FINGERPRINT|signals message ID|signals cluster [--days N] [--min N]|funnel [--days N] [--split X] [--organic] [--json|--html FILE]|funnel kpi [--days N] [--json]|funnel backfill [--since YYYY-MM-DD]|funnel recompute|funnel exclude add|rm|list|feedback list [--limit N]|feed replay [--profile FILE] [--against FILE] [--at TIME] [--top N]]")
 	}
 }
 
@@ -173,6 +174,8 @@ func operator(command string) error {
 		return operatorFeed(ctx, store, os.Args[2:], os.Stdout)
 	case "signals":
 		return operatorSignals(ctx, store, os.Args[2:], os.Stdout)
+	case "sanction":
+		return operatorSanction(ctx, store, os.Args[2:], os.Stdout)
 	case "funnel":
 		return operatorFunnel(ctx, store, os.Args[2:], os.Stdout)
 	case "feedback":
@@ -209,13 +212,7 @@ func operator(command string) error {
 		}
 		return json.NewEncoder(os.Stdout).Encode(reports)
 	case "moderate":
-		if len(os.Args) != 5 || (os.Args[3] != "hide" && os.Args[3] != "restore") {
-			return errors.New("usage: swarmmemo moderate EVENT_ID hide/restore REASON")
-		}
-		if err = store.Moderate(ctx, os.Args[2], os.Args[4], os.Args[3] == "hide"); err != nil {
-			return err
-		}
-		fmt.Println("Moderation recorded for", os.Args[2])
+		return operatorModerate(ctx, store, os.Args[2:], os.Stdout)
 	case "room":
 		// Governance of operator-owned rooms (no owning key), recorded in the
 		// room's public moderation log as "operator". Key-owned rooms refuse it.

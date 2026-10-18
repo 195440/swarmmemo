@@ -392,7 +392,7 @@ for (const code of 'invalid_link invalid_link_value invalid_link_proof link_limi
 for (const code of 'invalid_verification invalid_verification_id invalid_verification_query verification_delegated verification_hidden verification_limit verification_not_found'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_work_data invalid_work_root invalid_work_result invalid_work_state work_generation_mismatch work_state_conflict work_fence_mismatch work_forbidden work_exists work_renew_not_extended work_fence_exhausted work_read_timeout invalid_work_reward invalid_reward_note reject_fee_unavailable work_reward_limit reviewer_not_found reviewer_is_requester not_the_reviewer not_eligible work_result_changed usdc_rewards_unavailable reward_note_amount payout_address_required no_usdc_reward work_already_paid chain_unavailable settle_tx_not_found settle_tx_failed settle_unconfirmed settle_wrong_recipient settle_amount_short settle_tx_before_work settle_tx_used settle_sender_unlinked standing_needs_result seats_full seat_limit result_in_use results_max_reached invalid_work_rating work_rating_requester'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_delegation_context invalid_delegation_data invalid_delegation_proof delegation_not_found delegation_scope_mismatch delegation_exists delegation_limit delegation_already_revoked delegation_generation_mismatch delegation_quota_exhausted delegation_required delegation_context_mismatch delegation_inactive delegation_forbidden'.split(' ')) remoteCodes.add(code);
-for (const code of 'invalid_resource invalid_service invalid_service_data invalid_memory_key invalid_vouch standing_required no_share prefix_blocked transfers_frozen memory_not_found transfer_not_found handle_reserved not_transferable transfer_not_pending request_in_flight price_exceeds_max memory_limit vouch_limit self_vouch hold_limit service_unavailable trust_unavailable content_refused wakeup_conflict wakeup_limit wakeup_not_found notary_not_found notary_limit'.split(' ')) remoteCodes.add(code);
+for (const code of 'invalid_resource invalid_service invalid_service_data invalid_memory_key invalid_vouch standing_required no_share prefix_blocked sanctioned transfers_frozen memory_not_found transfer_not_found handle_reserved not_transferable transfer_not_pending request_in_flight price_exceeds_max memory_limit vouch_limit self_vouch hold_limit service_unavailable trust_unavailable content_refused wakeup_conflict wakeup_limit wakeup_not_found notary_not_found notary_limit'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_seal invalid_envelope not_sealed sealed_required seal_rotation_required seal_epoch_exists seal_members_mismatch'.split(' ')) remoteCodes.add(code);
 for (const code of 'anonymous_post_rate top_level_daily_limit'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_disposition entry_not_found own_inbox_only'.split(' ')) remoteCodes.add(code);
@@ -1588,7 +1588,16 @@ export async function loadWalletKey({file, env = WALLET_KEY_ENV} = {}) {
       handle = await open(file, constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0));
       const stat = await handle.stat();
       if (!stat.isFile() || (stat.mode & 0o077) || stat.size > 256 || stat.uid !== process.getuid()) fail('unsafe_key_file', 'The wallet key must be a small regular file owned by this user, with owner-only permissions (chmod 600).');
-      raw = (await handle.readFile()).toString('latin1');
+      // The stat check can race a growing file. Read at most one byte past
+      // the allowed limit, never unbounded content from a changing source.
+      const bytes = Buffer.alloc(257); let size = 0;
+      while (size < bytes.length) {
+        const {bytesRead} = await handle.read(bytes, size, bytes.length - size, null);
+        if (!bytesRead) break;
+        size += bytesRead;
+      }
+      if (size > 256) fail('unsafe_key_file', 'Wallet key file exceeds 256 bytes.');
+      raw = bytes.subarray(0, size).toString('latin1');
     } catch (error) {
       if (error instanceof ClientError) throw error;
       fail('key_read_failed', 'Could not read the wallet key file.');

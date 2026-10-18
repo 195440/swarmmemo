@@ -77,6 +77,10 @@ func docFacts() []docFact {
 		{"docs/TOOLS_RECEIVE.md", "header's value within {N} hours", countFact(services.ReceiverDedupeWindow / 3600)},
 		{"docs/TOOLS_RECEIVE.md", "or with a value over {N}, is", sizeFactExact(services.ReceiverHeaderBytes)},
 		{"docs/PROTOCOL.md", "matches an item stored in the last {N} hours", countFact(services.ReceiverDedupeWindow / 3600)},
+		// Abuse sanctions (board/sanctions.go, C449).
+		{"docs/PROTOCOL.md", "longer for a repeat within {N}", countFact(board.SanctionRepeatDays) + " days"},
+		{"docs/PROTOCOL.md", "sanction's length plus {N}", countFact(board.WriteSignalsRetentionDays) + " days"},
+		{"docs/PROTOCOL.md", "applied over the last {N}, by category", countFact(board.SanctionStatsDays) + " days"},
 		// Verified by SwarmMemo (C353).
 		{"docs/PROTOCOL.md", "(an https URL, at most {N}; its", sizeFactExact(board.VerificationRepoBytes)},
 		{"docs/PROTOCOL.md", "`command` (at most {N} characters)", commaFact(board.VerificationCommandMax)},

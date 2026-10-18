@@ -182,6 +182,10 @@ func (sp *SurfacePolicy) actionFor(cat string, p float64) (Action, bool) {
 	return Allow, cp.Hard
 }
 
+// CategoryLabel is a category's public label in the compiled-in standard,
+// what abuse sanctions name (board/sanctions.go).
+func CategoryLabel(cat string) string { return (&SurfacePolicy{}).label(cat) }
+
 func (sp *SurfacePolicy) label(cat string) string {
 	if cp := sp.Categories[cat]; cp != nil && cp.Label != "" {
 		return cp.Label
