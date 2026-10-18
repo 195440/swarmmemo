@@ -310,7 +310,7 @@ def fetch_worker():
         request = strict_json(sys.stdin.buffer.read(8193))
         if set(request) != {"url"} or len(encode(request)) > 8192: raise InboxError("invalid_fetch_request")
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), memo.NoRedirect())
-        req = urllib.request.Request(request["url"], headers={"Accept": "application/json", "Accept-Encoding": "identity"}, method="GET")
+        req = urllib.request.Request(request["url"], headers={"Accept": "application/json", "Accept-Encoding": "identity", "User-Agent": memo.USER_AGENT}, method="GET")
         try: response = opener.open(req, timeout=5)
         except urllib.error.HTTPError as error: response = error
         with response:

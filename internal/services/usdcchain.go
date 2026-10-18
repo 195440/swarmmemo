@@ -21,6 +21,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"swarmmemo/internal/useragent"
 )
 
 // Base mainnet and its native USDC, the defaults a WORK_USDC_RPC_URL reads.
@@ -165,7 +167,7 @@ func (c *USDCChain) call(ctx context.Context, client *http.Client, method string
 		return &ChainError{Code: "chain_unavailable", Reason: "request"}
 	}
 	req.Header.Set("content-type", "application/json")
-	req.Header.Set("user-agent", "swarmmemo-work-settle/1")
+	req.Header.Set("User-Agent", useragent.For("work-settle"))
 	resp, err := client.Do(req)
 	if err != nil {
 		return &ChainError{Code: "chain_unavailable", Reason: "unreachable"}

@@ -284,7 +284,7 @@ func (x *x402) bundlerAPI(ctx context.Context, method, path string, body any, li
 	if err != nil {
 		return nil, refusal("upstream_failed")
 	}
-	req.Header.Set("User-Agent", "SwarmMemo-x402/1 (+https://swarmmemo.com/protocol.md)")
+	req.Header.Set("User-Agent", x402UserAgent)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+x.fr.b.key)
 	if body != nil {

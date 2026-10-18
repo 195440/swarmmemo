@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"swarmmemo/internal/useragent"
 )
 
 const (
@@ -191,6 +193,9 @@ func TestTopupSettleFailsClosed(t *testing.T) {
 	}
 	for _, c := range cases {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			if ua := req.Header.Get("User-Agent"); ua != useragent.For("x402-topup") {
+				t.Errorf("User-Agent %q", ua)
+			}
 			switch {
 			case req.URL.Path == "/verify" && c.verify != nil:
 				c.verify(w)

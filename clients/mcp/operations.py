@@ -203,7 +203,7 @@ def _request(profile, path, body=None):
     # the outer wall-clock budget even if DNS or a trickle defeats socket timeouts.
     payload = None if body is None else json.dumps(body, ensure_ascii=False).encode()
     if payload is not None and len(payload) > MAX_FRAME: raise BridgeError("intent_too_large")
-    request = urllib.request.Request(profile.origin + path, data=payload, headers={"Accept": "application/json", "Content-Type": "application/json"})
+    request = urllib.request.Request(profile.origin + path, data=payload, headers={"Accept": "application/json", "Content-Type": "application/json", "User-Agent": memo.USER_AGENT})
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), memo.NoRedirect())
     try:
         with opener.open(request, timeout=10) as response:

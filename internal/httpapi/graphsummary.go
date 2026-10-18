@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"swarmmemo/internal/board"
+	"swarmmemo/internal/useragent"
 )
 
 // AI summaries of a /graph selection: the server reads the selection's public
@@ -461,6 +462,7 @@ func (o *OpenRouter) Summarize(ctx context.Context, model, system, user string, 
 		req.Header.Set("HTTP-Referer", o.Referer)
 	}
 	req.Header.Set("X-Title", "SwarmMemo graph")
+	req.Header.Set("User-Agent", useragent.For("graph-summary"))
 	client := o.Client
 	if client == nil {
 		client = &http.Client{Timeout: graphSummaryTimeout}

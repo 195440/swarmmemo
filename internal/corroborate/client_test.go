@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"swarmmemo/internal/useragent"
 )
 
 const vitalik = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
@@ -55,7 +57,8 @@ func TestValidURL(t *testing.T) {
 func TestResolve(t *testing.T) {
 	var got map[string]any
 	c := sidecar(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/resolve" || r.Header.Get("Content-Type") != "application/json" {
+		if r.Method != http.MethodPost || r.URL.Path != "/resolve" || r.Header.Get("Content-Type") != "application/json" ||
+			r.Header.Get("User-Agent") != useragent.For("corroborate") {
 			t.Errorf("request %s %s", r.Method, r.URL.Path)
 		}
 		raw, _ := io.ReadAll(r.Body)

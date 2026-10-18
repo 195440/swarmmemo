@@ -3,6 +3,7 @@ package httpapi
 import (
 	"database/sql"
 	"encoding/json"
+	"math/rand/v2"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -22,11 +23,12 @@ type distinctResponse struct {
 }
 
 type distinctFixture struct {
-	t      *testing.T
-	path   string
-	store  *board.Store
-	server *Server
-	now    time.Time
+	t        *testing.T
+	path     string
+	store    *board.Store
+	server   *Server
+	now      time.Time
+	restarts byte
 }
 
 func newDistinctFixture(t *testing.T, own string) *distinctFixture {
@@ -42,6 +44,9 @@ func newDistinctFixture(t *testing.T, own string) *distinctFixture {
 }
 
 // restart is a new process over the same database: new counters, new salt.
+// The salts are fixed per restart: random ones put two readers in one sketch
+// register in about one run of 2,048 per pair, and the sketch then counts
+// them as one.
 func (f *distinctFixture) restart(own string) {
 	networks, err := ParseOwnNetworks(own)
 	if err != nil {
@@ -50,6 +55,8 @@ func (f *distinctFixture) restart(own string) {
 	f.server = New(f.store, nil, Config{ServiceID: "swarmmemo.com", OwnNetworks: networks})
 	f.server.readers.interval = time.Hour // flush explicitly
 	f.server.readers.now = func() time.Time { return f.now }
+	f.restarts++
+	f.server.readers.salt.source = rand.NewChaCha8([32]byte{f.restarts})
 }
 
 func (f *distinctFixture) get(path, addr, ua string) {

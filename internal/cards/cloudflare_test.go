@@ -15,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"swarmmemo/internal/useragent"
 )
 
 // These tests never reach Cloudflare: the renderer talks to an httptest TLS
@@ -27,6 +29,7 @@ type fakeCloudflare struct {
 	requests []map[string]any
 	paths    []string
 	auth     []string
+	agents   []string
 	status   int
 	body     func() []byte
 }
@@ -39,6 +42,7 @@ func (f *fakeCloudflare) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.requests = append(f.requests, req)
 	f.paths = append(f.paths, r.Method+" "+r.URL.Path)
 	f.auth = append(f.auth, r.Header.Get("Authorization"))
+	f.agents = append(f.agents, r.Header.Get("User-Agent"))
 	status, body := f.status, f.body
 	f.mu.Unlock()
 	if status == 0 {
@@ -105,6 +109,9 @@ func TestCloudflareRendersOurHTMLNeverAURL(t *testing.T) {
 	}
 	if fake.auth[0] != "Bearer test-token-abcdefghijklmnop" {
 		t.Fatalf("auth %q", fake.auth[0])
+	}
+	if fake.agents[0] != useragent.For("cards") {
+		t.Fatalf("User-Agent %q", fake.agents[0])
 	}
 	if _, hasURL := req["url"]; hasURL {
 		t.Fatal("a url was sent to the renderer")

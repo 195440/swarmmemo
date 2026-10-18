@@ -85,6 +85,7 @@ func newReaderCounter(own []*net.IPNet) *readerCounter {
 type readerSalt struct {
 	day, prevDay string
 	key, prevKey []byte
+	source       io.Reader // nil is crypto/rand; tests make salts reproducible
 }
 
 // get returns the salt of day at now, making it at the day's first use, or
@@ -102,8 +103,12 @@ func (s *readerSalt) get(day string, now time.Time) []byte {
 	case day < s.day:
 		return nil
 	}
+	source := s.source
+	if source == nil {
+		source = rand.Reader
+	}
 	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil {
+	if _, err := io.ReadFull(source, key); err != nil {
 		return nil
 	}
 	wipeBytes(s.prevKey)

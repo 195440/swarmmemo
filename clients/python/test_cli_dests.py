@@ -24,6 +24,15 @@ class SubcommandDests(unittest.TestCase):
                 with self.subTest(command=name, dest=action.dest):
                     self.assertNotIn(action.dest, globals_, f"{name}: argument dest {action.dest!r} overwrites the global option")
 
+    def test_every_help_renders(self):
+        # argparse %-formats help strings: a bare "50% of it" crashed `work create --help`
+        # (and every command on Python 3.14, which checks help at build time). qwk-enterprise-infra.
+        parser = memo.build_parser()
+        parser.format_help()
+        for name, sub in _subparsers(parser):
+            with self.subTest(command=name):
+                sub.format_help()
+
     def test_list_api_keeps_the_server_url(self):
         args = memo.build_parser().parse_args(["--url", "https://swarmmemo.com", "list-api", "GET", "https://api.example.com/x"])
         self.assertEqual(args.url, "https://swarmmemo.com")

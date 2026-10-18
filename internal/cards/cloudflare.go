@@ -15,6 +15,7 @@ import (
 
 	"swarmmemo/internal/board"
 	"swarmmemo/internal/safenet"
+	"swarmmemo/internal/useragent"
 )
 
 // The Cloudflare renderer is Browser Rendering's REST /screenshot endpoint.
@@ -133,6 +134,7 @@ func (c *cloudflare) screenshot(ctx context.Context, page []byte) ([]byte, error
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "image/png")
+	req.Header.Set("User-Agent", useragent.For("cards"))
 	res, err := c.client.Do(req)
 	if err != nil {
 		return nil, err

@@ -21,6 +21,7 @@ import (
 	"swarmmemo/internal/allowance"
 	"swarmmemo/internal/services"
 	"swarmmemo/internal/services/servicestest"
+	"swarmmemo/internal/useragent"
 )
 
 const runsSecret = "0123456789abcdef0123456789abcdef-loader"
@@ -32,6 +33,7 @@ type fakeLoader struct {
 	secret   []byte // what it verifies requests with
 	signWith []byte // what it signs answers with
 	reqs     []map[string]any
+	agent    string // the last request's User-Agent
 	answer   func(req map[string]any) (int, []byte, time.Duration)
 }
 
@@ -46,6 +48,7 @@ func (f *fakeLoader) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = json.Unmarshal(body, &req)
 	f.mu.Lock()
 	f.reqs = append(f.reqs, req)
+	f.agent = r.Header.Get("User-Agent")
 	answer := f.answer
 	f.mu.Unlock()
 	status, out, delay := answer(req)
@@ -226,6 +229,12 @@ func TestRunsSuccessNetworkOffSignedReceiptAndLog(t *testing.T) {
 	reqs := env.loader.calls()
 	if len(reqs) != 1 {
 		t.Fatalf("one loader call, got %d", len(reqs))
+	}
+	env.loader.mu.Lock()
+	agent := env.loader.agent
+	env.loader.mu.Unlock()
+	if agent != useragent.For("runs") {
+		t.Fatalf("User-Agent %q", agent)
 	}
 	req := reqs[0]
 	if net := req["network"].(map[string]any); net["enabled"] != false || net["allow_connect"] != false {

@@ -28,6 +28,7 @@ import (
 	"unicode/utf8"
 
 	"swarmmemo/internal/safenet"
+	"swarmmemo/internal/useragent"
 )
 
 // Loader hard bounds: LIMITS in limits.gen.ts.
@@ -325,6 +326,7 @@ func (c *runsClient) run(ctx context.Context, req loaderRequest) (LoaderResponse
 	hr.Header.Set("Content-Type", "application/json")
 	hr.Header.Set(runsTimestampHeader, ts)
 	hr.Header.Set(runsSignatureHeader, signRuns(c.secret, "req", ts, body))
+	hr.Header.Set("User-Agent", useragent.For("runs"))
 	resp, err := c.http.Do(hr)
 	if err != nil {
 		return LoaderResponse{}, &LoaderError{Sent: sent.Load(), Kind: "transport", Detail: transportDetail(err)}

@@ -382,7 +382,7 @@ def _worker():
                 or not _private_cursor_fits(arguments["cursor"])):
             raise PrivateInboxError("invalid_fetch_request")
         if action == "message.get" and not matches(arguments["message_id"], IDENTIFIER): raise PrivateInboxError("invalid_fetch_request")
-        headers = {"Accept": "application/json", "Accept-Encoding": "identity"}
+        headers = {"Accept": "application/json", "Accept-Encoding": "identity", "User-Agent": memo.USER_AGENT}
         if action == "capabilities":
             req = urllib.request.Request(binding["origin"] + "/capabilities", headers=headers, method="GET")
         else:

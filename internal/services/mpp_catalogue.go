@@ -550,7 +550,7 @@ func (x *x402) fetchDiscovery(ctx context.Context, u string, limit int) ([]byte,
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "SwarmMemo-x402/1 (+https://swarmmemo.com/protocol.md)")
+	req.Header.Set("User-Agent", x402UserAgent)
 	req.Header.Set("Accept", "application/json")
 	resp, err := x.client.Do(req)
 	if err != nil {

@@ -23,7 +23,8 @@ type universeBody struct {
 func TestGraphCommunitySummary(t *testing.T) {
 	f := newGraphFixtureT(t)
 	fake := &fakeSummarizer{}
-	s := New(f.store, nil, Config{ServiceID: "swarmmemo.com", GraphSummary: &GraphSummaryConfig{Provider: fake}})
+	before := func() time.Time { return GraphSummaryEnd.Add(-24 * time.Hour) } // summaries end on GraphSummaryEnd
+	s := New(f.store, nil, Config{ServiceID: "swarmmemo.com", GraphSummary: &GraphSummaryConfig{Provider: fake, Now: before}})
 	var u universeBody
 	_ = json.Unmarshal(graphGet(s, "/api/graph/universe", nil).Body.Bytes(), &u)
 	body := fmt.Sprintf(`{"nodes":[%d],"gen":%q}`, u.Datasets[0].Node, u.Generation)

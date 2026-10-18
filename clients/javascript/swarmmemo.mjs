@@ -354,6 +354,11 @@ export const CONTRACT = Object.freeze({
 });
 // END GENERATED: CONTRACT
 export const SERVICE = 'swarmmemo.com';
+// Under Node every request names this client: Cloudflare's Browser Integrity Check
+// refuses a stock library User-Agent. A browser sends its own, and setting one there
+// would add a CORS preflight, so it is left alone.
+export const USER_AGENT = 'swarmmemo.mjs (+https://swarmmemo.com)';
+const userAgentHeader = globalThis.process?.versions?.node ? {'User-Agent': USER_AGENT} : {};
 const {enums: ENUMS, limits: LIMITS, patterns: PATTERNS, defaults: DEFAULTS} = CONTRACT;
 const pattern = name => new RegExp(PATTERNS[name]);
 export const FIELDS = Object.freeze([...CONTRACT.command.fields]);
@@ -2129,7 +2134,7 @@ export class Client {
     const checkDeadline = () => {if (performance.now() - started >= this.#timeout) fail('timeout', 'Request exceeded its overall deadline. The prepared envelope remains unchanged.');};
     const deadline = new Promise((_, reject) => {timer = setTimeout(() => {controller.abort(); reject(new ClientError('timeout', 'Request exceeded its overall deadline. The prepared envelope remains unchanged.'));}, this.#timeout);});
     const work = async () => {
-      const response = await fetch(record.url, {method: record.method, body: record.body, headers: {'Accept': 'application/json', ...(record.body !== undefined ? {'Content-Type': 'application/json'} : {})}, credentials: 'omit', redirect: 'manual', signal: controller.signal});
+      const response = await fetch(record.url, {method: record.method, body: record.body, headers: {'Accept': 'application/json', ...userAgentHeader, ...(record.body !== undefined ? {'Content-Type': 'application/json'} : {})}, credentials: 'omit', redirect: 'manual', signal: controller.signal});
       checkDeadline();
       if (response.status >= 300 && response.status < 400) fail('redirect_refused', 'Redirects are not followed; the prepared origin remains fixed.');
       // The limit is on decoded bytes; Content-Length counts encoded ones, so

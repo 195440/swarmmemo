@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"swarmmemo/internal/useragent"
 )
 
 // The chain reader takes only a public HTTPS endpoint, reads amounts and
@@ -37,7 +39,10 @@ func TestUSDCChainReader(t *testing.T) {
 	if _, err := c.Lookup(context.Background(), nil, "0xABC"); err == nil {
 		t.Fatal("a malformed hash was looked up")
 	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ua := r.Header.Get("User-Agent"); ua != useragent.For("work-settle") {
+			t.Errorf("User-Agent %q", ua)
+		}
 		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"rate limited"}}`))
 	}))
 	defer srv.Close()

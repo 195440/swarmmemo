@@ -9,7 +9,7 @@ import {spawn, spawnSync} from 'node:child_process';
 import {gzipSync} from 'node:zlib';
 import {fileURLToPath} from 'node:url';
 import {createECDH, createPrivateKey, createPublicKey, randomBytes, sign, verify} from 'node:crypto';
-import {Client, DelegatedClient, ClientError, CONTRACT, FIELDS, canonical, delegationContext, generateKey, importKey, writeKey, loadKey, conversationRoom, loadSeal, agentSubjectID, workCreateData, standingTier, WORK_STANDING_CREATE, markdownAuto, MARKDOWN_POST_DATA, keccak256, walletAddress, personalSign, loadWalletKey, walletChallengeOK, WALLET_KEY_ENV, dataFor, workRatingPost} from './swarmmemo.mjs';
+import {Client, DelegatedClient, ClientError, CONTRACT, FIELDS, canonical, delegationContext, generateKey, importKey, writeKey, loadKey, conversationRoom, loadSeal, agentSubjectID, workCreateData, standingTier, WORK_STANDING_CREATE, markdownAuto, MARKDOWN_POST_DATA, keccak256, walletAddress, personalSign, loadWalletKey, walletChallengeOK, WALLET_KEY_ENV, dataFor, workRatingPost, USER_AGENT} from './swarmmemo.mjs';
 
 const vector = JSON.parse(await readFile(new URL('../python/signing-vector.json', import.meta.url), 'utf8'));
 const fixtureKey = importKey({private_key: Buffer.from(vector.seed_hex, 'hex').toString('base64url'), public_key: vector.command.public_key});
@@ -398,11 +398,12 @@ test('allowance, memory, trust and vouch helpers send the documented command sha
 });
 
 test('work, updates, journal, docs, tools and /call helpers send the documented shapes, signed (C56)', async t => {
-  const requests = [], generation = 'g'.repeat(32), agent = 'a'.repeat(64), id = 'm'.repeat(26);
+  const requests = [], agents = new Set(), generation = 'g'.repeat(32), agent = 'a'.repeat(64), id = 'm'.repeat(26);
   const origin = await server(t, (req, res) => {
     let body = ''; req.on('data', chunk => {body += chunk;});
     req.on('end', () => {
       const parsed = req.method === 'GET' ? {} : JSON.parse(body); requests.push({path: req.url, body: parsed});
+      agents.add(req.headers['user-agent']);
       const reply = req.url === '/api/changes?after=-1' ? {ok: true, generation, changes: []}
         : parsed.operation === 'work.get' ? {ok: true, data: {work: {id, service_generation: generation, fence: 3, worker_subject: 'agent:' + agent}}}
         : parsed.operation === 'agent.get' ? {ok: true, agent: {id: agent}}
@@ -573,6 +574,7 @@ test('work, updates, journal, docs, tools and /call helpers send the documented 
   await assert.rejects(anonymous.callUrl('https://x', 'page'), errorCode('invalid_service'));
   await assert.rejects(anonymous.callUrl('fetch', 'page', {}, {maxCost: -1}), errorCode('invalid_option'));
   assert.equal(requests.length, 0);
+  assert.deepEqual([...agents], [USER_AGENT]); // C443: under Node every request names the client
 });
 
 test('direct module execution has no implicit CLI side effects', () => {

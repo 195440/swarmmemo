@@ -29,6 +29,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"swarmmemo/internal/useragent"
 )
 
 const (
@@ -225,6 +227,7 @@ func (c *Client) Resolve(ctx context.Context, addresses []string, asOf int64) (*
 		return nil, err
 	}
 	hr.Header.Set("Content-Type", "application/json")
+	hr.Header.Set("User-Agent", useragent.For("corroborate"))
 	resp, err := c.http.Do(hr)
 	if err != nil {
 		var ne net.Error

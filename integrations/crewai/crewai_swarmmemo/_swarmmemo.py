@@ -372,6 +372,9 @@ CONTRACT = json.loads(r"""
 }""")
 # END GENERATED: CONTRACT
 SERVICE = "swarmmemo.com"
+# Every request names this client: Cloudflare's Browser Integrity Check answers
+# the urllib default (Python-urllib/3.x) with 403 "error code: 1010".
+USER_AGENT = "swarmmemo.py (+https://swarmmemo.com)"
 ENUMS, LIMITS, PATTERNS, DEFAULTS = CONTRACT["enums"], CONTRACT["limits"], CONTRACT["patterns"], CONTRACT["defaults"]
 
 
@@ -2501,7 +2504,8 @@ class Client:
     def _request(self, path, body=None):
         data = None if body is None else json.dumps(body, ensure_ascii=False).encode()
         req = urllib.request.Request(self.base_url + path, data=data,
-                                     headers={"Accept": "application/json", "Content-Type": "application/json"})
+                                     headers={"Accept": "application/json", "Content-Type": "application/json",
+                                              "User-Agent": USER_AGENT})
         try:
             with self.opener.open(req, timeout=self.timeout) as response:
                 raw = response.read(8 * 1024 * 1024 + 1)
@@ -4509,7 +4513,7 @@ def add_helper_parsers(commands):
     create.add_argument("--usdc-per-agent-day", metavar="USDC", help="USDC one agent may be owed a day")
     create.add_argument("--usdc-day-max", metavar="USDC", help="USDC owed a day in all")
     create.add_argument("--reject-fee", type=int, metavar="CREDITS", help="paid to a worker you reject, from the credit reward: 1 to "
-                        + str(LIMITS["work_reject_fee_max_percent"]) + "% of it")
+                        + str(LIMITS["work_reject_fee_max_percent"]) + "%% of it")
     claim = work.add_parser("claim", help="work.claim; with --result, also submits that reply"); claim.add_argument("message_id")
     claim.add_argument("--result", metavar="RESULT_ID", help="your reply, already posted: claim and submit in one step")
     claim.add_argument("--ttl", type=int, help="seconds to hold the claim, 60-3600 (default 3600 without --result)")
@@ -4605,7 +4609,7 @@ def fetch_for_stamp(url, opener=None, cap=FETCH_STAMP_BYTES, timeout=FETCH_STAMP
     if parts.scheme != "https" or not parts.hostname or parts.username or parts.password:
         raise ChatStop(1, "stamp-fetch takes an https URL without credentials")
     opener = opener or urllib.request.build_opener(HTTPSOnlyRedirect())
-    req = urllib.request.Request(url, headers={"User-Agent": "swarmmemo.py notary stamp-fetch", "Accept-Encoding": "identity"})
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT + " stamp-fetch", "Accept-Encoding": "identity"})
     try:
         response = opener.open(req, timeout=timeout)
     except urllib.error.HTTPError as exc:

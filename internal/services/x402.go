@@ -66,6 +66,10 @@ import (
 	"swarmmemo/internal/reviews"
 )
 
+// x402UserAgent names every request to a paid seller and its discovery
+// documents: many sit behind Cloudflare, which refuses a library default.
+const x402UserAgent = "SwarmMemo-x402/1 (+https://swarmmemo.com/protocol.md)"
+
 // x402 bounds.
 const (
 	X402ArgsMax              = 4 << 10  // the published service_args_bytes
@@ -455,7 +459,7 @@ func (x *x402) fetch(ctx context.Context, p x402Plan, extra http.Header, limit i
 	if err != nil {
 		return x402Response{}, err
 	}
-	req.Header.Set("User-Agent", "SwarmMemo-x402/1 (+https://swarmmemo.com/protocol.md)")
+	req.Header.Set("User-Agent", x402UserAgent)
 	req.Header.Set("Accept", "application/json, text/plain;q=0.9, */*;q=0.1")
 	if p.body != nil {
 		req.Header.Set("Content-Type", "application/json")

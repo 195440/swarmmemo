@@ -32,6 +32,7 @@ import (
 	"unicode/utf8"
 
 	"swarmmemo/internal/pay"
+	"swarmmemo/internal/useragent"
 )
 
 // Top-up bounds and defaults, in credits (micro-USDC).
@@ -559,6 +560,7 @@ func (c *TopupConfig) post(ctx context.Context, client *http.Client, path string
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", useragent.For("x402-topup"))
 	if c.facilitatorToken != "" {
 		req.Header.Set("Authorization", "Bearer "+c.facilitatorToken)
 	}

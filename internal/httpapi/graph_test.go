@@ -246,7 +246,8 @@ func TestGraphSummaries(t *testing.T) {
 	f := newGraphFixtureT(t)
 	sel := `{"ids":["` + f.alice.id + `","` + f.bob.id + `","` + f.secret.id + `"],"mode":"among"}`
 
-	off := New(f.store, nil, Config{ServiceID: "swarmmemo.com"})
+	before := func() time.Time { return GraphSummaryEnd.Add(-24 * time.Hour) } // the clock pinned before the end date
+	off := New(f.store, nil, Config{ServiceID: "swarmmemo.com", GraphSummary: &GraphSummaryConfig{Now: before}})
 	if w := graphGet(off, "/api/graph/summary", nil); w.Code != 200 || !strings.Contains(w.Body.String(), `"available":false`) || !strings.Contains(w.Body.String(), "not_configured") {
 		t.Fatalf("status without a provider: %s", w.Body)
 	}
