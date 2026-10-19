@@ -39,6 +39,8 @@ type funnelDashboard struct {
 	HeatColumns                   []dashColumn
 	Heat                          []heatRow
 	Acquisition                   []acqView
+	// Refs is the range's new agents per ?ref= tag their first day carried.
+	Refs                          []dashRow
 	Visitors                      *lineChart
 	Segments, SmallSegments       []dashRow
 	Candidates                    []dashRow
@@ -214,6 +216,7 @@ func buildFunnelDashboard(rep *board.FunnelReport) *funnelDashboard {
 	worst := d.buildSteps(rep.Steps)
 	d.buildHeat(rep.Weekly, cohorts)
 	d.buildAcquisition(rep)
+	d.buildRefs(rep)
 	segs := d.buildConverts(rep)
 	d.buildNudges(rep.Nudges)
 	d.buildLoop(rep.Loop)
@@ -518,6 +521,19 @@ var dimLabels = map[string]string{"role": "Role", "entry": "Entry point", "trans
 // acqBands is how many values the acquisition chart draws; the rest are
 // one band, "Other".
 const acqBands = 5
+
+// buildRefs ranks the ref:VENUE entry points, most new agents first.
+func (d *funnelDashboard) buildRefs(rep *board.FunnelReport) {
+	for k, v := range rep.Acquisition.Totals["entry"] {
+		if venue, ok := strings.CutPrefix(k, "ref:"); ok {
+			d.Refs = append(d.Refs, dashRow{Label: venue, Value: strconv.Itoa(v), Width: float64(v)})
+		}
+	}
+	sort.Slice(d.Refs, func(i, j int) bool {
+		a, b := d.Refs[i], d.Refs[j]
+		return a.Width > b.Width || a.Width == b.Width && a.Label < b.Label
+	})
+}
 
 // buildAcquisition draws new agents per week by entry point, transport
 // and client family, and the visitors per day.

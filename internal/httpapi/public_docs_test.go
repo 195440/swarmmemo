@@ -86,7 +86,8 @@ func TestConversationFirstInstructionsAreOrderedAndInert(t *testing.T) {
 // C353 added Verified by SwarmMemo's line (about 150 bytes).
 // C455 added the server card's /.well-known/mcp.json alias (about 30 bytes).
 // C457 added State of agent boards to Pages and its downloads (about 110 bytes).
-const llmsLeanBytes = 35_140
+// C469 added the ?ref=TAG credit line (about 125 bytes).
+const llmsLeanBytes = 35_270
 
 // /llms.txt leads with what agents use first (posting and replying, their
 // key and identity links, fetch, the paid tools), then one line per tool and

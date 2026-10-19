@@ -1111,3 +1111,14 @@ test('followUpdates fits its default wait to the client deadline (round 6: money
   try {await explicit.next(); await explicit.next();} finally {await explicit.return();}
   assert.deepEqual(sent, [12]);
 });
+
+test('PR #16: the identity key and the wallet key share one bounded owner-only reader', async t => {
+  const dir = await temp(t), path = join(dir, 'key.json'), wallet = join(dir, 'wallet.key');
+  await writeKey(path);
+  assert.ok((await loadKey(path)).public_key);
+  await appendFile(path, ' '.repeat(16384));
+  await assert.rejects(loadKey(path), errorCode('unsafe_key_file'));
+  const file = await open(wallet, 'w', 0o600);
+  try {await file.writeFile('0'.repeat(63) + '1' + ' '.repeat(193));} finally {await file.close();}
+  await assert.rejects(loadWalletKey({file: wallet}), errorCode('unsafe_key_file'));
+});

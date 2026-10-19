@@ -2181,15 +2181,40 @@ def keygen(path: Path) -> dict:
     return {"public_key": record["public_key"], "id": hashlib.sha256(public_bytes(key)).hexdigest()}
 
 
-def load_key(path: Path):
-    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-    with os.fdopen(fd, encoding="utf-8") as stream:
-        mode = os.fstat(stream.fileno())
+def read_owner_only(path, cap, *, invalid, unopenable, too_large=ValueError) -> bytes:
+    """At most cap bytes of a regular file only its owner can read, through one descriptor:
+    no symlink, no reopen by name, and a file that grew past cap after the size check is
+    refused rather than read unbounded or cut short (PRs #15, #16). Errors never quote it."""
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    except OSError:
+        raise ValueError(unopenable) from None
+    try:
+        mode = os.fstat(fd)
         # Windows has no POSIX permission bits (st_mode reads 0o666): its file ACL is the guard there.
-        if not stat.S_ISREG(mode.st_mode) or (os.name != "nt" and mode.st_mode & 0o077):
-            raise ValueError("key file must be a regular file accessible only to its owner (chmod 600)")
+        if (not stat.S_ISREG(mode.st_mode) or (os.name != "nt" and mode.st_mode & 0o077)
+                or (hasattr(os, "getuid") and mode.st_uid != os.getuid())):
+            raise ValueError(invalid)
+        if mode.st_size > cap:
+            raise too_large(invalid)
         _warn_windows_acl(path)
-        record = json.loads(read_bounded(stream, "the key file", STATE_BYTES))
+        raw = bytearray()
+        while len(raw) <= cap:  # os.read may return less than asked: read to EOF or cap + 1
+            chunk = os.read(fd, cap + 1 - len(raw))
+            if not chunk:
+                break
+            raw += chunk
+        if len(raw) > cap:
+            raise too_large(invalid)
+        return bytes(raw)
+    finally:
+        os.close(fd)
+
+
+def load_key(path: Path):
+    record = json.loads(read_owner_only(
+        path, min(16384, STATE_BYTES), invalid="key file must be a regular file accessible only to its owner (chmod 600)",
+        unopenable="could not open the key file (it must exist and not be a symlink)", too_large=InputTooLarge).decode("utf-8"))
     private, _, serialization = crypto()
     raw = unb64(record["private_key"])
     if len(raw) == 32:
@@ -2429,22 +2454,9 @@ def load_wallet_key(path=None, env=WALLET_KEY_ENV) -> bytes:
     read, else from the environment variable env; never from an argument, which other
     users and shell history can see. Errors never quote the key."""
     if path is not None:
-        try:
-            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
-        except OSError:
-            raise ValueError("could not open the wallet key file (it must exist and not be a symlink)") from None
-        try:
-            mode = os.fstat(fd)
-            if (not stat.S_ISREG(mode.st_mode) or (os.name != "nt" and mode.st_mode & 0o077) or mode.st_size > 256
-                    or (hasattr(os, "getuid") and mode.st_uid != os.getuid())):
-                raise ValueError("the wallet key file must be a small regular file owned by this user, with owner-only permissions (chmod 600)")
-            _warn_windows_acl(path)
-            raw = os.read(fd, 257)
-            if len(raw) > 256:  # grew after the fstat above
-                raise ValueError("the wallet key file must be a small regular file owned by this user, with owner-only permissions (chmod 600)")
-            text = raw.decode("ascii", "replace")
-        finally:
-            os.close(fd)
+        text = read_owner_only(
+            path, 256, invalid="the wallet key file must be a small regular file owned by this user, with owner-only permissions (chmod 600)",
+            unopenable="could not open the wallet key file (it must exist and not be a symlink)").decode("ascii", "replace")
     else:
         text = os.environ.get(env, "")
         if not text: raise ValueError(f"no wallet key: pass --wallet-key FILE or set {env}")

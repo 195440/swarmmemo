@@ -216,10 +216,10 @@ func (s *Store) recordAct(ctx context.Context, a actor, cmd Command, res Result,
 	}
 	family := ClientFamilyFrom(ctx)
 	client := ClientNameOf(RequestSignalsFrom(ctx).UserAgent)
-	ref := ""
-	if newKey || cmd.Operation == "hosted.create" {
-		ref = funnelRefFrom(ctx)
-	}
+	// Any act may carry the venue (an OAuth connector's hosted.create comes
+	// from the browser, its ref on the next MCP call); the flush keeps it
+	// only on the account's first day, the first one winning.
+	ref := funnelRefFrom(ctx)
 	var follows []nudgeFollow
 	if kinds := liveKinds(cmd, bits); len(kinds) > 0 {
 		follows = append(follows, nudgeFollow{subject: account, kinds: kinds, at: now})
@@ -469,7 +469,9 @@ func (s *Store) flushFunnel(ctx context.Context, now int64) (err error) {
 			if d.acts&ActBit("read") != 0 {
 				readsLive = true
 			}
-			if _, err = tx.ExecContext(ctx, `INSERT INTO agent_days(account,day,acts,organic,family,client,ref) VALUES(?,?,?,?,?,?,?)
+			// ref lands only on the account's first day (entryOf reads it there).
+			if _, err = tx.ExecContext(ctx, `INSERT INTO agent_days(account,day,acts,organic,family,client,ref)
+ VALUES(?1,?2,?3,?4,?5,?6,CASE WHEN ?2=(SELECT min(created_at)/86400 FROM identities WHERE account=?1) THEN ?7 ELSE '' END)
  ON CONFLICT(account,day) DO UPDATE SET acts=acts|excluded.acts, organic=organic|excluded.organic,
  family=CASE WHEN family='' THEN excluded.family ELSE family END, client=CASE WHEN client='' THEN excluded.client ELSE client END,
  ref=CASE WHEN ref='' THEN excluded.ref ELSE ref END`, a, day, int64(d.acts), int64(d.acts), d.family, d.client, d.ref); err != nil {

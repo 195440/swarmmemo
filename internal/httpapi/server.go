@@ -91,6 +91,7 @@ type Server struct {
 	sitemapBuilds     chan struct{}
 	sitemaps          sync.Map // path → sitemapCopy
 	referrers         *referrerCounter
+	refs              refMemo // a landing page's ?ref= for its network's first write (funnelref.go)
 
 	// mcpAssistantHandler serves web.AssistantMCPPath, the profile without
 	// payment tools (mcp.go).
@@ -274,7 +275,7 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	s.countReferrer(r)
 	r = r.WithContext(board.WithClientFamily(r.Context(), requestClient(r)))
-	r = r.WithContext(board.WithFunnelRef(r.Context(), funnelRef(r))) // the funnel's entry venue (board/funnel.go)
+	r = r.WithContext(board.WithFunnelRef(r.Context(), s.firstContactRef(r, isMCP))) // the funnel's entry venue (funnelref.go)
 	r = withoutRef(r)
 	if referencePath(r.URL.Path) {
 		s.referenceRead(w, r)
@@ -361,6 +362,13 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.gateRoute(w, r) { // gate.go: /v1/gate/challenge, verify and status (C325)
+		return
+	}
+	if r.Method == http.MethodPost && (r.URL.Path == "/.well-known/agent-card.json" || r.URL.Path == "/.well-known/agent.json") {
+		// Some A2A clients and registry health checks send their JSON-RPC to
+		// the card's own URL instead of its "url" (/a2a). Answer them there
+		// rather than with a 405 that reads as downtime (C475).
+		s.a2a(w, r)
 		return
 	}
 	if s.discovery(w, r) {

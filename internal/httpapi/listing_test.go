@@ -29,8 +29,10 @@ func TestAgentCardShapeAndHonesty(t *testing.T) {
 		if head := makeRequest(s, "HEAD", path, "", ""); head.Code != 200 {
 			t.Fatalf("HEAD %s: %d", path, head.Code)
 		}
-		if post := makeRequest(s, "POST", path, "{}", "application/json"); post.Code != 405 {
-			t.Fatalf("POST %s must not be allowed: %d", path, post.Code)
+		// A POST is A2A JSON-RPC sent to the card's URL (C475): it gets the
+		// /a2a endpoint's answer (here an invalid-request error), never the card.
+		if post := makeRequest(s, "POST", path, "{}", "application/json"); !strings.Contains(post.Body.String(), `"jsonrpc":"2.0"`) || strings.Contains(post.Body.String(), `"skills"`) {
+			t.Fatalf("POST %s: %d %s", path, post.Code, post.Body.String())
 		}
 	}
 	var card map[string]any

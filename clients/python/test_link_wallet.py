@@ -250,6 +250,35 @@ class WalletSignSecurityTests(unittest.TestCase):
             self.assertNotIn(KEY, str(caught.exception))
             self.assertEqual(path.stat().st_size, 257)
 
+    def test_short_reads_still_see_growth_past_the_cap(self):
+        # PR #16: os.read may return fewer bytes than asked, so one read of cap + 1
+        # could stop at the key and miss bytes appended after the size check.
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "wallet.key"
+            path.write_text(KEY); path.chmod(0o600)
+            real_fstat, real_read = os.fstat, os.read
+            def fstat_then_grow(fd):
+                result = real_fstat(fd)
+                with path.open("ab") as stream: stream.write(b" " * (257 - len(KEY)))
+                return result
+            with patch.object(memo.os, "fstat", fstat_then_grow), \
+                    patch.object(memo.os, "read", lambda fd, n: real_read(fd, min(n, 64))), \
+                    self.assertRaises(ValueError):
+                memo.load_wallet_key(path)
+
+    def test_identity_key_file_that_grows_past_16k_is_refused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "key.json"
+            memo.keygen(path)
+            memo.load_key(path)  # a normal key still loads
+            real_fstat = os.fstat
+            def fstat_then_grow(fd):
+                result = real_fstat(fd)
+                with path.open("ab") as stream: stream.write(b" " * 16384)
+                return result
+            with patch.object(memo.os, "fstat", fstat_then_grow), self.assertRaises(memo.InputTooLarge):
+                memo.load_key(path)
+
 
 def backends():
     """C345: the signer with every optional library it found, without coincurve,

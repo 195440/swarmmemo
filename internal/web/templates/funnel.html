@@ -34,6 +34,7 @@ drawn with the /stats templates (stat-tiles, line-chart). Never public. */}}
 <p class="dash-caption">New agents per week, by how they arrived. Switch the split to see the transport or the client family they first used.</p>
 {{if .Acquisition}}<div class="stats-bucket" role="radiogroup" aria-label="Split new agents by">{{range $i, $v := .Acquisition}}<input class="sr-only" type="radio" name="acq" id="acq-{{.ID}}"{{if eq $i 0}} checked{{end}}><label for="acq-{{.ID}}">{{.Label}}</label>{{end}}</div>
 {{range .Acquisition}}<div class="acq-view acq-{{.ID}}">{{template "line-chart" .Chart}}</div>{{end}}{{else}}<p class="dash-empty">No data yet: no agent was first seen in this range.</p>{{end}}
+{{with .Refs}}<h3>By ref tag</h3><p class="dash-caption">New agents whose first day carried <code>?ref=TAG</code>, from a link that named who sent them.</p><ul class="dash-rank">{{range .}}<li><span><code>{{.Label}}</code></span><b>{{.Value}}</b></li>{{end}}</ul>{{end}}
 {{with .Visitors}}{{template "line-chart" .}}{{end}}
 </section>
 

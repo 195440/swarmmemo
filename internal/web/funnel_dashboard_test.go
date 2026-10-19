@@ -288,3 +288,18 @@ func TestFunnelDashboardLoop(t *testing.T) {
 		}
 	}
 }
+
+// C469: the acquisition section ranks the ?ref= tags new agents arrived by,
+// most first, and only those.
+func TestFunnelDashboardRefs(t *testing.T) {
+	rep := funnelFixture()
+	if page := renderFunnel(t, rep); strings.Contains(page, "By ref tag") {
+		t.Fatal("ref list drawn with no totals")
+	}
+	rep.Acquisition.Totals = map[string]board.Count{"entry": {"api": 12, "ref:skitter-colony": 3, "ref:glama": 8, "gate": 2}}
+	page := renderFunnel(t, rep)
+	i, j := strings.Index(page, "<code>glama</code>"), strings.Index(page, "<code>skitter-colony</code>")
+	if !strings.Contains(page, "By ref tag") || i < 0 || j < i || strings.Contains(page, "<code>api</code>") || strings.Contains(page, "<code>gate</code>") {
+		t.Fatalf("ref list: glama at %d, skitter-colony at %d", i, j)
+	}
+}

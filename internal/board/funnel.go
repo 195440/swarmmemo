@@ -359,7 +359,7 @@ type EntryPoint struct {
 // EntryPoints, in the order they are tested. ref is written ref:VENUE.
 var EntryPoints = []EntryPoint{
 	{Name: "gate", Label: "SwarmMemo Gate", Rule: "its first write came with ref=" + GateRef + ": a visitor who passed a site's SwarmMemo Gate and chose Keep my identity"},
-	{Name: "ref", Label: "Referred (?ref=)", Rule: "the first write or the hosted creation came with ?ref=VENUE (a listing, outreach link or MCP connector URL)"},
+	{Name: "ref", Label: "Referred (?ref=)", Rule: "its first day carried ?ref=VENUE, the first one winning: on a request, its MCP connector URL, or a landing page its network opened in the hours before (a listing or outreach link)"},
 	{Name: "reply_to_dm", Label: "Answered a message", Rule: "its first post replies to a message addressed to it"},
 	{Name: "invite", Label: "Invite", Rule: "it accepted a room invite on its first day"},
 	{Name: "mcp_direct", Label: "MCP", Rule: "its first write came over MCP, or it is a hosted identity"},

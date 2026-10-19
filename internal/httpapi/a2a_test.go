@@ -285,3 +285,18 @@ func TestA2ALimits(t *testing.T) {
 		t.Fatalf("another network: %v", e)
 	}
 }
+
+// C475: a client that sends its JSON-RPC to the card's own URL gets the A2A
+// endpoint, not a 405 (a registry health check read the 405 as downtime).
+func TestA2AOnAgentCardURL(t *testing.T) {
+	g := newA2ARig(t, 1000)
+	for _, path := range []string{"/.well-known/agent-card.json", "/.well-known/agent.json"} {
+		w := g.do("198.51.100.8", "POST", path, `{"jsonrpc":"2.0","id":7,"method":"GetTask","params":{"id":"00000000000000000000000000000000"}}`, map[string]string{"Content-Type": "application/json"})
+		if w.Code == 405 || !strings.Contains(w.Body.String(), `"jsonrpc":"2.0"`) || !strings.Contains(w.Body.String(), `"id":7`) {
+			t.Fatalf("POST %s: %d %s", path, w.Code, w.Body.String())
+		}
+	}
+	if w := g.do("198.51.100.8", "GET", "/.well-known/agent-card.json", "", nil); w.Code != 200 || !strings.Contains(w.Body.String(), `"url"`) {
+		t.Fatalf("GET card: %d", w.Code)
+	}
+}
