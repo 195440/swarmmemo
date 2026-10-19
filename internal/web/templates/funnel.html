@@ -11,7 +11,7 @@ drawn with the /stats templates (stat-tiles, line-chart). Never public. */}}
 <h1>Funnel</h1>
 <p class="dash-meta">{{.Range}} · generated {{.Generated}} · {{.Scope}}</p>
 <section class="dash-takeaways" aria-labelledby="dash-takeaways"><h2 id="dash-takeaways">Key takeaways</h2><ul>{{range .Takeaways}}<li>{{.}}</li>{{end}}</ul></section>
-<nav class="stats-toc" aria-label="On this page"><a href="#funnel">Funnel</a><a href="#retention">Retention</a><a href="#acquisition">Acquisition</a><a href="#converts">What converts</a><a href="#nudges">Nudges</a><a href="#loop">Judgement loop</a><a href="#feedback">Feedback</a><a href="#lapsing">Lapsing</a></nav>
+<nav class="stats-toc" aria-label="On this page"><a href="#funnel">Funnel</a><a href="#retention">Retention</a><a href="#burst">Bursts</a><a href="#acquisition">Acquisition</a><a href="#converts">What converts</a><a href="#nudges">Nudges</a><a href="#loop">Judgement loop</a><a href="#feedback">Feedback</a><a href="#lapsing">Lapsing</a></nav>
 {{template "stat-tiles" .Tiles}}
 
 <section class="stats-section" aria-labelledby="funnel"><h2 id="funnel">Funnel</h2>
@@ -28,6 +28,15 @@ drawn with the /stats templates (stat-tiles, line-chart). Never public. */}}
 <thead><tr><th scope="col">Week of</th><th scope="col" class="num">Agents</th>{{range .HeatColumns}}<th scope="col"><span class="term" tabindex="0" title="{{.Tip}}">{{.Label}}</span></th>{{end}}</tr></thead>
 <tbody>{{range .Heat}}<tr{{if .Low}} class="low"{{end}}><th scope="row">{{.Week}}{{if .Partial}} <span class="muted">(partial)</span>{{end}}</th><td class="num">{{.N}}</td>{{range .Cells}}{{if .Blank}}<td class="cell blank" title="Not yet eligible"><span class="sr-only">not yet eligible</span></td>{{else}}<td class="cell{{with .Class}} {{.}}{{end}}" style="--heat:{{.Heat}}" title="{{.Title}}">{{.Pct}}<small>{{.KN}}</small></td>{{end}}{{end}}</tr>{{end}}</tbody>
 </table></div>{{else}}<p class="dash-empty">No data yet: no agent was first seen in this range.</p>{{end}}
+</section>
+
+<section class="stats-section" aria-labelledby="burst"><h2 id="burst">Keys created in bursts</h2>
+<p class="dash-caption">{{.Burst.Caption}}</p>
+<div class="table-scroll"><table class="via-table">
+<thead><tr><th scope="col">Rate</th><th scope="col" class="num">All new agents</th><th scope="col" class="num">Excluding burst clusters</th></tr></thead>
+<tbody>{{range .Burst.Rows}}<tr><th scope="row">{{.Label}}</th><td class="num">{{.Value}}</td><td class="num">{{.Extra}}</td></tr>{{end}}</tbody>
+</table></div>
+{{with .Burst.Clusters}}<details class="dash-hidden"><summary>{{len .}} clusters</summary><ul class="dash-rank">{{range .}}<li><span>{{.Label}}</span><span class="muted">{{.Value}}</span></li>{{end}}</ul></details>{{end}}
 </section>
 
 <section class="stats-section acq" aria-labelledby="acquisition"><h2 id="acquisition">Acquisition: where new agents come from</h2>

@@ -1031,3 +1031,27 @@ class UpdatesWaitBounds(unittest.TestCase):
             client.updates = lambda agent, cursor, limit, wait, counts, **data: seen.append(wait) or {"data": {"cursor": "x", "updates": []}}
             next(client.follow_updates(cursor="c1", pages=1))
             self.assertEqual(seen[-1], want)
+
+
+class WritePrivateStaging(unittest.TestCase):
+    """PR #17: saving state never touches a fixed NAME.tmp, which may be the user's own file."""
+
+    def test_an_unrelated_tmp_file_survives_and_nothing_is_left_behind(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path, other = Path(folder) / "cursor.json", Path(folder) / "cursor.tmp"
+            other.write_text("my notes")
+            memo.write_private(path, {"cursor": "c1"})
+            memo.write_private(path, {"cursor": "c2"})
+            self.assertEqual(other.read_text(), "my notes")
+            self.assertEqual(json.loads(path.read_text()), {"cursor": "c2"})
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(sorted(p.name for p in Path(folder).iterdir()), ["cursor.json", "cursor.tmp"])
+
+    def test_a_failed_replace_keeps_the_old_state_and_cleans_up(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "state.tmp"  # a name that equals the old fixed staging name
+            memo.write_private(path, {"cursor": "old"})
+            with patch.object(memo.os, "replace", side_effect=OSError("disk full")), self.assertRaises(OSError):
+                memo.write_private(path, {"cursor": "new"})
+            self.assertEqual(json.loads(path.read_text()), {"cursor": "old"})
+            self.assertEqual([p.name for p in Path(folder).iterdir()], ["state.tmp"])

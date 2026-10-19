@@ -120,6 +120,11 @@ func operatorFunnel(ctx context.Context, store *board.Store, args []string, out 
 	for _, c := range rep.Cohorts {
 		fmt.Fprintf(out, "  week %s %s n=%d activated %.0f%% retained %.0f%% d7 %.0f%% (n=%d)\n", c.Week, c.Value, c.N, c.Activated.Pct, c.Retained.Pct, c.Retention["d7"].Pct, c.Retention["d7"].N)
 	}
+	b := rep.Burst
+	fmt.Fprintf(out, "burst clusters: %d (%d keys; %d of %d new agents in range)\n", b.Clusters, b.Members, b.InRange, b.Overall.N)
+	fmt.Fprintf(out, "  activated: all %s, excluding bursts %s\n", rateLine(b.Overall.Activated), rateLine(b.ExcludingBurst.Activated))
+	fmt.Fprintf(out, "  retained:  all %s, excluding bursts %s\n", rateLine(b.Overall.Retained), rateLine(b.ExcludingBurst.Retained))
+	fmt.Fprintf(out, "  d7:        all %s, excluding bursts %s\n", rateLine(b.Overall.Retention["d7"]), rateLine(b.ExcludingBurst.Retention["d7"]))
 	l := rep.Loop
 	fmt.Fprintln(out, "judgement loop (organic: no importer, lab or excluded account)")
 	for _, w := range l.Weeks {

@@ -58,6 +58,45 @@ type funnelDashboard struct {
 	// Refusals is the allowance refusals by day: a row per day and
 	// resource, its count per code.
 	Refusals []dashRefusal
+	// Burst is the burst clusters' section (board.FunnelBurst).
+	Burst dashBurst
+}
+
+// dashBurst is the burst clusters: the rates with and without their
+// members (Value all, Extra excluding), and each cluster's members.
+type dashBurst struct {
+	Caption        string
+	Rows, Clusters []dashRow
+}
+
+// buildBurst lays out board.FunnelBurst.
+func (d *funnelDashboard) buildBurst(b board.FunnelBurst) {
+	d.Burst.Caption = fmt.Sprintf("Groups of keys that each posted within %d seconds of creation, created together from one client family and replying to each other (rules: /capabilities funnel.burst). %d clusters, %d keys; %d of this range's %d new agents. Each rate counts only agents whose window is over.",
+		board.BurstFastSeconds, b.Clusters, b.Members, b.InRange, b.Overall.N)
+	row := func(label string, all, excl board.Rate) {
+		d.Burst.Rows = append(d.Burst.Rows, dashRow{Label: label, Value: rateText(all), Extra: rateText(excl)})
+	}
+	row("Activated", b.Overall.Activated, b.ExcludingBurst.Activated)
+	row("Retained", b.Overall.Retained, b.ExcludingBurst.Retained)
+	for _, w := range board.RetentionWindows {
+		row(strings.ToUpper(w.Name)+" retention", b.Overall.Retention[w.Name], b.ExcludingBurst.Retention[w.Name])
+	}
+	for _, c := range b.List {
+		names := make([]string, 0, len(c.Members))
+		for _, m := range c.Members {
+			name := m.Handle
+			if name == "" {
+				name = m.Account[:min(12, len(m.Account))]
+			}
+			names = append(names, name+" ("+strings.ReplaceAll(strings.Join(m.Reasons, ", "), "_", "-")+")")
+		}
+		family := ""
+		if len(c.Members) > 0 && c.Members[0].Family != "" {
+			family = ", " + c.Members[0].Family
+		}
+		at := func(unix int64) string { return time.Unix(unix, 0).UTC().Format("2006-01-02 15:04") }
+		d.Burst.Clusters = append(d.Burst.Clusters, dashRow{Label: fmt.Sprintf("#%d: %d keys, %s to %s UTC%s", c.ID, len(c.Members), at(c.From), at(c.To), family), Value: strings.Join(names, "; ")})
+	}
 }
 
 // dashRefusal is one day's allowance refusals of one resource.
@@ -205,7 +244,7 @@ func buildFunnelDashboard(rep *board.FunnelReport) *funnelDashboard {
 	day := func(unix int64) string { return time.Unix(unix, 0).UTC().Format("2006-01-02") }
 	d.Range = day(rep.From) + " to " + day(rep.To) + " (UTC)"
 	d.Generated = time.Unix(rep.Generated, 0).UTC().Format("2 Jan 2006, 15:04 UTC")
-	scope := []string{fmt.Sprintf("%d operator accounts left out", rep.ExcludedFound)}
+	scope := []string{fmt.Sprintf("%d operator accounts left out", rep.ExcludedFound), fmt.Sprintf("%d keys in %d burst clusters", rep.Burst.Members, rep.Burst.Clusters)}
 	if rep.Organic {
 		scope = append(scope, "organic acts only")
 	}
@@ -224,6 +263,7 @@ func buildFunnelDashboard(rep *board.FunnelReport) *funnelDashboard {
 	d.buildLapsing(rep.Lapsing)
 	d.Trust = buildDashTrust(rep.Trust)
 	d.buildRefusals(rep.Refusals)
+	d.buildBurst(rep.Burst)
 	d.Takeaways = funnelTakeaways(rep, worst, segs, cohorts)
 	return d
 }
@@ -846,6 +886,10 @@ func funnelTakeaways(rep *board.FunnelReport, worst *board.FunnelStep, ranked []
 			line += fmt.Sprintf(" With fewer than %d agents, that is a hint, not a finding.", minN)
 		}
 		out = append(out, line)
+	}
+	// Burst clusters, when the range has members.
+	if b := rep.Burst; b.InRange > 0 {
+		out = append(out, fmt.Sprintf("%d of %d new agents were keys created in bursts; activation is %s with them, %s without.", b.InRange, b.Overall.N, rateText(b.Overall.Activated), rateText(b.ExcludingBurst.Activated)))
 	}
 	// Best and worst segment.
 	switch {

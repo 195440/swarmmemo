@@ -78,6 +78,68 @@ type FunnelReport struct {
 	// Refusals is the allowance refusals per day of the range, by resource
 	// and code (allowance_refusals, C320c): whether anyone hit a limit.
 	Refusals []FunnelRefusal `json:"allowance_refusals"`
+	// Burst is the burst clusters (funnel_burst.go) and the range's new
+	// agents' rates with and without their members.
+	Burst FunnelBurst `json:"burst"`
+}
+
+// FunnelBurst is the burst clusters the last recompute found (every
+// account), the range's new agents among their members, and the rates over
+// all the range's new agents against those excluding burst members.
+type FunnelBurst struct {
+	ComputedAt     int64          `json:"computed_at"`
+	Clusters       int            `json:"clusters"`
+	Members        int            `json:"members"`
+	InRange        int            `json:"members_in_range"`
+	Overall        FunnelRates    `json:"overall"`
+	ExcludingBurst FunnelRates    `json:"excluding_burst"`
+	List           []BurstCluster `json:"list"`
+}
+
+// FunnelRates are a group's rates, each over the members whose window is
+// over: activated, retained, and each of RetentionWindows.
+type FunnelRates struct {
+	N         int             `json:"n"`
+	Activated Rate            `json:"activated"`
+	Retained  Rate            `json:"retained"`
+	Retention map[string]Rate `json:"retention"`
+}
+
+// funnelRates is FunnelRates over rows.
+func funnelRates(rows []FunnelRow, today int64, active func(string, int64, int64, uint64) bool, activatedAt, retainedAt func(FunnelRow) int64) FunnelRates {
+	out := FunnelRates{N: len(rows), Retention: map[string]Rate{}}
+	var an, ak, rn, rk int
+	for _, r := range rows {
+		d0 := r.FirstSeen / 86400
+		if windowClosed(d0, FunnelActivationDays-1, today) {
+			an++
+			if activatedAt(r) > 0 {
+				ak++
+			}
+		}
+		if windowClosed(d0, FunnelRetainedDays, today) {
+			rn++
+			if retainedAt(r) > 0 {
+				rk++
+			}
+		}
+	}
+	out.Activated, out.Retained = rate(ak, an), rate(rk, rn)
+	for _, w := range RetentionWindows {
+		n, k := 0, 0
+		for _, r := range rows {
+			d0 := r.FirstSeen / 86400
+			if !windowClosed(d0, w.To, today) {
+				continue
+			}
+			n++
+			if active(r.Account, d0+int64(w.From), d0+int64(w.To), VerifiableActs) {
+				k++
+			}
+		}
+		out.Retention[w.Name] = rate(k, n)
+	}
+	return out
 }
 
 // FunnelRefusal is one day's refusals of one resource for one code.
@@ -523,6 +585,30 @@ func (s *Store) FunnelReport(ctx context.Context, q FunnelQuery) (*FunnelReport,
 	// The weeks of the range, and the segments of its new agents.
 	rep.Weekly = funnelWeeks(q, today, cohort, all, days, mask, activatedAt)
 	rep.Segments = funnelSegments(cohort, today, active, activatedAt)
+
+	// Burst clusters: the same rates with and without their members.
+	bursts, err := s.FunnelBursts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rep.Burst = FunnelBurst{ComputedAt: bursts.ComputedAt, Clusters: len(bursts.Clusters), List: bursts.Clusters}
+	for i := range rep.Burst.List {
+		for j := range rep.Burst.List[i].Members {
+			m := &rep.Burst.List[i].Members[j]
+			m.Handle = s.signalHandle(ctx, m.Account)
+			rep.Burst.Members++
+		}
+	}
+	var unburst []FunnelRow
+	for _, r := range cohort {
+		if r.Burst != "" {
+			rep.Burst.InRange++
+			continue
+		}
+		unburst = append(unburst, r)
+	}
+	rep.Burst.Overall = funnelRates(cohort, today, active, activatedAt, retainedAt)
+	rep.Burst.ExcludingBurst = funnelRates(unburst, today, active, activatedAt, retainedAt)
 
 	// 3. What convinces them.
 	d14 := RetentionWindows[2]
@@ -1209,6 +1295,11 @@ type FunnelPublicWeek struct {
 func (s *Store) FunnelPublic(ctx context.Context, weeks int) ([]FunnelPublicCohort, []FunnelPublicWeek, error) {
 	today := s.now().Unix() / 86400
 	from := (weekOf(today) - int64(weeks)*7) * 86400
+	bursts, err := s.FunnelBursts(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	burst := bursts.Members()
 	rows, err := s.db.QueryContext(ctx, "SELECT first_seen,hosted,activated_at,account FROM agent_funnel WHERE first_seen>=? ORDER BY first_seen", from)
 	if err != nil {
 		return nil, nil, err
@@ -1233,7 +1324,10 @@ func (s *Store) FunnelPublic(ctx context.Context, weeks int) ([]FunnelPublicCoho
 			return nil, nil, err
 		}
 		kind := "own_key"
-		if hosted {
+		switch {
+		case burst[account] != nil:
+			kind = BurstKind
+		case hosted:
 			kind = "hosted"
 		}
 		k := key{weekOf(first / 86400), kind}

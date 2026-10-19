@@ -957,6 +957,10 @@ type FunnelRow struct {
 	Transport          string `json:"transport"`
 	Family             string `json:"family"`
 	Client             string `json:"client"`
+	// Burst is the reasons the burst detector flagged the account
+	// (funnel_burst.go, meta funnel.burst), comma-separated; empty for the
+	// rest.
+	Burst string `json:"burst,omitempty"`
 }
 
 // loadFunnelAccounts reads every account's first_seen, custody and days.
@@ -1167,6 +1171,9 @@ func (s *Store) FunnelRecompute(ctx context.Context) (int, error) {
 		}
 		total, after = total+n, last
 	}
+	if err = s.funnelDetectBursts(ctx); err != nil {
+		return total, err
+	}
 	_, err = s.db.ExecContext(ctx, "INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", metaFunnelComputed, fmt.Sprint(today))
 	return total, err
 }
@@ -1355,6 +1362,9 @@ func (s *Store) funnelDaily(ctx context.Context, today, done int64) error {
 			return err
 		}
 	}
+	if err = s.funnelDetectBursts(ctx); err != nil {
+		return err
+	}
 	_, err = s.db.ExecContext(ctx, "INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", metaFunnelComputed, fmt.Sprint(today))
 	return err
 }
@@ -1433,6 +1443,11 @@ func (s *Store) FunnelMaintenance(ctx context.Context) error {
 
 // FunnelRows reads agent_funnel, for tests and the operator.
 func (s *Store) FunnelRows(ctx context.Context) ([]FunnelRow, error) {
+	bursts, err := s.FunnelBursts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	burst := bursts.Members()
 	rows, err := s.db.QueryContext(ctx, `SELECT account,first_seen,hosted,entry,entry_ref,first_family,first_client,first_via,first_act_at,activated_at,activation_act,activated_organic_at,retained_at,retained_organic_at,durable,last_active_day,holdout,excluded,role,roles,tenure,transport,family,client FROM agent_funnel ORDER BY account`)
 	if err != nil {
 		return nil, err
@@ -1447,6 +1462,9 @@ func (s *Store) FunnelRows(ctx context.Context) ([]FunnelRow, error) {
 			return nil, err
 		}
 		r.Roles = uint64(roles)
+		if reasons, ok := burst[r.Account]; ok {
+			r.Burst = burstLabel(reasons)
+		}
 		out = append(out, r)
 	}
 	return out, rows.Err()

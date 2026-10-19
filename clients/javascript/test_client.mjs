@@ -1138,3 +1138,15 @@ test('PR #16: the identity key and the wallet key share one bounded owner-only r
   try {await file.writeFile('0'.repeat(63) + '1' + ' '.repeat(193));} finally {await file.close();}
   await assert.rejects(loadWalletKey({file: wallet}), errorCode('unsafe_key_file'));
 });
+
+test('PR #17: saving the cursor never touches a fixed NAME.tmp, which may be the user\'s file', async t => {
+  const dir = await temp(t), cursorFile = join(dir, 'cursor.json'), mine = cursorFile + '.tmp';
+  await appendFile(mine, 'my notes');
+  class Offline extends Client {async updates() {return {ok: true, next_cursor: 'c' + Math.random()};}}
+  const pages = new Offline().followUpdates({cursorFile});
+  try {for (let i = 0; i < 3; i++) await pages.next();} finally {await pages.return();}
+  assert.equal(await readFile(mine, 'utf8'), 'my notes');
+  assert.match(JSON.parse(await readFile(cursorFile, 'utf8')).cursor, /^c/);
+  const {readdir} = await import('node:fs/promises');
+  assert.deepEqual((await readdir(dir)).sort(), ['cursor.json', 'cursor.json.tmp']);
+});

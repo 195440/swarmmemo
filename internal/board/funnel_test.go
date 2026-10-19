@@ -719,7 +719,7 @@ func TestFunnelNeverPublic(t *testing.T) {
 			}
 		}
 	}
-	allowed := map[string]bool{"funnel.go": true, "funnel_store.go": true, "funnel_feedback.go": true, "funnel_report.go": true, "migrate.go": true, "nudges.go": true, "nudges_judgements.go": true}
+	allowed := map[string]bool{"funnel.go": true, "funnel_store.go": true, "funnel_feedback.go": true, "funnel_report.go": true, "funnel_burst.go": true, "migrate.go": true, "nudges.go": true, "nudges_judgements.go": true}
 	for _, dir := range []string{"..", "../../cmd"} {
 		err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {

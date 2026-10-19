@@ -672,8 +672,10 @@ var FunnelPublicLines = []FunnelPublicLine{
 // FunnelPublicWeeks is how many weekly cohorts /stats and /api/stats/daily show.
 const FunnelPublicWeeks = 8
 
-// FunnelIdentityKinds are the only split public lines take.
-var FunnelIdentityKinds = []string{"own_key", "hosted"}
+// FunnelIdentityKinds are the only split public lines take: a key of its
+// own, a hosted identity, or a key created in a burst (BurstKind,
+// funnel_burst.go), shown as its own kind rather than dropped.
+var FunnelIdentityKinds = []string{"own_key", "hosted", BurstKind}
 
 // FunnelCapabilities is /capabilities funnel: every table above, as data.
 func FunnelCapabilities() map[string]any {
@@ -698,6 +700,7 @@ func FunnelCapabilities() map[string]any {
 			"text_bytes": FeedbackTextBytes, "per_account_day": FeedbackPerAccountPerDay, "per_network_day": FeedbackPerNetworkPerDay,
 			"screened": true, "public": "weekly counts by about and rating, at least " + itoa(FeedbackPublicMinimum) + ", never text",
 		},
+		"burst":   burstCapabilities(),
 		"public":  map[string]any{"lines": FunnelPublicLines, "split": FunnelIdentityKinds, "minimum_n": FunnelMinimumN, "cohort": "week, closed only"},
 		"private": "every per-agent record is operator-only; the operator's own accounts are left out of its views, never of public ones",
 	}

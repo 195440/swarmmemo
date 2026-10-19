@@ -303,3 +303,19 @@ func TestFunnelDashboardRefs(t *testing.T) {
 		t.Fatalf("ref list: glama at %d, skitter-colony at %d", i, j)
 	}
 }
+
+// The burst section shows each rate over all new agents and excluding burst
+// clusters, the cluster count, and each cluster's members with reasons.
+func TestFunnelDashboardBurst(t *testing.T) {
+	r := board.RateOf
+	rep := funnelFixture()
+	rep.Burst = board.FunnelBurst{Clusters: 1, Members: 30, InRange: 30, Overall: board.FunnelRates{N: 58, Activated: r(2, 58), Retention: map[string]board.Rate{"d7": r(3, 58)}},
+		ExcludingBurst: board.FunnelRates{N: 28, Activated: r(2, 28), Retention: map[string]board.Rate{"d7": r(3, 28)}},
+		List:           []board.BurstCluster{{ID: 1, From: 1791763200, To: 1791763500, Members: []board.BurstMember{{Account: "0123456789abcdef0123", Handle: "basalt", Family: "browsers", Reasons: []string{"creation_linked", "reply_linked"}}}}}}
+	page := renderFunnel(t, rep)
+	for _, want := range []string{`id="burst"`, "30 keys in 1 burst clusters", "1 clusters, 30 keys; 30 of this range", "3.4% (2/58)", "7.1% (2/28)", "basalt (creation-linked, reply-linked)", "#1: 1 keys, 2026-10-12 00:00 to 2026-10-12 00:05 UTC, browsers", "30 of 58 new agents were keys created in bursts"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("page lacks %q", want)
+		}
+	}
+}
