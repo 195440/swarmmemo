@@ -1,5 +1,5 @@
 {
-  "allowlist_sha256": "7c16d4effd2218b9619c431e95835f4118c7bb9bf2677226dd66b3d2c7fd69f9",
+  "allowlist_sha256": "2c1d71edfd0fd8f3187d33e68fdb26da9a1cdf1992ec93f1b326d1848d14cd77",
   "files": [
     {
       "mode": "0644",
@@ -34,8 +34,8 @@
     {
       "mode": "0644",
       "path": "CONTRIBUTORS.md",
-      "sha256": "c1763a2587f0f91c6958c6174ce7237b41aa3cefd9ec7975a40b619e48489a83",
-      "size": 6357
+      "sha256": "36ff69107624b83c015ca0b4fe4e244b0f13112220bc4626b9dfd55fa1b2e87a",
+      "size": 6553
     },
     {
       "mode": "0644",
@@ -220,8 +220,8 @@
     {
       "mode": "0644",
       "path": "clients/python/swarmmemo.py",
-      "sha256": "7711eb61f2848f9b2da1933672815f06b7ac0f1a77fb12a2bde401dc21f92448",
-      "size": 336140
+      "sha256": "0117bf3d4653ab4439c85abc425d70d28d9e17e266262bbedb86752747a8b72a",
+      "size": 336770
     },
     {
       "mode": "0644",
@@ -268,8 +268,8 @@
     {
       "mode": "0644",
       "path": "clients/python/test_chat.py",
-      "sha256": "c5e808c26ae158132d59cd00eb34868b6a19d6fa7739cda04d3674aaeb7bb131",
-      "size": 59669
+      "sha256": "f44c2880df882752f5c116c10a83adc7ae4e2ef2b91022d17fa15796ddcf5f73",
+      "size": 61915
     },
     {
       "mode": "0644",
@@ -376,8 +376,8 @@
     {
       "mode": "0644",
       "path": "clients/python/test_verify_log.py",
-      "sha256": "074bc5a161ad5401a3bf587fecabb9db8b5a7d4a5e33413304f9d03feb102c56",
-      "size": 20646
+      "sha256": "7aed78d743dc3ad596ceaa8523428e7ee21ff18fb66d751435efd57f2a7771e7",
+      "size": 22316
     },
     {
       "mode": "0644",
@@ -394,8 +394,8 @@
     {
       "mode": "0644",
       "path": "clients/python/verify_log.py",
-      "sha256": "1f838e4334d56f58857886406b4aecffa49293f164b85db5c92a3cdef426c6b2",
-      "size": 27074
+      "sha256": "31a14e610f0bf6fd27aaa61debcc7e198394801092ada7d2f16dc320e91dc522",
+      "size": 27718
     },
     {
       "mode": "0644",
@@ -420,6 +420,12 @@
       "path": "clients/python/versions/verify_log-2b846ccc.py",
       "sha256": "2b846ccc57577ede83766e18477a119a68f4d81b2fe85e11e1ea8be470392225",
       "size": 25325
+    },
+    {
+      "mode": "0644",
+      "path": "clients/python/versions/verify_log-31a14e61.py",
+      "sha256": "31a14e610f0bf6fd27aaa61debcc7e198394801092ada7d2f16dc320e91dc522",
+      "size": 27718
     },
     {
       "mode": "0644",
@@ -976,8 +982,8 @@
     {
       "mode": "0644",
       "path": "docs/TOOLS_WORK.md",
-      "sha256": "bbbeec1d9aeca21b14c083262ae6e8bdf3e27d6dc4186bff13e957a9beb38e69",
-      "size": 16627
+      "sha256": "dc9214eb3a2f2b228b840fe8a2a00a150e50422ccf21607cda7304c6c51b1731",
+      "size": 16805
     },
     {
       "mode": "0644",
@@ -1120,8 +1126,8 @@
     {
       "mode": "0644",
       "path": "integrations/agno/agno_swarmmemo/_swarmmemo.py",
-      "sha256": "7711eb61f2848f9b2da1933672815f06b7ac0f1a77fb12a2bde401dc21f92448",
-      "size": 336140
+      "sha256": "0117bf3d4653ab4439c85abc425d70d28d9e17e266262bbedb86752747a8b72a",
+      "size": 336770
     },
     {
       "mode": "0644",
@@ -1180,8 +1186,8 @@
     {
       "mode": "0644",
       "path": "integrations/crewai/crewai_swarmmemo/_swarmmemo.py",
-      "sha256": "7711eb61f2848f9b2da1933672815f06b7ac0f1a77fb12a2bde401dc21f92448",
-      "size": 336140
+      "sha256": "0117bf3d4653ab4439c85abc425d70d28d9e17e266262bbedb86752747a8b72a",
+      "size": 336770
     },
     {
       "mode": "0644",
@@ -1240,8 +1246,8 @@
     {
       "mode": "0644",
       "path": "integrations/langchain/langchain_swarmmemo/_swarmmemo.py",
-      "sha256": "7711eb61f2848f9b2da1933672815f06b7ac0f1a77fb12a2bde401dc21f92448",
-      "size": 336140
+      "sha256": "0117bf3d4653ab4439c85abc425d70d28d9e17e266262bbedb86752747a8b72a",
+      "size": 336770
     },
     {
       "mode": "0644",
@@ -9670,8 +9676,8 @@
     {
       "mode": "0644",
       "path": "plugins/swarmmemo/skills/talk-privately/scripts/swarmmemo.py",
-      "sha256": "7711eb61f2848f9b2da1933672815f06b7ac0f1a77fb12a2bde401dc21f92448",
-      "size": 336140
+      "sha256": "0117bf3d4653ab4439c85abc425d70d28d9e17e266262bbedb86752747a8b72a",
+      "size": 336770
     },
     {
       "mode": "0644",

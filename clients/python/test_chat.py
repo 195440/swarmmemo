@@ -978,3 +978,46 @@ class ChatAttachTests(TempHome):
         self.assertEqual(stop.exception.code, 3)
         self.assertIn("notes0.txt, line 1", err.getvalue())
         self.assertEqual(board.sent, [])
+
+
+class FirstReadBookmarkTests(TempHome):
+    """PR #18: a first read (no local cursor) saves the server's read marker before any
+    mark_read page, so a crash between fetch and show replays instead of skipping messages."""
+
+    def fetch(self, room, saved_before_mark_read):
+        calls = []
+        class Fake:
+            def get(_, room, cursor="", limit=None, mark_read=False):
+                calls.append(mark_read)
+                if mark_read:
+                    saved_before_mark_read.append(memo.load_chat(room).get("cursor"))
+                    return {"messages": [{"id": "m1", "text": "hi"}], "next_cursor": "c9", "data": {"has_more": False, "conversation": {"my_state": "member"}}}
+                return {"sealed": False, "data": {"conversation": {"my_state": "member"}, "read_marker": "c5"}}
+        return memo.Chat.fetch(Fake(), room, ""), calls
+
+    def test_first_read_saves_the_pre_read_marker_before_marking_read(self):
+        seen = []
+        got, calls = self.fetch("~" + "a" * 26, seen)
+        self.assertEqual(calls, [False, True])
+        self.assertEqual(seen, ["c5"])
+        self.assertEqual(got["cursor"], "c9")
+
+    def test_a_failed_save_stops_before_anything_is_marked_read(self):
+        calls = []
+        class Fake:
+            def get(_, room, cursor="", limit=None, mark_read=False):
+                calls.append(mark_read)
+                return {"sealed": False, "data": {"conversation": {"my_state": "member"}, "read_marker": "c5"}}
+        with patch.object(memo, "save_chat", side_effect=OSError("disk full")), self.assertRaises(OSError):
+            memo.Chat.fetch(Fake(), "~" + "b" * 26, "")
+        self.assertEqual(calls, [False])
+
+    def test_a_saved_cursor_is_used_as_before(self):
+        memo.save_chat({"room": "~" + "c" * 26, "cursor": "c2"})
+        used = []
+        class Fake:
+            def get(_, room, cursor="", limit=None, mark_read=False):
+                if mark_read: used.append(cursor); return {"messages": [], "data": {"has_more": False, "conversation": {}}}
+                return {"sealed": False, "data": {"conversation": {"my_state": "member"}, "read_marker": "c7"}}
+        memo.Chat.fetch(Fake(), "~" + "c" * 26, "c2")
+        self.assertEqual(used, ["c2"])

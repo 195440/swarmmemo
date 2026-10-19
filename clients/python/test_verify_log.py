@@ -300,6 +300,36 @@ class Promises(unittest.TestCase):
         with open(state) as f:
             self.assertEqual(self.json.load(f)["size"], 5)
 
+    def test_state_save_never_destroys_the_old_pin(self):
+        """PR #19: a failed write keeps the last verified checkpoint, and a symlinked state path
+        is replaced, never written through to its target."""
+        import os
+        from unittest import mock
+
+        state = os.path.join(self.dir, "state-atomic.json")
+        ver = v.Verifier("http://127.0.0.1:9", self.vkey, state)
+        with mock.patch.object(v, "get", return_value={"checkpoint": self.cp(4)}):
+            ver.checkpoint()
+        with open(state) as f:
+            before = f.read()
+        with mock.patch.object(v, "get", return_value={"checkpoint": self.cp(6), "proof": []}), \
+                mock.patch.object(v, "verify_consistency"), \
+                mock.patch.object(v.json, "dump", side_effect=OSError("disk full")), self.assertRaises(OSError):
+            ver.checkpoint()
+        with open(state) as f:
+            self.assertEqual(f.read(), before)
+        self.assertEqual(sorted(n for n in os.listdir(self.dir) if n.startswith(".swarmmemo-checkpoint-")), [])
+        target, link = os.path.join(self.dir, "unrelated.txt"), os.path.join(self.dir, "state-link.json")
+        with open(target, "w") as f:
+            f.write(before)  # an older, valid pin someone keeps elsewhere
+        os.symlink(target, link)
+        with mock.patch.object(v, "get", return_value={"checkpoint": self.cp(6), "proof": []}), \
+                mock.patch.object(v, "verify_consistency"):
+            v.Verifier("http://127.0.0.1:9", self.vkey, link).checkpoint()
+        with open(target) as f:
+            self.assertEqual(f.read(), before)
+        self.assertFalse(os.path.islink(link))
+
     def test_parse(self):
         note = self.promise(3)
         body = v.open_note(note, self.vkey)
