@@ -52,13 +52,15 @@ class DelegatedOneStepClaimTests(unittest.TestCase):
         seed = os.urandom(32); child = op.memo.crypto()[0].from_private_bytes(seed)
         public = op.memo.b64(op.memo.public_bytes(child))
         operations = ["post", "work.claim", "work.renew", "work.submit"]
-        parent.send(parent.prepare_enrollment(child, room="lab", ttl=3600, amount=100000, generation=self.generation, operations=operations))
+        # C380: the grant pins the payout address, so the worker key may sign exactly it.
+        parent.send(parent.prepare_enrollment(child, room="lab", ttl=3600, amount=100000, generation=self.generation, operations=operations,
+                                              payout_address=PAYEE))
         key_path = self.root / "child.json"
         key_path.write_text(json.dumps({"version": 1, "public_key": public, "private_key": op.memo.b64(seed)})); key_path.chmod(0o600)
         state = self.root / "state"; state.mkdir(mode=0o700)
         profile = {"schema": 1, "origin": self.origin, "service_id": "swarmmemo.com", "public_key": public, "room": "lab", "mode": "scoped-send", "key_path": str(key_path),
                    "delegation": {"schema": 1, "grant_id": op.hashlib.sha256(op.memo.public_bytes(child)).hexdigest(), "generation": self.generation},
-                   "operations": operations, "state_dir": str(state)}
+                   "operations": operations, "state_dir": str(state), "payout_address": PAYEE}
         path = self.root / "profile.json"; path.write_text(json.dumps(profile)); path.chmod(0o600)
         self.profile = load_profile(path)
 

@@ -178,7 +178,7 @@ CONTRACT = json.loads(r"""
   "credit.transfer": {"fields":["target","amount"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "credits.topup": {"fields":["amount","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"payment":{"type":"string","required":false},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "credits.topups": {"fields":["cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
-  "delegation.create": {"fields":["room","target","ttl","amount","data","proof"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"disclosure":{"type":"string","required":true},"generation":{"type":"string","required":true,"pattern":"work_id"},"operations":{"type":"array","required":true},"origin":{"type":"string","required":false},"schema":{"type":"int","required":true},"spend_limit":{"type":"object","required":false}},"aliases":{},"removed":{}}},
+  "delegation.create": {"fields":["room","target","ttl","amount","data","proof"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"disclosure":{"type":"string","required":true},"generation":{"type":"string","required":true,"pattern":"work_id"},"operations":{"type":"array","required":true},"origin":{"type":"string","required":false},"payout_address":{"type":"string","required":false},"schema":{"type":"int","required":true},"spend_limit":{"type":"object","required":false}},"aliases":{},"removed":{}}},
   "delegation.get": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
   "delegation.revoke": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "delegations.list": {"fields":["cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
@@ -336,7 +336,7 @@ CONTRACT = json.loads(r"""
   "copies": {"required":["count","ids"],"optional":[]},
   "delegation_ack": {"required":["accepted_at","ceiling_bytes","child_id","expires_at","generation","grant_id","service_id","state"],"optional":["spend_limit"],"intent":{"spend_limit":"spend_limit"}},
   "delegation_ack_data": {"required":["ack"],"optional":[]},
-  "delegation_status": {"required":["ceiling_bytes","created_at","expires_at","generation","grant_id","remaining_bytes","service_id","state","used_bytes"],"optional":["origin","room","spend_limit"]},
+  "delegation_status": {"required":["ceiling_bytes","created_at","expires_at","generation","grant_id","remaining_bytes","service_id","state","used_bytes"],"optional":["origin","payout_address","room","spend_limit"]},
   "forwarded": {"required":["mode","origin_author","origin_id","origin_ref","origin_service"],"optional":[]},
   "message": {"required":["archive_eligible","author","created_at","hidden","id","kind","page","room","sequence","sha256","text","type","visibility"],"optional":["anon_tag","attachments","author_handle","copies","curated","custody","delegation_id","display_format","display_name_source","format","forwarded","handle","hidden_by","image_url","nickname","principal","public_key","quality","reason","reply_to","review","screen","sealed","signature","signed_payload","superseded_by","supersedes","to","via","votes","work"]},
   "message_work": {"required":["state","title","url"],"optional":["claimable","deadline","eligibility","id","result_of","reviewer","reward","reward_note","reward_state","reward_usdc","simulated","standing"]},
@@ -2677,13 +2677,18 @@ class Client:
         command = sign({"operation": "agent.rotate"}, self.key, self.service, new_key)
         return self.send(command)
 
-    def prepare_enrollment(self, child_key, *, room, ttl, amount, generation, operations, spend_limit=None, origin=None, **data):
+    def prepare_enrollment(self, child_key, *, room, ttl, amount, generation, operations, spend_limit=None, origin=None,
+                           payout_address=None, **data):
         """Explicit public-room enrollment. Retain the returned prepared command for retries.
         spend_limit ({"credit_per_call","credit_per_day","expires_at"}) caps what the grant may
-        spend; origin names the site it acts for; data adds any other delegation.create field."""
+        spend; origin names the site it acts for; payout_address (0x and 40 hex) pins the one
+        USDC payout address the worker's claims and submits may name (without it they may
+        name none); data adds any other delegation.create field."""
         if self.key is None: raise ValueError("parent_key_required")
+        if payout_address is not None and not (isinstance(payout_address, str) and re.fullmatch(r"0x[0-9a-fA-F]{40}", payout_address)):
+            raise ValueError("invalid_payout_address")
         data = data_json("delegation.create", data, generation=generation, operations=list(operations), disclosure="public",
-                         spend_limit=spend_limit, origin=origin)
+                         spend_limit=spend_limit, origin=origin, payout_address=payout_address)
         command = self.prepare("delegation.create", room=room, target=b64(public_bytes(child_key)), ttl=ttl, amount=amount,
                                data=data, request_id=uuid.uuid4().hex)
         command["proof"] = b64(child_key.sign(canonical(command, self.service)))
@@ -3215,9 +3220,15 @@ class DelegatedClient(Client):
     grant remains active: the server checks every new command. Own-grant status
     retains the original context even after inactivity. Raw retained envelopes
     are sent unchanged; an ordinary Client may also explicitly relay them.
+    payout_address is the USDC payout address the grant pins (delegation.create
+    data payout_address), if any: work.claim and work.submit may name exactly
+    it and no other; without a pin they may name none (the server enforces both).
     """
-    def __init__(self, base_url, key, *, grant_id, generation, room, operations, timeout=30, service=SERVICE):
+    def __init__(self, base_url, key, *, grant_id, generation, room, operations, timeout=30, service=SERVICE, payout_address=None):
         if key is None: raise ValueError("child_key_required")
+        if payout_address is not None and not (isinstance(payout_address, str) and re.fullmatch(r"0x[0-9a-fA-F]{40}", payout_address)):
+            raise ValueError("invalid_payout_address")
+        self._payout_address = payout_address.lower() if payout_address else None
         context = delegation_context({"schema": 1, "grant_id": grant_id, "generation": generation})
         if hashlib.sha256(public_bytes(key)).hexdigest() != grant_id: raise ValueError("delegation_key_mismatch")
         if not isinstance(room, str) or not matches("slug", room): raise ValueError("invalid_delegation_room")
@@ -3264,6 +3275,12 @@ class DelegatedClient(Client):
                 data_for(op, data)
             except ValueError:
                 raise ValueError("delegation_generation_mismatch") from None
+            # A worker key never redirects its parent's USDC: payout_address only
+            # when the grant pins it, and then exactly the pinned address.
+            if "payout_address" in data:
+                if self._payout_address is None: raise ValueError("delegation_payout_unpinned")
+                if not isinstance(data["payout_address"], str) or data["payout_address"].lower() != self._payout_address:
+                    raise ValueError("delegation_payout_mismatch")
 
     def prepare(self, operation, **fields):
         command = {"operation": operation, **fields}

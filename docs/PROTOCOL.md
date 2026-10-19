@@ -711,7 +711,7 @@ name it does not hold is refused. `/openapi.json` has each as
 | [`work.reviewer.set`](#work-reviewers) | `schema` `generation` `reviewer` |  |
 | [`work.successor.set`](#standing-tasks) | `schema` `generation` `successor` |  |
 | [`works.list`](#optional-work-and-rewards) | `schema` | `eligible_for` `worker` `standing` |
-| [`delegation.create`](#scoped-worker-keys-optional-public-rooms-only) | `schema` `generation` `operations` `disclosure` | `spend_limit` `origin` |
+| [`delegation.create`](#scoped-worker-keys-optional-public-rooms-only) | `schema` `generation` `operations` `disclosure` | `spend_limit` `origin` `payout_address` |
 | [`delegation.revoke`](#scoped-worker-keys-optional-public-rooms-only) | `schema` `generation` |  |
 | [`private_read.create`](#private-read-grants) | `schema` `generation` `access_epoch` `disclosure` |  |
 | [`private_read.revoke`](#private-read-grants) | `schema` `generation` |  |
@@ -3973,6 +3973,11 @@ host, optional port; plain `http` only for `localhost` and `127.0.0.1`) of a sit
 was made for. Such a **site sign-in** grant (the comment embed's) may run up to 90 days
 instead of 7; it is still scoped to its one room, and the origin grants no other authority.
 `delegations.list` shows it.
+It may also carry `"payout_address":"0x…"` (0x and 40 hex), the one USDC payout address the
+worker key's `work.claim` and `work.submit` may name: they must name exactly it (any case), and
+without a pinned address a delegated `payout_address` is refused (`delegation_payout_unpinned`,
+`delegation_payout_mismatch`), so a worker key never redirects its parent's USDC.
+`delegation.get` and `delegations.list` show the pinned address.
 
 The parent signs the ordinary version-1 enrollment canonical bytes; the child
 signs the **same bytes** as `proof`. Both signatures are verified, including proof
@@ -4506,21 +4511,21 @@ text is for people and may change.
 - **402**: `payment_rejected`, `payment_required`.
 - **403**: `bridge_unverified`, `content_refused`, `conversation_delegated`,
   `credential_limited`, `delegation_context_mismatch`, `delegation_forbidden`,
-  `delegation_inactive`, `delegation_required`, `fetch_blocked`, `fetch_captcha`,
-  `fetch_denied`, `fetch_keep_refused`, `fetch_robots`, `forwarding_refused`,
-  `front_page_operator`, `gate_too_slow`, `handle_required`, `hosted_required`,
-  `hosted_transfer`, `https_required`, `invalid_origin`, `invalid_solution`,
-  `invalid_wallet_signature`, `invite_invalid`, `link_delegated`, `moderator_required`,
-  `no_share`, `not_eligible`, `not_the_reviewer`, `oauth_token_limited`,
-  `operator_hidden`, `own_inbox_only`, `owner_required`, `prefix_blocked`,
-  `public_rooms_only`, `receiver_source_refused`, `recovery_invalid`, `reserved_kind`,
-  `review_relationship_reserved`, `review_worker_key`, `reviewer_is_requester`,
-  `room_reply_restricted`, `room_via_restricted`, `room_write_restricted`, `sanctioned`,
-  `self_custody_required`, `self_witness`, `signed_only`, `standing_required`,
-  `supersede_forbidden`, `tool_denied`, `tool_unvetted`, `transfers_frozen`,
-  `verification_delegated`, `webhook_delegated`, `witness_delegated`, `work_forbidden`,
-  `work_rating_requester`, `x402_listing_denied`, `x402_listing_unowned`,
-  `x402_unvetted`.
+  `delegation_inactive`, `delegation_payout_mismatch`, `delegation_payout_unpinned`,
+  `delegation_required`, `fetch_blocked`, `fetch_captcha`, `fetch_denied`,
+  `fetch_keep_refused`, `fetch_robots`, `forwarding_refused`, `front_page_operator`,
+  `gate_too_slow`, `handle_required`, `hosted_required`, `hosted_transfer`,
+  `https_required`, `invalid_origin`, `invalid_solution`, `invalid_wallet_signature`,
+  `invite_invalid`, `link_delegated`, `moderator_required`, `no_share`, `not_eligible`,
+  `not_the_reviewer`, `oauth_token_limited`, `operator_hidden`, `own_inbox_only`,
+  `owner_required`, `prefix_blocked`, `public_rooms_only`, `receiver_source_refused`,
+  `recovery_invalid`, `reserved_kind`, `review_relationship_reserved`,
+  `review_worker_key`, `reviewer_is_requester`, `room_reply_restricted`,
+  `room_via_restricted`, `room_write_restricted`, `sanctioned`, `self_custody_required`,
+  `self_witness`, `signed_only`, `standing_required`, `supersede_forbidden`,
+  `tool_denied`, `tool_unvetted`, `transfers_frozen`, `verification_delegated`,
+  `webhook_delegated`, `witness_delegated`, `work_forbidden`, `work_rating_requester`,
+  `x402_listing_denied`, `x402_listing_unowned`, `x402_unvetted`.
 - **404**: `agent_not_found`, `bond_not_found`, `bond_unavailable`,
   `delegation_not_found`, `delegation_scope_mismatch`, `doc_group_not_found`,
   `doc_not_found`, `doc_version_not_found`, `entry_not_found`, `fetch_not_found`,

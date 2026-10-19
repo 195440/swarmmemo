@@ -75,10 +75,35 @@ class HelperTests(unittest.TestCase):
         grant = hashlib.sha256(memo.public_bytes(self.key)).hexdigest()
         worker = memo.DelegatedClient("https://example.org", self.key, grant_id=grant, generation=g, room="lab", operations=["work.claim"])
         claim = lambda data: worker.prepare("work.claim", message_id="b" * 32, ttl=60, data=json.dumps(data))
-        claim({"schema": 1, "generation": g, "payout_address": "0x" + "1" * 40})
+        claim({"schema": 1, "generation": g, "result_sha256": "d" * 64})
         for bad in ({"schema": 1, "generation": "c" * 32, "payout_address": "0x" + "1" * 40}, {"schema": 1, "generation": g, "other": 1}):
             with self.subTest(data=bad), self.assertRaisesRegex(ValueError, "delegation_generation_mismatch"):
                 claim(bad)
+        # C380: payout_address only when the grant pins it, and then exactly that address
+        # (any case); the server enforces the same.
+        with self.assertRaisesRegex(ValueError, "delegation_payout_unpinned"):
+            claim({"schema": 1, "generation": g, "payout_address": "0x" + "1" * 40})
+        payee = "0x" + "aB" * 20
+        pinned = memo.DelegatedClient("https://example.org", self.key, grant_id=grant, generation=g, room="lab",
+                                      operations=["work.claim", "work.submit"], payout_address=payee)
+        for op in ("work.claim", "work.submit"):
+            pinned.prepare(op, message_id="b" * 32, ttl=60, data=json.dumps({"schema": 1, "generation": g, "payout_address": payee.lower()}))
+            pinned.prepare(op, message_id="b" * 32, ttl=60, data=json.dumps({"schema": 1, "generation": g}))
+            with self.assertRaisesRegex(ValueError, "delegation_payout_mismatch"):
+                pinned.prepare(op, message_id="b" * 32, ttl=60, data=json.dumps({"schema": 1, "generation": g, "payout_address": "0x" + "cd" * 20}))
+        for bad in ("0x" + "1" * 39, "1" * 42, 7):
+            with self.subTest(pin=bad), self.assertRaisesRegex(ValueError, "invalid_payout_address"):
+                memo.DelegatedClient("https://example.org", self.key, grant_id=grant, generation=g, room="lab", operations=["work.claim"], payout_address=bad)
+
+    def test_enrollment_pins_payout_address(self):
+        # C380: the parent pins the worker's payout address in the signed grant data.
+        parent = memo.Client("https://example.org", memo.crypto()[0].generate())
+        enrollment = parent.prepare_enrollment(self.key, room="lab", ttl=60, amount=1, generation="a" * 32, operations=["work.claim"],
+                                               payout_address="0x" + "ab" * 20)
+        self.assertEqual(json.loads(enrollment["data"])["payout_address"], "0x" + "ab" * 20)
+        self.assertNotIn("payout_address", json.loads(parent.prepare_enrollment(self.key, room="lab", ttl=60, amount=1, generation="a" * 32, operations=["work.claim"])["data"]))
+        with self.assertRaisesRegex(ValueError, "invalid_payout_address"):
+            parent.prepare_enrollment(self.key, room="lab", ttl=60, amount=1, generation="a" * 32, operations=["work.claim"], payout_address="0x12")
 
     def test_notary_url_shorthand_after_root_options(self):
         # `notary URL` expands after root options too (alex-vale, #bounties 10-17).

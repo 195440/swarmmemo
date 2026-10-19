@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
 import swarmmemo as memo  # noqa: E402
 from swarmmemo import is_loopback_host  # noqa: E402
 
-SAFE_CODES = frozenset("bridge_error invalid_profile unsafe_path invalid_origin invalid_key binding_mismatch binding_missing invalid_arguments tool_unavailable generation_mismatch intent_too_large response_too_large invalid_response scope_mismatch public_not_found transport_error unknown_intent intent_id_conflict intent_digest_mismatch outbox_not_head outbox_busy queue_item_limit queue_byte_limit invalid_acknowledgement delegation_inactive delegation_context_mismatch delegation_forbidden delegation_scope_mismatch delegation_generation_mismatch delegation_quota_exhausted stale_signature key_rotated invalid_signature idempotency_conflict quota_exhausted text_too_large invalid_ttl cursor_reset invalid_cursor work_state_conflict work_generation_mismatch work_fence_mismatch work_result_changed seats_full results_max_reached seat_limit result_in_use standing_needs_result blocked signed_only prefix_blocked sanctioned standing_required no_share handle_reserved service_unavailable".split())
+SAFE_CODES = frozenset("bridge_error invalid_profile unsafe_path invalid_origin invalid_key binding_mismatch binding_missing invalid_arguments tool_unavailable generation_mismatch intent_too_large response_too_large invalid_response scope_mismatch public_not_found transport_error unknown_intent intent_id_conflict intent_digest_mismatch outbox_not_head outbox_busy queue_item_limit queue_byte_limit invalid_acknowledgement delegation_inactive delegation_context_mismatch delegation_forbidden delegation_scope_mismatch delegation_generation_mismatch delegation_quota_exhausted delegation_payout_unpinned delegation_payout_mismatch stale_signature key_rotated invalid_signature idempotency_conflict quota_exhausted text_too_large invalid_ttl cursor_reset invalid_cursor work_state_conflict work_generation_mismatch work_fence_mismatch work_result_changed seats_full results_max_reached seat_limit result_in_use standing_needs_result blocked signed_only prefix_blocked sanctioned standing_required no_share handle_reserved service_unavailable".split())
 
 
 class BridgeError(ValueError):
@@ -89,6 +89,9 @@ class Profile:
     operations: tuple[str, ...]
     key_path: Path | None
     state_dir: Path
+    # The USDC payout address the grant pins (delegation.create data
+    # payout_address), if any: the only one stage_work may sign.
+    payout_address: str | None = None
 
     @property
     def delegation(self):
@@ -98,7 +101,7 @@ class Profile:
 def load_profile(path) -> Profile:
     value = strict_json(read_private(path))
     required = {"schema", "origin", "service_id", "public_key", "room", "delegation", "operations", "state_dir"}
-    if not isinstance(value, dict) or not required <= value.keys() or value.keys() - required - {"mode", "key_path"} or any(v is None for v in value.values()):
+    if not isinstance(value, dict) or not required <= value.keys() or value.keys() - required - {"mode", "key_path", "payout_address"} or any(v is None for v in value.values()):
         raise BridgeError("invalid_profile")
     if type(value["schema"]) is not int or value["schema"] != 1: raise BridgeError("invalid_profile")
     mode = value.get("mode", "draft")
@@ -136,6 +139,9 @@ def load_profile(path) -> Profile:
             or any(not isinstance(op, str) or op not in ("post", "work.claim", "work.renew", "work.submit") for op in operations)
             or len(set(operations)) != len(operations)):
         raise BridgeError("invalid_profile")
+    payout = value.get("payout_address")
+    if payout is not None and (not isinstance(payout, str) or not re.fullmatch(r"0x[0-9a-fA-F]{40}", payout)):
+        raise BridgeError("invalid_profile")
     state = protected_path(value["state_dir"], directory=True)
     key_path = protected_path(value["key_path"]) if mode == "scoped-send" else None
     repository = Path(__file__).resolve().parents[2]
@@ -144,7 +150,7 @@ def load_profile(path) -> Profile:
     normalized = {**value, "mode": mode, "operations": sorted(operations)}
     fingerprint = hashlib.sha256(encoded(normalized)).hexdigest()
     profile = Profile(fingerprint, mode, origin, value["service_id"], value["room"], public,
-                      d["grant_id"], d["generation"], tuple(sorted(operations)), key_path, state)
+                      d["grant_id"], d["generation"], tuple(sorted(operations)), key_path, state, payout)
     check_binding(profile)
     return profile
 

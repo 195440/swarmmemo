@@ -194,6 +194,11 @@ def arguments_checked(profile, action, args):
         data = set(args) & (set(memo.data_spec(operation)["fields"]) - {"schema", "generation"})
         if set(args) - data != allowed: raise BridgeError("invalid_arguments")
         if args["generation"] != profile.generation: raise BridgeError("generation_mismatch")
+        # A worker key never redirects its parent's USDC: payout_address only when
+        # the grant (and so the profile) pins it, and then exactly that address.
+        if "payout_address" in args:
+            if profile.payout_address is None: raise BridgeError("delegation_payout_unpinned")
+            if args["payout_address"].lower() != profile.payout_address.lower(): raise BridgeError("delegation_payout_mismatch")
     if action == "read_work" and "cursor" in args and not args.get("history", False): raise BridgeError("invalid_arguments")
     return copy.deepcopy(args)
 
@@ -232,7 +237,8 @@ def _client(profile):
     key = memo.load_key(profile.key_path)
     if memo.b64(memo.public_bytes(key)) != profile.public_key: raise BridgeError("invalid_key")
     client = memo.DelegatedClient(profile.origin, key, grant_id=profile.grant_id, generation=profile.generation,
-                                  room=profile.room, operations=profile.operations, timeout=10, service=profile.service_id)
+                                  room=profile.room, operations=profile.operations, timeout=10, service=profile.service_id,
+                                  payout_address=profile.payout_address)
     client._request = lambda path, body=None: _request(profile, path, body)
     return client
 

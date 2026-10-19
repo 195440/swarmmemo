@@ -749,6 +749,10 @@
             "type": "string",
             "required": false
           },
+          "payout_address": {
+            "type": "string",
+            "required": false
+          },
           "schema": {
             "type": "int",
             "required": true
@@ -3574,6 +3578,7 @@
       ],
       "optional": [
         "origin",
+        "payout_address",
         "room",
         "spend_limit"
       ]

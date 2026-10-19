@@ -137,6 +137,10 @@ const result = worker.prepare({operation: 'post', room: 'your-public-room',
 // await worker.send(result);
 ```
 
+For USDC-paying work, add `payout_address: '0x…'` to the enrollment data to pin the one payout
+address the worker's claims and submits may name, and pass the same `payoutAddress` to
+`DelegatedClient`; without a pin a worker key names no payout address (the server refuses it).
+
 Both keys sign the same enrollment bytes; neither private key is uploaded. The
 scoped client pins the child signer, origin, service, room, operations and recovery
 generation. It adds explicit canonical **version 2** delegation context to fresh

@@ -52,7 +52,7 @@ SAFE_CODES.update({"work_generation_mismatch", "work_state_conflict", "work_fenc
 SAFE_CODES.update({"invalid_delegation_context", "delegation_required", "delegation_not_found", "delegation_context_mismatch",
                    "delegation_inactive", "delegation_forbidden", "delegation_scope_mismatch", "delegation_quota_exhausted",
                    "delegation_exists", "delegation_limit", "delegation_already_revoked", "invalid_delegation_data",
-                   "invalid_delegation_proof", "delegation_generation_mismatch"})
+                   "invalid_delegation_proof", "delegation_generation_mismatch", "delegation_payout_unpinned", "delegation_payout_mismatch"})
 SAFE_CODES.update({"invalid_private_read_context", "invalid_private_read_data", "invalid_private_read_proof",
                    "private_read_exists", "private_read_limit", "private_read_generation_mismatch",
                    "private_read_epoch_mismatch", "private_read_already_revoked", "private_read_rate_limited",
@@ -88,7 +88,8 @@ def shaped(value, struct, operation, intent):
 
 DELEGATION_LOCAL_CODES = {"invalid_delegation_context", "delegation_required", "delegation_context_mismatch", "delegation_key_mismatch",
                           "delegation_client_binding_mismatch", "delegation_forbidden", "delegation_scope_mismatch",
-                          "delegation_public_post_required", "delegation_generation_mismatch", "delegation_signed_envelope_required"}
+                          "delegation_public_post_required", "delegation_generation_mismatch", "delegation_signed_envelope_required",
+                          "delegation_payout_unpinned", "delegation_payout_mismatch"}
 
 
 class OutboxError(ValueError):
@@ -656,11 +657,13 @@ def main(argv=None):
     flush.add_argument("--rotation-key", type=Path); flush.add_argument("--limit", type=int, default=10)
     flush.add_argument("--target-key", type=Path, help="local possession-proof key for enrollment or rotation; not uploaded")
     flush.add_argument("--grant-room"); flush.add_argument("--grant-operation", action="append", default=[])
+    flush.add_argument("--grant-payout-address", help="the USDC payout address the grant pins, if any")
     flush.add_argument("--retry-blocked", action="store_true")
     deliver = sub.add_parser("deliver", help="deliver one exact FIFO intent, or return its saved acknowledgement")
     deliver.add_argument("--id", required=True); deliver.add_argument("--intent-sha256", required=True)
     deliver.add_argument("--key", type=Path)
     deliver.add_argument("--grant-room"); deliver.add_argument("--grant-operation", action="append", default=[])
+    deliver.add_argument("--grant-payout-address", help="the USDC payout address the grant pins, if any")
     inspect = sub.add_parser("inspect"); inspect.add_argument("--id", required=True); inspect.add_argument("--sensitive", action="store_true")
     args = parser.parse_args(argv)
     try:
@@ -677,7 +680,8 @@ def main(argv=None):
             client = memo.Client(args.url, memo.load_key(args.key) if args.key else None, timeout=10, service=args.service)
             if context is not None:
                 client = memo.DelegatedClient(args.url, client.key, grant_id=context["grant_id"], generation=context["generation"],
-                                             room=args.grant_room, operations=args.grant_operation, timeout=10, service=args.service)
+                                             room=args.grant_room, operations=args.grant_operation, timeout=10, service=args.service,
+                                             payout_address=args.grant_payout_address)
             if args.action == "deliver":
                 result = queue.deliver(client, args.id, args.intent_sha256)
             else:

@@ -433,7 +433,7 @@ var dataSpecs = map[string]DataSpec{
 
 	// Grants and push.
 	"delegation.create": objectSpec("schema! int", "generation! string pattern=work_id", "operations! array", "disclosure! string",
-		"spend_limit object", "origin string"),
+		"spend_limit object", "origin string", "payout_address string"),
 	"delegation.revoke":   objectSpec("schema! int", "generation! string pattern=work_id"),
 	"private_read.create": objectSpec("schema! int", "generation! string pattern=work_id", "access_epoch! string pattern=work_id", "disclosure! string"),
 	"private_read.revoke": objectSpec("schema! int", "generation! string pattern=work_id"),

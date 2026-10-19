@@ -145,6 +145,10 @@ type DelegationStatus struct {
 	// sign-in named in the grant's data (embed grants), or empty.
 	Room   string `json:"room,omitempty"`
 	Origin string `json:"origin,omitempty"`
+	// PayoutAddress is the USDC payout address the parent pinned in the
+	// grant's signed data: the only payout_address the worker key's
+	// work.claim and work.submit may name. Empty: they may name none.
+	PayoutAddress string `json:"payout_address,omitempty"`
 	// SpendLimit is the grant's credit limit and today's spend through it,
 	// shown to the account's owner (delegations.list) and to the worker key
 	// itself (delegation.get), never publicly.
@@ -358,6 +362,12 @@ func parseDelegationData(raw string, create bool) (string, []string, *spendLimit
 				return "", nil, nil, delegationError("invalid_delegation_data")
 			}
 		}
+		if v := values["payout_address"]; v != nil {
+			var address string
+			if json.Unmarshal(v, &address) != nil || grantAddress(address) == "" {
+				return "", nil, nil, problem(400, "invalid_delegation_data", "payout_address pins the one USDC payout address the worker key may name: 0x and 40 hex digits (mixed case must be its EIP-55 checksum).")
+			}
+		}
 		seen := map[string]bool{}
 		for _, op := range operations {
 			if !delegable(op) || seen[op] {
@@ -476,7 +486,7 @@ func (s *Store) changeDelegation(ctx context.Context, tx *sql.Tx, c Command, a a
 
 func (s *Store) delegationStatus(ctx context.Context, tx *sql.Tx, g delegationRow, now int64) (DelegationStatus, error) {
 	state, err := delegationState(ctx, tx, g, now)
-	return DelegationStatus{GrantID: g.ID, Generation: g.Generation, ServiceID: s.config.ServiceID, State: state, CreatedAt: g.Created, ExpiresAt: g.Expires, CeilingBytes: g.Ceiling, UsedBytes: g.Used, RemainingBytes: g.Ceiling - g.Used, Room: g.Room, Origin: grantOrigin(g.Payload)}, err
+	return DelegationStatus{GrantID: g.ID, Generation: g.Generation, ServiceID: s.config.ServiceID, State: state, CreatedAt: g.Created, ExpiresAt: g.Expires, CeilingBytes: g.Ceiling, UsedBytes: g.Used, RemainingBytes: g.Ceiling - g.Used, Room: g.Room, Origin: grantOrigin(g.Payload), PayoutAddress: grantPayoutAddress(g.Payload)}, err
 }
 
 // originHostRE is a lowercase DNS host name (punycode for IDNs).
@@ -539,6 +549,50 @@ func grantOrigin(payload string) string {
 	}
 	return data.Origin
 }
+// grantAddress is address normalized (EIP-55), or "" when it is not a
+// nonzero EVM address.
+func grantAddress(address string) string {
+	a, ok := services.ParseEVMAddress(address)
+	if !ok || a == (services.EVMAddress{}) {
+		return ""
+	}
+	return a.String()
+}
+
+// grantPayoutAddress is the payout address a grant's signed enrollment
+// pinned in its data (normalized), or "" when it pinned none.
+func grantPayoutAddress(payload string) string {
+	var enrollment struct {
+		Command struct {
+			Data string `json:"data"`
+		} `json:"command"`
+	}
+	var data struct {
+		PayoutAddress string `json:"payout_address"`
+	}
+	if json.Unmarshal([]byte(payload), &enrollment) != nil || json.Unmarshal([]byte(enrollment.Command.Data), &data) != nil {
+		return ""
+	}
+	return grantAddress(data.PayoutAddress)
+}
+
+// authorizeGrantPayout refuses a worker key's payout_address unless its
+// grant pinned exactly that address: a child key never redirects its
+// parent's USDC.
+func authorizeGrantPayout(g *delegationRow, address string) error {
+	if g == nil || address == "" {
+		return nil
+	}
+	pinned := grantPayoutAddress(g.Payload)
+	if pinned == "" {
+		return problem(403, "delegation_payout_unpinned", "A worker key may name payout_address only when its grant pins one: the parent must pin a payout address in the delegation (delegation.create data payout_address) to allow it. Leave payout_address out to be paid at the parent's linked wallet.")
+	}
+	if !strings.EqualFold(pinned, address) {
+		return problem(403, "delegation_payout_mismatch", "payout_address must be exactly the address this worker key's grant pins ("+pinned+").")
+	}
+	return nil
+}
+
 func (s *Store) readDelegation(ctx context.Context, tx *sql.Tx, c Command, a actor, now int64) (Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()

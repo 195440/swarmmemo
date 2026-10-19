@@ -215,8 +215,18 @@ class OperationTests(unittest.TestCase):
     def test_stage_work_signs_payout_address_on_claim_and_submit(self):
         # survivor 886e8f56: stage_work takes payout_address (0x and 40 hex) on a claim or a
         # submit, into the signed data as hosted claim_work/submit_work put it; never on renew.
+        # C380: a worker key never redirects its parent's USDC; it signs payout_address only
+        # when the grant (and so the profile) pins it, and then exactly that address.
         payout = "0x" + "aB" * 20
         base = {"work_id": "b" * 32, "generation": "a" * 32, "payout_address": payout}
+        with self.assertRaisesRegex(BridgeError, "delegation_payout_unpinned"):
+            op.dispatch(self.profile, "stage_work", {"intent_id": "unpinned", "action": "claim", **base, "ttl": 60})
+        for bad in ("0x" + "a" * 39, 7, ""):
+            with self.subTest(pin=bad), self.assertRaisesRegex(BridgeError, "invalid_profile"):
+                self.value["payout_address"] = bad; self.load()
+        self.value["payout_address"] = payout.lower(); self.profile = self.load()
+        with self.assertRaisesRegex(BridgeError, "delegation_payout_mismatch"):
+            op.dispatch(self.profile, "stage_work", {"intent_id": "other", "action": "claim", **base, "payout_address": "0x" + "cd" * 20, "ttl": 60})
         for action, fields in (("claim", {"ttl": 60}), ("submit", {"fence": 1, "result_id": "c" * 32})):
             op.dispatch(self.profile, "stage_work", {"intent_id": "paid-" + action, "action": action, **base, **fields})
             stored = op._queue(self.profile).inspect("paid-" + action, sensitive=True)["intent"]

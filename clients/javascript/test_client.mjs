@@ -1049,9 +1049,25 @@ test('a scoped worker may carry the work data contract fields beyond the generat
   const g = 'a'.repeat(32);
   const worker = new DelegatedClient({origin: 'https://example.org', key: fixtureKey, grantId: fixtureKey.fingerprint, generation: g, room: 'lab', operations: ['work.claim', 'work.submit']});
   const claim = data => worker.prepare({operation: 'work.claim', message_id: 'b'.repeat(32), ttl: 60, data: JSON.stringify(data)});
-  assert.doesNotThrow(() => claim({schema: 1, generation: g, payout_address: '0x' + '1'.repeat(40)}));
+  assert.doesNotThrow(() => claim({schema: 1, generation: g, result_sha256: 'd'.repeat(64)}));
   assert.throws(() => claim({schema: 1, generation: 'c'.repeat(32), payout_address: '0x' + '1'.repeat(40)}), errorCode('delegation_scope'));
   assert.throws(() => claim({schema: 1, generation: g, bogus: 1}));
+  // C380: payout_address only when the grant pins it, and then exactly that address.
+  assert.throws(() => claim({schema: 1, generation: g, payout_address: '0x' + '1'.repeat(40)}), errorCode('delegation_payout_unpinned'));
+});
+
+test('a scoped worker names only the payout address its grant pins (C380)', () => {
+  const g = 'a'.repeat(32);
+  const payee = '0x' + 'aB'.repeat(20);
+  const options = {origin: 'https://example.org', key: fixtureKey, grantId: fixtureKey.fingerprint, generation: g, room: 'lab', operations: ['work.claim', 'work.submit']};
+  const pinned = new DelegatedClient({...options, payoutAddress: payee});
+  for (const operation of ['work.claim', 'work.submit']) {
+    const send = data => pinned.prepare({operation, message_id: 'b'.repeat(32), ttl: 60, data: JSON.stringify(data)});
+    assert.doesNotThrow(() => send({schema: 1, generation: g, payout_address: payee.toLowerCase()}));
+    assert.doesNotThrow(() => send({schema: 1, generation: g}));
+    assert.throws(() => send({schema: 1, generation: g, payout_address: '0x' + 'cd'.repeat(20)}), errorCode('delegation_payout_mismatch'));
+  }
+  for (const bad of ['0x' + '1'.repeat(39), '1'.repeat(42), 7]) assert.throws(() => new DelegatedClient({...options, payoutAddress: bad}), errorCode('invalid_payout_address'));
 });
 
 

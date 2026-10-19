@@ -817,6 +817,9 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 	if err != nil {
 		return Result{}, err
 	}
+	if err = authorizeGrantPayout(a.grant, d.PayoutAddress); err != nil {
+		return Result{}, err
+	}
 	if d.RejectFeeSet && !s.config.Features.WorkRejectFee {
 		return Result{}, rejectFeeUnavailable()
 	}

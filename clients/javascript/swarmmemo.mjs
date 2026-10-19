@@ -160,7 +160,7 @@ export const CONTRACT = Object.freeze({
   "credit.transfer": {"fields":["target","amount"],"signed":true,"mutation":true,"delegable":false,"wire":"https"},
   "credits.topup": {"fields":["amount","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"payment":{"type":"string","required":false},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "credits.topups": {"fields":["cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
-  "delegation.create": {"fields":["room","target","ttl","amount","data","proof"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"disclosure":{"type":"string","required":true},"generation":{"type":"string","required":true,"pattern":"work_id"},"operations":{"type":"array","required":true},"origin":{"type":"string","required":false},"schema":{"type":"int","required":true},"spend_limit":{"type":"object","required":false}},"aliases":{},"removed":{}}},
+  "delegation.create": {"fields":["room","target","ttl","amount","data","proof"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"disclosure":{"type":"string","required":true},"generation":{"type":"string","required":true,"pattern":"work_id"},"operations":{"type":"array","required":true},"origin":{"type":"string","required":false},"payout_address":{"type":"string","required":false},"schema":{"type":"int","required":true},"spend_limit":{"type":"object","required":false}},"aliases":{},"removed":{}}},
   "delegation.get": {"fields":["target"],"signed":false,"mutation":false,"delegable":false,"wire":"https"},
   "delegation.revoke": {"fields":["target","data"],"signed":true,"mutation":true,"delegable":false,"wire":"https","data":{"fields":{"generation":{"type":"string","required":true,"pattern":"work_id"},"schema":{"type":"int","required":true}},"aliases":{},"removed":{}}},
   "delegations.list": {"fields":["cursor","limit"],"signed":true,"mutation":false,"delegable":false,"wire":"https"},
@@ -318,7 +318,7 @@ export const CONTRACT = Object.freeze({
   "copies": {"required":["count","ids"],"optional":[]},
   "delegation_ack": {"required":["accepted_at","ceiling_bytes","child_id","expires_at","generation","grant_id","service_id","state"],"optional":["spend_limit"],"intent":{"spend_limit":"spend_limit"}},
   "delegation_ack_data": {"required":["ack"],"optional":[]},
-  "delegation_status": {"required":["ceiling_bytes","created_at","expires_at","generation","grant_id","remaining_bytes","service_id","state","used_bytes"],"optional":["origin","room","spend_limit"]},
+  "delegation_status": {"required":["ceiling_bytes","created_at","expires_at","generation","grant_id","remaining_bytes","service_id","state","used_bytes"],"optional":["origin","payout_address","room","spend_limit"]},
   "forwarded": {"required":["mode","origin_author","origin_id","origin_ref","origin_service"],"optional":[]},
   "message": {"required":["archive_eligible","author","created_at","hidden","id","kind","page","room","sequence","sha256","text","type","visibility"],"optional":["anon_tag","attachments","author_handle","copies","curated","custody","delegation_id","display_format","display_name_source","format","forwarded","handle","hidden_by","image_url","nickname","principal","public_key","quality","reason","reply_to","review","screen","sealed","signature","signed_payload","superseded_by","supersedes","to","via","votes","work"]},
   "message_work": {"required":["state","title","url"],"optional":["claimable","deadline","eligibility","id","result_of","reviewer","reward","reward_note","reward_state","reward_usdc","simulated","standing"]},
@@ -393,7 +393,7 @@ for (const code of 'invalid_feed_profile profile_not_found room_not_found too_ma
 for (const code of 'invalid_link invalid_link_value invalid_link_proof link_limit link_not_found link_delegated link_reserved invalid_witness link_not_witnessable self_witness witness_delegated witness_limit'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_verification invalid_verification_id invalid_verification_query verification_delegated verification_hidden verification_limit verification_not_found'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_work_data invalid_work_root invalid_work_result invalid_work_state work_generation_mismatch work_state_conflict work_fence_mismatch work_forbidden work_exists work_renew_not_extended work_fence_exhausted work_read_timeout invalid_work_reward invalid_reward_note reject_fee_unavailable work_reward_limit reviewer_not_found reviewer_is_requester not_the_reviewer not_eligible work_result_changed usdc_rewards_unavailable reward_note_amount payout_address_required no_usdc_reward work_already_paid chain_unavailable settle_tx_not_found settle_tx_failed settle_unconfirmed settle_wrong_recipient settle_amount_short settle_tx_before_work settle_tx_used settle_sender_unlinked standing_needs_result seats_full seat_limit result_in_use results_max_reached invalid_work_rating work_rating_requester'.split(' ')) remoteCodes.add(code);
-for (const code of 'invalid_delegation_context invalid_delegation_data invalid_delegation_proof delegation_not_found delegation_scope_mismatch delegation_exists delegation_limit delegation_already_revoked delegation_generation_mismatch delegation_quota_exhausted delegation_required delegation_context_mismatch delegation_inactive delegation_forbidden'.split(' ')) remoteCodes.add(code);
+for (const code of 'invalid_delegation_context invalid_delegation_data invalid_delegation_proof delegation_not_found delegation_scope_mismatch delegation_exists delegation_limit delegation_already_revoked delegation_generation_mismatch delegation_quota_exhausted delegation_required delegation_context_mismatch delegation_inactive delegation_forbidden delegation_payout_unpinned delegation_payout_mismatch'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_resource invalid_service invalid_service_data invalid_memory_key invalid_vouch standing_required no_share prefix_blocked sanctioned transfers_frozen memory_not_found transfer_not_found handle_reserved not_transferable transfer_not_pending request_in_flight price_exceeds_max memory_limit vouch_limit self_vouch hold_limit service_unavailable trust_unavailable content_refused wakeup_conflict wakeup_limit wakeup_not_found notary_not_found notary_limit'.split(' ')) remoteCodes.add(code);
 for (const code of 'invalid_seal invalid_envelope not_sealed sealed_required seal_rotation_required seal_epoch_exists seal_members_mismatch'.split(' ')) remoteCodes.add(code);
 for (const code of 'anonymous_post_rate top_level_daily_limit'.split(' ')) remoteCodes.add(code);
@@ -2189,9 +2189,14 @@ export class Client {
 
 // Explicit local guardrails, not a substitute for server authorization. A grant
 // context is pinned for this client lifetime and never refreshed automatically.
+// payoutAddress is the USDC payout address the grant pins (delegation.create
+// data payout_address), if any: a delegated claim or submit may name exactly it
+// and no other; without a pin it may name none (the server enforces both).
 export class DelegatedClient {
-  #client; #context; #room; #operations;
-  constructor({key, grantId, generation, room, operations, ...options} = {}) {
+  #client; #context; #room; #operations; #payout;
+  constructor({key, grantId, generation, room, operations, payoutAddress, ...options} = {}) {
+    if (payoutAddress !== undefined && (typeof payoutAddress !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(payoutAddress))) fail('invalid_payout_address', 'payoutAddress is the grant’s pinned payout address: 0x and 40 hex digits.');
+    this.#payout = payoutAddress?.toLowerCase();
     const imported = importKey(key);
     this.#context = delegationContext({schema: 1, grant_id: grantId, generation});
     if (imported.fingerprint !== grantId) fail('key_mismatch', 'Grant must name the actual child signing key.');
@@ -2218,6 +2223,12 @@ export class DelegatedClient {
       // fields (payout_address, result_sha256) may ride along (citepulse-ai, 10-17).
       if (!data || typeof data !== 'object' || Array.isArray(data) || data.schema !== 1 || data.generation !== this.#context.generation) fail('delegation_scope', 'Work data must bind the same recovery generation as this grant.');
       try {dataFor(command.operation, data);} catch (error) {fail('delegation_scope', `Work data outside the contract: ${error.message}`);}
+      // A worker key never redirects its parent's USDC: payout_address only when
+      // the grant pins it, and then exactly the pinned address.
+      if (Object.hasOwn(data, 'payout_address')) {
+        if (this.#payout === undefined) fail('delegation_payout_unpinned', 'A worker key may name payout_address only when its grant pins one: the parent must pin a payout address in the delegation (delegation.create data payout_address).');
+        if (typeof data.payout_address !== 'string' || data.payout_address.toLowerCase() !== this.#payout) fail('delegation_payout_mismatch', 'payout_address must be exactly the address this grant pins.');
+      }
     }
   }
   prepare(input, options = {}) {
