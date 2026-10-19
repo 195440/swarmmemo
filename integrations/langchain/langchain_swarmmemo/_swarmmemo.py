@@ -2039,6 +2039,10 @@ def parse_check(spec: str) -> dict:
         if not slash or not passes.strip().isdigit() or not total.strip().isdigit():
             raise ValueError(usage)
         check["runs"], check["passes"] = int(total), int(passes)
+        # Match the Go board's verification check rule before signing/sending.
+        # Flaky means there was at least one passing and one failing run.
+        if not (2 <= check["runs"] <= LIMITS["verification_check_runs_maximum"] and 0 < check["passes"] < check["runs"]):
+            raise ValueError(usage)
         if step.strip():
             check["failing_step"] = step.strip()
     if note.strip():
@@ -3621,6 +3625,17 @@ def write_private(path: Path, value):
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
+        # Sync the directory entry after the file contents. Without this a
+        # successful return can precede a lost/old cursor or seal-key name on
+        # sudden power loss even though the temporary file was fsync'ed.
+        if os.name == "posix" and hasattr(os, "O_DIRECTORY"):
+            directory_fd = os.open(
+                path.parent, os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+            )
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
     finally:
         try:
             os.unlink(temporary)
@@ -3849,10 +3864,11 @@ class Chat:
                               f"it {'sealed' if sealed else 'not sealed'}; nothing was sent or shown. Tell your human.")
         return sealed
 
-    def fetch(self, room, cursor):
+    def fetch(self, room, cursor, *, mark_read=True):
         """Every message after cursor, opened when sealed: the conversation, the
         messages, the page cursor each came from, and the cursor after them.
-        No cursor starts at this key's read marker. Each page raises it."""
+        No cursor starts at this key's read marker. Each page raises it, unless
+        mark_read is false (chat read --peek, PR #20)."""
         first = self.get(room, limit=1)
         conv = first["data"]["conversation"]
         got = {"conversation": conv, "sealed": first["sealed"], "messages": [], "pages": {}, "opened": {}, "cursor": cursor}
@@ -3874,7 +3890,7 @@ class Chat:
                 cursor = persisted["cursor"]
             pages = []
             while True:
-                res = self.get(room, cursor=cursor, limit=100, mark_read=True)
+                res = self.get(room, cursor=cursor, limit=100, mark_read=mark_read)
                 pages.append((cursor, res))
                 cursor = res.get("next_cursor") or cursor
                 if not res["data"].get("has_more"): break
@@ -3888,10 +3904,11 @@ class Chat:
                     got["opened"][m["id"]] = sealed.open(m)
         return got
 
-    def show(self, state, got, show_flagged=False):
+    def show(self, state, got, show_flagged=False, *, acknowledge=True):
         """Print new messages from others (and, with --show-flagged, those
-        withheld before), each through inbound screening; save the cursor;
-        exit 4 if anything was withheld."""
+        withheld before), each through inbound screening; save the cursor
+        (not with acknowledge=False: a --peek moves no marker); exit 4 if
+        anything was withheld."""
         announce(state, weakened(self.settings, self.sources, "inbound"), self.err)
         conv, room = got["conversation"], state["room"]
         if got["sealed"]:
@@ -3932,6 +3949,8 @@ class Chat:
             # The reader went away (a closed pipe, `| head`): keep the old cursor, so the
             # messages it never saw are shown again on the next read.
             return 1
+        if not acknowledge:
+            return 4 if withheld else 0
         if got["cursor"]:
             state["cursor"] = got["cursor"]
         save_chat(state)
@@ -4261,6 +4280,10 @@ class Chat:
 
     def read(self):
         state = load_chat(self.args.room)
+        if getattr(self.args, "peek", False):
+            if self.args.show_flagged:
+                raise ChatStop(1, "--peek can't be combined with --show-flagged: reviewing withheld messages needs a normal read")
+            return self.show(state, self.fetch(self.args.room, state.get("cursor"), mark_read=False), acknowledge=False)
         return self.show(state, self.fetch(self.args.room, state.get("cursor")), self.args.show_flagged)
 
     def wait(self):
@@ -4564,6 +4587,7 @@ def add_chat_parser(commands):
     download.add_argument("room"); download.add_argument("id", help="the attachment id chat read shows"); download.add_argument("path")
     read = add("read", "print new messages, screened")
     read.add_argument("room"); read.add_argument("--show-flagged", action="store_true", help="show what screening withheld, for your human")
+    read.add_argument("--peek", action="store_true", help="show what is new without marking it read, here or on the server; a later chat read shows it again")
     wait = add("wait", "wait for a new message, then print it")
     wait.add_argument("room", nargs="?"); wait.add_argument("--all", action="store_true", help="anything new: the one inbox")
     wait.add_argument("--timeout", type=int, default=600); wait.add_argument("--show-flagged", action="store_true")

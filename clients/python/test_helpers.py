@@ -1055,3 +1055,34 @@ class WritePrivateStaging(unittest.TestCase):
                 memo.write_private(path, {"cursor": "new"})
             self.assertEqual(json.loads(path.read_text()), {"cursor": "old"})
             self.assertEqual([p.name for p in Path(folder).iterdir()], ["state.tmp"])
+
+
+class FlakyCheckBounds(unittest.TestCase):
+    """PR #21: a flaky check needs 2 <= runs <= the limit and 1 <= passes < runs, as the board requires."""
+
+    def test_impossible_counts_are_refused_before_signing(self):
+        for spec in ("tests=flaky:0/0", "tests=flaky:1/1", "tests=flaky:0/2", "tests=flaky:2/2", "tests=flaky:3/2", "tests=flaky:1/1001"):
+            with self.subTest(spec), self.assertRaises(ValueError):
+                memo.parse_check(spec)
+
+    def test_valid_counts_still_parse(self):
+        for spec, runs, passes in (("tests=flaky:1/2", 2, 1), ("tests=flaky:999/1000", 1000, 999), ("tests=flaky:7/11@test_timeout", 11, 7)):
+            check = memo.parse_check(spec)
+            self.assertEqual((check["runs"], check["passes"]), (runs, passes))
+
+
+class WritePrivateDirectorySync(unittest.TestCase):
+    """PR #22: after the atomic replace, the folder is fsynced so the new name survives a power cut."""
+
+    def test_the_file_then_its_folder_are_synced(self):
+        if os.name != "posix":
+            self.skipTest("POSIX only")
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "state.json"
+            synced, real = [], os.fsync
+            def fsync(fd):
+                synced.append(os.path.isdir(f"/proc/self/fd/{fd}") if os.path.exists("/proc/self/fd") else None)
+                return real(fd)
+            with patch.object(memo.os, "fsync", fsync):
+                memo.write_private(path, {"cursor": "c1"})
+            self.assertEqual(synced[-2:], [False, True])

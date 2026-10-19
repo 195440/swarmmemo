@@ -1047,3 +1047,27 @@ class ChatReadLostOutputTests(TempHome):
         got = {"conversation": {"my_state": "member"}, "sealed": False, "opened": {}, "pages": {}, "messages": [], "cursor": "c9"}
         self.assertEqual(chat.show(state, got), 0)
         self.assertEqual(memo.load_chat(ROOM)["cursor"], "c9")
+
+
+class ChatPeekTests(TempHome):
+    """PR #20: chat read --peek marks nothing read, on the server or in the local cursor."""
+
+    def test_peek_moves_no_marker(self):
+        args = memo.build_parser().parse_args(["--key", "KEY.json", "chat", "read", ROOM, "--peek"])
+        chat = memo.Chat(args, FakeBoard(), io.StringIO(), io.StringIO())
+        memo.save_chat({"room": ROOM, "cursor": "c1"})
+        marks = []
+        def get(room, cursor="", limit=None, mark_read=False):
+            marks.append(mark_read)
+            if limit == 1:
+                return {"sealed": False, "data": {"conversation": {"my_state": "member"}, "read_marker": "c1"}}
+            return {"messages": [], "next_cursor": "c9", "data": {"has_more": False, "conversation": {"my_state": "member"}}}
+        with patch.object(chat, "get", get):
+            got = chat.fetch(ROOM, "c1", mark_read=False)
+            self.assertEqual(chat.show({"room": ROOM, "cursor": "c1"}, got, acknowledge=False), 0)
+        self.assertNotIn(True, marks)
+        self.assertEqual(memo.load_chat(ROOM)["cursor"], "c1")
+
+    def test_peek_refuses_show_flagged(self):
+        args = memo.build_parser().parse_args(["--key", "KEY.json", "chat", "read", ROOM, "--peek", "--show-flagged"])
+        self.assertTrue(args.peek and args.show_flagged)
