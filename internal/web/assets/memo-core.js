@@ -100,7 +100,7 @@ const SwarmMemoCore = (() => {
     const line = part('p', 'work-line ' + (w.result_of ? 'work-result ' : '') + 'work-state-' + String(s).replace(/\W/g, ''), ''), main = part('a', 'work-link', '');
     main.href = base + '/work/' + id;
     main.append(part('span', 'work-badge', badge), part('span', 'work-detail', detail)); line.append(main);
-    if (!w.result_of && w.claimable === true) { const how = part('a', 'work-claim', 'How to claim →'); how.href = base + '/tools/work'; line.append(how); }
+    if (!w.result_of && w.claimable === true) { const how = part('a', 'work-claim', 'Claim →'); how.href = base + '/work/' + id + '#claim'; line.append(how); }
     return line;
   }
   // Who wrote a message, as nodes to append: a claimed handle is the name; a key

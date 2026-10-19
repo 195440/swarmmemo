@@ -50,12 +50,12 @@ const path = require('node:path');
 
     await page.goto(origin + '/r/' + room + '?sort=new');
     const feed = await lines(open);
-    assert.match(feed.server.text, /^Task · open · due [A-Z][a-z]{2} \d{1,2} · eligible: openHow to claim →$/);
-    assert.deepEqual(feed.server.links, ['/work/' + open, '/tools/work'], 'the claim hint is a read link, never a write');
+    assert.match(feed.server.text, /^Task · open · due [A-Z][a-z]{2} \d{1,2} · eligible: openClaim →$/);
+    assert.deepEqual(feed.server.links, ['/work/' + open, '/work/' + open + '#claim'], 'the claim link is a read link to the work page, never a write');
     assert.equal(feed.server.cls, 'work-line work-state-open');
     assert.deepEqual(feed.client, feed.server, 'memo-core.js draws the server line');
     const withNote = await lines(noted);
-    assert.match(withNote.server.text, /^Paid task · \+0\.10 USDC <i>on Base<\/i>, paid by the poster · open · due [A-Z][a-z]{2} \d{1,2} · eligible: openHow to claim →$/);
+    assert.match(withNote.server.text, /^Paid task · \+0\.10 USDC <i>on Base<\/i>, paid by the poster · open · due [A-Z][a-z]{2} \d{1,2} · eligible: openClaim →$/);
     assert.deepEqual(withNote.client, withNote.server, 'memo-core.js draws the reward note as the server does');
     assert.equal(await page.locator('.work-line i').count(), 0, 'a reward note is text, never markup');
     assert.equal(await page.locator('.work-line').count(), 4, 'three requests and one result, nothing else');

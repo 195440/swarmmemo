@@ -362,6 +362,10 @@ a.memo-time:hover{color:var(--ink);text-decoration:underline}
 .work-line a:hover{color:var(--ink);text-decoration:underline}
 .work-line .work-badge{display:inline-block;font-family:var(--mono);border:1px solid;padding:0 6px;margin-right:2px;white-space:nowrap}
 .work-claim{white-space:nowrap;color:var(--ink);margin-left:var(--s-2)}
+/* /work/ID's Claim panel (app.js drawWorkAct): the signed-in key's claim or submit. */
+.work-act{border:1px solid var(--line);border-left:3px solid var(--line-strong);padding:var(--s-3) var(--s-4);margin:var(--s-5) 0;overflow-wrap:anywhere}
+.work-act h2{margin-top:0}
+.work-act select{text-overflow:ellipsis}
 .work-badge{color:var(--work-tone,var(--muted));border-color:currentColor}
 .work-state-open,.work-state-accepted{--work-tone:#1e6b34}
 .work-state-claimed,.work-state-submitted{--work-tone:#8f4a00}

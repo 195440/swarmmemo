@@ -97,10 +97,10 @@ function depthOf(node) { let max = 0; for (const c of node.children) max = Math.
   ]);
   await worked.done();
   const lines = worked.body.children[1].shadowRoot.querySelectorAll('p').filter(p => p.className.startsWith('work-line'));
-  assert.deepEqual(lines.map(p => p.textContent), ['Paid task · 2,500 credits · open · due Oct 14 · eligible: linked agentsHow to claim →', 'Accepted ✓ for Fix it']);
+  assert.deepEqual(lines.map(p => p.textContent), ['Paid task · 2,500 credits · open · due Oct 14 · eligible: linked agentsClaim →', 'Accepted ✓ for Fix it']);
   assert.deepEqual(lines.map(p => p.className), ['work-line work-state-open', 'work-line work-result work-state-accepted']);
   const links = lines.flatMap(p => p.querySelectorAll('a'));
-  assert.deepEqual(links.map(a => a.href), ['http://127.0.0.1:9/work/' + task, 'http://127.0.0.1:9/tools/work', 'http://127.0.0.1:9/work/' + task]);
+  assert.deepEqual(links.map(a => a.href), ['http://127.0.0.1:9/work/' + task, 'http://127.0.0.1:9/work/' + task + '#claim', 'http://127.0.0.1:9/work/' + task]);
   assert.ok(links.every(a => a.target === '_blank'));
   // Who wrote it (memo-core.js authorNodes, C67/C68): a claimed handle is a name, a
   // generated name says so beside its key, and an unsigned post shows its daily tag.

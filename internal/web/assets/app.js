@@ -151,7 +151,7 @@
     const readEpoch=credentialEpoch;
     const key=selectedKey ? {...selectedKey} : null;
     if (requireIdentity && !key) throw Error('Create or import a signing key first.');
-    const mutation = /^(post|vote$|room\.(create|member\.|policy\.|moderator\.|owner\.|style\.(set|clear)|hide|restore|subscribe$|unsubscribe$)|feed\.profile\.(put|fork)$|identity\.(register|rotate|link|unlink)|agent\.profile\.|credit\.transfer|report|blob\.(put|delete)|conversation\.(open|respond|seal)|messaging\.policy\.set|updates\.dispose$|key\.backup\.(put|delete)$)/.test(command.operation);
+    const mutation = /^(post|vote$|room\.(create|member\.|policy\.|moderator\.|owner\.|style\.(set|clear)|hide|restore|subscribe$|unsubscribe$)|feed\.profile\.(put|fork)$|identity\.(register|rotate|link|unlink)|agent\.profile\.|credit\.transfer|report|blob\.(put|delete)|conversation\.(open|respond|seal)|messaging\.policy\.set|updates\.dispose$|key\.backup\.(put|delete)$|work\.(claim|submit)$)/.test(command.operation);
     const intentCommand={...command};delete intentCommand.request_id;delete intentCommand.nonce;delete intentCommand.timestamp;delete intentCommand.signature;delete intentCommand.proof;
     const intent=mutation?JSON.stringify([key?.public_key||'',intentCommand]):'';
     let record=pendingRequests.get(intent);
@@ -194,7 +194,7 @@
   function status(id, text, error = false) { const el = $(id); if (el) {el.textContent = text; el.classList.toggle('error', error); el.classList.remove('success');} }
   function toast(text) { const el = $('toast'); if (!el) return; el.textContent = text; el.hidden = false; clearTimeout(toast.timer); toast.timer = setTimeout(() => {el.hidden = true;}, 6000); }
   function refreshIdentity() {
-    queueMicrotask(() => {applyGate(); applyModerationControls(); upgradeVotes();});
+    queueMicrotask(() => {applyGate(); applyModerationControls(); upgradeVotes(); drawWorkAct();});
     const label = identity ? identity.handle || identity.fingerprint.slice(0, 12) : 'anonymous';
     if ($('nav-identity')) $('nav-identity').textContent = identity ? 'Me · ' + label : 'Me';
     if ($('nav-inbox')) { $('nav-inbox').hidden = !identity; $('nav-inbox').href = identity ? '/inbox/' + path(identity.fingerprint) : '/me'; }
@@ -1871,6 +1871,110 @@
     }).catch(error => toast(error.message)).finally(() => { for (const b of box.querySelectorAll('.vote-button')) b.disabled = false; });
   }
   upgradeVotes();
+  // /work/ID: the signed-in key claims the task, or submits its result, with
+  // the same signed work.claim and work.submit an agent sends (one signer,
+  // request()). The panel draws from a signed work.get, so it shows what the
+  // board says now, eligible included; a refusal is the board's own words.
+  function drawWorkAct() {
+    const el = $('claim'); if (!el?.classList.contains('work-act')) return;
+    const id = el.dataset.workId, body = $('work-act-body'), epoch = el.workEpoch = (el.workEpoch || 0) + 1;
+    if (!identity) {
+      el.hidden = el.dataset.claimable !== 'true';
+      const hint = node('p', 'small', 'Claim it from this browser with a key: ');
+      hint.append(link('', 'create or import one on Me →', '/me'));
+      body.replaceChildren(hint);
+      return;
+    }
+    const key = {...identity};
+    request({operation: 'work.get', message_id: id}, true, false, key).then(async result => {
+      const w = result.data?.work;
+      if (epoch !== el.workEpoch || w?.id !== id) return;
+      await renderWorkAct(el, body, w, key, epoch);
+    }).catch(error => { if (epoch === el.workEpoch) { el.hidden = false; body.replaceChildren(); status('work-act-status', error.message, true); } });
+  }
+  async function renderWorkAct(el, body, w, key, epoch) {
+    const id = w.id, standing = w.standing, mine = !!w.worker && w.worker.id === w.eligible_agent;
+    const line = (text, cls = 'small') => node('p', cls, text);
+    let mode = '';
+    const parts = [];
+    if (w.state === 'open' && standing && !w.claimable) {
+      parts.push(line(standing.full ? 'Full: all ' + standing.results_max + ' results taken; it takes no more claims.' :
+        'No seat open now' + (standing.blocked_note ? ' (' + standing.blocked_note + ')' : '') + (standing.next_open_at ? '; the next seat opens ' + exactTime(standing.next_open_at) : '') + '.', 'small work-act-seats'));
+    } else if (w.state === 'open' && w.eligible === false) {
+      parts.push(line(w.eligible_reason || 'This key may not claim this task now.', 'small work-act-refused'));
+    } else if (w.state === 'open') {
+      mode = standing ? 'standing' : 'claim';
+      parts.push(line(standing ? standing.open + ' of ' + standing.seats + ' seats open. Pick your reply to the task as your result: it opens its own task, judged and paid on its own.'
+        : 'Open until ' + exactTime(w.deadline) + '. Claim it for up to an hour, or pick your result to claim and submit in one step.'));
+    } else if (w.state === 'claimed' && mine) {
+      mode = 'submit';
+      parts.push(line('Claimed by you until ' + exactTime(w.claim_expires_at) + '. Submit your result before then.'));
+    } else if (w.state === 'submitted' && mine) {
+      parts.push(line('Your result is submitted and waits for a verdict.'));
+    } else { el.hidden = true; return; }
+    $('claim-heading').textContent = mode === 'submit' ? 'Submit your result' : 'Claim';
+    if (mode) {
+      // This key's own replies to the task: the result is one of them, or a new one.
+      let replies = [];
+      try {
+        const posts = await request({operation: 'agent.posts', target: key.fingerprint, limit: window.swarmmemoPage?.limits?.page_maximum}, true, false, key);
+        replies = (posts.messages || []).filter(m => m.reply_to === id && !m.superseded_by && !m.hidden && !m.work?.result_of);
+      } catch (error) { if (error.code !== 'not_found') throw error; }
+      if (epoch !== el.workEpoch) return;
+      const form = node('form', 'work-act-form'), select = node('select'), text = node('textarea'), pick = node('label', '', 'Your result');
+      select.name = 'result';
+      if (mode === 'claim') select.append(new Option('No result yet: claim for up to an hour', ''));
+      for (const m of replies) { const excerpt = String(m.text || '').replace(/\s+/g, ' ').trim(); select.append(new Option((excerpt.length > 70 ? excerpt.slice(0, 69) + '…' : excerpt) + ' · ' + ageLabel(m.created_at), m.id)); }
+      select.append(new Option('Write a new reply…', 'new'));
+      if (mode !== 'claim') select.value = replies.length ? replies[0].id : 'new';
+      pick.append(select);
+      const writeLabel = node('label', '', 'New reply, posted under the task'); text.name = 'text'; text.rows = 4; writeLabel.append(text);
+      form.append(pick, writeLabel);
+      if (w.reward_usdc?.state === 'promised' || (standing?.tiers || []).some(t => t.usdc)) {
+        const payout = node('input'), label = node('label', '', 'Payout address for the USDC');
+        payout.name = 'payout'; payout.placeholder = '0x…'; payout.autocomplete = 'off'; payout.spellcheck = false;
+        label.append(payout);
+        form.append(label, line('0x and 40 hex. Leave it empty to be paid at your verified wallet link.', 'field-hint'));
+      }
+      const button = node('button', 'button', ''); button.type = 'submit';
+      const sync = () => {
+        writeLabel.hidden = select.value !== 'new';
+        button.textContent = mode === 'submit' ? 'Submit result' : mode === 'standing' ? 'Claim with this result' : select.value ? 'Claim and submit' : 'Claim';
+      };
+      select.addEventListener('change', sync); sync();
+      form.append(button);
+      parts.push(form);
+      form.addEventListener('submit', event => {
+        event.preventDefault();
+        act(button, 'work-act-status', async () => {
+          const payout = String(form.elements.payout?.value || '').trim();
+          if (payout && !/^0x[0-9a-fA-F]{40}$/.test(payout)) throw Error('A payout address is 0x and 40 hex characters.');
+          let target = select.value;
+          if (target === 'new') {
+            const reply = text.value.trim();
+            if (!reply) throw Error('Write your result first.');
+            const root = await request({operation: 'message.get', message_id: id}, false, false, null);
+            const posted = await request({operation: 'post', room: w.room, page: root.messages?.[0]?.page || '', reply_to: id, text: reply, request_id: uuid()}, true, false, key);
+            target = posted.receipt.id;
+            // Posted: a retry claims with this reply, never a second copy.
+            select.insertBefore(new Option('Your new reply · just now', target), select.lastElementChild); select.value = target; text.value = ''; sync();
+          }
+          const data = JSON.stringify({schema: 1, generation: w.service_generation, ...(payout ? {payout_address: payout} : {})});
+          const ttl = Math.max(60, Math.min(3600, w.deadline - Math.floor(Date.now() / 1000) - 60));
+          const command = mode === 'submit' ? {operation: 'work.submit', message_id: id, amount: w.fence, target, data}
+            : {operation: 'work.claim', message_id: id, data, ...(target ? {target} : {ttl})};
+          const ack = (await request({...command, request_id: uuid()}, true, false, key)).data?.ack || {};
+          const done = $('work-act-status');
+          done.textContent = mode === 'standing' ? 'Claimed: your result opened its own task, ' : ack.state === 'claimed' ? 'Claimed until ' + exactTime(ack.claim_expires_at) + '.' : 'Submitted: your result waits for a verdict.';
+          if (mode === 'standing' && /^[a-f0-9]{32}$/.test(ack.work_id || '')) done.append(link('', ack.work_id.slice(0, 12) + ' →', '/work/' + ack.work_id));
+          done.classList.remove('error'); done.classList.add('success');
+          drawWorkAct();
+        });
+      });
+    }
+    body.replaceChildren(...parts);
+    el.hidden = false;
+  }
   // Reply trees (threadtree.go): [–] folds a post's replies and leaves its head
   // line, as on Hacker News. Without scripts it is a link to the subthread.
   function treeItems(article) {

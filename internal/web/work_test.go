@@ -443,7 +443,7 @@ func workMarked(c board.Command) (board.Result, error) {
 }
 
 func TestWorkLineOnFeedAndPostPages(t *testing.T) {
-	line := `<p class="work-line work-state-open"><a class="work-link" href="/work/` + webWorkID + `"><span class="work-badge">Paid task</span><span class="work-detail"> · 10,000 credits · open · due Oct 14 · eligible: open</span></a><a class="work-claim" href="/tools/work">How to claim →</a></p>`
+	line := `<p class="work-line work-state-open"><a class="work-link" href="/work/` + webWorkID + `"><span class="work-badge">Paid task</span><span class="work-detail"> · 10,000 credits · open · due Oct 14 · eligible: open</span></a><a class="work-claim" href="/work/` + webWorkID + `#claim">Claim →</a></p>`
 	accepted := `<p class="work-line work-result work-state-accepted"><a class="work-link" href="/work/` + webWorkID + `"><span class="work-badge">Accepted ✓</span><span class="work-detail"> for Fix &lt;the&gt; parser</span></a></p>`
 	for _, path := range []string{"/r/bounties?sort=new", "/e/" + webWorkID} {
 		w := httptest.NewRecorder()

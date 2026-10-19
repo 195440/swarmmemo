@@ -1,5 +1,5 @@
 {
-  "allowlist_sha256": "616a902d74f4677876e70ffb8fc41f8d1014587e38c2445e3472d96506739a57",
+  "allowlist_sha256": "a17cd1f393d352f0fcce875ecf905a8d1b4035a9dd27c00e19ac841c0ebeac81",
   "files": [
     {
       "mode": "0644",
@@ -928,8 +928,8 @@
     {
       "mode": "0644",
       "path": "docs/TOOLS_OFFERINGS.md",
-      "sha256": "aadaa2f38e3fce64e61d1cf46007d7b66c024b94da9c53ed44d26bad34f8cbc1",
-      "size": 7370
+      "sha256": "19cd5d6803675a85afa594c8f04dffe787a1ad2d2ebaf7fe5bd1f05622ea88bf",
+      "size": 7903
     },
     {
       "mode": "0644",
@@ -7804,8 +7804,8 @@
     {
       "mode": "0644",
       "path": "internal/web/assets/app.js",
-      "sha256": "4a331f0742181996f87463866bbb505af88f96fb56783eb54ba8f588927d9b8f",
-      "size": 215613
+      "sha256": "0954e2c7e5a198191950c428103363b367f68a7fb5bd6c699cb07d8c52e2d235",
+      "size": 223112
     },
     {
       "mode": "0644",
@@ -8032,8 +8032,8 @@
     {
       "mode": "0644",
       "path": "internal/web/assets/memo-core.js",
-      "sha256": "544b5f662c8d0a990a51adfa46e68a94c1a960c503f1d2464810d013a59fae3a",
-      "size": 10653
+      "sha256": "f88763c66931789a11076311a81f78386175ef0dcc1074f0956023e9c3c2ff08",
+      "size": 10657
     },
     {
       "mode": "0644",
@@ -8056,8 +8056,8 @@
     {
       "mode": "0644",
       "path": "internal/web/assets/style.css",
-      "sha256": "021b0dfdf2851a2feec1f6b8d1147e3adf22b7a053e043728f1980e9cee82e6e",
-      "size": 153964
+      "sha256": "25dd57eba33adb025b808dcf6c0eb79f7cf07cef9407047ded750920016a7c76",
+      "size": 154274
     },
     {
       "mode": "0644",
@@ -8302,8 +8302,8 @@
     {
       "mode": "0644",
       "path": "internal/web/embed_render_test.cjs",
-      "sha256": "4ee05397e3c6ffa9444e899815c44302b1e225192572ab49b761bb3d81cd5122",
-      "size": 12966
+      "sha256": "e9f03f81c3a1b9551b0fb5cced9f0b68c1ca72d6953cb7db8d65d79a8d35a681",
+      "size": 12972
     },
     {
       "mode": "0644",
@@ -9268,8 +9268,8 @@
     {
       "mode": "0644",
       "path": "internal/web/templates/page.html",
-      "sha256": "66354e88c8f8bcd970813f932864b8b520124cbaf7ce98003770f32e563fa340",
-      "size": 60324
+      "sha256": "3e09ed3c92341c8d9ff7352081b48ec43e32504e089fbf1101b151bc9abbc89e",
+      "size": 60321
     },
     {
       "mode": "0644",
@@ -9328,8 +9328,8 @@
     {
       "mode": "0644",
       "path": "internal/web/templates/work.html",
-      "sha256": "10ecf4cfa51ca36b14962cd76c4cc6525ae68b15bbb47062c262f13ab61ad041",
-      "size": 21608
+      "sha256": "9b3e6832e580fd49073d05e647ae69ab144810c5c56c0b98df3914c5ff6378af",
+      "size": 21894
     },
     {
       "mode": "0644",
@@ -9477,9 +9477,15 @@
     },
     {
       "mode": "0644",
+      "path": "internal/web/work_claim_test.cjs",
+      "sha256": "b9d9bc05acd6d0e59d4dc2372e71efa4554df5783de06b5b7c6b51972cc7e67f",
+      "size": 10883
+    },
+    {
+      "mode": "0644",
       "path": "internal/web/work_line_test.cjs",
-      "sha256": "7128ba41fcd208765233068d39d962d833381c4fb890be0b7db229db6663240c",
-      "size": 6728
+      "sha256": "551f7a0ac93872500946d7f1fc818a13005ee3422431201b6d6f3c5105e8856d",
+      "size": 6744
     },
     {
       "mode": "0644",
@@ -9490,8 +9496,14 @@
     {
       "mode": "0644",
       "path": "internal/web/work_test.go",
-      "sha256": "59f4b4e72cdce7b99f3f4fd9d1c3a5afd2f5bf4ddf6e4224ca6af48999d01592",
-      "size": 25435
+      "sha256": "e3e0ae698a734b75412a1464a50eac1213eae67e147622a4210d4fd5f57a55cc",
+      "size": 25446
+    },
+    {
+      "mode": "0644",
+      "path": "internal/web/workact_test.go",
+      "sha256": "66e20c83441f39d8ed12e54a205aea64c6d2826aa387dcfb61c08c51f3a8a890",
+      "size": 2772
     },
     {
       "mode": "0644",
