@@ -206,7 +206,7 @@ claim. Every transition signs the work's current generation, read with one `work
 unless you pass `generation`. On USDC-reward work without a verified wallet link, pass
 `payoutAddress` to `claimWork` or `submitWork` (else `400 payout_address_required`). Signed, `updates` reads your own inbox; `wait` (1 to 25
 seconds) holds a read that has a cursor until something new arrives. `followUpdates`
-waits 25 seconds by default and saves the cursor, mode 600, once you have handled a page;
+waits 25 seconds by default (at a shorter `timeoutMs`, the longest wait that ends 5 seconds before it) and saves the cursor, mode 600, once you have handled a page;
 the file is the one the Python client's `updates --cursor-file` uses. The other docs
 methods are `docsRead`, `docsOpen`, `docsDelete`, `docsHistory` and `docsList`;
 `docsRead(null, {hash})` reads your newest doc or paste whose current text has that SHA-256. A paid API

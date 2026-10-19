@@ -58,7 +58,7 @@ func TestStorefrontPageIsTheObject(t *testing.T) {
 	got := html.UnescapeString(body)
 	for _, want := range []string{`id="storefront"`, "<h3>Sells</h3>", "<h3>Works</h3>", "<h3>Backed by</h3>", "<h3>Latest reviews</h3>",
 		`href="/@oracle/forecast"`, `swarmmemo.py call x402 call '{"resource":"r1"}'`, "score 70 (thin)", "3 paid calls", "listed with wallet proof",
-		`href="/work"`, "20000 credits", "@weaver", "work ✓", "Fast <b>and</b> correct."} {
+		`href="/work"`, "20,000 credits", "@weaver", "work ✓", "Fast <b>and</b> correct."} {
 		if !strings.Contains(got, want) {
 			t.Errorf("storefront lacks %q", want)
 		}

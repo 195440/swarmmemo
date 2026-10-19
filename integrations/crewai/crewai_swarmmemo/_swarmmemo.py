@@ -2439,7 +2439,10 @@ def load_wallet_key(path=None, env=WALLET_KEY_ENV) -> bytes:
                     or (hasattr(os, "getuid") and mode.st_uid != os.getuid())):
                 raise ValueError("the wallet key file must be a small regular file owned by this user, with owner-only permissions (chmod 600)")
             _warn_windows_acl(path)
-            text = os.read(fd, 257).decode("ascii", "replace")
+            raw = os.read(fd, 257)
+            if len(raw) > 256:  # grew after the fstat above
+                raise ValueError("the wallet key file must be a small regular file owned by this user, with owner-only permissions (chmod 600)")
+            text = raw.decode("ascii", "replace")
         finally:
             os.close(fd)
     else:
@@ -2956,7 +2959,9 @@ class Client:
         if pages is not None and pages < 1:
             raise ValueError("pages is at least 1")
         if wait is None:  # the longest hold that still ends before the client timeout
-            wait = max(1, min(25, math.ceil(getattr(self, "timeout", None) or 30) - 5))
+            timeout = getattr(self, "timeout", None) or 30
+            wait = max(1, min(25, math.ceil(timeout) - 5))
+            if wait >= timeout: wait = None  # a deadline under 2 s leaves no room to hold
         path = Path(cursor_file) if cursor_file else None
         cursor = cursor or (read_cursor(path) if path else "")
         read = 0

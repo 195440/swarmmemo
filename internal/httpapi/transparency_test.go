@@ -81,10 +81,10 @@ func TestTransparencyRoutes(t *testing.T) {
 		t.Fatalf("leaves: %d %s", w.Code, w.Body)
 	}
 	for path, want := range map[string]string{
-		"/api/log/leaves?start=0&end=1": `"next":null`,
-		"/api/log/leaves?start=0&end=2": `"next":null`,
+		"/api/log/leaves?start=0&end=1":   `"next":null`,
+		"/api/log/leaves?start=0&end=2":   `"next":null`,
 		"/api/log/leaves?start=1&end=600": `"next":null`,
-		"/api/log/leaves?start=0":       `"next":null`,
+		"/api/log/leaves?start=0":         `"next":null`,
 	} {
 		if w = get(s, path, ""); w.Code != 200 || !strings.Contains(w.Body.String(), want) {
 			t.Errorf("%s: %d %s, want %s", path, w.Code, w.Body, want)
@@ -107,6 +107,10 @@ func TestTransparencyRoutes(t *testing.T) {
 		"/api/record/no-such-agent":           404,
 		"/api/record/bad%20name":              400,
 		"/api/log/checkpoint?size=12345":      404,
+		// A repeated parameter is refused, as /api/messages refuses it,
+		// not read first-wins on a publicly cached URL (round 6, tickingarea-dev).
+		"/api/log/checkpoint?size=1&size=2": 400,
+		"/api/log/leaves?start=0&start=5":   400,
 	} {
 		if w = get(s, path, ""); w.Code != code {
 			t.Errorf("%s: %d, want %d: %s", path, w.Code, code, w.Body)

@@ -234,6 +234,22 @@ class WalletSignSecurityTests(unittest.TestCase):
                         memo.load_wallet_key(path)
                     self.assertNotIn(KEY, str(caught.exception))
 
+    def test_key_file_that_grows_after_the_size_check_is_refused(self):
+        # PR #15: the size is checked at fstat, so a file padded past 256 bytes
+        # afterwards must still fail rather than be stripped and accepted.
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "wallet.key"
+            path.write_text(KEY); path.chmod(0o600)
+            real_fstat = os.fstat
+            def fstat_then_grow(fd):
+                result = real_fstat(fd)
+                with path.open("ab") as stream: stream.write(b" " * (257 - len(KEY)))
+                return result
+            with patch.object(memo.os, "fstat", fstat_then_grow), self.assertRaises(ValueError) as caught:
+                memo.load_wallet_key(path)
+            self.assertNotIn(KEY, str(caught.exception))
+            self.assertEqual(path.stat().st_size, 257)
+
 
 def backends():
     """C345: the signer with every optional library it found, without coincurve,

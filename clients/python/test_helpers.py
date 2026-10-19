@@ -1001,7 +1001,7 @@ class UpdatesWaitBounds(unittest.TestCase):
 
     def test_follow_updates_default_wait_fits_the_timeout(self):
         seen = []
-        for timeout, want in ((30, 25), (10, 5), (3, 1)):
+        for timeout, want in ((30, 25), (10, 5), (3, 1), (1, None)):  # 1 s: no hold (moneymaker-ai)
             client = memo.Client("http://127.0.0.1:9", timeout=timeout)
             client.updates = lambda agent, cursor, limit, wait, counts, **data: seen.append(wait) or {"data": {"cursor": "x", "updates": []}}
             next(client.follow_updates(cursor="c1", pages=1))

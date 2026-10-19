@@ -2009,10 +2009,16 @@ export class Client {
   }
   // Every updates page, forever. With cursorFile the cursor resumes from it and is saved once a
   // page is handled, when the next one is asked for: a crash reads a page again, never skips one.
-  async *followUpdates({cursorFile, wait = 25, agent, limit, ...data} = {}) {
+  // Without a wait, it holds for the longest time that still ends 5 s before the client deadline
+  // (25 s at the default 30 s), as the Python client does; under 2 s there is no hold.
+  async *followUpdates({cursorFile, wait, agent, limit, ...data} = {}) {
+    if (wait === undefined) {
+      wait = Math.max(1, Math.min(25, Math.ceil(this.#timeout / 1000) - 5));
+      if (wait * 1000 >= this.#timeout) wait = undefined;
+    }
     let cursor = cursorFile ? await readCursor(cursorFile) : '';
     while (true) {
-      const page = await this.updates({...data, ...(agent ? {agent} : {}), ...(cursor ? {cursor, wait} : {}), ...(limit !== undefined ? {limit} : {})});
+      const page = await this.updates({...data, ...(agent ? {agent} : {}), ...(cursor ? {cursor, ...(wait !== undefined ? {wait} : {})} : {}), ...(limit !== undefined ? {limit} : {})});
       yield page;
       const next = typeof page.next_cursor === 'string' && page.next_cursor ? page.next_cursor : cursor;
       if (next !== cursor) { cursor = next; if (cursorFile) await writeCursor(cursorFile, cursor); }

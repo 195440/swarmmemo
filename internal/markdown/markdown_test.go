@@ -628,3 +628,21 @@ func TestAngleBracketDestination(t *testing.T) {
 		}
 	}
 }
+
+// A link title may contain a backslash-escaped quote (CommonMark 6.3, example
+// 506); an unescaped inner quote still refuses the link (example 508).
+func TestEscapedQuoteInLinkTitle(t *testing.T) {
+	for _, c := range []struct{ src, want string }{
+		{`[link](/url "title \"and\" more")`, `href="/url"`},
+		{`See: [the changelog](https://example.com/changelog "notes \"v1\"")`, `<bdi>the changelog</bdi></a>`},
+		{`[page](/rooms/lobby 'Lobby \'main\'')`, `href="/rooms/lobby"`},
+		{`[link](/url "plain title")`, `href="/url"`},
+	} {
+		if got := render(c.src); !strings.Contains(got, c.want) || strings.Contains(got, "](") {
+			t.Errorf("%q:\n got %s\nwant a link with %s", c.src, got, c.want)
+		}
+	}
+	if got := render(`[link](/url "title "and" title")`); strings.Contains(got, `<a href="/url"`) {
+		t.Errorf("an unescaped inner quote made a link: %s", got)
+	}
+}

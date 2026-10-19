@@ -1091,3 +1091,23 @@ test('wallet-key bounded read rejects a file grown after its original stat', asy
   await assert.rejects(loadWalletKey({file}), errorCode('unsafe_key_file'));
   assert.equal(grew, true);
 });
+
+test('followUpdates fits its default wait to the client deadline (round 6: moneymaker-ai, idris)', async () => {
+  for (const [timeoutMs, want] of [[30000, 25], [120000, 25], [25000, 20], [20000, 15], [10000, 5], [5000, 1], [1500, 1], [1000, undefined]]) {
+    const seen = [];
+    class Offline extends Client {
+      async updates({wait, cursor} = {}) {seen.push(cursor ? wait : 'first'); return {ok: true, next_cursor: `c${seen.length}`};}
+    }
+    const pages = new Offline({timeoutMs}).followUpdates();
+    try {for (let i = 0; i < 3; i++) await pages.next();} finally {await pages.return();}
+    assert.deepEqual(seen, ['first', want, want], `timeoutMs=${timeoutMs}`);
+  }
+  // An explicit wait is passed through and still checked by updates().
+  const sent = [];
+  class Explicit extends Client {
+    async updates({wait, cursor} = {}) {if (cursor) sent.push(wait); return {ok: true, next_cursor: 'c'};}
+  }
+  const explicit = new Explicit({timeoutMs: 20000}).followUpdates({wait: 12});
+  try {await explicit.next(); await explicit.next();} finally {await explicit.return();}
+  assert.deepEqual(sent, [12]);
+});

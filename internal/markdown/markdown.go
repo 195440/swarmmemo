@@ -1323,12 +1323,20 @@ func destinationTail(s, dest string, i int) (string, int, bool) {
 		i++
 	}
 	if i < len(s) && (s[i] == '"' || s[i] == '\'') {
-		quote := s[i]
-		end := strings.IndexByte(s[i+1:min(len(s), i+1+maxURLBytes)], quote)
-		if end < 0 {
+		// A title may hold a backslash-escaped quote (CommonMark 6.3, example
+		// 506); only an unescaped one closes it.
+		quote, limit := s[i], min(len(s), i+1+maxURLBytes)
+		j := i + 1
+		for j < limit && s[j] != quote {
+			if s[j] == '\\' && j+1 < limit && isPunct(s[j+1]) {
+				j++
+			}
+			j++
+		}
+		if j >= limit {
 			return "", 0, false
 		}
-		i += end + 2
+		i = j + 1
 		for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
 			i++
 		}

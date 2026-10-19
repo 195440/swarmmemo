@@ -59,7 +59,10 @@ var LogPaths = map[string]string{
 func logQuery(r *http.Request, names ...string) (map[string]int64, error) {
 	q := r.URL.Query()
 	out := map[string]int64{}
-	for name := range q {
+	for name, values := range q {
+		if len(values) != 1 {
+			return nil, bad("Duplicate query parameter: " + name)
+		}
 		if name != "format" && !strings.Contains(" "+strings.Join(names, " ")+" ", " "+name+" ") {
 			return nil, bad("Unknown query parameter " + strconv.Quote(name) + "; expected " + strings.Join(names, ", ") + ".")
 		}
@@ -153,7 +156,10 @@ func (s *Server) transparencyRoute(w http.ResponseWriter, r *http.Request) bool 
 		jsonResponse(w, 200, proof)
 	case strings.HasPrefix(p, "/api/record/") && strings.HasSuffix(p, "/proofs"):
 		q := r.URL.Query()
-		for name := range q {
+		for name, values := range q {
+			if len(values) != 1 {
+				return fail(bad("Duplicate query parameter: " + name))
+			}
 			if name != "cursor" && name != "limit" {
 				return fail(bad("Unknown query parameter " + strconv.Quote(name) + "; expected cursor, limit."))
 			}
