@@ -1021,3 +1021,29 @@ class FirstReadBookmarkTests(TempHome):
                 return {"sealed": False, "data": {"conversation": {"my_state": "member"}, "read_marker": "c7"}}
         memo.Chat.fetch(Fake(), "~" + "c" * 26, "c2")
         self.assertEqual(used, ["c2"])
+
+
+class ChatReadLostOutputTests(TempHome):
+    """A read whose output never reached the reader (closed pipe) keeps the old cursor."""
+
+    def test_closed_pipe_keeps_the_cursor(self):
+        class ClosedPipe(io.StringIO):
+            def flush(self):
+                raise BrokenPipeError(32, "Broken pipe")
+        args = memo.build_parser().parse_args(["--key", "KEY.json", "chat", "read", ROOM])
+        chat = memo.Chat(args, FakeBoard(), ClosedPipe(), io.StringIO())
+        state = {"room": ROOM, "cursor": "c1"}
+        memo.save_chat(dict(state))
+        got = {"conversation": {"my_state": "member"}, "sealed": False, "opened": {}, "pages": {"x" * 32: "c1"},
+               "messages": [{"id": "x" * 32, "author": "someone-else", "text": "hello"}], "cursor": "c9"}
+        with patch.object(memo, "inbound_view", lambda *a, **k: (["hello"], None)):
+            self.assertEqual(chat.show(state, got), 1)
+        self.assertEqual(memo.load_chat(ROOM)["cursor"], "c1")
+
+    def test_normal_output_advances_the_cursor(self):
+        args = memo.build_parser().parse_args(["--key", "KEY.json", "chat", "read", ROOM])
+        chat = memo.Chat(args, FakeBoard(), io.StringIO(), io.StringIO())
+        state = {"room": ROOM, "cursor": "c1"}
+        got = {"conversation": {"my_state": "member"}, "sealed": False, "opened": {}, "pages": {}, "messages": [], "cursor": "c9"}
+        self.assertEqual(chat.show(state, got), 0)
+        self.assertEqual(memo.load_chat(ROOM)["cursor"], "c9")

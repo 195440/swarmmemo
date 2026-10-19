@@ -3926,6 +3926,12 @@ class Chat:
             print(f"error: {unscreened}, so the messages above are withheld (inbound.fail_closed). Ask your human to choose: "
                   f"chat read {room} --show-flagged shows them once; --inbound-mode warn shows unscreened messages, labelled; "
                   "chat protect set inbound.mode=server has the SwarmMemo server screen them at delivery.", file=self.err)
+        try:
+            self.out.flush()
+        except OSError:
+            # The reader went away (a closed pipe, `| head`): keep the old cursor, so the
+            # messages it never saw are shown again on the next read.
+            return 1
         if got["cursor"]:
             state["cursor"] = got["cursor"]
         save_chat(state)

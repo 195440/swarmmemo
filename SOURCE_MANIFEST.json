@@ -220,8 +220,8 @@
     {
       "mode": "0644",
       "path": "clients/python/swarmmemo.py",
-      "sha256": "0117bf3d4653ab4439c85abc425d70d28d9e17e266262bbedb86752747a8b72a",
-      "size": 336770
+      "sha256": "4650e4bb993c8ae510922690c90d622c9f013d73a78a654e65aac5623bdc83ff",
+      "size": 337017
     },
     {
       "mode": "0644",
@@ -268,8 +268,8 @@
     {
       "mode": "0644",
       "path": "clients/python/test_chat.py",
-      "sha256": "f44c2880df882752f5c116c10a83adc7ae4e2ef2b91022d17fa15796ddcf5f73",
-      "size": 61915
+      "sha256": "79978bbb7d004b02098c36a9be8ed750470e1662672313b42369c34fa877cfb2",
+      "size": 63404
     },
     {
       "mode": "0644",
@@ -844,8 +844,8 @@
     {
       "mode": "0644",
       "path": "docs/MESSAGES.md",
-      "sha256": "1de720c6ca03946f28f0c2cdc06f7060cf8b6d780705e78656481b85848191ef",
-      "size": 22082
+      "sha256": "90ce08fc55d5e71429402558a447569d2a993e0a11b28c83c53d91c5efb9229b",
+      "size": 22253
     },
     {
       "mode": "0644",
@@ -1126,8 +1126,8 @@
     {
       "mode": "0644",
       "path": "integrations/agno/agno_swarmmemo/_swarmmemo.py",
-      "sha256": "0117bf3d4653ab4439c85abc425d70d28d9e17e266262bbedb86752747a8b72a",
-      "size": 336770
+      "sha256": "4650e4bb993c8ae510922690c90d622c9f013d73a78a654e65aac5623bdc83ff",
+      "size": 337017
     },
     {
       "mode": "0644",
@@ -1186,8 +1186,8 @@
     {
       "mode": "0644",
       "path": "integrations/crewai/crewai_swarmmemo/_swarmmemo.py",
-      "sha256": "0117bf3d4653ab4439c85abc425d70d28d9e17e266262bbedb86752747a8b72a",
-      "size": 336770
+      "sha256": "4650e4bb993c8ae510922690c90d622c9f013d73a78a654e65aac5623bdc83ff",
+      "size": 337017
     },
     {
       "mode": "0644",
@@ -1246,8 +1246,8 @@
     {
       "mode": "0644",
       "path": "integrations/langchain/langchain_swarmmemo/_swarmmemo.py",
-      "sha256": "0117bf3d4653ab4439c85abc425d70d28d9e17e266262bbedb86752747a8b72a",
-      "size": 336770
+      "sha256": "4650e4bb993c8ae510922690c90d622c9f013d73a78a654e65aac5623bdc83ff",
+      "size": 337017
     },
     {
       "mode": "0644",
@@ -9676,8 +9676,8 @@
     {
       "mode": "0644",
       "path": "plugins/swarmmemo/skills/talk-privately/scripts/swarmmemo.py",
-      "sha256": "0117bf3d4653ab4439c85abc425d70d28d9e17e266262bbedb86752747a8b72a",
-      "size": 336770
+      "sha256": "4650e4bb993c8ae510922690c90d622c9f013d73a78a654e65aac5623bdc83ff",
+      "size": 337017
     },
     {
       "mode": "0644",
