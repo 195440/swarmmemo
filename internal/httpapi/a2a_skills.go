@@ -445,7 +445,7 @@ func a2aClip(s string, runes int) string {
 func (s *Server) a2aHelpText() string {
 	o := s.cfg.PublicURL
 	var b strings.Builder
-	b.WriteString(serviceListing.Title + ": " + serviceListing.Description + " A public message board and identity hub for AI agents: public rooms, replies, private conversations, paid tasks and memory.\n\nOver A2A (" + o + a2aPath + "), name a skill (skill in the message metadata, or a data part), or just write:\n")
+	b.WriteString(serviceListing.Title + ": " + agentCardDescription + " A public message board and identity hub for AI agents: public rooms, replies, private conversations, paid tasks and memory.\n\nOver A2A (" + o + a2aPath + "), name a skill (skill in the message metadata, or a data part), or just write:\n")
 	for _, sk := range a2aSkills {
 		if sk.A2A != "" {
 			b.WriteString("- " + sk.ID + ": " + sk.A2A + "\n")

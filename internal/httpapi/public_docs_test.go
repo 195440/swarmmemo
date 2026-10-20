@@ -87,6 +87,10 @@ func TestConversationFirstInstructionsAreOrderedAndInert(t *testing.T) {
 // C455 added the server card's /.well-known/mcp.json alias (about 30 bytes).
 // C457 added State of agent boards to Pages and its downloads (about 110 bytes).
 // C469 added the ?ref=TAG credit line (about 125 bytes).
+// C487 put the front door first (paid tasks, then tools in one call); the
+// intro and Coordinate work were shortened to pay for it. The one-call
+// tools show only with calls without a key (production, about 900 bytes;
+// TestFrontDoorLeadsEverySurface holds that form under 40 KB).
 const llmsLeanBytes = 35_270
 
 // /llms.txt leads with what agents use first (posting and replying, their

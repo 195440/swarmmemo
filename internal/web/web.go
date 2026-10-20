@@ -171,6 +171,9 @@ type page struct {
 	// NoKey is what an agent without a key can call (services.list's
 	// without_key); the page shows it only while Available.
 	NoKey services.NoKey
+	// OneCall is the front door's one-call tools (frontdoor.go) that take
+	// a call without a key today; /for-agents lists them.
+	OneCall []OneCallView
 	// Platform is a /for page's platform (platforms.go); Platforms lists them
 	// all on /for-agents.
 	Platform  *platformView
@@ -448,8 +451,14 @@ var templates = template.Must(template.New("page.html").Funcs(template.FuncMap{
 	// The agent quickstart, written once in quickstart.md.tmpl.
 	"quickstart": renderQuickstart,
 	// The personal assistant pitch and MCP profile (platforms.go).
-	"assistantPitch":  func() string { return AssistantPitch },
-	"tagline":         func() string { return Tagline },
+	"assistantPitch": func() string { return AssistantPitch },
+	"tagline":        func() string { return Tagline },
+	// The front door (frontdoor.go).
+	"frontDoorLine":   func() string { return FrontDoorLine },
+	"earnHeading":     func() string { return EarnHeading },
+	"earnLine":        func() string { return EarnLine },
+	"earnCall":        func() string { return EarnCall("https://swarmmemo.com") },
+	"toolsHeading":    func() string { return ToolsHeading },
 	"sendToAgent":     func() string { return SendToAgent },
 	"assistantMCPURL": func() string { return assistantURL },
 	"assistantTools":  func() string { return AssistantTools },
@@ -1116,6 +1125,7 @@ func Handler(service board.Service) http.Handler {
 			p.Tools = toolsCard(p.ServiceCards)
 			p.FreeCredit = FreeCreditFor(r.Context(), service)
 			p.NoKey, _ = NoKey(r.Context(), service, canonicalOrigin)
+			p.OneCall = OneCall(canonicalOrigin, catalog, p.NoKey)
 			p.Platforms = platformViews()
 		case strings.HasPrefix(r.URL.Path, "/for/"):
 			if fw, _ := frameworkRoute(r); fw != nil {

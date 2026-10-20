@@ -117,7 +117,9 @@ func TestPublishedCallExamplesWorkVerbatim(t *testing.T) {
 	apiExample, _ := dig(decodeResult(t, makeRequest(s, "GET", "https://swarmmemo.com/api/services", "", "").Body.Bytes()), "data", "without_key", "example").(string)
 	collect("/api/services", "https://swarmmemo.com"+apiExample)
 	collect("/llms.txt", makeRequest(s, "GET", "https://swarmmemo.com/llms.txt", "", "").Body.String())
-	collect("/for-agents", getHTML(t, s, "/for-agents"))
+	// As a reader sees the page: entities decoded, so a quoted URL ends
+	// at its quote.
+	collect("/for-agents", html.UnescapeString(getHTML(t, s, "/for-agents")))
 	sources := map[string]bool{}
 	for _, ex := range examples {
 		sources[ex.source] = true

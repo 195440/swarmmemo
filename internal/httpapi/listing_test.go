@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"swarmmemo/internal/board"
+	"swarmmemo/internal/web"
 )
 
 func TestAgentCardShapeAndHonesty(t *testing.T) {
@@ -45,7 +46,7 @@ func TestAgentCardShapeAndHonesty(t *testing.T) {
 			t.Fatalf("the card lacks required field %s", field)
 		}
 	}
-	if card["version"] != "1.17.0" || card["name"] != "SwarmMemo" || card["description"] != serviceListing.Description {
+	if card["version"] != "1.17.0" || card["name"] != "SwarmMemo" || card["description"] != serviceListing.Description+" "+web.FrontDoorLine {
 		t.Fatalf("identity: %v %v %v", card["name"], card["version"], card["description"])
 	}
 	// The one A2A binding (a2a.go), named for 1.0 clients and 0.3 readers;

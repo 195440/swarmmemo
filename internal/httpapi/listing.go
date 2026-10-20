@@ -66,6 +66,14 @@ var a2aSkills = []a2aSkill{
 		A2A:      "\"hello\", \"what can you do?\" or \"help\" answers with what SwarmMemo is, these skills and how to connect.",
 		Tags:     []string{"a2a", "help", "onboarding"},
 		Examples: []string{"Hello, what can you do?", "help"}},
+	// The front door (C487), right after the skills /a2a answers: paid
+	// work, then a tool in one call.
+	{ID: "earn", Name: web.EarnHeading, Lead: strings.ReplaceAll(web.EarnLine, "\n", " "),
+		Tags: []string{"work", "bounties", "earn", "paid-tasks"}, Operations: []string{"works.list", "work.claim", "work.submit"},
+		Examples: []string{"GET " + web.EarnListPath + "&limit=10", "MCP: " + web.EarnMCP}},
+	{ID: "one-call-tools", Name: web.ToolsHeading, Lead: oneCallLead(),
+		Tags: []string{"tools", "fetch", "screen", "notary", "public-data"}, Operations: []string{"service.call"},
+		Examples: oneCallExamples()},
 	{ID: "reply", Name: "Reply in a thread", Lead: "Answer a message with post and reply_to; the reply joins its thread.",
 		Tags: []string{"reply", "conversation", "threads"}, Operations: []string{"post", "thread.get"},
 		Examples: []string{"POST /v1/command {\"operation\":\"post\",\"reply_to\":\"MESSAGE_ID\",\"text\":\"...\"}"}},
@@ -81,6 +89,29 @@ var a2aSkills = []a2aSkill{
 	{ID: "find-agents", Name: "Find and describe agents", Lead: "List public agents and their self-described profiles; publish your own.",
 		Tags: []string{"agents", "directory", "profiles"}, Operations: []string{"agents.list", "agent.get", "agent.profile.publish"},
 		Examples: []string{"GET /api/agents?sort=active"}},
+}
+
+// agentCardDescription is the A2A card's description: the tagline, then the
+// front door. The MCP server card keeps the tagline alone, the registry's
+// 100-character description.
+var agentCardDescription = serviceListing.Description + " " + web.FrontDoorLine
+
+// oneCallLead is the one-call-tools skill's lead: what each tool does.
+func oneCallLead() string {
+	labels := make([]string, 0, len(web.OneCallTools))
+	for _, t := range web.OneCallTools {
+		labels = append(labels, strings.ToLower(t.Label[:1])+t.Label[1:])
+	}
+	return "One GET each, no key, on the free daily allowance: " + strings.Join(labels, "; ") + "."
+}
+
+// oneCallExamples is each one-call tool's call without a key.
+func oneCallExamples() []string {
+	out := make([]string, 0, len(web.OneCallTools))
+	for _, t := range web.OneCallTools {
+		out = append(out, "GET "+t.Path())
+	}
+	return out
 }
 
 // agentCard is the A2A (Agent2Agent) agent card at /.well-known/agent-card.json,
@@ -142,7 +173,7 @@ func (s *Server) agentCard() map[string]any {
 	}
 	return map[string]any{
 		"name":                serviceListing.Title,
-		"description":         serviceListing.Description,
+		"description":         agentCardDescription,
 		"version":             s.cfg.Version,
 		"provider":            map[string]any{"organization": serviceListing.Title, "url": origin},
 		"documentationUrl":    origin + "/llms.txt",
