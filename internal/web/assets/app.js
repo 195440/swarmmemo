@@ -1897,6 +1897,16 @@
     const line = (text, cls = 'small') => node('p', cls, text);
     let mode = '';
     const parts = [];
+    // C481: on a standing task the task stays open for other seats; this key's
+    // own newest result (your_results, its own work item) says where it stands.
+    const yours = (w.your_results || [])[0];
+    if (yours && /^[a-f0-9]{32}$/.test(yours.work_id || '')) {
+      const where = yours.verdict === 'accepted' ? 'accepted' + (yours.tier ? ' (tier ' + yours.tier + ')' : '') : yours.verdict === 'rejected' ? 'rejected'
+        : yours.state === 'submitted' ? 'awaiting the requester\'s verdict' : yours.state === 'expired' ? 'undecided by its deadline; its seat returned' : yours.state;
+      const mineLine = line('Your result is in: ' + where + '. ', 'small work-act-yours');
+      mineLine.append(link('', 'Your result ' + yours.work_id.slice(0, 12) + ' →', '/work/' + yours.work_id));
+      parts.push(mineLine);
+    }
     if (w.state === 'open' && standing && !w.claimable) {
       parts.push(line(standing.full ? 'Full: all ' + standing.results_max + ' results taken; it takes no more claims.' :
         'No seat open now' + (standing.blocked_note ? ' (' + standing.blocked_note + ')' : '') + (standing.next_open_at ? '; the next seat opens ' + exactTime(standing.next_open_at) : '') + '.', 'small work-act-seats'));
@@ -1911,8 +1921,8 @@
       parts.push(line('Claimed by you until ' + exactTime(w.claim_expires_at) + '. Submit your result before then.'));
     } else if (w.state === 'submitted' && mine) {
       parts.push(line('Your result is submitted and waits for a verdict.'));
-    } else { el.hidden = true; return; }
-    $('claim-heading').textContent = mode === 'submit' ? 'Submit your result' : 'Claim';
+    } else if (!parts.length) { el.hidden = true; return; }
+    $('claim-heading').textContent = mode === 'submit' ? 'Submit your result' : !mode && yours ? 'Your result' : 'Claim';
     if (mode) {
       // This key's own replies to the task: the result is one of them, or a new one.
       let replies = [];
@@ -1965,8 +1975,9 @@
             : {operation: 'work.claim', message_id: id, data, ...(target ? {target} : {ttl})};
           const ack = (await request({...command, request_id: uuid()}, true, false, key)).data?.ack || {};
           const done = $('work-act-status');
-          done.textContent = mode === 'standing' ? 'Claimed: your result opened its own task, ' : ack.state === 'claimed' ? 'Claimed until ' + exactTime(ack.claim_expires_at) + '.' : 'Submitted: your result waits for a verdict.';
-          if (mode === 'standing' && /^[a-f0-9]{32}$/.test(ack.work_id || '')) done.append(link('', ack.work_id.slice(0, 12) + ' →', '/work/' + ack.work_id));
+          const resultWork = ack.result_work_id || ack.work_id || '';
+          done.textContent = mode === 'standing' ? 'Your result is in: awaiting the requester\'s verdict' + (ack.seat ? ', seat ' + ack.seat + ' of ' + ack.seats : '') + '. This task stays open for other seats; your result is its own task, ' : ack.state === 'claimed' ? 'Claimed until ' + exactTime(ack.claim_expires_at) + '.' : 'Submitted: your result waits for a verdict.';
+          if (mode === 'standing' && /^[a-f0-9]{32}$/.test(resultWork)) done.append(link('', resultWork.slice(0, 12) + ' →', '/work/' + resultWork));
           done.classList.remove('error'); done.classList.add('success');
           drawWorkAct();
         });

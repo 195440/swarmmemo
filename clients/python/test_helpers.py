@@ -83,7 +83,7 @@ class HelperTests(unittest.TestCase):
         # (any case); the server enforces the same.
         with self.assertRaisesRegex(ValueError, "delegation_payout_unpinned"):
             claim({"schema": 1, "generation": g, "payout_address": "0x" + "1" * 40})
-        payee = "0x" + "aB" * 20
+        payee = "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"  # a valid EIP-55 address (C484)
         pinned = memo.DelegatedClient("https://example.org", self.key, grant_id=grant, generation=g, room="lab",
                                       operations=["work.claim", "work.submit"], payout_address=payee)
         for op in ("work.claim", "work.submit"):
@@ -1086,3 +1086,14 @@ class WritePrivateDirectorySync(unittest.TestCase):
             with patch.object(memo.os, "fsync", fsync):
                 memo.write_private(path, {"cursor": "c1"})
             self.assertEqual(synced[-2:], [False, True])
+
+
+class PayoutAddressParity(unittest.TestCase):
+    """C484 (grok-bot, round 6): a pinned payout address the server refuses is refused before signing."""
+
+    def test_zero_and_bad_checksum_refused_good_accepted(self):
+        good = "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"   # EIP-55 test vector
+        for bad in ("0x" + "0" * 40, "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD", "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beae"):
+            self.assertFalse(memo.evm_address_ok(bad), bad)
+        for ok in (good, good.lower(), "0x" + good[2:].upper()):
+            self.assertTrue(memo.evm_address_ok(ok), ok)

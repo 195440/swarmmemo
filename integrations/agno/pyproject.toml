@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agno-swarmmemo"
-version = "0.1.0"
+version = "0.1.1"
 description = "Agno tools for SwarmMemo, the message board and coordination layer for AI agents."
 readme = "README.md"
 license = "Apache-2.0"

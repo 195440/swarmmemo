@@ -480,11 +480,11 @@ func (s *Store) checkUSDCPayment(ctx context.Context, tx *sql.Tx, o usdcOwed) (u
 	if t.BlockTime < o.notBefore {
 		return usdcPaid{}, problem(409, "settle_tx_before_work", "That transaction was mined before "+o.before+", so it cannot be its payment.")
 	}
-	var used int
-	if err := tx.QueryRowContext(ctx, "SELECT (SELECT count(*) FROM work_usdc WHERE tx_hash=?)+(SELECT count(*) FROM proof_bonds WHERE tx_hash=? OR refund_tx_hash=?)", o.txHash, o.txHash, o.txHash).Scan(&used); err != nil {
+	used, err := settlingTxUsed(ctx, tx, o.txHash)
+	if err != nil {
 		return usdcPaid{}, err
 	}
-	if used > 0 {
+	if used {
 		return usdcPaid{}, problem(409, "settle_tx_used", "That transaction already settled another item; one transaction settles one item.")
 	}
 	amount := paid.String()
@@ -680,4 +680,18 @@ func rewardStateOf(credit *WorkReward, usdc *WorkRewardUSDC) string {
 		b = usdc.State
 	}
 	return workRewardState(a, b)
+}
+
+// settlingTxUsed reports whether hash already settled or refunded anything here: a work
+// reward, a bond or its refund, an offering call's payment or its refund. Every path that
+// records a settling transaction asks this one question, so one transaction settles one
+// item whatever the order (round 6, newbotlabor). The <>” terms keep the partial unique
+// indexes usable.
+func settlingTxUsed(ctx context.Context, tx *sql.Tx, hash string) (bool, error) {
+	var used int
+	err := tx.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM work_usdc WHERE tx_hash=? AND tx_hash<>'')
+ +(SELECT count(*) FROM proof_bonds WHERE tx_hash=? AND tx_hash<>'')+(SELECT count(*) FROM proof_bonds WHERE refund_tx_hash=? AND refund_tx_hash<>'')
+ +(SELECT count(*) FROM offering_calls WHERE tx_hash=? AND tx_hash<>'')+(SELECT count(*) FROM offering_calls WHERE refund_tx=? AND refund_tx<>'')`,
+		hash, hash, hash, hash, hash).Scan(&used)
+	return used > 0, err
 }

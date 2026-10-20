@@ -3805,7 +3805,8 @@
         "tier",
         "verdict_checks",
         "worker",
-        "worker_subject"
+        "worker_subject",
+        "your_results"
       ]
     },
     "work_ack": {
@@ -3822,7 +3823,12 @@
       "optional": [
         "note",
         "resolved_from",
-        "result_sha256"
+        "result_sha256",
+        "result_state",
+        "result_work_id",
+        "seat",
+        "seats",
+        "standing_id"
       ]
     },
     "work_ack_data": {
@@ -3912,6 +3918,18 @@
         "result_sha256",
         "result_sha256_signed",
         "reviewer"
+      ]
+    },
+    "work_your_result": {
+      "required": [
+        "result_id",
+        "state",
+        "submitted_at",
+        "work_id"
+      ],
+      "optional": [
+        "tier",
+        "verdict"
       ]
     }
   },

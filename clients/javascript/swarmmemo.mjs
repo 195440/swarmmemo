@@ -331,13 +331,14 @@ export const CONTRACT = Object.freeze({
   "screen": {"required":["state","withheld"],"optional":["categories","classifier_version","reason"]},
   "verdict_check": {"required":["property","state"],"optional":["evidence","failing_step","note","passes","runs","subject_sha256","tool"]},
   "votes": {"required":["down","score","up"],"optional":["weight"]},
-  "work": {"required":["capabilities","claim_expires_at","claimable","created_at","deadline","eligibility","fence","generation","id","requester","requester_author","result_available","room","service_generation","service_id","simulated","state","stored_state","title","updated_at"],"optional":["attempt_grant_id","eligible","eligible_agent","eligible_preview","eligible_reason","reject_fee","request","requester_may_decide_at","requester_record","resolved_from","result_changed_since_submit","result_id","result_sha256","results","reviewer","reviewer_fee","reward","reward_note","reward_receipt","reward_state","reward_usdc","standing","standing_id","tier","verdict_checks","worker","worker_subject"]},
-  "work_ack": {"required":["accepted_at","claim_expires_at","deadline","fence","generation","service_id","state","work_id"],"optional":["note","resolved_from","result_sha256"]},
+  "work": {"required":["capabilities","claim_expires_at","claimable","created_at","deadline","eligibility","fence","generation","id","requester","requester_author","result_available","room","service_generation","service_id","simulated","state","stored_state","title","updated_at"],"optional":["attempt_grant_id","eligible","eligible_agent","eligible_preview","eligible_reason","reject_fee","request","requester_may_decide_at","requester_record","resolved_from","result_changed_since_submit","result_id","result_sha256","results","reviewer","reviewer_fee","reward","reward_note","reward_receipt","reward_state","reward_usdc","standing","standing_id","tier","verdict_checks","worker","worker_subject","your_results"]},
+  "work_ack": {"required":["accepted_at","claim_expires_at","deadline","fence","generation","service_id","state","work_id"],"optional":["note","resolved_from","result_sha256","result_state","result_work_id","seat","seats","standing_id"]},
   "work_ack_data": {"required":["ack"],"optional":["review"],"intent":{"review":"review"}},
   "work_result": {"required":["accepted_at","result_id","work_id","worker"],"optional":["rating","review_id","tier"]},
   "work_standing": {"required":["day_max","open","opened_today","owed","paid","per_agent_day","per_result","results","results_until","seats","submitted","tiers","verdict_ttl"],"optional":["blocked_by","blocked_note","full","next_open_at","next_round","results_max","successor","usdc_day_max","usdc_owed","usdc_owed_max","usdc_per_agent_day"]},
   "work_standing_tier": {"required":["credits","name"],"optional":["usdc"]},
-  "work_transition": {"required":["accepted_at","author","fence","generation","operation","public_key","sequence","signature","signed_payload","state"],"optional":["checks","delegation_id","fallback","note","previous_reviewer","reject_fee","resolved_from","result_sha256","result_sha256_signed","reviewer"]}
+  "work_transition": {"required":["accepted_at","author","fence","generation","operation","public_key","sequence","signature","signed_payload","state"],"optional":["checks","delegation_id","fallback","note","previous_reviewer","reject_fee","resolved_from","result_sha256","result_sha256_signed","reviewer"]},
+  "work_your_result": {"required":["result_id","state","submitted_at","work_id"],"optional":["tier","verdict"]}
  },
  "work_create_data": ["capabilities","day_max","eligibility","generation","per_agent_day","reject_fee","results_max","reviewer","reviewer_fee","reward","reward_note","schema","seats","tiers","title","usdc_day_max","usdc_per_agent_day"],
  "work_rating": {
@@ -1536,6 +1537,15 @@ function walletScalar(key) {
 }
 // walletAddress is the EVM address (EIP-55 mixed case) of a 32-byte private key.
 // {plain: true} here and in personalSign skips OpenSSL (tests compare the paths).
+// evmAddressOK: a payout address the board accepts: 0x and 40 hex digits, not zero, and
+// its EIP-55 checksum when mixed case (as the server's grantAddress).
+export function evmAddressOK(address) {
+  if (typeof address !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(address) || /^0x0{40}$/.test(address)) return false;
+  const body = address.slice(2), lower = body.toLowerCase();
+  if (body === lower || body === body.toUpperCase()) return true;
+  const nibbles = keccak256(Buffer.from(lower)).toString('hex');
+  return body === [...lower].map((c, i) => parseInt(nibbles[i], 16) >= 8 ? c.toUpperCase() : c).join('');
+}
 export function walletAddress(key, {plain = false} = {}) {
   const [x, y] = baseMul(walletScalar(key), plain), lower = keccak256(Buffer.concat([word(x), word(y)])).subarray(12).toString('hex');
   const nibbles = keccak256(Buffer.from(lower)).toString('hex');
@@ -2203,7 +2213,7 @@ export class Client {
 export class DelegatedClient {
   #client; #context; #room; #operations; #payout;
   constructor({key, grantId, generation, room, operations, payoutAddress, ...options} = {}) {
-    if (payoutAddress !== undefined && (typeof payoutAddress !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(payoutAddress))) fail('invalid_payout_address', 'payoutAddress is the grant’s pinned payout address: 0x and 40 hex digits.');
+    if (payoutAddress !== undefined && (typeof payoutAddress !== 'string' || !evmAddressOK(payoutAddress))) fail('invalid_payout_address', 'payoutAddress is the grant’s pinned payout address: 0x and 40 hex digits, not zero, EIP-55 when mixed case.');
     this.#payout = payoutAddress?.toLowerCase();
     const imported = importKey(key);
     this.#context = delegationContext({schema: 1, grant_id: grantId, generation});

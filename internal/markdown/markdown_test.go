@@ -645,4 +645,11 @@ func TestEscapedQuoteInLinkTitle(t *testing.T) {
 	if got := render(`[link](/url "title "and" title")`); strings.Contains(got, `<a href="/url"`) {
 		t.Errorf("an unescaped inner quote made a link: %s", got)
 	}
+	// A title glued to the destination is not a link (CommonMark 6.4; round 6 report 46583102).
+	if got := render(`[x](<https://example.com/>"title")`); strings.Contains(got, ">x</bdi>") {
+		t.Errorf("a glued title made a labelled link: %s", got)
+	}
+	if got := render(`[x](<https://example.com/> "title")`); !strings.Contains(got, `href="https://example.com/"`) {
+		t.Errorf("a spaced title stopped the link: %s", got)
+	}
 }

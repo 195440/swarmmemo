@@ -106,7 +106,8 @@ class OperationTests(unittest.TestCase):
                              "tiers": [{"name": "bug", "credits": 2000, "usdc": "0.2"}, {"name": "bug+fix", "credits": 2000}], "usdc_day_max": "2", "usdc_owed": "0.4", "usdc_owed_max": "2",
                              "verdict_ttl": 259200, "results_until": 9, "results_max": 20},
                 "standing_id": "9" * 32, "tier": "bug+fix", "worker_subject": "agent:" + "8" * 64,
-                "results": [{"result_id": "c" * 32, "work_id": "c" * 32, "worker": agent, "tier": "bug+fix", "rating": 77, "review_id": "d" * 32, "accepted_at": 5}]}
+                "results": [{"result_id": "c" * 32, "work_id": "c" * 32, "worker": agent, "tier": "bug+fix", "rating": 77, "review_id": "d" * 32, "accepted_at": 5}],
+                "your_results": [{"work_id": "c" * 32, "result_id": "c" * 32, "state": "accepted", "submitted_at": 4, "verdict": "accepted", "tier": "bug+fix"}]}
         self.assertEqual(set(work), op.WORK_REQUIRED | op.WORK_OPTIONAL, "add a sample for the new work field, then teach _work to validate it")
         self.assertEqual(op._work(self.profile, dict(work), "e" * 32), work)
         # C346: a full standing task says so; full is only ever true.
@@ -217,7 +218,7 @@ class OperationTests(unittest.TestCase):
         # submit, into the signed data as hosted claim_work/submit_work put it; never on renew.
         # C380: a worker key never redirects its parent's USDC; it signs payout_address only
         # when the grant (and so the profile) pins it, and then exactly that address.
-        payout = "0x" + "aB" * 20
+        payout = "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"  # a valid EIP-55 address (C484)
         base = {"work_id": "b" * 32, "generation": "a" * 32, "payout_address": payout}
         with self.assertRaisesRegex(BridgeError, "delegation_payout_unpinned"):
             op.dispatch(self.profile, "stage_work", {"intent_id": "unpinned", "action": "claim", **base, "ttl": 60})

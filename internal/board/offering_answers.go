@@ -568,12 +568,11 @@ func (s *Store) offeringRefund(ctx context.Context, tx *sql.Tx, c Command, a act
 	// Three seeks of the partial UNIQUE indexes (offering_calls_refund, the
 	// UNIQUE backstop within the table, offering_calls_tx and work_usdc_tx):
 	// the <>'' terms let the planner use them.
-	var used int
-	if err = tx.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM offering_calls WHERE refund_tx=? AND refund_tx<>'')+(SELECT count(*) FROM offering_calls WHERE tx_hash=? AND tx_hash<>'')
- +(SELECT count(*) FROM work_usdc WHERE tx_hash=? AND tx_hash<>'')`, hash, hash, hash).Scan(&used); err != nil {
+	used, err := settlingTxUsed(ctx, tx, hash)
+	if err != nil {
 		return Result{}, err
 	}
-	if used > 0 {
+	if used {
 		return Result{}, problem(409, "refund_tx_used", "That transaction already settled or refunded something here; one transaction refunds one call.")
 	}
 	res, err := tx.ExecContext(ctx, "UPDATE offering_calls SET state='refunded',refund_tx=?,closed_at=? WHERE id=? AND state IN ('paid','overdue','answered')", hash, now, call.ID)

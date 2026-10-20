@@ -2,7 +2,8 @@
 // C476: /work/ID's Claim panel. A signed-in browser key claims a task and submits
 // its result with the same signed work.claim and work.submit an agent sends; a
 // keyless reader gets no claim button; a standing task with no seat open says when
-// the next one opens and offers no claim; a refusal shows the board's own message.
+// the next one opens and offers no claim; a refusal shows the board's own message;
+// on a standing task the key's own result shows where it stands (C481).
 const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
@@ -94,12 +95,12 @@ const stamp = s => new Date(s * 1000).toISOString().slice(0, 16).replace('T', ' 
     // standing task escrows a credit pool, which a loopback fixture has none of,
     // so the board's signed work.get answer is given a standing task's seats.)
     const next = Math.floor(Date.now() / 1000) + 7200;
-    const seats = (open, extra = {}) => async route => {
+    const seats = (open, extra = {}, work = {}) => async route => {
       const command = route.request().postDataJSON();
       if (command.operation !== 'work.get' || command.message_id !== standing) return route.continue();
       const response = await route.fetch(), body = await response.json();
       Object.assign(body.data.work, {claimable: open > 0, standing: {seats: 2, open, submitted: 2 - open, owed: 0, paid: 0, per_agent_day: 1, per_result: 100, results: 2 - open, day_max: 2, opened_today: 2 - open,
-        tiers: [{name: 'bug', credits: 100, usdc: '0.20'}], verdict_ttl: 259200, results_until: next + 86400, ...extra}});
+        tiers: [{name: 'bug', credits: 100, usdc: '0.20'}], verdict_ttl: 259200, results_until: next + 86400, ...extra}, ...work});
       await route.fulfill({response, json: body});
     };
     await page.route('**/v1/command', seats(0, {next_open_at: next, blocked_by: 'seats', blocked_note: 'seats full, 2 submitted awaiting verdict'}));
@@ -122,8 +123,28 @@ const stamp = s => new Date(s * 1000).toISOString().slice(0, 16).replace('T', ' 
     assert.equal(signed.slice(before).filter(c => c.operation !== 'work.get' && c.operation !== 'agent.posts').length, 0, 'a bad address signs nothing');
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), '320px standing panel overflow');
     await page.unroute('**/v1/command');
+    // C481: the task stays open for other seats; this key's own result (its
+    // your_results, each its own work item) says where it stands, with a link.
+    const mine = 'e'.repeat(32), submittedAt = Math.floor(Date.now() / 1000) - 60;
+    await page.route('**/v1/command', seats(1, {}, {your_results: [{work_id: mine, result_id: mine, state: 'submitted', submitted_at: submittedAt}]}));
+    await page.goto(origin + '/work/' + standing);
+    const yours = page.locator('.work-act-yours');
+    await yours.waitFor();
+    assert.equal(await yours.textContent(), "Your result is in: awaiting the requester's verdict. Your result " + mine.slice(0, 12) + ' →');
+    assert.equal(await yours.locator('a').getAttribute('href'), '/work/' + mine);
+    await page.getByRole('button', {name: 'Claim with this result', exact: true}).waitFor();
+    await page.unroute('**/v1/command');
+    // Decided, and no seat open now: the verdict still shows, under "Your result".
+    await page.route('**/v1/command', seats(0, {blocked_by: 'own_result_waiting'}, {your_results: [{work_id: mine, result_id: mine, state: 'accepted', submitted_at: submittedAt, verdict: 'accepted', tier: 'bug'}]}));
+    await page.goto(origin + '/work/' + standing);
+    await yours.waitFor();
+    assert.equal(await yours.textContent(), 'Your result is in: accepted (tier bug). Your result ' + mine.slice(0, 12) + ' →');
+    assert.equal(await page.locator('#claim-heading').textContent(), 'Your result');
+    assert.equal(await page.locator('#claim button').count(), 0);
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), '320px your-result overflow');
+    await page.unroute('**/v1/command');
     assert.deepEqual(errors, []);
     await ctx.close();
-    console.log('PASS: Claim panel: keyless has no button, signed claim then submit, refusal in the board\'s words, standing seats and next seat, payout check, 320px.');
+    console.log('PASS: Claim panel: keyless has no button, signed claim then submit, refusal in the board\'s words, standing seats and next seat, payout check, your result on a standing task, 320px.');
   } finally {await browser.close();}
 })().catch(error => {console.error(error); process.exitCode = 1;});

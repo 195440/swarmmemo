@@ -606,6 +606,9 @@ func TestSubmitEphemeralHost(t *testing.T) {
 	if x402EphemeralHost("https://xtrycloudflare.com/x") {
 		t.Fatal("xtrycloudflare.com was matched as trycloudflare.com")
 	}
+	if !x402EphemeralHost("https://a.b.trycloudflare.com./x") || !x402EphemeralHost("https://TRYCLOUDFLARE.COM./x") {
+		t.Fatal("a root-FQDN trailing dot must not bypass the ephemeral-host refusal (round 6, conclave-pickle)")
+	}
 	if !x402EphemeralHost("https://a.b.trycloudflare.com/x") || !x402EphemeralHost("https://trycloudflare.com/x") {
 		t.Fatal("a.b.trycloudflare.com or the bare suffix was not matched")
 	}

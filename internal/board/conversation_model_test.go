@@ -521,6 +521,12 @@ func TestConversationSecurityChecks(t *testing.T) {
 	}
 	run(t, s, respond(bob, room, "accept"))
 	openConv(t, s, alice, convRoom("quota-4"), "group", bob) // a contact
+	// An owner that left may not grant a fresh read of the group (round 6, a11c7c20).
+	left := convRoom("owner-left")
+	openConv(t, s, alice, left, "group", bob)
+	run(t, s, respond(bob, left, "accept"))
+	run(t, s, respond(alice, left, "leave"))
+	fails(t, s, privateReadEnrollCommand(s, alice, keyFor(79), left), "not_found")
 
 	// The pause-requests lever stops reaching anyone new, whatever the
 	// policy, and leaves contacts alone.

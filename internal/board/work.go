@@ -145,6 +145,11 @@ type Work struct {
 	// and, on a standing task, a seat open (C384). Who may claim is
 	// eligibility; whether the reader may, eligible.
 	Claimable bool `json:"claimable"`
+	// YourResults is, on work.get of a standing task signed by an agent that
+	// sent results to it, that agent's own results, newest first, at most
+	// WorkYourResultsMax (C481): the standing task stays open for other
+	// seats, and each result is its own work item. Never anyone else's.
+	YourResults []WorkYourResult `json:"your_results,omitempty"`
 }
 
 // WorkRequest is the text of a work item's request at its newest version,
@@ -198,6 +203,16 @@ type WorkAck struct {
 	// credit reward, it says how earned credits fund a paid task
 	// (workPaidNote); absent otherwise.
 	Note string `json:"note,omitempty"`
+	// StandingID, ResultWorkID, ResultState, Seat and Seats are on a
+	// work.claim that opened a result on a standing task (C481): the
+	// standing task, which stays open for other seats; the result's own work
+	// item (work_id too); its state, submitted: awaiting the requester's
+	// verdict; and the seat it holds, Seat of Seats.
+	StandingID   string `json:"standing_id,omitempty"`
+	ResultWorkID string `json:"result_work_id,omitempty"`
+	ResultState  string `json:"result_state,omitempty"`
+	Seat         int64  `json:"seat,omitempty"`
+	Seats        int64  `json:"seats,omitempty"`
 }
 
 type WorkTransition struct {
@@ -964,6 +979,15 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 			}
 		}
 		if !allowed {
+			if c.Operation == "work.submit" || c.Operation == "work.renew" {
+				// A standing task is never claimed or submitted itself: the
+				// claim with a result is the submission (C481).
+				if st, e := loadWorkStanding(ctx, tx, w.ID); e != nil {
+					return Result{}, e
+				} else if st != nil {
+					return Result{}, problem(409, "work_state_conflict", "This is a standing task: it is never claimed itself and stays open for other seats. Your result is submitted by work.claim with target, your reply's ID, which opens it as its own work item; work.get on this task lists yours under your_results.")
+				}
+			}
 			return Result{}, problem(409, "work_state_conflict", "This transition is not allowed in the current effective state.")
 		}
 		if standing, err = loadWorkStanding(ctx, tx, w.ID); err != nil {
@@ -1383,6 +1407,8 @@ func (s *Store) changeWork(ctx context.Context, tx *sql.Tx, c Command, a actor, 
 	}
 	if standingRoot != nil {
 		ack.Note = strings.TrimSpace(standingSeatNote(standing, seats, w) + " " + ack.Note)
+		ack.StandingID, ack.ResultWorkID, ack.ResultState = standingRoot.ID, w.ID, w.State
+		ack.Seat, ack.Seats = seats.waiting+1, standing.Seats
 	}
 	if c.Operation == "work.accept" || c.Operation == WorkSettle {
 		u, e := loadWorkUSDC(ctx, tx, w.ID)
@@ -1743,6 +1769,9 @@ func (s *Store) readWork(ctx context.Context, tx *sql.Tx, c Command, a actor, no
 		}
 		if err == nil {
 			p.Results, err = workAcceptedResults(ctx, tx, w.ID)
+		}
+		if err == nil && p.Standing != nil && a.signed && a.account != "" {
+			p.YourResults, err = workYourResults(ctx, tx, w.ID, a.account, generation, now)
 		}
 		if named != id {
 			p.ResolvedFrom = named

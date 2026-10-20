@@ -471,6 +471,17 @@ def _work(profile, work, expected=None):
                 or not isinstance(verdict["author"], str) or not re.fullmatch(HEX64, verdict["author"]) or not _valid_checks(verdict["checks"])):
             raise BridgeError("invalid_response")
     # results: each accepted result (Go WorkAcceptedResult), newest first.
+    # C481: a signed read of a standing task lists the caller's own results there.
+    if "your_results" in work:
+        mine, fields = work["your_results"], memo.struct_fields("work_your_result")
+        if not isinstance(mine, list) or not 1 <= len(mine) <= 20: raise BridgeError("invalid_response")
+        for item in mine:
+            if (not isinstance(item, dict) or set(item) - fields
+                    or any(not isinstance(item.get(name), str) or not re.fullmatch(HEX32, item[name]) for name in ("result_id", "work_id"))
+                    or not isinstance(item.get("state"), str) or type(item.get("submitted_at")) is not int
+                    or item.get("verdict", "accepted") not in ("accepted", "rejected")
+                    or not isinstance(item.get("tier", ""), str)):
+                raise BridgeError("invalid_response")
     if "results" in work:
         results = work["results"]
         fields = memo.struct_fields("work_result")

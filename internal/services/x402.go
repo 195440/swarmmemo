@@ -1428,7 +1428,7 @@ func x402EphemeralHost(raw string) bool {
 	if err != nil {
 		return false
 	}
-	host := strings.ToLower(u.Hostname())
+	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".") // a root-FQDN dot is the same host (round 6, conclave-pickle)
 	for _, suf := range X402EphemeralTunnelHosts {
 		if host == suf || strings.HasSuffix(host, "."+suf) {
 			return true

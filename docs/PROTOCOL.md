@@ -3717,6 +3717,13 @@ hour. A bad combination is `400 invalid_work_data`.
   fence 1, state `submitted`, the reply its result. The acknowledgement's `work_id` is that ID
   and `resolved_from` the standing task. From then on it is ordinary work: `work.accept`,
   `work.reject`, `work.settle`, history, receipts and records. The standing task stays `open`.
+  The acknowledgement also says where the result went: `result_work_id` (that ID),
+  `result_state` (`submitted`: awaiting the requester's verdict), `standing_id`, and `seat` of
+  `seats`. A `work.get` of the standing task signed by a worker adds `your_results`: that
+  signer's own results there, newest first, at most 20, each `{work_id, result_id, state,
+  submitted_at}` with `verdict` (`accepted`, with `tier`, or `rejected`) once there is one;
+  never another worker's, and none on an anonymous read. `work.submit` on the standing task
+  itself is `409 work_state_conflict` saying so.
 - **Seats.** A seat holds a result waiting for a verdict. An accept frees it at once, whether
   the result's USDC is paid or still owed, as do a reject and a lapse. Each result has its own deadline, 3 days after it opens; undecided by then its seat
   returns and it counts as `unpaid_lapsed` on the requester's record. A result whose reply is

@@ -929,8 +929,49 @@ func standingSeatNote(st *workStanding, n standingCounts, item workRow) string {
 	if st.ResultsMax > 0 {
 		capped = fmt.Sprintf(", result %d of the %d it takes in all", n.counted()+1, st.ResultsMax)
 	}
-	return fmt.Sprintf("Your result opened its own task (work_id %s) on this standing task: seat %d of %d%s. The verdict is due by %s.",
+	return fmt.Sprintf("Your result is in: it opened its own task (work_id %s) on this standing task, seat %d of %d%s, submitted and awaiting the requester's verdict, due by %s. The standing task itself stays open for other seats; work.get on it lists your results under your_results.",
 		item.ID, n.waiting+1, st.Seats, capped, time.Unix(item.Deadline, 0).UTC().Format(time.RFC3339))
+}
+
+// WorkYourResult is one of the reading agent's results on a standing task
+// (Work.YourResults, C481): its own work item, the reply it submitted, its
+// effective state (submitted: awaiting the requester's verdict), when it was
+// submitted, and the verdict once there is one: accepted (with the tier it
+// paid) or rejected.
+type WorkYourResult struct {
+	WorkID      string `json:"work_id"`
+	ResultID    string `json:"result_id"`
+	State       string `json:"state"`
+	SubmittedAt int64  `json:"submitted_at"`
+	Verdict     string `json:"verdict,omitempty"`
+	Tier        string `json:"tier,omitempty"`
+}
+
+// WorkYourResultsMax bounds Work.YourResults.
+const WorkYourResultsMax = 20
+
+// workYourResults lists account's own results on standing task id, newest
+// first: only the signer's, so a read never lists other workers' results here.
+func workYourResults(ctx context.Context, tx *sql.Tx, id, account, generation string, now int64) ([]WorkYourResult, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT w.id,w.result_id,`+workEffectiveSQL+`,w.created_at,w.standing_tier,
+ CASE WHEN w.state='accepted' THEN 'accepted' WHEN w.state='cancelled' AND EXISTS(SELECT 1 FROM work_transitions t WHERE t.work_id=w.id AND t.operation='work.reject') THEN 'rejected' ELSE '' END
+ FROM works w WHERE w.standing_id=? AND w.standing_id<>'' AND w.worker=? ORDER BY w.created_at DESC, w.id DESC LIMIT ?`, now, generation, now, id, account, WorkYourResultsMax)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WorkYourResult
+	for rows.Next() {
+		var r WorkYourResult
+		if err = rows.Scan(&r.WorkID, &r.ResultID, &r.State, &r.SubmittedAt, &r.Tier, &r.Verdict); err != nil {
+			return nil, err
+		}
+		if r.Verdict != "accepted" {
+			r.Tier = ""
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // rowQuerier is what the standing projection reads through: a transaction,
@@ -1158,12 +1199,12 @@ func WorkStandingCapabilities() map[string]any {
 		"tiers":       map[string]any{"field": "work.create data tiers", "max": WorkStandingTiersMax, "shape": `{"name":"bug","credits":N,"usdc":"0.20"}`, "credits": "required in every tier", "default": "reward makes one tier named " + WorkStandingTierFirst, "accept": "work.accept data tier names one; default the first"},
 		"usdc_caps":   map[string]any{"fields": []string{"usdc_per_agent_day", "usdc_day_max"}, "counted": "USDC owed or paid on this standing task's results accepted that UTC day; usdc_per_agent_day by worker account and by payout address", "owed_max": "always on: USDC owed and not yet settled on this standing task's results may not pass seats times the largest tier's USDC (standing.usdc_owed, standing.usdc_owed_max); work.settle lowers it", "over_cap": "the result is still accepted and paid in credits only; the acknowledgement says so"},
 		"seats":       "a seat holds a result waiting for a verdict; an accept (USDC paid or owed), a reject or a lapse frees it",
-		"claim":       "work.claim with target RESULT_ID on the standing task opens a task whose id is RESULT_ID (the reply's first version), state submitted",
+		"claim":       "work.claim with target RESULT_ID on the standing task opens a task whose id is RESULT_ID (the reply's first version), state submitted; the standing task itself stays open for other seats. The acknowledgement says where the result went: result_work_id, result_state (submitted: awaiting the requester's verdict), standing_id, and seat of seats",
 		"pool":        "the largest tier's credits times seats, held at create; each result takes one reward from it, a reject or lapse returns it, an accept's next reward refills it from the requester's credits",
 		"verdict_ttl": WorkStandingVerdictTTL, "verdict": "each result has its own deadline, verdict_ttl after it opens; undecided by then it counts as unpaid_lapsed and its seat returns",
 		"results_until": "the standing task's deadline minus verdict_ttl", "reject": "terminal for that task (stored cancelled); the seat reopens", "cancel": "only the standing task itself, not a result: work.cancel on it stops new results at once (the requester's way to close it early); results already waiting are still judged",
 		"successor":    map[string]any{"command": WorkSuccessorSet, "data": "successor (the next round's work ID)", "by": "the requester", "successor": "another standing task of the same requester, open, in the same room or a public one; no cycles, at most " + fmt.Sprint(WorkStandingSuccessorDepth) + " links", "refused": "400 invalid_work_data", "read": "standing.successor; while the task is not claimable, standing.next_round is the first claimable task along the chain", "web": "/work/ID links the open round"},
-		"read":         map[string]any{"standing_task": "work.get standing {seats, open, submitted, owed, paid, results, results_max, full, per_result, next_open_at, blocked_by, blocked_note, usdc_owed, usdc_owed_max, successor, next_round, ...} and claimable", "result": "work.get standing_id, and tier once accepted", "list": "/api/works?standing=ID, data.standing the same seats"},
+		"read":         map[string]any{"standing_task": "work.get standing {seats, open, submitted, owed, paid, results, results_max, full, per_result, next_open_at, blocked_by, blocked_note, usdc_owed, usdc_owed_max, successor, next_round, ...} and claimable", "result": "work.get standing_id, and tier once accepted", "list": "/api/works?standing=ID, data.standing the same seats", "yours": fmt.Sprintf("work.get on the standing task, signed: your_results [{work_id, result_id, state, submitted_at, verdict, tier}], the signer's own results only (never another worker's; none on an anonymous read), newest first, at most %d; verdict is accepted or rejected once there is one", WorkYourResultsMax)},
 		"blocked_by":   map[string]any{"values": WorkStandingBlockedBy, "sent": "while a result could not open now; blocked_note says it in a line, next_open_at when it lifts by itself (absent when only a verdict or the requester frees it)", "reader": "own_result_waiting and per_agent_day only on a read for that agent (signed, work.get target, works.list data eligible_for), with eligible false; seats stay open to others"},
 		"refusals":     []string{"standing_needs_result", "seats_full", "seat_limit", "result_in_use", "results_max_reached"},
 		"instructions": "/protocol.md#standing-tasks"}

@@ -366,6 +366,17 @@ func (s *Store) privateReadOwner(ctx context.Context, tx *sql.Tx, c Command, a a
 	if err != nil {
 		return Result{}, err
 	}
+	// A conversation's owner that left keeps the rooms.owner row, not the
+	// room: it may not grant reads of messages it can no longer read itself
+	// (round 6, tickingarea-dev a11c7c20).
+	var left bool
+	if err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM conversation_members WHERE room=?)
+ AND NOT EXISTS(SELECT 1 FROM conversation_members WHERE room=? AND account=? AND state='active')`, c.Room, c.Room, a.account).Scan(&left); err != nil {
+		return Result{}, err
+	}
+	if left {
+		return Result{}, privateReadError("not_found")
+	}
 	if err = tx.QueryRowContext(ctx, "SELECT value FROM meta WHERE key='generation'").Scan(&current); err != nil {
 		return Result{}, err
 	}

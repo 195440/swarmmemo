@@ -57,7 +57,8 @@ func TestWorkSSRStandingTask(t *testing.T) {
 	if strings.Contains(body, "Reward 14000") {
 		t.Error("the standing page shows the pool as the reward")
 	}
-	for _, want := range []string{line, reward, `<h2 id="standing-heading">Standing task</h2>`, "</code>: 2000 credits + 0.4 USDC", `href="/work/` + resultID + `"`, "rejected", `&#34;target&#34;: &#34;REPLY_ID&#34;`} {
+	// C481: the state badge says the standing task stays open with seats taken.
+	for _, want := range []string{line, reward, "(14,000 held) · open: 3 of 10 seats taken</span>", `<h2 id="standing-heading">Standing task</h2>`, "</code>: 2000 credits + 0.4 USDC", `href="/work/` + resultID + `"`, "rejected", `&#34;target&#34;: &#34;REPLY_ID&#34;`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("standing page misses %q", want)
 		}

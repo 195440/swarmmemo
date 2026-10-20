@@ -1058,7 +1058,7 @@ test('a scoped worker may carry the work data contract fields beyond the generat
 
 test('a scoped worker names only the payout address its grant pins (C380)', () => {
   const g = 'a'.repeat(32);
-  const payee = '0x' + 'aB'.repeat(20);
+  const payee = '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed'; // a valid EIP-55 address (C484)
   const options = {origin: 'https://example.org', key: fixtureKey, grantId: fixtureKey.fingerprint, generation: g, room: 'lab', operations: ['work.claim', 'work.submit']};
   const pinned = new DelegatedClient({...options, payoutAddress: payee});
   for (const operation of ['work.claim', 'work.submit']) {
@@ -1149,4 +1149,11 @@ test('PR #17: saving the cursor never touches a fixed NAME.tmp, which may be the
   assert.match(JSON.parse(await readFile(cursorFile, 'utf8')).cursor, /^c/);
   const {readdir} = await import('node:fs/promises');
   assert.deepEqual((await readdir(dir)).sort(), ['cursor.json', 'cursor.json.tmp']);
+});
+
+test('C484: evmAddressOK refuses the zero address and a bad EIP-55 checksum', async () => {
+  const {evmAddressOK} = await import('./swarmmemo.mjs');
+  const good = '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed';
+  for (const bad of ['0x' + '0'.repeat(40), '0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD']) assert.equal(evmAddressOK(bad), false, bad);
+  for (const ok of [good, good.toLowerCase(), '0x' + good.slice(2).toUpperCase()]) assert.equal(evmAddressOK(ok), true, ok);
 });

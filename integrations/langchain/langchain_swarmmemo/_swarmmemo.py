@@ -350,13 +350,14 @@ CONTRACT = json.loads(r"""
   "screen": {"required":["state","withheld"],"optional":["categories","classifier_version","reason"]},
   "verdict_check": {"required":["property","state"],"optional":["evidence","failing_step","note","passes","runs","subject_sha256","tool"]},
   "votes": {"required":["down","score","up"],"optional":["weight"]},
-  "work": {"required":["capabilities","claim_expires_at","claimable","created_at","deadline","eligibility","fence","generation","id","requester","requester_author","result_available","room","service_generation","service_id","simulated","state","stored_state","title","updated_at"],"optional":["attempt_grant_id","eligible","eligible_agent","eligible_preview","eligible_reason","reject_fee","request","requester_may_decide_at","requester_record","resolved_from","result_changed_since_submit","result_id","result_sha256","results","reviewer","reviewer_fee","reward","reward_note","reward_receipt","reward_state","reward_usdc","standing","standing_id","tier","verdict_checks","worker","worker_subject"]},
-  "work_ack": {"required":["accepted_at","claim_expires_at","deadline","fence","generation","service_id","state","work_id"],"optional":["note","resolved_from","result_sha256"]},
+  "work": {"required":["capabilities","claim_expires_at","claimable","created_at","deadline","eligibility","fence","generation","id","requester","requester_author","result_available","room","service_generation","service_id","simulated","state","stored_state","title","updated_at"],"optional":["attempt_grant_id","eligible","eligible_agent","eligible_preview","eligible_reason","reject_fee","request","requester_may_decide_at","requester_record","resolved_from","result_changed_since_submit","result_id","result_sha256","results","reviewer","reviewer_fee","reward","reward_note","reward_receipt","reward_state","reward_usdc","standing","standing_id","tier","verdict_checks","worker","worker_subject","your_results"]},
+  "work_ack": {"required":["accepted_at","claim_expires_at","deadline","fence","generation","service_id","state","work_id"],"optional":["note","resolved_from","result_sha256","result_state","result_work_id","seat","seats","standing_id"]},
   "work_ack_data": {"required":["ack"],"optional":["review"],"intent":{"review":"review"}},
   "work_result": {"required":["accepted_at","result_id","work_id","worker"],"optional":["rating","review_id","tier"]},
   "work_standing": {"required":["day_max","open","opened_today","owed","paid","per_agent_day","per_result","results","results_until","seats","submitted","tiers","verdict_ttl"],"optional":["blocked_by","blocked_note","full","next_open_at","next_round","results_max","successor","usdc_day_max","usdc_owed","usdc_owed_max","usdc_per_agent_day"]},
   "work_standing_tier": {"required":["credits","name"],"optional":["usdc"]},
-  "work_transition": {"required":["accepted_at","author","fence","generation","operation","public_key","sequence","signature","signed_payload","state"],"optional":["checks","delegation_id","fallback","note","previous_reviewer","reject_fee","resolved_from","result_sha256","result_sha256_signed","reviewer"]}
+  "work_transition": {"required":["accepted_at","author","fence","generation","operation","public_key","sequence","signature","signed_payload","state"],"optional":["checks","delegation_id","fallback","note","previous_reviewer","reject_fee","resolved_from","result_sha256","result_sha256_signed","reviewer"]},
+  "work_your_result": {"required":["result_id","state","submitted_at","work_id"],"optional":["tier","verdict"]}
  },
  "work_create_data": ["capabilities","day_max","eligibility","generation","per_agent_day","reject_fee","results_max","reviewer","reviewer_fee","reward","reward_note","schema","seats","tiers","title","usdc_day_max","usdc_per_agent_day"],
  "work_rating": {
@@ -2373,6 +2374,18 @@ def _base_mul(k: int):
     return _secp_mul(k)
 
 
+def evm_address_ok(address) -> bool:
+    """A payout address the board accepts: 0x and 40 hex digits, not the zero address,
+    and, when mixed case, its EIP-55 checksum (as the server's grantAddress)."""
+    if not (isinstance(address, str) and re.fullmatch(r"0x[0-9a-fA-F]{40}", address)) or int(address, 16) == 0:
+        return False
+    body = address[2:]
+    if body == body.lower() or body == body.upper():
+        return True
+    nibbles = keccak256(body.lower().encode()).hex()
+    return body == "".join(c.upper() if int(n, 16) >= 8 else c for c, n in zip(body.lower(), nibbles))
+
+
 def wallet_address(key: bytes) -> str:
     """The EVM address (EIP-55 mixed case) of a 32-byte secp256k1 private key."""
     x, y = _base_mul(wallet_scalar(key))
@@ -2690,7 +2703,7 @@ class Client:
         USDC payout address the worker's claims and submits may name (without it they may
         name none); data adds any other delegation.create field."""
         if self.key is None: raise ValueError("parent_key_required")
-        if payout_address is not None and not (isinstance(payout_address, str) and re.fullmatch(r"0x[0-9a-fA-F]{40}", payout_address)):
+        if payout_address is not None and not evm_address_ok(payout_address):
             raise ValueError("invalid_payout_address")
         data = data_json("delegation.create", data, generation=generation, operations=list(operations), disclosure="public",
                          spend_limit=spend_limit, origin=origin, payout_address=payout_address)
@@ -3231,7 +3244,7 @@ class DelegatedClient(Client):
     """
     def __init__(self, base_url, key, *, grant_id, generation, room, operations, timeout=30, service=SERVICE, payout_address=None):
         if key is None: raise ValueError("child_key_required")
-        if payout_address is not None and not (isinstance(payout_address, str) and re.fullmatch(r"0x[0-9a-fA-F]{40}", payout_address)):
+        if payout_address is not None and not evm_address_ok(payout_address):
             raise ValueError("invalid_payout_address")
         self._payout_address = payout_address.lower() if payout_address else None
         context = delegation_context({"schema": 1, "grant_id": grant_id, "generation": generation})

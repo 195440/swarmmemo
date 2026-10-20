@@ -24,6 +24,7 @@ import (
 type nullArgRule struct {
 	required map[string]bool
 	nullable map[string]bool // type admits null, or no type at all
+	known    map[string]bool // only declared optional properties may be dropped
 }
 
 // dropNullOptionalArgs must be the innermost receiving middleware: it reads
@@ -31,8 +32,8 @@ type nullArgRule struct {
 // registered tool, hidden aliases included.
 func dropNullOptionalArgs() mcp.Middleware {
 	var (
-		once  sync.Once
-		rules map[string]nullArgRule
+		mu    sync.Mutex
+		rules map[string]nullArgRule // nil until all tools/list pages succeed
 	)
 	return func(next mcp.MethodHandler) mcp.MethodHandler {
 		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
@@ -53,14 +54,26 @@ func dropNullOptionalArgs() mcp.Middleware {
 			if len(nulls) == 0 {
 				return next(ctx, method, req)
 			}
-			once.Do(func() { rules = toolNullRules(ctx, next, call.Session) })
+			mu.Lock()
+			if rules == nil {
+				// An early tools/list refusal, disconnect or incomplete
+				// pagination must not permanently poison future calls.
+				if fetched, complete := toolNullRules(ctx, next, call.Session); complete {
+					rules = fetched
+				}
+			}
 			rule, known := rules[call.Params.Name]
+			mu.Unlock()
 			if !known {
 				return next(ctx, method, req)
 			}
 			dropped := false
 			for _, name := range nulls {
-				if !rule.required[name] && !rule.nullable[name] {
+				// Preserve historic MCP adapter compatibility for the two null-only
+				// aliases used by older memory_list callers, without silently
+				// deleting arbitrary schema-invalid tool arguments.
+				legacyNullAlias := call.Params.Name == "memory_list" && (name == "cursor" || name == "max_cost")
+				if legacyNullAlias || (rule.known[name] && !rule.required[name] && !rule.nullable[name]) {
 					delete(args, name)
 					dropped = true
 				}
@@ -83,30 +96,30 @@ func dropNullOptionalArgs() mcp.Middleware {
 
 // toolNullRules reads every registered tool's input schema from the SDK's
 // tools/list (next is the SDK's own handler), following its pages.
-func toolNullRules(ctx context.Context, next mcp.MethodHandler, session *mcp.ServerSession) map[string]nullArgRule {
+func toolNullRules(ctx context.Context, next mcp.MethodHandler, session *mcp.ServerSession) (map[string]nullArgRule, bool) {
 	rules := map[string]nullArgRule{}
 	cursor := ""
 	for range 100 {
 		res, err := next(ctx, "tools/list", &mcp.ListToolsRequest{Session: session, Params: &mcp.ListToolsParams{Cursor: cursor}})
 		list, ok := res.(*mcp.ListToolsResult)
 		if err != nil || !ok {
-			return rules
+			return nil, false
 		}
 		for _, t := range list.Tools {
 			rules[t.Name] = nullRuleOf(t.InputSchema)
 		}
 		if list.NextCursor == "" {
-			break
+			return rules, true
 		}
 		cursor = list.NextCursor
 	}
-	return rules
+	return nil, false
 }
 
 // nullRuleOf reads the top-level required list and each property's type from
 // a schema of any form the SDK holds (*jsonschema.Schema or a map).
 func nullRuleOf(schema any) nullArgRule {
-	rule := nullArgRule{required: map[string]bool{}, nullable: map[string]bool{}}
+	rule := nullArgRule{required: map[string]bool{}, nullable: map[string]bool{}, known: map[string]bool{}}
 	raw, err := json.Marshal(schema)
 	if err != nil {
 		return rule
@@ -122,6 +135,7 @@ func nullRuleOf(schema any) nullArgRule {
 		rule.required[name] = true
 	}
 	for name, p := range s.Properties {
+		rule.known[name] = true
 		var prop struct {
 			Type json.RawMessage `json:"type"`
 		}
