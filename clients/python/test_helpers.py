@@ -605,6 +605,13 @@ class HelperTests(unittest.TestCase):
                 self.anonymous.call_url(service, method)
         self.assertEqual(self.recorder.sent, [])
 
+    def test_tool_args_are_strict_json(self):
+        self.assertEqual(memo.json_object('{"url": "https://example.com/", "n": {"a": 1}}'), {"url": "https://example.com/", "n": {"a": 1}})
+        for raw in ('{"url": "a", "url": "b"}', '{"n": {"a": 1, "a": 2}}', '{"n": NaN}', '{"n": -Infinity}', '[1]'):
+            with self.assertRaises(ValueError):
+                memo.json_object(raw)
+        self.assertEqual(memo.json_object_or_int("7"), 7)
+
     def test_cli_subcommands(self):
         def run(*argv, signed=True):
             with patch.object(memo, "load_key", return_value=self.key), contextlib.redirect_stdout(io.StringIO()) as out:

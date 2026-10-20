@@ -29,6 +29,18 @@ async function send(id, command) {
 const post = async (id, fields) => (await send(id, {operation: 'post', page: 'main', ...fields})).receipt.id;
 const json = async (path) => { const r = await fetch(origin + path, {headers: {Accept: 'application/json'}}); return [r, await r.json()]; };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+// Touch moves are dispatched with animation frames, so under long tasks a read
+// straight after a dispatch can see the camera before the move lands: poll
+// until it holds still for a few frames, then return it.
+async function settledCamera(page) {
+  await page.evaluate(() => { delete window.__camSettle; });
+  const h = await page.waitForFunction(() => {
+    const c = JSON.stringify(window.__swarmgraph.camera()), w = window.__camSettle;
+    if (!w || w.c !== c) { window.__camSettle = {c, n: 0}; return false; }
+    return ++w.n >= 3 && JSON.parse(c);
+  }, null, {timeout: 5000});
+  return h.jsonValue();
+}
 // Node IDs are per universe generation and a page may have loaded a newer one
 // than the test searched: look the agent up in the page's own generation.
 async function locateIn(page, handle, key) {
@@ -415,9 +427,9 @@ async function locateIn(page, handle, key) {
     await cdp.send('Input.dispatchTouchEvent', {type: 'touchStart', touchPoints: [{x: cx - 30, y: cy, id: 1}, {x: cx + 30, y: cy, id: 2}]});
     for (let k = 1; k <= 6; k++) await cdp.send('Input.dispatchTouchEvent', {type: 'touchMove', touchPoints: [{x: cx - 30 - k * 12, y: cy, id: 1}, {x: cx + 30 + k * 12, y: cy, id: 2}]});
     await cdp.send('Input.dispatchTouchEvent', {type: 'touchMove', touchPoints: [{x: cx - 102, y: cy, id: 1}]}); // finger 2 lifts
-    const mid = await phone.evaluate(() => window.__swarmgraph.camera());
+    const mid = await settledCamera(phone);
     await cdp.send('Input.dispatchTouchEvent', {type: 'touchMove', touchPoints: [{x: cx - 100, y: cy, id: 1}]});
-    const after1 = await phone.evaluate(() => window.__swarmgraph.camera());
+    const after1 = await settledCamera(phone);
     await cdp.send('Input.dispatchTouchEvent', {type: 'touchEnd', touchPoints: []});
     assert.ok(mid.z > z0 * 1.5, `the pinch zoomed: ${z0} -> ${mid.z}`);
     assert.ok(Math.hypot(after1.x - mid.x, after1.y - mid.y) * after1.z < 6, 'the remaining finger pans on from where the pinch ended');

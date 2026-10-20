@@ -4790,7 +4790,7 @@ def stamp_fetch(client, url, save=None, out=None, opener=None):
 
 
 def json_object(text):
-    value = json.loads(text)
+    value = strict_json(text)  # tool and /call args: no duplicate keys, no NaN/Infinity
     if not isinstance(value, dict):
         raise ValueError("args must be a JSON object")
     return value

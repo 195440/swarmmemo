@@ -703,6 +703,12 @@ const (
 	workEarnAmountSQL = `coalesce((SELECT wr.amount FROM work_rewards wr WHERE wr.work_id=w.id),0)`
 )
 
+// workClaimableScanMax bounds the stored rows one works.list kind rewarded or
+// earn page examines while it skips standing tasks with no seat open; past
+// it the page returns what it holds, has_more true, its cursor after the
+// last row examined.
+var workClaimableScanMax = 500 // a var so a test can lower it
+
 // earnCursorRE is an earn page's cursor: rank.amount.id of the last row.
 var earnCursorRE = regexp.MustCompile(`^([01])\.([0-9]{1,10})\.([a-f0-9]{32})$`)
 
@@ -1885,53 +1891,87 @@ func (s *Store) readWork(ctx context.Context, tx *sql.Tx, c Command, a actor, no
 	columns, order := workColumns+`,0,0`, `w.id`
 	if earn {
 		columns, order = workColumns+`,`+workEarnRankSQL+`,`+workEarnAmountSQL, workEarnRankSQL+`,`+workEarnAmountSQL+`,w.id`
-		if m := earnCursorRE.FindStringSubmatch(cursor.Page); m != nil {
-			rank, _ := strconv.ParseInt(m[1], 10, 64)
-			amount, _ := strconv.ParseInt(m[2], 10, 64)
-			where += ` AND (` + workEarnRankSQL + `,` + workEarnAmountSQL + `,w.id)>(?,?,?)`
-			args = append(args, rank, amount, m[3])
+	}
+	// after is the cursor condition: rows strictly past page in the order.
+	after := func(page string) (string, []any) {
+		if !earn {
+			return ` AND w.id>?`, []any{page}
 		}
-	} else {
-		where += ` AND w.id>?`
-		args = append(args, cursor.Page)
-	}
-	args = append(args, limit+1)
-	rows, err := tx.QueryContext(ctx, `SELECT `+columns+` FROM works w JOIN events e ON e.id=w.id JOIN rooms r ON r.name=e.room WHERE `+where+` ORDER BY `+order+` LIMIT ?`, args...)
-	if err != nil {
-		return Result{}, workReadError(err)
-	}
-	stored := []workRow{}
-	keys := []string{}
-	for rows.Next() {
-		var w workRow
-		var rank, amount int64
-		if e := rows.Scan(append(w.fields(), &rank, &amount)...); e != nil {
-			rows.Close()
-			return Result{}, workReadError(e)
+		m := earnCursorRE.FindStringSubmatch(page)
+		if m == nil {
+			return "", nil
 		}
-		stored = append(stored, w)
-		keys = append(keys, fmt.Sprintf("%d.%d.%s", rank, amount, w.ID))
+		rank, _ := strconv.ParseInt(m[1], 10, 64)
+		amount, _ := strconv.ParseInt(m[2], 10, 64)
+		return ` AND (` + workEarnRankSQL + `,` + workEarnAmountSQL + `,w.id)>(?,?,?)`, []any{rank, amount, m[3]}
 	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return Result{}, workReadError(err)
-	}
-	hasMore := len(stored) > limit
-	if hasMore {
-		stored = stored[:limit]
-	}
+	// A standing task with no seat open now (full, or every seat waiting on a
+	// verdict) can't be claimed, so a worker looking for claimable work
+	// doesn't see it in kind rewarded or earn; it returns when a seat frees,
+	// and every other listing still shows it (telagoebez 27e6f215). Those
+	// kinds read on past the dropped rows, batch by batch, until the page
+	// holds limit works or workClaimableScanMax rows were examined. The
+	// cursor follows the last row examined, so the next page resumes right
+	// after it: nothing is skipped or repeated.
+	claimableOnly := c.Kind == WorkKindRewarded || c.Kind == WorkKindEarn
 	works := []Work{}
-	for _, w := range stored {
-		root, e := visibleWorkRoot(ctx, tx, w.ID, a)
-		if e != nil {
-			return Result{}, workReadError(e)
+	stored := []workRow{} // the stored row of each work kept, for the requester records
+	page, lastKey := cursor.Page, ""
+	hasMore, examined := false, 0
+scan:
+	for {
+		cond, condArgs := after(page)
+		batchArgs := append(append(append([]any{}, args...), condArgs...), limit+1)
+		rows, err := tx.QueryContext(ctx, `SELECT `+columns+` FROM works w JOIN events e ON e.id=w.id JOIN rooms r ON r.name=e.room WHERE `+where+cond+` ORDER BY `+order+` LIMIT ?`, batchArgs...)
+		if err != nil {
+			return Result{}, workReadError(err)
 		}
-		p, e := s.projectWork(ctx, tx, w, root, generation, now, opt)
-		if e != nil {
-			return Result{}, workReadError(e)
+		batch := []workRow{}
+		keys := []string{}
+		for rows.Next() {
+			var w workRow
+			var rank, amount int64
+			if e := rows.Scan(append(w.fields(), &rank, &amount)...); e != nil {
+				rows.Close()
+				return Result{}, workReadError(e)
+			}
+			batch = append(batch, w)
+			keys = append(keys, fmt.Sprintf("%d.%d.%s", rank, amount, w.ID))
 		}
-		works = append(works, p)
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return Result{}, workReadError(err)
+		}
+		for i, w := range batch {
+			if len(works) == limit || examined >= workClaimableScanMax {
+				// A row past the last one examined exists: the page has more.
+				hasMore = true
+				break scan
+			}
+			examined++
+			lastKey = w.ID
+			if earn {
+				lastKey = keys[i]
+			}
+			root, e := visibleWorkRoot(ctx, tx, w.ID, a)
+			if e != nil {
+				return Result{}, workReadError(e)
+			}
+			p, e := s.projectWork(ctx, tx, w, root, generation, now, opt)
+			if e != nil {
+				return Result{}, workReadError(e)
+			}
+			if claimableOnly && !standingSeatOpen(p.Standing) {
+				continue
+			}
+			works = append(works, p)
+			stored = append(stored, w)
+		}
+		if len(batch) <= limit {
+			break // the rows ran out
+		}
+		page = lastKey
 	}
 	// Every row's requester record, in one query for the page.
 	requesters := make([]string, len(stored))
@@ -1945,20 +1985,6 @@ func (s *Store) readWork(ctx context.Context, tx *sql.Tx, c Command, a actor, no
 	for i := range works {
 		works[i].RequesterRecord = records[stored[i].Requester]
 	}
-	if c.Kind == WorkKindRewarded || c.Kind == WorkKindEarn {
-		// A standing task with no seat open now (full, or every seat waiting on
-		// a verdict) can't be claimed, so a worker looking for claimable work
-		// doesn't see it here; it returns when a seat frees, and every other
-		// listing still shows it (telagoebez 27e6f215). The cursor follows the
-		// stored page, so a filtered page may be shorter than the limit.
-		claimable := works[:0]
-		for _, w := range works {
-			if standingSeatOpen(w.Standing) {
-				claimable = append(claimable, w)
-			}
-		}
-		works = claimable
-	}
 	result := Result{Data: map[string]any{"works": works, "has_more": hasMore}}
 	if standing != "" {
 		// The standing task's own seats ride along with its results.
@@ -1971,11 +1997,7 @@ func (s *Store) readWork(ctx context.Context, tx *sql.Tx, c Command, a actor, no
 		}
 	}
 	if hasMore {
-		page := stored[len(stored)-1].ID
-		if earn {
-			page = keys[len(stored)-1]
-		}
-		result.NextCursor = s.encodeConversationCursor(conversationCursor{Domain: "works.list", Scope: scope, Page: page})
+		result.NextCursor = s.encodeConversationCursor(conversationCursor{Domain: "works.list", Scope: scope, Page: lastKey})
 	}
 	return result, nil
 }

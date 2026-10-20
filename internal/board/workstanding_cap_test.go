@@ -3,6 +3,7 @@ package board
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -183,5 +184,124 @@ func TestSchema41UpgradeFrom40(t *testing.T) {
 	}
 	if err = db.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// C488: kind rewarded and earn read on past standing tasks with no seat open,
+// so the first page holds limit claimable works even when the stored rows
+// before them are all full tasks; the cursor follows the last row read, so
+// paging returns every claimable work exactly once.
+func TestWorksListClaimableFillsPagePastFullStanding(t *testing.T) {
+	s := rewardStore(t)
+	owner := keyFor(200)
+	mintCredit(t, s, keyID(owner), allowance.Paid, 20000)
+	ttl := int64(10 * 86400)
+	full := map[string]bool{}
+	for i := range 6 {
+		// Tagged earn and one seat, so earn lists them first; the one seat
+		// waits on a verdict, so none is claimable.
+		id := rewardRequest(t, s, owner, "lobby")
+		run(t, s, standingCreate(s, owner, id, map[string]any{"seats": 1, "reward": 100, "day_max": 10, "capabilities": []string{WorkEarnTag}}, ttl))
+		_, c := standingClaim(t, s, keyFor(byte(201+i)), id, nil)
+		run(t, s, c)
+		if st := standingAt(t, s, id); st.Open != 0 {
+			t.Fatalf("standing %d still open: %+v", i, st)
+		}
+		full[id] = true
+	}
+	claimable := map[string]bool{}
+	for i := range 3 {
+		id := rewardRequest(t, s, owner, "lobby")
+		run(t, s, earnCreate(s, owner, id, fmt.Sprint("claimable ", i), []string{"review"}, int64(300+i)))
+		claimable[id] = true
+	}
+	page := func(kind, cursor string, limit int) ([]string, string, bool) {
+		t.Helper()
+		r := run(t, s, Command{Operation: "works.list", Kind: kind, Limit: limit, Cursor: cursor})
+		ids := []string{}
+		for _, w := range r.Data["works"].([]Work) {
+			if full[w.ID] {
+				t.Fatalf("%s listed full standing task %s", kind, w.ID)
+			}
+			ids = append(ids, w.ID)
+		}
+		more, _ := r.Data["has_more"].(bool)
+		if more != (r.NextCursor != "") {
+			t.Fatalf("%s has_more %v with cursor %q", kind, more, r.NextCursor)
+		}
+		return ids, r.NextCursor, more
+	}
+	walk := func(kind string, limit int) [][]string {
+		t.Helper()
+		pages := [][]string{}
+		cursor := ""
+		for range 20 {
+			ids, next, _ := page(kind, cursor, limit)
+			pages = append(pages, ids)
+			if next == "" {
+				return pages
+			}
+			cursor = next
+		}
+		t.Fatalf("%s never ran out of pages", kind)
+		return nil
+	}
+	for _, kind := range []string{WorkKindEarn, WorkKindRewarded} {
+		// Earn orders the six full tasks first: page 1 still holds 2.
+		if ids, _, more := page(kind, "", 2); len(ids) != 2 || !more {
+			t.Fatalf("%s page 1 limit 2: %v more=%v", kind, ids, more)
+		}
+		if ids, _, more := page(kind, "", 10); len(ids) != 3 || more {
+			t.Fatalf("%s page 1 limit 10: %v more=%v", kind, ids, more)
+		}
+		seen := map[string]int{}
+		pages := walk(kind, 2)
+		for _, p := range pages {
+			for _, id := range p {
+				seen[id]++
+			}
+		}
+		if len(pages) != 2 || len(pages[0]) != 2 || len(pages[1]) != 1 || len(seen) != 3 {
+			t.Fatalf("%s pages %v", kind, pages)
+		}
+		for id, n := range seen {
+			if !claimable[id] || n != 1 {
+				t.Fatalf("%s listed %s %d times (claimable %v)", kind, id, n, claimable[id])
+			}
+		}
+	}
+	// The plain listing still shows every full task.
+	plain := 0
+	for _, w := range run(t, s, Command{Operation: "works.list"}).Data["works"].([]Work) {
+		if full[w.ID] {
+			plain++
+		}
+	}
+	if plain != len(full) {
+		t.Fatalf("plain listing holds %d of %d full tasks", plain, len(full))
+	}
+
+	// The scan is bounded: past workClaimableScanMax rows examined the page
+	// returns what it holds, has_more true, and the cursor resumes after the
+	// last row examined, still listing each claimable work once.
+	defer func(n int) { workClaimableScanMax = n }(workClaimableScanMax)
+	workClaimableScanMax = 4
+	ids, _, more := page(WorkKindEarn, "", 10)
+	if len(ids) != 0 || !more {
+		t.Fatalf("capped earn page 1: %v more=%v", ids, more)
+	}
+	seen := map[string]int{}
+	for _, p := range walk(WorkKindEarn, 10) {
+		for _, id := range p {
+			seen[id]++
+		}
+	}
+	if len(seen) != 3 {
+		t.Fatalf("capped earn walk saw %v", seen)
+	}
+	for id, n := range seen {
+		if !claimable[id] || n != 1 {
+			t.Fatalf("capped walk listed %s %d times", id, n)
+		}
 	}
 }
