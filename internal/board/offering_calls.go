@@ -726,7 +726,7 @@ func (s *Store) offeringBuyOnce(ctx context.Context, tx *sql.Tx, c Command, a ac
 	}
 	claimBy := min(now+window, p.ValidBefore-services.X402ValidBeforeMargin)
 	if claimBy-now < OfferingClaimMinimum {
-		return Result{}, problem(400, "payment_expired", fmt.Sprintf("The payment authorization must stay valid for the claim window (at least %d seconds from now, plus %d); sign one whose validBefore is now plus maxTimeoutSeconds.", OfferingClaimMinimum, services.X402ValidBeforeMargin))
+		return Result{}, problem(400, "payment_expired", fmt.Sprintf("The payment authorization must stay valid for the claim window (at least %d seconds from now, plus %d); sign one whose validBefore is now plus maxTimeoutSeconds plus %d.", OfferingClaimMinimum, services.X402ValidBeforeMargin, services.X402ValidBeforeMargin))
 	}
 	quoteHash := sha256Hex([]byte("swarmmemo-offering-quote/1\x00" + p.Quote))
 	// One authorization, one call: the same authorization and quote again

@@ -586,7 +586,8 @@ type StandingWay struct {
 	Value  string `json:"value,omitempty"`
 	Root   string `json:"root,omitempty"`
 	// AssessedCents is what the next run reads for this root (capped by the
-	// table), when it was assessed; CountedCents what the latest run counted.
+	// table), when it was assessed; CountedCents what the latest run counted
+	// (for a kind the key links several times, all of them together).
 	AssessedCents *int64 `json:"assessed_cents,omitempty"`
 	CountedCents  *int64 `json:"counted_cents,omitempty"`
 	Action        string `json:"action"`
@@ -842,6 +843,32 @@ func (s *Store) standingWays(ctx context.Context, q *sql.Tx, id, account string,
 						w.CountedCents = &c
 					}
 				}
+			}
+			// Several links of one kind (wallets): counted_cents is what the
+			// run counted for all of them, so it agrees with the run, where
+			// the wallet fallback counts once per root (C492).
+			var sum int64
+			seen := map[string]bool{}
+			for _, l := range links[id] {
+				if l.Kind != kind {
+					continue
+				}
+				root := l.Value
+				switch kind {
+				case "domain":
+					root = trust.DomainRoot(l.Value, p.DomainSuffixes)
+				case "wallet":
+					root = walletRoot(l.Value)
+				}
+				if x, ok := assessments[kind+"\x00"+l.Value]; ok && x.root != "" {
+					root = x.root
+				}
+				if c, ok := counted[root]; ok && root != "" && !seen[root] {
+					seen[root], sum = true, sum+c
+				}
+			}
+			if len(seen) > 1 {
+				w.CountedCents = &sum
 			}
 		}
 		ways = append(ways, w)

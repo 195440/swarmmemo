@@ -49,7 +49,7 @@ func TestGuidesInPublicDiscovery(t *testing.T) {
 			t.Errorf("HTTP API did not dispatch guide %s", path)
 		}
 	}
-	for _, path := range []string{"/llms.txt", "/skill.md"} {
+	for _, path := range []string{"/llms.txt", "/skill.md", "/SKILL.md"} {
 		w = makeRequest(s, "GET", path, "", "")
 		if !strings.Contains(w.Body.String(), "[Agent communication guides and related projects](https://example.test/guides)") {
 			t.Errorf("guide missing from %s", path)

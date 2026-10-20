@@ -117,19 +117,26 @@ func (f *keyBundler) Endpoint() string { return f.endpoint }
 func (f *keyBundler) String() string   { return "frames(" + f.endpoint + ")" }
 func (f *keyBundler) GoString() string { return f.String() }
 
-// bundlerFeePercent is what the bundler adds to a tool's price on every call
-// ("data that arrived + 15%").
+// bundlerFeePercent is what the bundler adds to a tool's price on every
+// delivered call (price_usd × 1.15, before bundlerFeeFloorMicroUSD).
 const bundlerFeePercent = 15
 
+// bundlerFeeFloorMicroUSD is the flat per-call fee the bundler adds on top of
+// the price and bundlerFeePercent: it bills a delivered call
+// price_usd × 1.15 + $0.005, and refuses one ("budget_exceeded") whose
+// max_usd is below that.
+const bundlerFeeFloorMicroUSD = 5000
+
 // bundlerCost is the most the bundler bills for one call of a tool priced price
-// (micro-USD): the price plus bundlerFeePercent, rounded up to whole credits.
-// It is the one figure behind a tool's quote (tools_search and tools_get
-// cost) and the most a call of it pays (bundlerGate caps max_usd at it).
+// (micro-USD): the price plus bundlerFeePercent plus bundlerFeeFloorMicroUSD,
+// rounded up to whole credits. It is the one figure behind a tool's quote
+// (tools_search and tools_get cost), the max_price check, and the most a call
+// of it pays (bundlerGate caps max_usd at it).
 func bundlerCost(price int64) int64 {
-	if price <= 0 {
+	if price < 0 {
 		return 0
 	}
-	withFee := price + (price*bundlerFeePercent+99)/100
+	withFee := price + (price*bundlerFeePercent+99)/100 + bundlerFeeFloorMicroUSD
 	return (withFee + bundlerCreditMicroUSD - 1) / bundlerCreditMicroUSD * bundlerCreditMicroUSD
 }
 
@@ -187,6 +194,7 @@ func (f *keyBundler) Exchange(ctx context.Context, p x402Plan, pay *payment) (x4
 		return x402Response{}, nil, refusal("upstream_failed")
 	}
 	charged := p.max // what we assume when the bundler reports nothing, or we could not read it
+	reported := false
 	if !resp.over {
 		var out map[string]json.RawMessage
 		dec := json.NewDecoder(bytes.NewReader(resp.body))
@@ -198,7 +206,11 @@ func (f *keyBundler) Exchange(ctx context.Context, p x402Plan, pay *payment) (x4
 			if raw, ok := out["billing"]; ok && json.Unmarshal(raw, &billing) == nil {
 				if credits, err := strconv.ParseFloat(billing.Charged.String(), 64); err == nil {
 					charged = bundlerCharged(credits, p.max)
+					reported = true
 				}
+			}
+			if !reported && bundlerUndelivered(out) {
+				charged = 0 // the bundler reports it delivered and billed nothing
 			}
 			delete(out, "billing") // our account's balance is not the agent's business
 			bundlerLabelUpstreamReceipts(out)
@@ -219,6 +231,41 @@ func (f *keyBundler) Exchange(ctx context.Context, p x402Plan, pay *payment) (x4
 	pay.settle(charged)
 	return resp, &x402Receipt{Amount: strconv.FormatInt(charged, 10), Price: formatUnits(charged, 6), Asset: "USD", Network: publicBundler(f.Name()),
 		PayTo: bundlerToolID(p.res.Tool), Payer: "swarmmemo", Nonce: idem}, nil
+}
+
+// bundlerUndelivered says whether a 2xx invoke answer without billing reports,
+// in full, that nothing was delivered or billed, as the bundler's
+// budget_exceeded answer does: result.delivered is 0 and every result.calls[]
+// entry has delivered false and charged_usd 0. Every field is parsed strictly
+// (a JSON number, a JSON false); anything missing, malformed or reporting a
+// delivery or a charge is false and the call keeps the conservative charge of
+// its maximum, so no malformed value turns a billed call into a free one.
+func bundlerUndelivered(out map[string]json.RawMessage) bool {
+	var result map[string]json.RawMessage
+	if json.Unmarshal(out["result"], &result) != nil || result == nil || !bundlerZero(result["delivered"]) {
+		return false
+	}
+	var calls []json.RawMessage
+	if json.Unmarshal(result["calls"], &calls) != nil || len(calls) == 0 {
+		return false
+	}
+	for _, raw := range calls {
+		var c map[string]json.RawMessage
+		if json.Unmarshal(raw, &c) != nil || c == nil || !bytes.Equal(bytes.TrimSpace(c["delivered"]), []byte("false")) || !bundlerZero(c["charged_usd"]) {
+			return false
+		}
+	}
+	return true
+}
+
+// bundlerZero says whether raw is a JSON number (not a string) equal to zero.
+func bundlerZero(raw json.RawMessage) bool {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || !(raw[0] == '-' || raw[0] >= '0' && raw[0] <= '9') || !json.Valid(raw) {
+		return false
+	}
+	v, err := strconv.ParseFloat(string(raw), 64)
+	return err == nil && v == 0
 }
 
 // BundlerUpstreamNote labels the chain facts a bundler reports in its own

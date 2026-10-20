@@ -308,6 +308,22 @@ def assessed_contribution(price, assessed):
     return 0
 
 
+def assessed_value(price, assessed):
+    """assessed_contribution without a capped row's fallback_cents: what the
+    assessment itself is worth (C492: the floor counts once per kind and
+    node root)."""
+    u = price.get("units_per_cent", 0)
+    if u <= 0 or assessed <= 0:
+        return 0
+    ceiling = min(price["forge"], price["rent"])
+    assessed = min(assessed, ASSESSED_MAX)
+    if price["assess"] == "capped":
+        return min(ceiling, assessed // u)
+    if price["assess"] == "saturating":
+        return ceiling * assessed // (assessed + ceiling * u) if ceiling > 0 else 0
+    return 0
+
+
 class Curves:
     """1e6 × f^days, one whole day at a time with floor; ages past 3650 days
     use 3650. The run never evaluates a float."""
@@ -1595,6 +1611,7 @@ SNAPSHOT_SCHEMA_V2 = 2
 UNIFIED_VERSION = 8
 PASS_VERSION = 10
 BREAKER_VERSION = 11
+FLOOR_ONCE_VERSION = 12  # C492: a capped row's fallback counts once per (kind, node root); rule only, body as 11
 BREAKER_REASONS = {"agent.rotate", "dormant", "identity.link", "identity.unlink", "spike"}
 
 RECORD_FIELDS_V2 = [
@@ -2166,7 +2183,7 @@ def compute_unified(snap: SnapshotV2) -> dict:
             it["root"] = x.root
         else:
             it["root"] = x.kind + ":" + x.link_value
-        cents = 0
+        cents = value = 0
         if not counts(x):
             it["note"] = "not counted: not verified within proof_fresh_days"
         elif it["root"] in burned:
@@ -2176,9 +2193,30 @@ def compute_unified(snap: SnapshotV2) -> dict:
             if x.registered_at <= 0 and x.rank <= 0:
                 it["note"] = "registration age and rank not yet fetched: priced at the domain row's fallback"
         else:
-            cents = assessed_contribution(price, x.assessed)
+            cents, value = assessed_contribution(price, x.assessed), assessed_value(price, x.assessed)
         it["price_cents"] = cents
-        claims.append((x.account, it, cents))
+        claims.append((x.account, it, cents, value))
+    # From version 12, a capped row's fallback floor counts once per (kind,
+    # node root): the best claim keeps it, the others price at their
+    # assessed value (C492). Versions up to 11 keep each claim's floor.
+    floor_of = {}
+    for i, (a, it, price, value) in enumerate(claims):
+        row = proofs_p.get(it["source"], {})
+        if snap.params_version < FLOOR_ONCE_VERSION or price <= 0 or row.get("assess", "") != "capped" or row.get("fallback_cents", 0) <= 0:
+            continue
+        k = (it["source"], root_of(a))
+        j = floor_of.get(k)
+        # The highest price keeps the floor; at equal price the higher value,
+        # then the lower account.
+        if j is None or (price, value) > (claims[j][2], claims[j][3]) or ((price, value) == (claims[j][2], claims[j][3]) and a < claims[j][0]):
+            floor_of[k] = i
+    for i, (a, it, price, value) in enumerate(claims):
+        j = floor_of.get((it["source"], root_of(a)))
+        if j is None or j == i or value >= price:
+            continue
+        it = dict(it, price_cents=value, note="fallback counted once per root: on " + claims[j][0])
+        claims[i] = (a, it, value, value)
+    claims = [(a, it, price) for a, it, price, _ in claims]
     best_of, claimants = {}, {}
     for i, (a, it, price) in enumerate(claims):
         if price <= 0:

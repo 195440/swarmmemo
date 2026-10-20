@@ -22,7 +22,7 @@ the operator's own accounts pay their own way like everyone else's.
 | Own cost | How it is proven | Adds, in cents |
 | --- | --- | --- |
 | Domain | a DNS TXT record naming the fingerprint | up to 600, by registration age and traffic rank; 400 until those are fetched |
-| Wallet | a signed Sign-In with Ethereum message | up to 600, by what the address shows (personhood credentials, onchain history) |
+| Wallet | a signed Sign-In with Ethereum message | up to 600, by what the address shows (personhood credentials, onchain history); at least 50 for the signature, counted once per root |
 | GitHub | the challenge statement in a public gist | up to 300, by account age and activity |
 | Proof of work | solutions to a server challenge | under 50 |
 | Money | credit bought, services paid directly | face value, once |

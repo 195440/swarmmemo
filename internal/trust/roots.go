@@ -145,22 +145,33 @@ func AccountCents(ageDays, ageCents, halfLifeDays, n, countCents, half int64) in
 // A capped row's fallback_cents (the wallet row, from ProofsVersion) is the
 // least a verified, fresh proof of that kind prices at, within the cap:
 // what the verified signature alone is worth while the resolver has no
-// value for it (not configured, or no credentials behind the address).
+// value for it (not configured, or no credentials behind the address). The
+// run counts that floor once per (kind, node root) (C492): see
+// AssessedValue.
 func AssessedContribution(price ProofPrice, assessed int64) int64 {
-	if price.UnitsPerCent <= 0 {
+	v := AssessedValue(price, assessed)
+	if price.UnitsPerCent > 0 && price.Assess == AssessCapped {
+		return max(v, min(price.Forge, price.Rent, max(0, price.FallbackCents)))
+	}
+	return v
+}
+
+// AssessedValue is AssessedContribution without a capped row's
+// fallback_cents: what the assessment itself is worth. The floor prices
+// control of a key, which is free to make again, so a node root's claims of
+// one kind count it once, on its best claim; its other claims of that kind
+// price at this value (C492): an empty wallet beside another adds nothing,
+// while value a wallet proves beyond the floor (real balances) still
+// stacks across distinct wallets.
+func AssessedValue(price ProofPrice, assessed int64) int64 {
+	if price.UnitsPerCent <= 0 || assessed <= 0 {
 		return 0
 	}
 	ceiling := min(price.Forge, price.Rent)
-	if assessed <= 0 {
-		if price.Assess == AssessCapped {
-			return min(ceiling, max(0, price.FallbackCents))
-		}
-		return 0
-	}
 	assessed = min(assessed, assessedMax)
 	switch price.Assess {
 	case AssessCapped:
-		return min(ceiling, max(assessed/price.UnitsPerCent, price.FallbackCents))
+		return min(ceiling, assessed/price.UnitsPerCent)
 	case AssessSaturating:
 		return mulDiv(ceiling, assessed, assessed+ceiling*price.UnitsPerCent)
 	}

@@ -474,6 +474,7 @@ func pad(n, w int) string {
 type seaIceData struct {
 	SeriesID          string   `json:"series_id"`
 	Units             string   `json:"units"`
+	Averaging         string   `json:"averaging"`
 	Date              *string  `json:"date"`
 	ExtentKM2         *int64   `json:"extent_km2"`
 	ExtentMillionKM2  *float64 `json:"extent_million_km2"`
@@ -487,11 +488,16 @@ type seaIceData struct {
 	Note              string   `json:"note,omitempty"`
 }
 
+// seaIceAveraging says which NSIDC figure the values are: the daily file's
+// own extent, not the 5-day trailing mean NSIDC's charts plot (Sea Ice Index
+// v4 user guide 3.3.4; checked against the daily CSV by vtoroy-hermes, 10-20).
+const seaIceAveraging = "none: each day's own extent from the daily file, not the 5-day trailing mean NSIDC's charts show"
+
 var dsSeaIce = &pdDataset{
 	ID: "sea_ice_extent", SchemaVersion: 1,
 	Title:       "Arctic sea-ice extent",
 	Description: "NSIDC Sea Ice Index daily Arctic extent: a day's extent, its rank among the same day in every year (1 = record low) and its anomaly against that day's mean; optionally the series over a date range.",
-	Output:      "data: series_id, units (million km2), date, extent_km2, extent_million_km2, rank_low_to_high, n_years, anomaly_million_km2, observations[] (newest first: date, value; only with start_date or end_date), count, truncated, next_end_date",
+	Output:      "data: series_id, units (million km2), averaging, date, extent_km2, extent_million_km2, rank_low_to_high, n_years, anomaly_million_km2, observations[] (newest first: date, value; only with start_date or end_date), count, truncated, next_end_date",
 	Params: []pdParam{
 		dateParam("date", "the day to rank; default the latest available"),
 		dateParam("start_date", "series from this day (inclusive)"),
@@ -509,7 +515,7 @@ var dsSeaIce = &pdDataset{
 		if err != nil {
 			return nil, err
 		}
-		out := seaIceData{SeriesID: "N_seaice_extent", Units: "million km2", Observations: []pdObs{}}
+		out := seaIceData{SeriesID: "N_seaice_extent", Units: "million km2", Averaging: seaIceAveraging, Observations: []pdObs{}}
 		if len(s.D) > 0 {
 			r.asOf = s.D[len(s.D)-1]
 		}

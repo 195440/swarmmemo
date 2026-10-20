@@ -178,7 +178,7 @@ func unknownDataset(id string) string {
 	if EchoesArg(id) {
 		what = `Dataset "` + id + `"`
 	}
-	return what + " is not in the catalogue; public_data.datasets lists the dataset ids."
+	return what + " is not in the catalogue; public_data.datasets (GET /call/public_data/datasets) lists the dataset ids."
 }
 
 // rule is what spec takes, for a refusal: "is TYPE ...", never the value

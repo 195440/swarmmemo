@@ -720,6 +720,7 @@ func (r *run) compute(ctx context.Context) (Output, error) {
 		account string
 		item    WorldItem
 		price   int64 // cents
+		value   int64 // cents: the price without a capped row's fallback floor
 	}
 	var claims []claim
 	for _, x := range proofs {
@@ -736,7 +737,7 @@ func (r *run) compute(ctx context.Context) (Output, error) {
 		default:
 			it.Root = x.Kind + ":" + x.LinkValue
 		}
-		var cents int64
+		var cents, value int64
 		switch {
 		case !counts(x):
 			it.Note = "not counted: not verified within proof_fresh_days"
@@ -748,10 +749,38 @@ func (r *run) compute(ctx context.Context) (Output, error) {
 				it.Note = "registration age and rank not yet fetched: priced at the domain row's fallback"
 			}
 		default:
-			cents = AssessedContribution(price, x.Assessed)
+			cents, value = AssessedContribution(price, x.Assessed), AssessedValue(price, x.Assessed)
 		}
 		it.PriceCents = cents
-		claims = append(claims, claim{x.Account, it, cents})
+		claims = append(claims, claim{x.Account, it, cents, value})
+	}
+	// A capped row's fallback floor prices control of a key, which is free
+	// to make again: from version 12 (FloorOnceVersion), per (kind, node
+	// root) only the best claim keeps it, and the others price at their
+	// assessed value (C492). N fresh wallets on one root count the floor
+	// once; real balances still stack. Versions up to 11 price each claim
+	// with its floor, as their published runs did.
+	floorOf := map[[2]string]int{} // (kind, node root) → claim index
+	for i, c := range claims {
+		if row := p.Proofs[c.item.Source]; p.Version < FloorOnceVersion || c.price <= 0 || row.Assess != AssessCapped || row.FallbackCents <= 0 {
+			continue
+		}
+		k := [2]string{c.item.Source, r.rootOf(c.account)}
+		// The highest price keeps the floor; at equal price the higher
+		// value (where the floor adds least), then the lower account.
+		if j, ok := floorOf[k]; !ok || c.price > claims[j].price || c.price == claims[j].price &&
+			(c.value > claims[j].value || c.value == claims[j].value && c.account < claims[j].account) {
+			floorOf[k] = i
+		}
+	}
+	for i := range claims {
+		c := &claims[i]
+		j, ok := floorOf[[2]string{c.item.Source, r.rootOf(c.account)}]
+		if !ok || j == i || c.value >= c.price {
+			continue
+		}
+		c.price, c.item.PriceCents = c.value, c.value
+		c.item.Note = "fallback counted once per root: on " + claims[j].account
 	}
 	// Per proof root: the claiming roots and each root's best claim.
 	bestOf := map[[2]string]int{} // (proof root, node root) → claim index

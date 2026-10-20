@@ -27,6 +27,8 @@ type fakeBundlerAPI struct {
 	charged                        string            // billing.charged_credits of an invoke
 	receiptExtra                   string            // more fields of an invoke row's receipt, each with a leading comma
 	invokeStatus                   int
+	invokeBody                     string // when set, the whole 200 answer of an invoke
+	nRefused                       int    // invokes refused as budget_exceeded
 	nSearch, nProbe, nGet, nInvoke int
 	lastInvoke                     map[string]any
 	badAuth                        int
@@ -81,6 +83,27 @@ func (f *fakeBundlerAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			c0, _ := calls[0].(map[string]any)
 			tool, _ = c0["id"].(string)
 		}
+		if f.invokeBody != "" {
+			_, _ = w.Write([]byte(f.invokeBody))
+			return
+		}
+		// The upstream's rule: a call bills price_usd × 1.15 + $0.005, and a
+		// max_usd below that is refused, HTTP 200, nothing delivered or billed.
+		price := 0.002
+		if p, ok := f.probes[tool]; ok {
+			var pr struct {
+				Price *float64 `json:"price_usd"`
+			}
+			if json.Unmarshal([]byte(p), &pr) == nil && pr.Price != nil {
+				price = *pr.Price
+			}
+		}
+		maxUSD, _ := f.lastInvoke["max_usd"].(float64)
+		if needs := price*1.15 + 0.005; maxUSD < needs-1e-9 {
+			f.nRefused++
+			fmt.Fprintf(w, bundlerBudgetExceeded, tool, needs, tool)
+			return
+		}
 		fmt.Fprintf(w, `{"results":[{"id":%q,"delivered":true,"response":{"temp_c":14},"receipt":{"tool":%q,"delivered":true%s}}],"billing":{"charged_credits":%s,"balance_credits":2997}}`, tool, tool, f.receiptExtra, f.charged)
 	default:
 		f.nGet++
@@ -93,6 +116,10 @@ func (f *fakeBundlerAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(d))
 	}
 }
+
+// bundlerBudgetExceeded is the upstream's answer, HTTP 200 without billing, to
+// a call whose max_usd is under what it would bill (tool, needs, tool).
+const bundlerBudgetExceeded = `{"result":{"calls":[{"id":%q,"body":{"error":"budget_exceeded","estimate_usd":0.001,"needs_usd":%v},"charged_usd":0,"delivered":false,"status":402}],"delivered":0,"requested":1,"charged_usd":0},"receipts":[{"tool":%q,"amount":"0","delivered":false,"reason":"budget_exceeded"}]}`
 
 func (f *fakeBundlerAPI) count() (search, probe, get, invoke int) {
 	f.mu.Lock()
@@ -319,7 +346,7 @@ func TestBundlerSearch(t *testing.T) {
 	}
 	ok := hits["tool:"+toolOK]
 	desc := ok["description"].(string)
-	if ok["callable"] != true || ok["vetted"] != true || ok["price_usd"] != "0.002" || ok["cost"] != float64(creditsFor(3000)) ||
+	if ok["callable"] != true || ok["vetted"] != true || ok["price_usd"] != "0.002" || ok["cost"] != float64(creditsFor(8000)) ||
 		ok["max_cost"] != float64(creditsFor(20000)) || ok["summary_status"] != "unscreened" || strings.ContainsAny(desc, "‮\u0007") ||
 		fmt.Sprint(ok["capabilities"]) != "[weather forecast badcap]" || fmt.Sprint(ok["input_schema"]) == "" {
 		t.Fatalf("vetted hit %v", ok)
@@ -444,7 +471,8 @@ func TestBundlerPublicIDsNeverNameTheVendor(t *testing.T) {
 }
 
 // TestBundlerQuoteCoversTheCharge: tools_get's cost includes the upstream's
-// fee (a $0.002 tool is billed 2.3 credits, rounded up to 3), and a call
+// fees (a $0.002 tool is billed $0.002 x 1.15 + $0.005 = 7.3 credits, rounded
+// up to 8), the upstream accepts a call at that max_usd, and a call
 // is never charged more than that quote, whatever the upstream reports.
 func TestBundlerQuoteCoversTheCharge(t *testing.T) {
 	h, api := newBundlerHarness(t, "", "")
@@ -456,10 +484,10 @@ func TestBundlerQuoteCoversTheCharge(t *testing.T) {
 		t.Fatal(err)
 	}
 	quote := int64(tool["cost"].(float64))
-	if quote != creditsFor(bundlerCost(2000)) || bundlerCost(2000) != 3000 {
-		t.Fatalf("quote %d, want the price plus the fee in whole credits: %d", quote, creditsFor(3000))
+	if quote != creditsFor(bundlerCost(2000)) || bundlerCost(2000) != 8000 {
+		t.Fatalf("quote %d, want the price plus the fees in whole credits: %d", quote, creditsFor(8000))
 	}
-	for _, billed := range []string{"3", "2", "9"} {
+	for _, billed := range []string{"8", "2", "9"} {
 		api.charged = billed
 		before := h.charged()
 		if _, err := h.call(testSubject, `{"resource":"tool:`+toolOK+`","body":{}}`, quote); err != nil {
@@ -468,8 +496,63 @@ func TestBundlerQuoteCoversTheCharge(t *testing.T) {
 		if got := h.charged() - before; got > quote {
 			t.Fatalf("billed %s: charged %d over the quote %d", billed, got, quote)
 		}
-		if api.lastInvoke["max_usd"] != 0.003 {
-			t.Fatalf("max_usd %v, want the quote's $0.003", api.lastInvoke["max_usd"])
+		if api.lastInvoke["max_usd"] != 0.008 || api.nRefused != 0 {
+			t.Fatalf("max_usd %v (refused %d), want the quote's $0.008, which the upstream accepts", api.lastInvoke["max_usd"], api.nRefused)
+		}
+	}
+}
+
+// budgetExceededBody is the upstream's budget_exceeded answer as it sends it:
+// HTTP 200, no billing, nothing delivered or charged.
+const budgetExceededBody = `{"result":{"calls":[{"id":"` + toolOK + `","body":{"error":"budget_exceeded","estimate_usd":0.001,"needs_usd":0.00615},"charged_usd":0,"delivered":false,"status":402}],"delivered":0,"requested":1},"receipts":[{"tool":"` + toolOK + `","amount":"0","delivered":false,"reason":"budget_exceeded"}]}`
+
+// TestBundlerUndeliveredNotCharged: a 200 answer without billing that reports
+// nothing delivered and nothing charged costs the caller no upstream price
+// (only the call's base), and the answer is still returned; any malformed or
+// contrary field keeps the conservative charge of the quote.
+func TestBundlerUndeliveredNotCharged(t *testing.T) {
+	h, api := newBundlerHarness(t, "", "")
+	if _, err := h.bundlerRead(testSubject, "tools_search", `{"query":"weather"}`); err != nil {
+		t.Fatal(err)
+	}
+	quote := creditsFor(bundlerCost(2000))
+	api.invokeBody = budgetExceededBody
+	before := h.charged()
+	out, err := h.call(testSubject, `{"resource":"tool:`+toolOK+`","body":{}}`, quote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := h.charged() - before; got != creditsFor(0) {
+		t.Fatalf("charged %d for an undelivered call, want only the base %d", got, creditsFor(0))
+	}
+	if raw, _ := json.Marshal(resultOf(out)); !strings.Contains(string(raw), "budget_exceeded") {
+		t.Fatalf("result %s, want the upstream's answer", raw)
+	}
+	var state, reason string
+	_ = h.db.QueryRow("SELECT state, reason FROM x402_payments").Scan(&state, &reason)
+	if state != "failed" || reason != "not_charged" {
+		t.Fatalf("payment %s %s", state, reason)
+	}
+	for i, body := range []string{
+		strings.Replace(budgetExceededBody, `"charged_usd":0,`, `"charged_usd":"0",`, 1),                  // a string, not a number
+		strings.Replace(budgetExceededBody, `"charged_usd":0,`, `"charged_usd":0.001,`, 1),                // billed
+		strings.Replace(budgetExceededBody, `"charged_usd":0,`, ``, 1),                                    // missing
+		strings.Replace(budgetExceededBody, `"delivered":false,"status"`, `"delivered":true,"status"`, 1), // delivered
+		strings.Replace(budgetExceededBody, `"delivered":false,"status"`, `"delivered":"false","status"`, 1),
+		strings.Replace(budgetExceededBody, `"delivered":0,`, `"delivered":1,`, 1),
+		strings.Replace(budgetExceededBody, `"delivered":0,`, ``, 1),
+		strings.Replace(budgetExceededBody, `"delivered":0,`, `"delivered":null,`, 1),
+		`{"result":{"calls":[],"delivered":0}}`,
+		`{"result":{"calls":[{"charged_usd":0,"delivered":false},{"charged_usd":0.002,"delivered":true}],"delivered":0}}`,
+		`{"result":[1]}`,
+	} {
+		api.invokeBody = body
+		before := h.charged()
+		if _, err := h.call(testSubject, `{"resource":"tool:`+toolOK+`","body":{"n":`+fmt.Sprint(i)+`}}`, quote); err != nil {
+			t.Fatalf("body %d: %v", i, err)
+		}
+		if got := h.charged() - before; got != quote {
+			t.Fatalf("body %d: charged %d, want the quote %d", i, got, quote)
 		}
 	}
 }
@@ -497,7 +580,7 @@ func TestBundlerCall(t *testing.T) {
 	}
 	calls := api.lastInvoke["calls"].([]any)
 	c0 := calls[0].(map[string]any)
-	if c0["id"] != toolOK || fmt.Sprint(c0["args"]) != "map[city:Paris]" || api.lastInvoke["max_usd"] != 0.003 ||
+	if c0["id"] != toolOK || fmt.Sprint(c0["args"]) != "map[city:Paris]" || api.lastInvoke["max_usd"] != 0.008 ||
 		fmt.Sprint(api.lastInvoke["search_ids"]) != "[srch_test-1]" || !strings.HasPrefix(fmt.Sprint(api.lastInvoke["idempotency_key"]), "swarmmemo-") {
 		t.Fatalf("invoke %v", api.lastInvoke)
 	}
@@ -511,7 +594,7 @@ func TestBundlerCall(t *testing.T) {
 		t.Fatalf("payment %d %d %s", amount, version, resource)
 	}
 	// The caller's max_cost bounds what the bundler may be paid.
-	if _, err := call(toolOK, `{}`, creditsFor(3000)); err != nil || api.lastInvoke["max_usd"] != 0.003 {
+	if _, err := call(toolOK, `{}`, creditsFor(8000)); err != nil || api.lastInvoke["max_usd"] != 0.008 {
 		t.Fatalf("max_usd for a lower ceiling: %v %v", api.lastInvoke["max_usd"], err)
 	}
 	_, _, _, invokes := api.count()
@@ -638,12 +721,12 @@ func TestBundlerTxIsLabelledUpstream(t *testing.T) {
 }
 
 func TestBundlerCallAllowUnvettedAndCaps(t *testing.T) {
-	// tool_daily 0.02: a tool priced $0.017 costs 0.02 a call with the fee
-	// (0.01955, whole credits), so the second call of the day finds the
+	// tool_daily 0.02: a tool priced $0.013 costs 0.02 a call with the fees
+	// (0.01995, whole credits), so the second call of the day finds the
 	// tool's budget spent.
 	h, api := newBundlerHarness(t, `,"allow_unvetted":true,"max_price":"0.02","open_daily":"0.05","tool_daily":"0.02"`, "")
 	for _, id := range []string{toolUnvet, toolOK, toolDenied} {
-		api.probes[id] = `{"id":"` + id + `","live":true,"price_usd":0.017,"payable":true}`
+		api.probes[id] = `{"id":"` + id + `","live":true,"price_usd":0.013,"payable":true}`
 	}
 	if _, err := h.bundlerRead(testSubject, "tools_search", `{"queries":["weather","forecast"]}`); err != nil {
 		t.Fatal(err)

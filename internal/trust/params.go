@@ -186,10 +186,20 @@ func DefaultBreakerTrustDays() map[string]int64 {
 	return map[string]int64{"agent.rotate": 30, "dormant": 30, "identity.link": 7, "identity.unlink": 7, "spike": 0}
 }
 
+// FloorOnceVersion is version 11 plus C492's rule: a capped row's
+// fallback_cents (the wallet's 50¢) counts once per (kind, node root), on
+// the root's best claim; its other claims of that kind price at their
+// assessed value alone (AssessedValue), so N fresh empty wallets add 50¢,
+// not N × 50¢. The rule only: the body is version 11's, and runs at
+// versions up to 11 compute as before, so their published outputs still
+// recompute.
+const FloorOnceVersion = 12
+
 // DefaultVersion is the compiled-in trust parameter version: RFC 0021 with
-// C326's price rows, C336's pass share and C338's breaker windows, active
-// from the deploy that ships it (no parameter write is needed).
-const DefaultVersion = BreakerVersion
+// C326's price rows, C336's pass share, C338's breaker windows and C492's
+// once-per-root fallback, active from the deploy that ships it (no
+// parameter write is needed).
+const DefaultVersion = FloorOnceVersion
 
 // Evidence classes (RFC 0015 §5.4, judge.EvidenceWeightPPM).
 var evidenceClasses = []string{"free_use", "observed", "opinion", "paid_use", "work"}
@@ -208,11 +218,13 @@ func DayFactor(halfLifeDays int64) int64 {
 	return int64(math.Round(1e6 * math.Pow(2, -1/float64(halfLifeDays))))
 }
 
-// DefaultParams is the compiled-in parameter set (version 11): RFC 0021's
+// DefaultParams is the compiled-in parameter set (version 12): RFC 0021's
 // knobs (G 120 days, Hd 180, H 180, the evidence weights), U = 200¢ and
 // m = 2, the values derived from them, the price rows of §10 and C326's
-// (proofRowsV9), C336's pass share and C338's breaker windows. PassParams
-// is version 10, the same without the breaker windows; ProofsParams version
+// (proofRowsV9), C336's pass share and C338's breaker windows, under C492's
+// once-per-root fallback. BreakerParams is version 11, the same body
+// without that rule; PassParams
+// is version 10, also without the breaker windows; ProofsParams version
 // 9, also without the pass share; UnifiedParams version 8, also without
 // C326's rows.
 func DefaultParams() Params {
@@ -263,10 +275,18 @@ func DefaultParams() Params {
 	return p
 }
 
-// PassParams is parameter version 10: DefaultParams without the breaker
+// BreakerParams is parameter version 11: DefaultParams' body, without
+// C492's once-per-root fallback (each wallet's floor counts).
+func BreakerParams() Params {
+	p := DefaultParams()
+	p.Version = BreakerVersion
+	return p
+}
+
+// PassParams is parameter version 10: BreakerParams without the breaker
 // windows.
 func PassParams() Params {
-	p := DefaultParams()
+	p := BreakerParams()
 	p.Version, p.BreakerTrustDays = PassVersion, nil
 	return p
 }

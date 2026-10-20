@@ -1,6 +1,7 @@
 """Tests for scripts/trust/recompute.py: python3 -m unittest scripts/trust/test_recompute.py"""
 
 import copy
+import hashlib
 import io
 import json
 import os
@@ -313,6 +314,27 @@ class Unified(unittest.TestCase):
             recompute.check_params_v2(params["body"], params["version"])
         with self.assertRaises(recompute.InputError):
             recompute.check_params_v2(json.loads(next(line for line in lines if '"type":"params"' in line))["body"], 7)
+
+    def test_wallet_fallback_once_per_root(self):
+        # C492: the Go reference's golden_wallet_floor fixtures recompute
+        # byte for byte. Version 11 keeps each wallet's 50¢ fallback (seven
+        # empty wallets on one root count 350¢, as published v11 runs did);
+        # version 12 counts it once per root (50¢), real balances still stack.
+        for version, want in (("v11", (350, 550, 50, 50)), ("v12", (50, 500, 50, 50))):
+            inputs = golden_dir() / f"golden_wallet_floor_{version}_inputs.jsonl"
+            output = golden_dir() / f"golden_wallet_floor_{version}_output.json"
+            if not inputs.exists():
+                self.skipTest(f"no golden_wallet_floor_{version} fixture at {golden_dir()}")
+            out = recompute.compute_any(inputs.read_text(encoding="utf-8").splitlines())
+            self.assertEqual(recompute.canonical(out), output.read_text(encoding="utf-8").rstrip("\n"), version)
+            self.assertEqual(out["params_version"], int(version[1:]))
+
+            def wallets(name):
+                acct = hashlib.sha256(name.encode()).hexdigest()
+                score = next(s for s in out["scores"] if s["account"] == acct)
+                return sum(it["cents"] for it in score["parts"]["world"] if it["kind"] == "proof" and it["source"] == "wallet")
+            self.assertEqual((wallets("sybil") + wallets("sybil2"), wallets("rich"), wallets("x"), wallets("y")), want, version)
+        self.assertEqual(recompute.assessed_value({"forge": 5000, "rent": 600, "assess": "capped", "units_per_cent": 1, "fallback_cents": 50}, 0), 0)
 
     def test_log10(self):
         import math

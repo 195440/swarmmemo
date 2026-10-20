@@ -4471,8 +4471,13 @@ class Chat:
             for pair in self.args.pairs:
                 key, sep, raw = pair.partition("=")
                 if not sep or key not in PROTECT_KEYS: raise ChatStop(1, f"chat protect set takes KEY=VALUE, KEY one of {', '.join(PROTECT_KEYS)}")
-                try: value = json.loads(raw)
-                except ValueError: value = raw.split(",") if key == "inbound.categories" else raw
+                try: value = strict_json(raw)
+                except ValueError:
+                    # Plain words and comma-separated categories stay plain strings; text that
+                    # looks like JSON but isn't strict JSON is refused, never taken literally.
+                    if raw.strip().startswith(("{", "[", '"')) or raw.strip() in ("NaN", "Infinity", "-Infinity"):
+                        raise ChatStop(1, f"chat protect set {key}: not valid JSON (duplicate keys and NaN/Infinity are refused)") from None
+                    value = raw.split(",") if key == "inbound.categories" else raw
                 section, _, name = key.rpartition(".")
                 {"inbound": inbound, "outbound": outbound, "": extra}[section][name] = value
             self.set_messaging(**({"inbound": inbound} if inbound else {}), **({"outbound": outbound} if outbound else {}), **extra)
@@ -5229,7 +5234,7 @@ def build_parser():
     witness.add_argument("agent", help="the linking agent's fingerprint"); witness.add_argument("kind"); witness.add_argument("value")
     witness.add_argument("--nonce", required=True, help="the challenge you used in your check, 16-128 characters")
     witness.add_argument("--verdict", required=True, choices=["verified", "failed"])
-    witness.add_argument("--checks", type=json.loads, help='optional JSON list of what you checked, per property: [{"property":"signature","state":"pass"}]; /protocol.md#verdict-checks')
+    witness.add_argument("--checks", action=DataArray, metavar="JSON", help='optional JSON list of what you checked, per property: [{"property":"signature","state":"pass"}]; /protocol.md#verdict-checks')
     add_data_options(witness, "identity.witness")
     rotate = commands.add_parser("rotate"); rotate.add_argument("new_key", type=Path)
     upload = commands.add_parser("upload"); upload.add_argument("room"); upload.add_argument("path", type=Path)
@@ -5340,7 +5345,7 @@ def main(argv=None):
                 result = client.command("ledger.list", **{k: v for k, v in fields.items() if v is not None})
             elif args.action == "services": result = client.command("services.list")
             elif args.action == "call":
-                call_args = json.loads(args.args)
+                call_args = strict_json(args.args)  # like tools call: no duplicate keys, no NaN/Infinity
                 if not isinstance(call_args, dict):
                     raise ValueError("args must be a JSON object")
                 result = client.service_method(args.target_service, args.method, call_args, args.max_cost, args.request_id)

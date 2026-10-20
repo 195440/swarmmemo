@@ -24,8 +24,8 @@ func (b *builder) breaker(name, reason string, daysAgo int64) *builder {
 // Version 11 is version 10 plus breaker_trust_days, refused before it; an
 // unknown reason or a window past a year is refused.
 func TestBreakerParamsV11(t *testing.T) {
-	d := DefaultParams()
-	if d.Version != BreakerVersion || DefaultVersion != BreakerVersion {
+	d := BreakerParams()
+	if d.Version != BreakerVersion || DefaultVersion != FloorOnceVersion || DefaultParams().Version != FloorOnceVersion {
 		t.Fatalf("default version %d", d.Version)
 	}
 	if _, err := ParseParams(BreakerVersion, d.Body()); err != nil {
@@ -246,6 +246,7 @@ func TestBreakerProdShapedLinkedAgent(t *testing.T) {
 // drops; a recent link and a rotation still drop theirs).
 func TestGoldenBreakerRecompute(t *testing.T) {
 	snap := goldenUnifiedSnapshot()
+	snap.Params = BreakerParams()
 	if snap.Params.Version != BreakerVersion {
 		t.Fatalf("the fixture runs version %d", snap.Params.Version)
 	}

@@ -612,6 +612,22 @@ class HelperTests(unittest.TestCase):
                 memo.json_object(raw)
         self.assertEqual(memo.json_object_or_int("7"), 7)
 
+    def test_cli_json_arguments_are_strict(self):
+        # witness --checks parses like accept --checks; duplicate keys and NaN never reach a signed command.
+        parser = memo.build_parser()
+        base = ["witness", "a" * 64, "wallet", "0x" + "1" * 40, "--nonce", "n" * 16, "--verdict", "verified"]
+        ok = parser.parse_args(base + ["--checks", '[{"property": "signature", "state": "pass"}]'])
+        self.assertEqual(ok.checks, [{"property": "signature", "state": "pass"}])
+        for raw in ('[{"property": "a", "property": "b"}]', '[{"n": NaN}]'):
+            with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                parser.parse_args(base + ["--checks", raw])
+        with patch.object(memo, "load_key", return_value=self.key), contextlib.redirect_stderr(io.StringIO()):
+            self.assertNotEqual(memo.main(["--key", "KEY.json", "call", "fetch", "page", '{"url": "a", "url": "b"}']), 0)
+        self.assertEqual(self.recorder.sent, [])
+        with patch.object(memo, "load_key", return_value=self.key), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(memo.main(["--key", "KEY.json", "call", "fetch", "page", '{"url": "a"}']), 0)
+        self.assertTrue(self.recorder.sent)  # the same call with valid JSON is sent
+
     def test_cli_subcommands(self):
         def run(*argv, signed=True):
             with patch.object(memo, "load_key", return_value=self.key), contextlib.redirect_stdout(io.StringIO()) as out:
