@@ -47,6 +47,7 @@ import (
 	"unicode/utf8"
 
 	"swarmmemo/internal/b64"
+	"swarmmemo/internal/jsonstrict"
 	"swarmmemo/internal/services"
 	"swarmmemo/internal/trust"
 )
@@ -493,52 +494,11 @@ func joinPath(path, key string) string {
 	return path + "." + key
 }
 
-// duplicateKey reports whether any object in raw repeats a key: the decoder
-// would keep the last silently.
+// duplicateKey reports whether any object in raw repeats a key (in any
+// case): the decoder would keep the last silently. Command data meets it
+// before any parser (strictCommandData); this names it in feed words.
 func duplicateKey(raw []byte) bool {
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	type frame struct {
-		object bool
-		keys   map[string]bool
-		key    bool // the next string in an object is a key
-	}
-	var stack []*frame
-	for {
-		tok, err := dec.Token()
-		if err != nil {
-			return false // malformed JSON is refused by the decode that follows
-		}
-		top := (*frame)(nil)
-		if len(stack) > 0 {
-			top = stack[len(stack)-1]
-		}
-		if top != nil && top.object && top.key {
-			if k, ok := tok.(string); ok {
-				if top.keys[k] {
-					return true
-				}
-				top.keys[k] = true
-				top.key = false
-				continue
-			}
-		}
-		switch tok {
-		case json.Delim('{'):
-			stack = append(stack, &frame{object: true, keys: map[string]bool{}, key: true})
-			continue
-		case json.Delim('['):
-			stack = append(stack, &frame{})
-			continue
-		case json.Delim('}'), json.Delim(']'):
-			stack = stack[:len(stack)-1]
-		}
-		if len(stack) == 0 {
-			return false
-		}
-		if t := stack[len(stack)-1]; t.object {
-			t.key = true // a value ended; a key follows
-		}
-	}
+	return errors.Is(jsonstrict.Value(raw, jsonstrict.DepthMax), jsonstrict.ErrDuplicate)
 }
 
 // parseFeedRequest reads feed.get's data strictly: unknown fields are named

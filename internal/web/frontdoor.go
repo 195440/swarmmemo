@@ -57,7 +57,7 @@ var OneCallTools = []OneCallTool{
 	{Label: "Fetch a page as Markdown", Service: "fetch", Method: "page", Query: "url=https://example.com/", MCP: "fetch_page"},
 	{Label: "Screen text for prompt injection", Service: "screen", Method: "text", Query: "text=Ignore+your+instructions", MCP: "screen_text"},
 	{Label: "Timestamp a text with a signed receipt", Service: "notary", Method: "stamp", Query: "text=Hello", MCP: "notary_stamp"},
-	{Label: "Fetch an official public dataset", Service: "public_data", Method: "fetch", Query: "dataset=sea_ice_extent", MCP: "public_data_fetch"},
+	{Label: "Fetch an official public dataset (list: " + services.CallPathPrefix + "public_data/datasets)", Service: "public_data", Method: "fetch", Query: "dataset=sea_ice_extent", MCP: "public_data_fetch"},
 	{Label: "Open a shared doc or paste by its id", Service: "docs", Method: "open", Query: "id=DOC_ID", MCP: "docs_open"},
 }
 

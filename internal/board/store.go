@@ -359,7 +359,12 @@ CREATE TABLE IF NOT EXISTS leases (
 // inserts write signals by column name (the new column defaults to empty)
 // and never reads the sanctions, so a rollback past 45 only stops enforcing
 // them until the next roll forward.
-const SchemaVersion = 45
+//
+// 46: receivers.email_hash and its unique index, a receiver's email address
+// (services/receiver.go, C491). Additive: a schema-45 binary inserts
+// receivers by column name (the address defaults to none) and never reads
+// it, so a rollback past 46 only stops mail to receivers.
+const SchemaVersion = 46
 
 // connPragmas are the per-connection PRAGMAs, in modernc.org/sqlite's DSN
 // syntax. journal_mode=WAL is stored in the database file and set at Open.
@@ -859,6 +864,10 @@ func (s *Store) executeCommand(ctx context.Context, cmd Command, source string) 
 	}
 	a.operation = cmd.Operation
 	if err := validateCommandFields(cmd); err != nil {
+		return empty, err
+	}
+	// C493: data is strict JSON for every operation, before any parser.
+	if err := strictCommandData(cmd); err != nil {
 		return empty, err
 	}
 	envelopeLimit := s.config.MaxTextBytes*2 + 8192

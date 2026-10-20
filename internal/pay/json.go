@@ -1,17 +1,18 @@
 package pay
 
-// Bounded, strict JSON and base64 helpers both wires share. CheckStructure,
-// DecodeBase64JSON and IsObject moved here from internal/services without
-// change.
+// Bounded, strict JSON and base64 helpers both wires share. DecodeBase64JSON
+// and IsObject moved here from internal/services without change; the
+// structural check is internal/jsonstrict's, shared with command data.
 
 import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"io"
 	"strings"
 	"unicode/utf8"
+
+	"swarmmemo/internal/jsonstrict"
 )
 
 // JSONDepthMax bounds the nesting of any JSON a wire parses
@@ -28,7 +29,7 @@ func strictObject(raw []byte, dst any) error {
 	if len(raw) == 0 || !utf8.Valid(raw) {
 		return errStructure
 	}
-	if err := CheckStructure(raw, JSONDepthMax); err != nil {
+	if err := jsonstrict.Object(raw, JSONDepthMax); err != nil {
 		return errStructure
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -45,7 +46,7 @@ func lenientObject(raw []byte, dst any) error {
 	if len(raw) == 0 || !utf8.Valid(raw) {
 		return errStructure
 	}
-	if err := CheckStructure(raw, JSONDepthMax); err != nil {
+	if err := jsonstrict.Object(raw, JSONDepthMax); err != nil {
 		return errStructure
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -76,95 +77,3 @@ func IsObject(raw json.RawMessage) bool {
 }
 
 var errStructure = errors.New("pay: malformed JSON structure")
-
-// CheckStructure walks raw once: exactly one top-level object, no duplicate
-// key in any object (case-insensitively), depth at most depthMax, nothing
-// after the value. Moved from internal/services (data.go) without change
-// but the depth bound, which is now a parameter.
-func CheckStructure(raw []byte, depthMax int) error {
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
-	var stack []*frame
-	first := true
-	for {
-		tok, err := dec.Token()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		if first {
-			if d, ok := tok.(json.Delim); !ok || d != '{' {
-				return errStructure
-			}
-		} else if len(stack) == 0 {
-			return errStructure // a second top-level value
-		}
-		first = false
-		var top *frame
-		if len(stack) > 0 {
-			top = stack[len(stack)-1]
-		}
-		if top != nil && top.object && top.key {
-			if d, ok := tok.(json.Delim); ok && d == '}' {
-				stack = stack[:len(stack)-1]
-				if len(stack) > 0 {
-					stack[len(stack)-1].valueDone()
-				}
-				continue
-			}
-			name, ok := tok.(string)
-			// encoding/json matches field names case-insensitively, so keys
-			// that differ only in case are duplicates too: "method" and
-			// "METHOD" would let the last one win where another reader sees
-			// the first (security review 1.20, L12).
-			folded := strings.ToLower(strings.ToUpper(name))
-			if !ok || top.keys[folded] {
-				return errStructure
-			}
-			top.keys[folded] = true
-			top.key = false
-			continue
-		}
-		switch d := tok.(type) {
-		case json.Delim:
-			switch d {
-			case '{', '[':
-				if len(stack) >= depthMax {
-					return errStructure
-				}
-				stack = append(stack, &frame{object: d == '{', keys: map[string]bool{}, key: d == '{'})
-			case ']':
-				stack = stack[:len(stack)-1]
-				if len(stack) > 0 {
-					stack[len(stack)-1].valueDone()
-				}
-			default:
-				return errStructure
-			}
-		default:
-			if top != nil {
-				top.valueDone()
-			}
-		}
-	}
-	if first || len(stack) != 0 {
-		return errStructure
-	}
-	return nil
-}
-
-// frame is one open object or array in CheckStructure.
-type frame struct {
-	object bool
-	keys   map[string]bool
-	key    bool // the next token in this object is a key
-}
-
-// valueDone records that a value ended inside f: in an object, a key is next.
-func (f *frame) valueDone() {
-	if f.object {
-		f.key = true
-	}
-}

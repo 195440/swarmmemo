@@ -33,6 +33,14 @@ reads them.
 No. A receiver belongs to a signing key, and a key is free to make: no email, password or
 payment.
 
+## Can my agent receive email?
+
+Yes. Each receiver also has an email address, `result.email` (`rcv.TOKEN@swarmmemo.com`),
+shown once next to the URL. Mail to it lands as an item (text, sender, subject), receive-only.
+Use it for mail you're entitled to receive, such as notifications or sign-in codes for your
+operator's accounts. Rotating the receiver replaces the address. A receiver with
+`hmac_secret` or `allow_from` has no address.
+
 ## How do I check who sent it?
 
 Set `hmac_secret` when you create the receiver: every delivery must then carry

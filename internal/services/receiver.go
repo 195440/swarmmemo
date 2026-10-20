@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"database/sql"
+	"encoding/base32"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -45,6 +46,15 @@ import (
 // header matches an item stored in the last ReceiverDedupeWindow with the
 // first item's id and duplicate: true; it is not stored, charged or woken on
 // again. Only a hash of the value is kept, on the item.
+//
+// A receiver without hmac_secret or allow_from also has an email address,
+// rcv.TOKEN@DOMAIN (ReceiverMailLocalPrefix): a second delivery capability
+// with its own secret (20 random bytes in lowercase base32, since mail
+// systems case-fold addresses), shown once with the URL and kept only as a
+// hash; rotate replaces both. The local part never names a room (a room
+// slug has no "."). The Cloudflare email worker (deploy/cloudflare-email)
+// turns mail to it into one JSON delivery {"kind":"email",...} to
+// ReceiverMailPath+TOKEN, stored, screened and charged like any other.
 
 // Receiver bounds.
 const (
@@ -107,11 +117,22 @@ var ReceiverDeliverPrice = Price{Base: 1, PerKiB: 1}
 // ReceiverPathPrefix is where receive URLs live: /in/ID/SECRET.
 const ReceiverPathPrefix = "/in/"
 
+// ReceiverMailPath is where the email worker delivers mail to a receiver's
+// address: /in/mail/TOKEN ("mail" is never a receiver id, 32 hex digits).
+// ReceiverMailLocalPrefix starts the address's local part: rcv.TOKEN@DOMAIN.
+const (
+	ReceiverMailPath        = ReceiverPathPrefix + "mail/"
+	ReceiverMailLocalPrefix = "rcv."
+)
+
 var (
 	receiverIDRE    = regexp.MustCompile(`^[0-9a-f]{32}$`)
 	receiverTokenRE = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
-	receiverHMACRE  = regexp.MustCompile(`^[\x21-\x7e]+$`)
-	headerValueRE   = regexp.MustCompile(`^[\x20-\x7e]*$`)
+	// receiverMailTokenRE is an email address's secret: 20 bytes in
+	// lowercase base32 without padding.
+	receiverMailTokenRE = regexp.MustCompile(`^[a-z2-7]{32}$`)
+	receiverHMACRE      = regexp.MustCompile(`^[\x21-\x7e]+$`)
+	headerValueRE       = regexp.MustCompile(`^[\x20-\x7e]*$`)
 	// headerTokenRE is an HTTP header name (RFC 9110 token).
 	headerTokenRE = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 )
@@ -188,6 +209,7 @@ type receiver struct {
 	screener TextScreener
 	mode     ScreenMode
 	origin   string
+	mailHost string  // the domain of receivers' email addresses
 	engine   *Engine // bound by NewEngine: the meter, the database and the clock
 
 	mu        sync.Mutex
@@ -199,15 +221,18 @@ type receiver struct {
 }
 
 func newReceiver(d Deps) Provider {
-	origin := "https://swarmmemo.com"
+	origin, mailHost := "https://swarmmemo.com", "swarmmemo.com"
 	if d.ServiceID != "" {
-		origin = "https://" + d.ServiceID
+		origin, mailHost = "https://"+d.ServiceID, strings.ToLower(d.ServiceID)
+		if host, _, err := net.SplitHostPort(d.ServiceID); err == nil {
+			mailHost = strings.ToLower(host)
+		}
 	}
 	mode := d.ReceiverScreen
 	if mode == "" {
 		mode = ScreenDefaultOn
 	}
-	return &receiver{board: d.Board, screener: d.TextScreener, mode: mode, origin: origin,
+	return &receiver{board: d.Board, screener: d.TextScreener, mode: mode, origin: origin, mailHost: mailHost,
 		perRecv: map[string]*anonWindow{}, perSource: map[string]*anonWindow{}, inflight: map[string]bool{}}
 }
 
@@ -243,6 +268,9 @@ var receiverAdded = [][3]string{
 	{"receivers", "dedupe_header", "TEXT NOT NULL DEFAULT ''"},
 	{"receivers", "duplicates", "INTEGER NOT NULL DEFAULT 0"},
 	{"receiver_items", "dedupe_key", "TEXT NOT NULL DEFAULT ''"},
+	// Schema 46 (C491): the hash of the email address's secret, '' for a
+	// receiver without an address.
+	{"receivers", "email_hash", "TEXT NOT NULL DEFAULT ''"},
 }
 
 // MigrateReceivers adds receiverAdded to existing receiver tables and creates
@@ -264,7 +292,10 @@ func MigrateReceivers(tx *sql.Tx) error {
 	if err := tx.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='receiver_items'").Scan(&tables); err != nil || tables == 0 {
 		return err
 	}
-	_, err := tx.Exec("CREATE INDEX IF NOT EXISTS receiver_items_dedupe ON receiver_items(receiver,dedupe_key,received_at) WHERE dedupe_key<>''")
+	if _, err := tx.Exec("CREATE INDEX IF NOT EXISTS receiver_items_dedupe ON receiver_items(receiver,dedupe_key,received_at) WHERE dedupe_key<>''"); err != nil {
+		return err
+	}
+	_, err := tx.Exec("CREATE UNIQUE INDEX IF NOT EXISTS receivers_email ON receivers(email_hash) WHERE email_hash<>''")
 	return err
 }
 
@@ -276,7 +307,7 @@ func (r *receiver) Describe() Descriptor {
 		Summary: "Your agent's own drop box for callbacks, webhooks and results from its jobs: create returns a secret receive URL, and anything POSTed to it (JSON, a form or text, up to " + SizeText(ReceiverBodyBytes) + ") becomes a private item only you read, in updates.get (data.received) and in the items read. " +
 			"Each delivery is charged to your credit (" + ReceiverDeliverPrice.Words() + "), plus what screening it cost while the receiver screens (on by default; screen: false turns it off). " +
 			"Optional HMAC-SHA256 verification of the sender (X-Hub-Signature-256, GitHub style) and a source allowlist. " +
-			"Deliveries are not deduplicated by default: each POST is its own item, so a sender's retries arrive as separate items; set dedupe_header (such as X-Event-Id) and a repeat of its value within " + itoa(ReceiverDedupeWindow/3600) + " hours answers success with duplicate: true and is not stored or charged again. Never public, never rendered, never forwarded; it makes no outbound request. GET/HEAD answer 200 for reachability checks; only POST deliveries are stored. Items are kept, marked stale after " + durationText(ReceiverRetention) + ".",
+			"Deliveries are not deduplicated by default: each POST is its own item, so a sender's retries arrive as separate items; set dedupe_header (such as X-Event-Id) and a repeat of its value within " + itoa(ReceiverDedupeWindow/3600) + " hours answers success with duplicate: true and is not stored or charged again. Each receiver without hmac_secret or allow_from also has an email address (" + ReceiverMailLocalPrefix + "TOKEN@" + r.mailHost + "): mail to it lands as an item (text, sender, subject), receive-only; use it for mail you're entitled to receive. Never public, never rendered, never forwarded; it makes no outbound request. GET/HEAD answer 200 for reachability checks; only POST deliveries are stored. Items are kept, marked stale after " + durationText(ReceiverRetention) + ".",
 		Title: "Receivers", Topic: "Receivers",
 		Line: "Get callbacks, webhooks and job results at a secret URL of your own: each POST becomes a private item in your updates, screened for prompt injection by default.",
 		Limits: []Limit{
@@ -291,7 +322,7 @@ func (r *receiver) Describe() Descriptor {
 		Mode: Local,
 		Methods: []Method{
 			{Name: "create", Write: true, Signed: true, Resource: allowance.Credit, ArgsMax: receiverArgsMax, Price: Price{Base: 5},
-				Line: "Create a receiver; its receive URL is shown once (rotate shows a new one). GET/HEAD answer 200 for reachability checks; only POST deliveries are stored.",
+				Line: "Create a receiver; its receive URL and email address are shown once (rotate shows new ones). GET/HEAD answer 200 for reachability checks; only POST deliveries are stored.",
 				Args: []Arg{
 					{"label", "string", false, "your name for it, up to " + SizeText(ReceiverLabelBytes)},
 					{"screen", "boolean", false, "screen each body for prompt injection (default true; the surcharge is what the classifier cost)"},
@@ -301,7 +332,7 @@ func (r *receiver) Describe() Descriptor {
 				},
 				Example: json.RawMessage(`{"label":"ci-results","screen":true}`)},
 			{Name: "rotate", Write: true, Signed: true, Resource: allowance.Credit, ArgsMax: receiverArgsMax, Price: Price{Base: 1},
-				Line: "Replace a receiver's URL; the old one stops at once.", Args: []Arg{receiverIDArg},
+				Line: "Replace a receiver's URL and email address; the old ones stop at once.", Args: []Arg{receiverIDArg},
 				Example: json.RawMessage(`{"id":"RECEIVER_ID"}`)},
 			{Name: "delete", Write: true, Signed: true, Resource: allowance.Credit, ArgsMax: receiverArgsMax, Price: Price{Base: 1},
 				Line: "Stop a receiver; its items stay readable.", Args: []Arg{receiverIDArg},
@@ -332,6 +363,9 @@ func (r *receiver) CatalogueExtra() map[string]any {
 			"reachability":          "GET/HEAD answer 200 for reachability checks; only POST deliveries are stored.",
 			"deduplicated":          "Not by default: each POST is its own item. With dedupe_header set at create, a repeat of that header's value within the window answers 202 with duplicate: true and the first item's id, and is not stored, charged or woken on again.",
 			"dedupe_window_seconds": ReceiverDedupeWindow, "dedupe_value_bytes": ReceiverHeaderBytes},
+		"email": map[string]any{"address": ReceiverMailLocalPrefix + "TOKEN@" + r.mailHost, "shown": "once, with the URL, for a receiver without hmac_secret or allow_from; rotate replaces it",
+			"item":         map[string]any{"content_type": "application/json", "kind": "email", "fields": []string{"kind", "from", "subject", "date", "message_id", "text", "truncated"}},
+			"receive_only": true, "attachments": false, "message_bytes": ReceiverBodyBytes},
 		"screening": screening,
 		"outbound":  false, "public": false, "tool_page": "/tools/receive",
 	}
@@ -451,21 +485,24 @@ type ReceiverView struct {
 	// deliveries answered as duplicates.
 	DedupeHeader string `json:"dedupe_header"`
 	Duplicates   int64  `json:"duplicates"`
-	State        string `json:"state"` // active, deleted or revoked
-	Reason       string `json:"reason,omitempty"`
-	CreatedAt    int64  `json:"created_at"`
-	RotatedAt    int64  `json:"rotated_at,omitempty"`
-	FinishedAt   int64  `json:"finished_at,omitempty"`
-	Deliveries   int64  `json:"deliveries"`
-	LastAt       int64  `json:"last_at,omitempty"`
+	// Email is whether it has an email address (shown once with the URL;
+	// a receiver created before addresses existed gets one on rotate).
+	Email      bool   `json:"email"`
+	State      string `json:"state"` // active, deleted or revoked
+	Reason     string `json:"reason,omitempty"`
+	CreatedAt  int64  `json:"created_at"`
+	RotatedAt  int64  `json:"rotated_at,omitempty"`
+	FinishedAt int64  `json:"finished_at,omitempty"`
+	Deliveries int64  `json:"deliveries"`
+	LastAt     int64  `json:"last_at,omitempty"`
 }
 
-const receiverColumns = "id,label,screen,hmac_secret<>'',allow_from,dedupe_header,duplicates,state,reason,created_at,rotated_at,finished_at,deliveries,last_at"
+const receiverColumns = "id,label,screen,hmac_secret<>'',allow_from,dedupe_header,duplicates,email_hash<>'',state,reason,created_at,rotated_at,finished_at,deliveries,last_at"
 
 func scanReceiver(row interface{ Scan(...any) error }) (ReceiverView, error) {
 	var v ReceiverView
 	var allow string
-	err := row.Scan(&v.ID, &v.Label, &v.Screen, &v.HMAC, &allow, &v.DedupeHeader, &v.Duplicates, &v.State, &v.Reason, &v.CreatedAt, &v.RotatedAt, &v.FinishedAt, &v.Deliveries, &v.LastAt)
+	err := row.Scan(&v.ID, &v.Label, &v.Screen, &v.HMAC, &allow, &v.DedupeHeader, &v.Duplicates, &v.Email, &v.State, &v.Reason, &v.CreatedAt, &v.RotatedAt, &v.FinishedAt, &v.Deliveries, &v.LastAt)
 	if allow != "" {
 		v.AllowFrom = strings.Split(allow, ",")
 	}
@@ -484,10 +521,30 @@ func (r *receiver) url(id, token string) string {
 	return r.origin + ReceiverPathPrefix + id + "/" + token
 }
 
+// newReceiverMailToken is an email address's secret: 20 random bytes in
+// lowercase base32, unrelated to the URL's, so neither reveals the other.
+func newReceiverMailToken() (string, string) {
+	b := make([]byte, 20)
+	_, _ = rand.Read(b)
+	token := strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(b))
+	return token, sha256Of([]byte(token))
+}
+
+// takesMail is whether a receiver gets an email address: not when its owner
+// limited senders by HMAC or source, which mail relayed by the worker can
+// never meet.
+func takesMail(hmac bool, allow []string) bool { return !hmac && len(allow) == 0 }
+
 // once is the part of an answer shown only to the first caller: the receive
-// URL, never stored in the call record or a retry's receipt.
-func (r *receiver) once(id, token string) json.RawMessage {
-	return canonicalJSON(map[string]any{"url": r.url(id, token), "url_note": "Shown once and never stored: only a hash of its secret is kept. Keep it private; whoever holds it can deliver to you (and spend your credit). Rotate to replace it."})
+// URL and, when it has one, the email address, never stored in the call
+// record or a retry's receipt.
+func (r *receiver) once(id, token, mailToken string) json.RawMessage {
+	out := map[string]any{"url": r.url(id, token), "url_note": "Shown once and never stored: only a hash of its secret is kept. Keep it private; whoever holds it can deliver to you (and spend your credit). Rotate to replace it."}
+	if mailToken != "" {
+		out["email"] = ReceiverMailLocalPrefix + mailToken + "@" + r.mailHost
+		out["email_note"] = "Mail to this address lands as an item (kind email: from, subject, date, message_id, text; no attachments), receive-only, charged and screened like any delivery. Shown once, like the URL, and replaced with it on rotate. Use it for mail you're entitled to receive."
+	}
+	return canonicalJSON(out)
 }
 
 func (r *receiver) Run(ctx context.Context, tx *sql.Tx, c Call) (Result, error) {
@@ -510,16 +567,20 @@ func (r *receiver) Run(ctx context.Context, tx *sql.Tx, c Call) (Result, error) 
 		}
 		id := newCallID()
 		token, hash := newReceiverToken()
+		mailToken, mailHash := "", ""
+		if takesMail(s.hmac != "", s.allowText) {
+			mailToken, mailHash = newReceiverMailToken()
+		}
 		screen := s.screen == nil || *s.screen
-		if _, err = tx.ExecContext(ctx, "INSERT INTO receivers(id,account,key_id,hosted,label,token_hash,hmac_secret,allow_from,dedupe_header,screen,state,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,'active',?)",
-			id, account, c.Subject.KeyID, c.Subject.Hosted, s.label, hash, s.hmac, strings.Join(s.allowText, ","), s.dedupe, screen, c.Now); err != nil {
+		if _, err = tx.ExecContext(ctx, "INSERT INTO receivers(id,account,key_id,hosted,label,token_hash,email_hash,hmac_secret,allow_from,dedupe_header,screen,state,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,'active',?)",
+			id, account, c.Subject.KeyID, c.Subject.Hosted, s.label, hash, mailHash, s.hmac, strings.Join(s.allowText, ","), s.dedupe, screen, c.Now); err != nil {
 			return Result{}, err
 		}
 		v, err := scanReceiver(tx.QueryRowContext(ctx, "SELECT "+receiverColumns+" FROM receivers WHERE id=?", id))
 		if err != nil {
 			return Result{}, err
 		}
-		return Result{Body: r.receiverBody(v), Used: c.Price.For(0), Public: json.RawMessage(`{}`), Once: r.once(id, token)}, nil
+		return Result{Body: r.receiverBody(v), Used: c.Price.For(0), Public: json.RawMessage(`{}`), Once: r.once(id, token, mailToken)}, nil
 	case "rotate", "delete":
 		id, err := parseReceiverRef(c.Args)
 		if err != nil {
@@ -546,11 +607,15 @@ func (r *receiver) Run(ctx context.Context, tx *sql.Tx, c Call) (Result, error) 
 			return Result{}, refusal("receiver_not_active")
 		}
 		token, hash := newReceiverToken()
-		if _, err = tx.ExecContext(ctx, "UPDATE receivers SET token_hash=?, rotated_at=? WHERE id=? AND state='active'", hash, c.Now, id); err != nil {
+		mailToken, mailHash := "", ""
+		if takesMail(v.HMAC, v.AllowFrom) {
+			mailToken, mailHash = newReceiverMailToken()
+		}
+		if _, err = tx.ExecContext(ctx, "UPDATE receivers SET token_hash=?, email_hash=?, rotated_at=? WHERE id=? AND state='active'", hash, mailHash, c.Now, id); err != nil {
 			return Result{}, err
 		}
-		v.RotatedAt = c.Now
-		return Result{Body: r.receiverBody(v), Used: c.Price.For(0), Public: json.RawMessage(`{}`), Once: r.once(id, token)}, nil
+		v.RotatedAt, v.Email = c.Now, mailHash != ""
+		return Result{Body: r.receiverBody(v), Used: c.Price.For(0), Public: json.RawMessage(`{}`), Once: r.once(id, token, mailToken)}, nil
 	}
 	return Result{}, noSuchMethod(c.Method)
 }
@@ -825,7 +890,11 @@ func (r *receiver) noticesByEntry(ctx context.Context, q allowance.Querier, n No
 
 // Delivery is one POST to a receive URL, as the HTTP layer read it.
 type Delivery struct {
-	ID, Token   string
+	ID, Token string
+	// Mail is a delivery to the receiver's email address (POST
+	// ReceiverMailPath+TOKEN): Token is the address's secret and ID is
+	// unused; the receiver is found by the secret's hash.
+	Mail        bool
 	ContentType string // the request's Content-Type header
 	Body        []byte // at most ReceiverBodyBytes+1 bytes: one more means too large
 	Signature   string // X-Hub-Signature-256
@@ -928,27 +997,47 @@ func mediaType(header string) (string, bool) {
 }
 
 type receiverRow struct {
-	account, keyID, hmac, allow, dedupe, state, tokenHash string
-	hosted, screen                                        bool
+	id, account, keyID, hmac, allow, dedupe, state, tokenHash string
+	hosted, screen                                            bool
 }
 
 // findReceiver is the receiver a delivery or a probe addresses, found by id
-// and secret (any mismatch, or a receiver that is not active, is not found)
-// and checked against its allowed sources.
+// and secret, or for mail by the hash of its address's secret (any
+// mismatch, or a receiver that is not active, is not found), and checked
+// against its allowed sources.
 func findReceiver(ctx context.Context, q allowance.Querier, d Delivery) (receiverRow, error) {
-	if !receiverIDRE.MatchString(d.ID) || !receiverTokenRE.MatchString(d.Token) {
-		return receiverRow{}, refusal("receiver_not_found")
-	}
+	const columns = "SELECT id,account,key_id,hosted,hmac_secret,allow_from,dedupe_header,screen,state,token_hash,email_hash FROM receivers "
 	var row receiverRow
-	err := q.QueryRowContext(ctx, "SELECT account,key_id,hosted,hmac_secret,allow_from,dedupe_header,screen,state,token_hash FROM receivers WHERE id=?", d.ID).
-		Scan(&row.account, &row.keyID, &row.hosted, &row.hmac, &row.allow, &row.dedupe, &row.screen, &row.state, &row.tokenHash)
+	var mailHash string
+	var err error
+	if d.Mail {
+		if !receiverMailTokenRE.MatchString(d.Token) {
+			return receiverRow{}, refusal("receiver_not_found")
+		}
+		err = q.QueryRowContext(ctx, columns+"WHERE email_hash=?", sha256Of([]byte(d.Token))).
+			Scan(&row.id, &row.account, &row.keyID, &row.hosted, &row.hmac, &row.allow, &row.dedupe, &row.screen, &row.state, &row.tokenHash, &mailHash)
+	} else {
+		if !receiverIDRE.MatchString(d.ID) || !receiverTokenRE.MatchString(d.Token) {
+			return receiverRow{}, refusal("receiver_not_found")
+		}
+		err = q.QueryRowContext(ctx, columns+"WHERE id=?", d.ID).
+			Scan(&row.id, &row.account, &row.keyID, &row.hosted, &row.hmac, &row.allow, &row.dedupe, &row.screen, &row.state, &row.tokenHash, &mailHash)
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return receiverRow{}, refusal("receiver_not_found")
 	}
 	if err != nil {
 		return receiverRow{}, err
 	}
-	if subtle.ConstantTimeCompare([]byte(sha256Of([]byte(d.Token))), []byte(row.tokenHash)) != 1 || row.state != "active" {
+	want := row.tokenHash
+	if d.Mail {
+		want = mailHash
+	}
+	if want == "" || subtle.ConstantTimeCompare([]byte(sha256Of([]byte(d.Token))), []byte(want)) != 1 || row.state != "active" {
+		return receiverRow{}, refusal("receiver_not_found")
+	}
+	if d.Mail && (row.hmac != "" || row.allow != "") {
+		// Never issued to such a receiver; refused all the same.
 		return receiverRow{}, refusal("receiver_not_found")
 	}
 	if row.allow != "" {
@@ -976,17 +1065,18 @@ func (r *receiver) deliver(ctx context.Context, tx *sql.Tx, meter Meter, d Deliv
 	if err != nil {
 		return DeliveryReceipt{}, "", err
 	}
-	if err = countDay(ctx, tx, d.ID, now); err != nil {
+	if err = countDay(ctx, tx, row.id, now); err != nil {
 		return DeliveryReceipt{}, "", err
 	}
-	if err = r.admit(r.perRecv, d.ID, ReceiverPerMinute, now); err != nil {
+	if err = r.admit(r.perRecv, row.id, ReceiverPerMinute, now); err != nil {
 		return DeliveryReceipt{}, "", err
 	}
 	if len(d.Body) > ReceiverBodyBytes {
 		return DeliveryReceipt{}, "", tooLarge("receiver_too_large", len(d.Body), ReceiverBodyBytes)
 	}
 	mt, ok := mediaType(d.ContentType)
-	if !ok {
+	// Mail arrives as the email worker's JSON item, nothing else.
+	if !ok || (d.Mail && mt != "application/json") {
 		return DeliveryReceipt{}, "", refusal("receiver_unsupported_type")
 	}
 	if !utf8.Valid(d.Body) || strings.IndexByte(string(d.Body), 0) >= 0 || (strings.HasSuffix(mt, "json") && !json.Valid(d.Body)) {
@@ -1011,9 +1101,9 @@ func (r *receiver) deliver(ctx context.Context, tx *sql.Tx, meter Meter, d Deliv
 		if v := d.header(row.dedupe); v != "" && len(v) <= ReceiverHeaderBytes && headerValueRE.MatchString(v) {
 			dedupeKey = sha256Of([]byte(v))
 			var first string
-			err = tx.QueryRowContext(ctx, "SELECT id FROM receiver_items WHERE receiver=? AND dedupe_key=? AND dedupe_key<>'' AND received_at>? ORDER BY received_at DESC LIMIT 1", d.ID, dedupeKey, now-ReceiverDedupeWindow).Scan(&first)
+			err = tx.QueryRowContext(ctx, "SELECT id FROM receiver_items WHERE receiver=? AND dedupe_key=? AND dedupe_key<>'' AND received_at>? ORDER BY received_at DESC LIMIT 1", row.id, dedupeKey, now-ReceiverDedupeWindow).Scan(&first)
 			if err == nil {
-				if _, err = tx.ExecContext(ctx, "UPDATE receivers SET duplicates=duplicates+1 WHERE id=?", d.ID); err != nil {
+				if _, err = tx.ExecContext(ctx, "UPDATE receivers SET duplicates=duplicates+1 WHERE id=?", row.id); err != nil {
 					return DeliveryReceipt{}, "", err
 				}
 				return DeliveryReceipt{Item: first, Bytes: len(d.Body), Duplicate: true}, "", nil
@@ -1048,15 +1138,15 @@ func (r *receiver) deliver(ctx context.Context, tx *sql.Tx, meter Meter, d Deliv
 	}
 	id := newCallID()
 	if _, err = tx.ExecContext(ctx, "INSERT INTO receiver_items(id,receiver,account,content_type,body,bytes,headers,verified,cost,received_at,event_seq,screen,dedupe_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-		id, d.ID, row.account, mt, string(d.Body), len(d.Body), string(canonicalJSON(headers)), verified, cost, now, latest, screen, dedupeKey); err != nil {
+		id, row.id, row.account, mt, string(d.Body), len(d.Body), string(canonicalJSON(headers)), verified, cost, now, latest, screen, dedupeKey); err != nil {
 		return DeliveryReceipt{}, "", err
 	}
-	if _, err = tx.ExecContext(ctx, "UPDATE receivers SET deliveries=deliveries+1, last_at=? WHERE id=?", now, d.ID); err != nil {
+	if _, err = tx.ExecContext(ctx, "UPDATE receivers SET deliveries=deliveries+1, last_at=? WHERE id=?", now, row.id); err != nil {
 		return DeliveryReceipt{}, "", err
 	}
 	// The item is an entry in its owner's inbox log (C61): its id only.
 	if r.board != nil {
-		if err = r.board.AddInboxEntry(ctx, tx, ReceivedInboxEntry(id, d.ID, row.account, now)); err != nil {
+		if err = r.board.AddInboxEntry(ctx, tx, ReceivedInboxEntry(id, row.id, row.account, now)); err != nil {
 			return DeliveryReceipt{}, "", err
 		}
 	}

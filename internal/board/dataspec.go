@@ -2,12 +2,15 @@ package board
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 
 	"swarmmemo/internal/gate"
+	"swarmmemo/internal/jsonstrict"
 )
 
 // The data spec (C377) is the one statement of what each operation's data
@@ -467,4 +470,97 @@ var dataSpecs = map[string]DataSpec{
 	"hosted.recover":       structSpec(hostedData{}, "schema!", "recovery_code!").only("schema", "recovery_code"),
 	"hosted.token":         structSpec(hostedData{}, "schema!", "action!").only("schema", "action", "target", "label", "spend_limit"),
 	"hosted.claim":         structSpec(hostedData{}, "schema!", "new_public_key!", "proof!", "recovery_code!").only("schema", "new_public_key", "proof", "recovery_code"),
+}
+
+// dataRefusals is the code each operation's own parser refuses its data
+// with, so the strict check below answers as that parser would; an
+// operation named by its family ("work.") takes the family's, and any other
+// invalid_request. TestDataRefusalsAreTheParsers holds it to the parsers.
+var dataRefusals = map[string]string{
+	"post":                  "invalid_post_data",
+	"messages.list":         "invalid_list_options",
+	"feed.":                 "invalid_feed_profile",
+	"room.subscribe":        "invalid_feed_profile",
+	"vote":                  "invalid_vote",
+	"room.policy.set":       "invalid_policy",
+	"room.style.":           "invalid_style",
+	"agent.profile.publish": "invalid_profile",
+	"key.backup.":           "invalid_key_backup",
+	"identity.link":         "invalid_link",
+	"identity.unlink":       "invalid_link",
+	"identity.witness":      "invalid_witness",
+	"verify.publish":        "invalid_verification",
+	"standing.":             "invalid_standing",
+	"gate.":                 "invalid_gate_data",
+	"vouch":                 "invalid_vouch",
+	"work.":                 "invalid_work_data",
+	"works.list":            "invalid_work_data",
+	"delegation.":           "invalid_delegation_data",
+	"private_read.":         "invalid_private_read_data",
+	"webhook.":              "invalid_webhook",
+	"spend_limit.set":       "invalid_spend_limit",
+	"offering.publish":      "invalid_offering",
+	"offering.answer":       "invalid_offering_answer",
+	"offering.refund":       "invalid_refund",
+	"x402.submit":           "x402_listing_data",
+	"find":                  "invalid_find",
+	"conversation.":         "invalid_conversation",
+	"conversation.seal":     "invalid_seal",
+	"messaging.policy.set":  "invalid_messaging_policy",
+	"hosted.":               "invalid_hosted_data",
+}
+
+// dataRefusal is operation's entry in dataRefusals.
+func dataRefusal(operation string) string {
+	if code, ok := dataRefusals[operation]; ok {
+		return code
+	}
+	for family := operation; ; {
+		i := strings.LastIndex(family, ".")
+		if i < 0 {
+			return "invalid_request"
+		}
+		family = family[:i]
+		if code, ok := dataRefusals[family+"."]; ok {
+			return code
+		}
+	}
+}
+
+// strictCommandData is the one choke point for command data (C493), run
+// before any operation reads its data or anything is written: data that
+// parses as JSON but that two parsers could read differently is refused
+// (invalid UTF-8, a key repeated in any object at any depth, keys that
+// differ only in case included, nesting deeper than jsonstrict.DepthMax,
+// anything after the value), so what is signed and stored means one thing
+// to every reader. Malformed JSON goes on to the operation's parser, which
+// refuses it in its own words. Raw data (DataSpec.Raw) is skipped:
+// base64url bytes and "viewer" are not JSON, and a service method's data is
+// held to the same rule, at its own depth bound and as invalid_service_data,
+// by services.ParseData before the engine reads it.
+func strictCommandData(c Command) error {
+	if c.Data == "" {
+		return nil
+	}
+	if spec, ok := DataSpecOf(c.Operation); !ok || spec.Raw != "" {
+		return nil
+	}
+	err := jsonstrict.Value([]byte(c.Data), jsonstrict.DepthMax)
+	if !jsonstrict.Ambiguous(err) {
+		return nil
+	}
+	code := dataRefusal(c.Operation)
+	if c.PrivateRead != nil || code == "invalid_private_read_data" {
+		return privateReadError("invalid_private_read_data") // the private plane names nothing
+	}
+	msg := "data must be valid UTF-8."
+	switch {
+	case errors.Is(err, jsonstrict.ErrDuplicate):
+		msg = "data repeats a field in one object (names that differ only in case are the same field); give each once."
+	case errors.Is(err, jsonstrict.ErrDepth):
+		msg = "data nests deeper than " + strconv.Itoa(jsonstrict.DepthMax) + " levels."
+	case errors.Is(err, jsonstrict.ErrTrailing):
+		msg = "data must be one JSON value with nothing after it."
+	}
+	return problem(400, code, msg)
 }

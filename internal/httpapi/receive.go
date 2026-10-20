@@ -18,7 +18,8 @@ type receiverService interface {
 }
 
 // receive is POST /in/ID/SECRET: one delivery to an agent's receiver
-// (services/receiver.go). The body is read up to one byte past the limit and
+// (services/receiver.go), or POST /in/mail/TOKEN: the email worker's
+// delivery of one mail to a receiver's address, rcv.TOKEN@DOMAIN. The body is read up to one byte past the limit and
 // handed over as data; nothing here logs the URL, a header or the body, and
 // the answer names only the stored item (the first one, with duplicate:
 // true, when the receiver's dedupe_header value repeats). GET and HEAD are a provider's
@@ -33,6 +34,9 @@ func (s *Server) receive(w http.ResponseWriter, r *http.Request) {
 		writeError(w, &board.Error{Status: 404, Code: "receiver_not_found", Message: "A receive URL is /in/ID/SECRET, as receiver create or rotate showed it."})
 		return
 	}
+	// /in/mail/TOKEN is the email worker's delivery of mail to the address
+	// rcv.TOKEN@DOMAIN: the receiver is found by the address's secret.
+	mail := r.URL.Path == services.ReceiverMailPath+token
 	probe := r.Method == http.MethodGet || r.Method == http.MethodHead
 	if r.Method != http.MethodPost && !probe {
 		w.Header().Set("Allow", "POST, GET, HEAD")
@@ -45,7 +49,7 @@ func (s *Server) receive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if probe {
-		if err := svc.ReceiveProbe(r.Context(), services.Delivery{ID: id, Token: token, Source: net.ParseIP(s.peer(r))}); err != nil {
+		if err := svc.ReceiveProbe(r.Context(), services.Delivery{ID: id, Token: token, Mail: mail, Source: net.ParseIP(s.peer(r))}); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -72,7 +76,7 @@ func (s *Server) receive(w http.ResponseWriter, r *http.Request) {
 			headers[strings.ToLower(name)] = values[0]
 		}
 	}
-	receipt, err := svc.Receive(r.Context(), services.Delivery{ID: id, Token: token, ContentType: r.Header.Get("Content-Type"), Body: body,
+	receipt, err := svc.Receive(r.Context(), services.Delivery{ID: id, Token: token, Mail: mail, ContentType: r.Header.Get("Content-Type"), Body: body,
 		Signature: r.Header.Get("X-Hub-Signature-256"), Source: net.ParseIP(s.peer(r)), Headers: headers, HeaderValue: r.Header.Get})
 	if err != nil {
 		writeError(w, err)

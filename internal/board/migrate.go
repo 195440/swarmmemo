@@ -135,7 +135,8 @@ func migrateSchema(tx *sql.Tx, version int) error {
 	}
 	// The services' later columns: recurring wake-ups, pastes.show_author
 	// and the fold of pastes into docs with its one-time, id-keyed copy,
-	// the receiver dedupe columns and index (services.MigrateSchema).
+	// the receiver dedupe columns and index (services.MigrateSchema), and
+	// (schema 46, C491) receivers.email_hash with its unique index.
 	if err := services.MigrateSchema(tx); err != nil {
 		return err
 	}

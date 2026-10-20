@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"swarmmemo/internal/allowance"
+	"swarmmemo/internal/jsonstrict"
 	"swarmmemo/internal/pay"
 )
 
@@ -258,9 +259,9 @@ func UnknownArg(name string) string {
 
 // checkStructure walks raw once: exactly one top-level object, no duplicate
 // key in any object (case-insensitively), depth bounded by JSONDepthMax,
-// nothing after the value. It is pay.CheckStructure, shared with the
-// payment wires (C202a).
-func checkStructure(raw []byte) error { return pay.CheckStructure(raw, JSONDepthMax) }
+// nothing after the value. It is jsonstrict.Object, shared with the
+// payment wires (C202a) and every command's data (C493).
+func checkStructure(raw []byte) error { return jsonstrict.Object(raw, JSONDepthMax) }
 
 // Encodings every provider shares: one implementation each.
 
