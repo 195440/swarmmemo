@@ -122,3 +122,40 @@ func TestSec120_PlannerSeesTheClaimLotBehindAFullWindow(t *testing.T) {
 		t.Fatalf("the claim lot is out of the planner's sight: %v", err)
 	}
 }
+
+// The sender's own key has the same end to the cancel window as the
+// rotated-away key: a transfer at or past execute_at is due, even while the
+// sweep has not run it (tickingarea-dev 168278c0).
+func TestSec120_CancelEndsAtExecuteAt(t *testing.T) {
+	p := smallParams()
+	p.Resources[allowance.PostBytes].GrantSharePPM = 500_000
+	h := newHarness(t, p)
+	if err := h.do(func(q *sql.Tx) error {
+		return h.l.TripBreaker(ctx, q, "payer", "agent.rotate", "payer-old-key", h.now)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.do(func(q *sql.Tx) error {
+		return h.l.Mint(ctx, q, "payer", allowance.PostBytes, allowance.Granted, 300, "grant", h.now)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pending := func() Transfer {
+		tr, err := h.transfer(signedSubject("payer"), "payee", 50, "pay")
+		if err != nil || tr.State != "pending" || tr.ExecuteAt <= h.now {
+			t.Fatalf("%+v %v", tr, err)
+		}
+		return tr
+	}
+	for _, late := range []int64{0, 3600} {
+		tr := pending()
+		err := h.do(func(q *sql.Tx) error { _, e := h.l.CancelTransfer(ctx, q, tr.ID, "payer", tr.ExecuteAt+late); return e })
+		if code(err) != "transfer_due" {
+			t.Fatalf("cancel at execute_at+%d: %v, want transfer_due", late, err)
+		}
+	}
+	tr := pending()
+	if err := h.do(func(q *sql.Tx) error { _, e := h.l.CancelTransfer(ctx, q, tr.ID, "payer", tr.ExecuteAt-1); return e }); err != nil {
+		t.Fatalf("a cancel before execute_at: %v", err)
+	}
+}

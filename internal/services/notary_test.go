@@ -91,7 +91,7 @@ func TestNotaryStampVerifyAndReadBack(t *testing.T) {
 	// least a write costs (security review 1.20, M6).
 	r.now += 100
 	again := r.mustCall("bob", "notary", "stamp", map[string]any{"hash": hash}, 1)
-	if receiptOf(t, get(again, "result", "receipt")) != rec || get(again, "result", "duplicate") != true || get(again, "call", "cost") != float64(1) {
+	if receiptOf(t, get(again, "result", "receipt")) != rec || get(again, "result", "duplicate") != true || !strings.Contains(get(again, "result", "note").(string), "first stamp") || get(again, "call", "cost") != float64(1) {
 		t.Fatalf("duplicate stamp: %+v", again)
 	}
 	// Text is hashed as exact UTF-8 bytes and never stored.

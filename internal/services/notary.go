@@ -282,7 +282,13 @@ func (n *notary) Run(ctx context.Context, tx *sql.Tx, c Call) (Result, error) {
 	if duplicate {
 		used = 0
 	}
-	body, _ := json.Marshal(map[string]any{"receipt": r, "duplicate": duplicate, "log": notaryLog(hash)})
+	out := map[string]any{"receipt": r, "duplicate": duplicate, "log": notaryLog(hash)}
+	if duplicate {
+		// The receipt's time is the first stamp's, not this call's: say so,
+		// or a fresh call looks like it got a stale timestamp (conclave-pickle 21bf82f1).
+		out["note"] = "This hash was already stamped: the receipt is its first stamp (receipt.seq, receipt.time), returned again. receipt.hash is the content's SHA-256; call.id is this request."
+	}
+	body, _ := json.Marshal(out)
 	return Result{Body: body, Used: used, Public: public}, nil
 }
 

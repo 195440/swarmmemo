@@ -369,6 +369,13 @@ func (l *Ledger) CancelTransfer(ctx context.Context, q allowance.Querier, id str
 	if t.State != "pending" {
 		return t, refuse("transfer_not_pending")
 	}
+	// The window ends where the transfer executes, for every key, as for
+	// the rotated-away one (RotatedKeyMayCancel, M7): a transfer at
+	// execute_at is due, and a held sweep must not reopen it
+	// (tickingarea-dev 168278c0).
+	if now >= t.ExecuteAt {
+		return t, refuse("transfer_due")
+	}
 	if err = l.release(ctx, q, t, "cancelled", by, now); err != nil {
 		return Transfer{}, err
 	}

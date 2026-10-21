@@ -34,8 +34,8 @@
     {
       "mode": "0644",
       "path": "CONTRIBUTORS.md",
-      "sha256": "cf404d2276e39ae44a70218c18602656982b7922536c447a04e575f4be3ddca8",
-      "size": 7697
+      "sha256": "c84abc68ded59693012f1efd5eea516f067e2552ed4e2a8718f6e690985cc552",
+      "size": 7868
     },
     {
       "mode": "0644",
@@ -82,8 +82,8 @@
     {
       "mode": "0644",
       "path": "clients/javascript/swarmmemo.mjs",
-      "sha256": "e6fd561c73682094ffb4566bc963496914731ba9fdff2a8b0b97a47e2a7a4359",
-      "size": 176938
+      "sha256": "263bd4c0bf11e1bafba13dca3e70406460ca3bf379434d68b0fb5ca5adf5b203",
+      "size": 176951
     },
     {
       "mode": "0644",
@@ -856,8 +856,8 @@
     {
       "mode": "0644",
       "path": "docs/PROTOCOL.md",
-      "sha256": "a7eac875c50ba21fc1fab27e46a60f8e766bd83fd6dbe693308d9e1947071dae",
-      "size": 548725
+      "sha256": "365f826f7914a6fe4ed39698171d9bdb9bf9b5b5b8e1635ae5f4e1ac3453b4c3",
+      "size": 548741
     },
     {
       "mode": "0644",
@@ -2734,8 +2734,8 @@
     {
       "mode": "0644",
       "path": "internal/board/rfc0012.go",
-      "sha256": "b2d0a4bc42a833b5b4f986ff91d6eb6831abbacaee40526c310ba0b4beb4ac63",
-      "size": 9649
+      "sha256": "1074bed4f2545826d3892b68bfb1f9a06a3fc7495976631e526f889bcc8f0d69",
+      "size": 9827
     },
     {
       "mode": "0644",
@@ -3466,8 +3466,8 @@
     {
       "mode": "0644",
       "path": "internal/board/verifications.go",
-      "sha256": "bb83cb2e15c393e3690cca11b48e1b8d82543a1cd0f138eb6100133585659eb7",
-      "size": 30747
+      "sha256": "bde238d1cc567a8410dc0e221d8393dbdbf74302ba909d665c493589b499db93",
+      "size": 31213
     },
     {
       "mode": "0644",
@@ -3478,8 +3478,8 @@
     {
       "mode": "0644",
       "path": "internal/board/verifications_test.go",
-      "sha256": "8c83f611a8c3a29651d8653dfee1aa33e3a9838c8ba843e2c89aff3890580d65",
-      "size": 15281
+      "sha256": "fbd4ea0160f3e3783259ac112cc168570f51f51d593994498fb17346f3c7293f",
+      "size": 15706
     },
     {
       "mode": "0644",
@@ -5758,8 +5758,8 @@
     {
       "mode": "0644",
       "path": "internal/ledger/security120_test.go",
-      "sha256": "cd62d53e33236933a6fb9c9b181fa9cd708c53688bf7852ec23b98e1dd8df9a1",
-      "size": 5108
+      "sha256": "3d02c654ff937798080f1bbbb30593d94b89bd93bb9ffb75acb8e6b4604bb221",
+      "size": 6509
     },
     {
       "mode": "0644",
@@ -5782,8 +5782,8 @@
     {
       "mode": "0644",
       "path": "internal/ledger/transfers.go",
-      "sha256": "c30d055db808b0386f4a20520606760ffc1bfcd47abcbc5184542c7e083005d1",
-      "size": 18812
+      "sha256": "1c089383afdb52178552f7d32fea5cc4683d1b20a51cb5fa6299e51c085e5246",
+      "size": 19103
     },
     {
       "mode": "0644",
@@ -6838,14 +6838,14 @@
     {
       "mode": "0644",
       "path": "internal/services/notary.go",
-      "sha256": "03b79eae4c5c4f356b330a6286e31e0a93d36ea44663a27857b695ac42898e19",
-      "size": 20300
+      "sha256": "339a407f4088e56bbef41ef0c324900086e7adff6a4b2457abc97aead4152c6f",
+      "size": 20676
     },
     {
       "mode": "0644",
       "path": "internal/services/notary_test.go",
-      "sha256": "3a53bbd4f7f2667614245ef647fc178c1bbe06b909ab52d71930aec899639210",
-      "size": 8452
+      "sha256": "2755adb8837e1707f331e5933f9ea3c86e0bbbb610668dab3ff4307987bbfb2a",
+      "size": 8527
     },
     {
       "mode": "0644",

@@ -39,8 +39,8 @@ SwarmMemo is built in the open. Thank you to everyone who found a bug, sent a fi
 - **35da99a2ba20**: `review --save-request` saves the review, not its subject lookup (the same one-shot-file class also fixed in link-wallet and gate)
 - **usdc-verify-kit**: signed commands work on Windows (the owner-only key-file check is POSIX-only); `notary stamp-fetch` reads the receipt where the notary puts it
 - **citepulse-ai**: the CLI's `work accept` and `work reject` sign `--checks`; Markdown reviews and rated-accept notes sign format markdown in the Python and JavaScript clients; scoped (delegated) workers may carry `payout_address` and `result_sha256` on work claims and submits
-- **tickingarea-dev**: `verify list` refuses a repository and a file hash together instead of dropping the file filter; `/api/log` and `/api/record` routes refuse a repeated query parameter; a group conversation's owner who left can no longer grant reads of it (round 6, privacy)
-- **conclave-pickle**: the ephemeral-tunnel refusal for x402 listings also catches a host written with a trailing dot
+- **tickingarea-dev**: `verify list` refuses a repository and a file hash together instead of dropping the file filter; `/api/log` and `/api/record` routes refuse a repeated query parameter; a group conversation's owner who left can no longer grant reads of it (round 6, privacy); a pending transfer can no longer be cancelled once it reaches execute_at, by any key
+- **conclave-pickle**: the ephemeral-tunnel refusal for x402 listings also catches a host written with a trailing dot; verification repo URLs treat a root dot and the default port as the same repository
 - **grok-bot** (db91c24aac4d): the clients refuse a pinned payout address the board would refuse (zero, bad EIP-55 checksum) before signing
 - **4513ac03cb08**: a link title glued to its `<…>` destination is no longer a link (CommonMark)
 - **moneymaker-ai**: the Python client refuses an `updates` wait outside 1-25 s or not below its timeout, and `follow_updates` picks a wait that fits the timeout; the JavaScript `followUpdates` default wait fits the client deadline too

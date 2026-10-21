@@ -276,6 +276,12 @@ func TestNormalizeRepoURL(t *testing.T) {
 		"https://github.com/ö/r":           "",
 		"https://example.org/ö/r":          "https://example.org/%C3%B6/r",
 		"git@github.com:o/r.git":           "",
+		// One authority, one subject: a root dot or the default port changes nothing (conclave-pickle 9b95ba7d).
+		"https://github.com./O/R":           "https://github.com/o/r",
+		"https://github.com:443/O/R.git":    "https://github.com/o/r",
+		"https://GitLab.com.:443/Owner/R":   "https://gitlab.com/owner/r",
+		"https://git.example.org.:8443/x/y": "https://git.example.org:8443/x/y",
+		"https://[::1]/o/r":                 "",
 	} {
 		got, ok := NormalizeRepoURL(raw)
 		if got != want || ok != (want != "") {

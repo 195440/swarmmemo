@@ -217,7 +217,19 @@ func NormalizeRepoURL(raw string) (string, bool) {
 			return "", false
 		}
 	}
-	host := strings.ToLower(u.Host)
+	// One authority, one spelling: no trailing root dot and no default
+	// port (github.com. and github.com:443 are github.com), as the other
+	// host-normalising sites do (conclave-pickle 9b95ba7d).
+	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+	if strings.Contains(host, ":") {
+		return "", false // an IPv6 literal names no forge
+	}
+	if port := u.Port(); port != "" && port != "443" {
+		host += ":" + port
+	}
+	if host == "" || strings.HasPrefix(host, ":") {
+		return "", false
+	}
 	if caseFoldingForges[host] {
 		// These forges name a repository case-insensitively, in ASCII: one
 		// record subject, however a README spells it.

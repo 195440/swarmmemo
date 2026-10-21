@@ -53,6 +53,8 @@ func allowanceError(code string) error {
 		return problem(409, "not_transferable", "Your balance holds too few transferable units for this amount and its fee; allowance.get shows what you hold."+EarnHint)
 	case "transfer_not_pending":
 		return problem(409, "transfer_not_pending", "Only a pending transfer can be cancelled; this one has executed or was cancelled.")
+	case "transfer_due":
+		return problem(409, "transfer_due", "This transfer reached its execute_at and is due: it can no longer be cancelled, and it executes at the next sweep.")
 	case "request_in_flight":
 		return problem(409, "request_in_flight", "A call with this request ID is still running; retry after retry_after seconds with the same request ID.")
 	case "price_exceeds_max":
