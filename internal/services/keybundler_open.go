@@ -707,7 +707,7 @@ func (x *x402) bundlerSearchRead(ctx context.Context, s bundlerSearch, price Pri
 	}
 	verdicts := x.verdictsFor(ctx, texts)
 	hosts := x.bundlerHosts(ctx, page.hits)
-	hits := []any{}
+	hits, later := []any{}, []any{}
 	for _, h := range page.hits {
 		status := screenStatus(h.Description, verdicts)
 		desc := h.Description
@@ -735,10 +735,18 @@ func (x *x402) bundlerSearchRead(ctx context.Context, s bundlerSearch, price Pri
 		} else if h.SchemaCut {
 			e["input_schema_truncated"] = true
 		}
-		hits = append(hits, e)
+		// Callable hits first, in the bundler's order, then the rest: an agent
+		// looking for something it can buy sees those at the top (Skitter 12b515db).
+		if why == "" {
+			hits = append(hits, e)
+		} else {
+			later = append(later, e)
+		}
 	}
+	callable := len(hits)
+	hits = append(hits, later...)
 	return canonicalJSON(map[string]any{
-		"hits": hits, "matched": len(hits), "partial": page.partial, "cached": cached,
+		"hits": hits, "matched": len(hits), "callable": callable, "partial": page.partial, "cached": cached,
 		"tools": x.bundlerSummary(price), "call": bundlerCallNote,
 		// Titles, descriptions and schemas are the bundler's listings' text.
 		"text_is_untrusted": true,

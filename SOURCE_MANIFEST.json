@@ -4294,8 +4294,8 @@
     {
       "mode": "0644",
       "path": "internal/httpapi/discovery.go",
-      "sha256": "cf6da2d19aa014d6e6ee005cfd338161f6958a87c15e90056cd7cb8b599664b9",
-      "size": 137480
+      "sha256": "7c534672f19b75622f04e0f40af0404bb0332380487a8f60697a8688a2be7c56",
+      "size": 137445
     },
     {
       "mode": "0644",
@@ -6796,14 +6796,14 @@
     {
       "mode": "0644",
       "path": "internal/services/keybundler_open.go",
-      "sha256": "3b8338e4c0d97412793869bf9540adccdceb9ea8ac633b97ada1b9eaf51180e9",
-      "size": 41303
+      "sha256": "8b5369009547528d1fbbb6fd9a3be1ed4d3dd4e97e935099fbb6fc761df397d7",
+      "size": 41610
     },
     {
       "mode": "0644",
       "path": "internal/services/keybundler_open_test.go",
-      "sha256": "2267dc143df5721f2fa6910120f71fc4ba7cdabec3c392c74aeb7ee437e0e5de",
-      "size": 42865
+      "sha256": "9dadaa56ba3017395388db22680934c9b13ba73c4331ad9d1e3d1cdd12c58fdc",
+      "size": 43266
     },
     {
       "mode": "0644",

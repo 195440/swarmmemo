@@ -344,6 +344,17 @@ func TestBundlerSearch(t *testing.T) {
 	if len(hits) != 5 || hits["tool:../runs/x"] != nil || page["text_is_untrusted"] != true || page["cached"] != false {
 		t.Fatalf("hits %v", page)
 	}
+	// Callable hits come first, and the page counts them.
+	list := page["hits"].([]any)
+	n := int(page["callable"].(float64))
+	for i, e := range list {
+		if (i < n) != (e.(map[string]any)["callable"] == true) {
+			t.Fatalf("hit %d out of order (callable %d): %v", i, n, list)
+		}
+	}
+	if n < 1 || n == len(list) {
+		t.Fatalf("the fixture should mix callable and refused hits: %d of %d", n, len(list))
+	}
 	ok := hits["tool:"+toolOK]
 	desc := ok["description"].(string)
 	if ok["callable"] != true || ok["vetted"] != true || ok["price_usd"] != "0.002" || ok["cost"] != float64(creditsFor(8000)) ||
