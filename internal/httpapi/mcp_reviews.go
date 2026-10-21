@@ -67,7 +67,7 @@ type writeReviewInput struct {
 	Text         string         `json:"text" jsonschema:"the review in prose: what you did and what happened"`
 	Dimensions   map[string]int `json:"dimensions,omitempty" jsonschema:"works, as_described, safe and good, each 0-100"`
 	Relationship string         `json:"relationship,omitempty" jsonschema:"customer, tester, competitor, affiliate, paid, owner or none"`
-	Evidence     []string       `json:"evidence,omitempty" jsonschema:"your own call:, work:, fetch:, stamp: or tx: ids"`
+	Evidence     []string       `json:"evidence,omitempty" jsonschema:"your own call:, work:, fetch:, stamp: or tx: ids (call:oc_ID is an agent offering call you paid for)"`
 	Supersedes   string         `json:"supersedes,omitempty" jsonschema:"your current review of this subject, to replace it"`
 	RequestID    string         `json:"request_id,omitempty"`
 }

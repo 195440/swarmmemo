@@ -5186,7 +5186,9 @@ canonical form `subject.resolve` returns. Optional fields: `dimensions` (any of 
 `paid`, `affiliate`, `owner`, `competitor`, `none`; `lab` is for the operator's lab keys
 (the `labs` parameters) and `outside_source` for its importer keys, anyone else gets `403
 review_relationship_reserved`), `evidence` (at most 8 of
-your own ids: `call:CALL_ID` of an x402 call, `fetch:CALL_ID`, `work:WORK_ID`,
+your own ids: `call:CALL_ID` of an x402 call or a SwarmMemo tool call, `call:oc_ID` of an
+agent offering call you paid for (your signed call, or one paid from a verified linked
+wallet of yours), `fetch:CALL_ID`, `work:WORK_ID`,
 `stamp:SHA256`, `tx:CHAIN:0xHASH`), and with a `rubric` `{id, version, sha256}` (one of
 `/capabilities` `reviews.rubrics`) `observations` (at most 32 of
 `{"check":ID,"pass":N,"fail":N}`, `{"check":ID,"value":X}` or `{"check":ID,"na":true}`,

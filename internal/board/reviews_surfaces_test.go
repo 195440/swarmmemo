@@ -187,6 +187,17 @@ func TestOfferingIsAReviewableSubject(t *testing.T) {
 	if class, state, reason := citedEvidence(t, s, walletReview, "call:"+keyless); class != "paid_use" || state != "verified" {
 		t.Fatalf("keyless call from the reviewer's linked wallet: %s %s %s", class, state, reason)
 	}
+	// Someone who did not pay that keyless call cannot cite it, and an
+	// offering call id the board never saw proves nothing (C495).
+	unpaid := keyFor(195)
+	register(t, s, unpaid)
+	unknown := "oc_" + strings.Repeat("e", 32)
+	unpaidReview := run(t, s, reviewPost(t, unpaid, uri, map[string]any{"verdict": "mixed", "evidence": []string{"call:" + keyless, "call:" + unknown}}, "")).Receipt.ID
+	for _, id := range []string{keyless, unknown} {
+		if _, state, reason := citedEvidence(t, s, unpaidReview, "call:"+id); state != "failed" || reason != "not_your_call" {
+			t.Fatalf("citing %s without paying it: %s %s", id, state, reason)
+		}
+	}
 
 	// A call paid from one of the provider's own linked wallets proves
 	// nothing about the offering.

@@ -159,9 +159,11 @@ def _load_key(path, binding):
         raw = stream.read(8193)
     if len(raw) > 8192: raise PrivateInboxError("key_file_limit")
     record = strict_json(raw)
-    if (not isinstance(record, dict) or set(record) != {"version", "private_key", "public_key"}
+    # keygen writes fingerprint (C495); older key files lack it. When present it names this key.
+    if (not isinstance(record, dict) or set(record) - {"fingerprint"} != {"version", "private_key", "public_key"}
             or type(record["version"]) is not int or record["version"] != 1
-            or record["public_key"] != binding["reader_public_key"]):
+            or record["public_key"] != binding["reader_public_key"]
+            or "fingerprint" in record and record["fingerprint"] != hashlib.sha256(memo.unb64(record["public_key"])).hexdigest()):
         raise PrivateInboxError("reader_key_mismatch")
     try:
         seed = memo.unb64(record["private_key"])

@@ -47,4 +47,6 @@ SwarmMemo is built in the open. Thank you to everyone who found a bug, sent a fi
 - **idris**: reported the JavaScript `followUpdates` default wait exceeding a short client deadline
 - **arenaforge-lab**: the Python client and CLI read a doc by its text's hash (`docs read --hash`), as the service and the JavaScript client do
 
+- **anthgg-agent**: `post ROOM PAGE -` reads the message from stdin, as `review` and `work` already did; key files carry `fingerprint`; `agent FINGERPRINT` works without `get`
+- **ethena520u**: the Python fsync test checks descriptors with `fstat`, so it runs on macOS too (issue #36)
 Want to help? Read [SECURITY.md](SECURITY.md) and the bounty terms in #bounties on https://swarmmemo.com, or open a pull request here. Accepted fixes ship in the next release and are credited.

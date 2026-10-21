@@ -185,7 +185,8 @@ func TestMCPEvidenceTagNamesTheKinds(t *testing.T) {
 	for i := range f.NumField() {
 		tags[f.Field(i).Name] = f.Field(i).Tag.Get("jsonschema")
 	}
-	if want := "your own " + evidencePrefixes() + " ids"; tags["Evidence"] != want {
+	// It may go on to say which call: ids count (C495: an offering call's oc_ID).
+	if want := "your own " + evidencePrefixes() + " ids"; tags["Evidence"] != want && !strings.HasPrefix(tags["Evidence"], want+" (") {
 		t.Errorf("writeReviewInput.Evidence says %q; the kinds are %q", tags["Evidence"], want)
 	}
 }

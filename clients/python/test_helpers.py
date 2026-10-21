@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+import stat
 import tempfile
 import unittest
 import urllib.error
@@ -628,6 +629,14 @@ class HelperTests(unittest.TestCase):
             self.assertEqual(memo.main(["--key", "KEY.json", "call", "fetch", "page", '{"url": "a"}']), 0)
         self.assertTrue(self.recorder.sent)  # the same call with valid JSON is sent
 
+    def test_post_dash_reads_stdin(self):
+        # "post ROOM PAGE -" posted a literal "-" (anthgg-agent 132626fb); it reads stdin, as review and work do.
+        with patch.object(memo, "load_key", return_value=self.key), patch.object(memo, "read_bounded", return_value="from stdin") as rb, \
+                contextlib.redirect_stdout(io.StringIO()):
+            memo.main(["--key", "KEY.json", "post", "lobby", "main", "-"])
+        rb.assert_called_once()
+        self.assertTrue(any("from stdin" in json.dumps(s) for s in self.recorder.sent))
+
     def test_cli_subcommands(self):
         def run(*argv, signed=True):
             with patch.object(memo, "load_key", return_value=self.key), contextlib.redirect_stdout(io.StringIO()) as out:
@@ -951,6 +960,58 @@ class NotaryShorthandTests(unittest.TestCase):
         self.assertEqual(exc.exception.code, 0)
 
 
+class AgentShorthandTests(unittest.TestCase):
+    """C495: `agent TARGET` is `agent get TARGET` (fingerprint or @handle); `agent get` still works."""
+    def test_bare_target_reads_the_agent(self):
+        for argv, target in ((["agent", AGENT], AGENT), (["agent", "@ada"], "@ada"), (["agent", "get", AGENT], AGENT),
+                             (["--url", "http://127.0.0.1:9", "agent", AGENT], AGENT)):
+            with self.subTest(argv=argv), patch.object(memo.Client, "command", return_value={"agent": {}}) as fake, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(memo.main(argv), 0)
+                self.assertEqual(fake.call_args, (("agent.get",), {"target": target}))
+
+    def test_help_is_unaffected(self):
+        with contextlib.redirect_stdout(io.StringIO()) as out, self.assertRaises(SystemExit) as exc:
+            memo.main(["agent", "--help"])
+        self.assertEqual(exc.exception.code, 0)
+        self.assertIn("agent get TARGET", out.getvalue())
+
+
+class KeyFileFingerprintTests(unittest.TestCase):
+    """C495: new key files carry `fingerprint` (the docs' name for the id); files
+    without it still load, and one naming another key is refused."""
+    def test_keygen_writes_fingerprint_owner_only(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "key.json"
+            result = memo.keygen(path)
+            record = json.loads(path.read_text())
+            self.assertEqual(record["fingerprint"], result["id"])
+            self.assertEqual(result["fingerprint"], result["id"])
+            self.assertEqual(record["fingerprint"], hashlib.sha256(memo.unb64(record["public_key"])).hexdigest())
+            if os.name != "nt":
+                self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+            key = memo.load_key(path)
+            self.assertEqual(memo.b64(memo.public_bytes(key)), record["public_key"])
+
+    def test_loader_accepts_old_files_and_refuses_a_wrong_fingerprint(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "key.json"
+            memo.keygen(path)
+            record = json.loads(path.read_text())
+            for name, change, ok in (("old", lambda r: r.pop("fingerprint"), True), ("wrong", lambda r: r.update(fingerprint="0" * 64), False)):
+                with self.subTest(name):
+                    edited = dict(record); change(edited)
+                    other = Path(folder) / (name + ".json")
+                    fd = os.open(other, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                    with os.fdopen(fd, "w") as stream:
+                        json.dump(edited, stream)
+                    if ok:
+                        memo.load_key(other)
+                    else:
+                        with self.assertRaisesRegex(ValueError, "fingerprint"):
+                            memo.load_key(other)
+
+
 class WindowsKeyFileTests(unittest.TestCase):
     """Windows has no POSIX permission bits (st_mode reads 0o666), so the owner-only
     check applies on POSIX only; a world-readable key is still refused there."""
@@ -1104,7 +1165,7 @@ class WritePrivateDirectorySync(unittest.TestCase):
             path = Path(folder) / "state.json"
             synced, real = [], os.fsync
             def fsync(fd):
-                synced.append(os.path.isdir(f"/proc/self/fd/{fd}") if os.path.exists("/proc/self/fd") else None)
+                synced.append(stat.S_ISDIR(os.fstat(fd).st_mode))  # fstat, not /proc: portable to macOS (#36)
                 return real(fd)
             with patch.object(memo.os, "fsync", fsync):
                 memo.write_private(path, {"cursor": "c1"})
